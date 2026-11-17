@@ -154,6 +154,9 @@ Ground::QuaysMoment Ground::quays_moment(const frame::FrameState& state) const {
 }
 
 void Ground::decide_quays(const frame::FrameState& state) {
+    // the bands of a tall wall in sun are TONE's: the user's Tone switched off (a strength of 0, which lights every
+    // pack without TONE: frame::with_profile) leaves them out with it
+    const bool toned = !state.theme.has(style::theme_flag::tone_strength) || state.theme.tone > 0.0F;
     GroundFrame& f = frame_;
     quays_made_ = quays_moment(state);
     f.quays.clear();
@@ -264,7 +267,7 @@ void Ground::decide_quays(const frame::FrameState& state) {
         const auto wall = face_of(face, wy);
         const bool f1 = walls && face_kept(cam, wall, 300, 0.12, false, cs);
         bool wall_drawn = false; // the port's f1 as drawn: the wall, or its bands' paths
-        if (f1 && g.tone && toward && wy < -2 && p.sampled && p.columns > 0) {
+        if (f1 && g.tone && toned && toward && wy < -2 && p.sampled && p.columns > 0) {
             // a tall quay wall in sun: its lit bands' path, then its unlit ones'
             for (const bool want : {true, false}) {
                 QuayFace b = face;

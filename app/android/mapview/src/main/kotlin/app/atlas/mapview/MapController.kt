@@ -23,6 +23,7 @@ import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapview.palette.Palette
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.vk.CoreMap
 import app.atlas.mapview.vk.MapCameraSource
@@ -98,8 +99,17 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** The moment sent again where the user's Tone or palette changed since it was last sent ([sendMoment]). */
     private val retone = Runnable { if (!closed && lookChanged()) update() }
 
-    /** Whether the user's Tone or palette differs from what the core's theme was last sent with. */
-    private fun lookChanged() = MapEngine.tone != sentTone || MapEngine.palette != sentPalette
+    /**
+     * Whether the user's Tone or palette differs from what the core's theme holds (false until the core took a first
+     * moment: that one carries the look of its time, and its result looks again).
+     */
+    private fun lookChanged(): Boolean {
+        val s = moments.sent ?: return false
+        return MapEngine.tone != s.tone || MapEngine.palette != s.palette
+    }
+
+    /** The moment sent again after a send that failed, while the map is at rest too ([MomentBook.finish]). */
+    private val resend = Runnable { if (!closed) update() }
 
     /** The core's camera published again where what it carries changed (nothing otherwise: the map stays at rest). */
     private val republish = Runnable { if (!closed) publishCamera() }
@@ -263,16 +273,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** The camera's publication whose complete picture the start's paper waits for: the first once the packs are known (-1 until then). */
     private var startRevision = -1L
     private var coverJob: Job? = null
-    private var sentMoment: Moment? = null
-    private var sentPlace: LitPlace? = null
 
-    /** The user's Tone (MapEngine.tone) the core's theme was last sent with. */
-    @Volatile
-    private var sentTone = 1f
+    /** What a moment's send carries: the moment, the place it lights, and the user's Tone and palette (MapEngine's). */
+    private data class SentMoment(val moment: Moment, val place: LitPlace, val tone: Float, val palette: Palette)
 
-    /** The user's palette (MapEngine.palette) the core's theme was last sent with. */
-    @Volatile
-    private var sentPalette = MapEngine.palette
+    /** What the core's theme holds and what is on its way to it ([sendMoment]). */
+    private val moments = MomentBook<SentMoment>()
 
     /** The labels last handed to the core: the list (by identity), its face, the density, whether the core draws them. */
     private class SentLabels(val labels: List<MapLabel>, val face: android.graphics.Typeface?, val density: Float, val draws: Boolean)
@@ -585,10 +591,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         canvasTick.intValue++
         place = MapPlace.DRAWN
         startRevision = -1L
-        sentMoment = null
-        sentPlace = null
-        sentTone = MapEngine.tone
-        sentPalette = MapEngine.palette
+        moments.reset()
         sentLabels = null
         coreLabels = false
         sentMarkers = null
@@ -920,19 +923,24 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * at once, at rest too.
      */
     private fun sendMoment(c: CoreMap, moment: Moment) {
-        val tone = MapEngine.tone
-        val palette = MapEngine.palette
         val place = litPlace(c) ?: return
-        if (moment == sentMoment && tone == sentTone && palette == sentPalette && place == sentPlace) return
-        val retoned = tone != sentTone || palette != sentPalette
-        sentMoment = moment
-        sentTone = tone
-        sentPalette = palette
-        sentPlace = place
+        val key = SentMoment(moment, place, MapEngine.tone, MapEngine.palette)
+        if (!moments.due(key)) return
+        val before = moments.sent
+        val retoned = before != null && (key.tone != before.tone || key.palette != before.palette)
+        moments.start(key)
         val daylight = MapEngine.DAYLIGHT
         scope.launch(Dispatchers.Default) {
-            c.moment(moment, place.zone, daylight, place.lat, place.lon)
-            if (retoned) main.post { if (core === c && !closed) publishCamera(force = true) }
+            val ok = c.moment(moment, place.zone, daylight, place.lat, place.lon, key.tone, key.palette).isEmpty()
+            main.post {
+                if (core !== c || closed) return@post
+                // only a moment the core took is recorded as its; one that failed goes again at the next update, and
+                // once at rest
+                if (moments.finish(key, ok)) main.postDelayed(resend, RESEND_MS)
+                if (ok && retoned) publishCamera(force = true)
+                // the look changed while this one was on its way
+                if (ok && lookChanged()) update()
+            }
         }
     }
 
@@ -1703,6 +1711,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
         /** The live moment moves on in steps of this many seconds (each step is a new frame). */
         const val MOMENT_STEP_S = 300L
+
+        /** How long after a moment's send failed the map sends it once more, at rest too ([sendMoment]). */
+        const val RESEND_MS = 1_000L
 
         /** [t] rounded down to a [MOMENT_STEP_S] step. */
         fun quantise(t: Instant): Instant = Instant.ofEpochSecond(t.epochSecond - Math.floorMod(t.epochSecond, MOMENT_STEP_S))

@@ -16,6 +16,7 @@
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "style/CameraState.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "text/Fonts.hpp"
 #include "text/Utf8.hpp"
@@ -546,7 +547,10 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
                 b.frame = face_of(cam, quad(-w2, w2, 0.0, 2.85, 0.07));
                 b.frame_colour = night ? style.frame.night : style.frame.day;
                 b.glass = face_of(cam, quad(-w2 + 0.12, w2 - 0.12, 0.12, 2.7, 0.08));
-                b.glass_colour = open ? style.glass_open : style.glass_closed;
+                // the open shop's glass the user's lit windows (the style's own colour theirs exactly)
+                b.glass_colour = open ? style::paint(state.palette, style::palette_slot::lit_windows, style.glass_open,
+                                                     style.glass_open)
+                                      : style.glass_closed;
                 b.glass_lit = open;
                 for (std::size_t k = 0; k < b.mullions.size(); ++k) {
                     const double m = k == 0 ? -w2 / 3 : w2 / 3;

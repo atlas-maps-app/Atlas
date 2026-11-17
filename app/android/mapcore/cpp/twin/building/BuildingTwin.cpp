@@ -425,8 +425,13 @@ void BuildingTwin::windows(const passes::BuildingTile& b, std::span<const std::u
             }
             // its material face, with weather nearer than 1.35 times win_d: after its shop glazing, before its windows
             if (materials && i < b.window_materials.size()) {
-                material_face(wall, f, place, wall_plane, w, b.window_materials[i], material_slot,
-                              item_of(b, wall.item), row < distances_.depth.size() ? distances_.depth[row] : 0.0);
+                // a metal wall's ribs a darker tone of its wall's colour as the palette paints it, as the jobs take it
+                passes::BuildingTile::MaterialWall m = b.window_materials[i];
+                if (i < b.window_faces.size() && b.window_faces[i] < b.lights.size()) {
+                    m.ribs = passes::repainted(palette_, &b.lights[b.window_faces[i]], m.ribs);
+                }
+                material_face(wall, f, place, wall_plane, w, m, material_slot, item_of(b, wall.item),
+                              row < distances_.depth.size() ? distances_.depth[row] : 0.0);
             }
             // a church's own windows, with weather nearer than 520 m (none of its plain ones then)
             const std::uint32_t church = i < b.window_churches.size() ? b.window_churches[i] : 0U;
@@ -983,7 +988,9 @@ void BuildingTwin::roof_lines(const passes::BuildingTile& b, std::span<const std
         const std::uint32_t width = passes::courses_width(at->second, distances_.focal);
         const std::uint32_t flags = 30U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT;
         const hlsl::uint4 normal = {bits(c.normal[0]), bits(c.normal[1]), bits(c.normal[2]), flags};
-        const hlsl::uint4 test = {bits(c.test[0]), bits(c.test[1]), bits(c.test[2]), c.rgb};
+        const std::uint32_t rgb =
+            passes::repainted(palette_, c.light < b.lights.size() ? &b.lights[c.light] : nullptr, c.rgb);
+        const hlsl::uint4 test = {bits(c.test[0]), bits(c.test[1]), bits(c.test[2]), rgb};
         lines.clear();
         float opacity = 0.0F;
         for (std::uint32_t j = 1; j < c.k; ++j) {
@@ -994,7 +1001,7 @@ void BuildingTwin::roof_lines(const passes::BuildingTile& b, std::span<const std
             opacity = r.opacity;
             if (r.line.drawn) lines.push_back(r.line);
         }
-        if (!lines.empty()) emit(c.item, at->first, lines, false, c.rgb, opacity, width);
+        if (!lines.empty()) emit(c.item, at->first, lines, false, rgb, opacity, width);
     }
     // the lit ridge: `<path d="M..L.." stroke="#F4EEE2" stroke-width="%.2f" opacity=".55" stroke-linecap="round"/>`
     for (const passes::BuildingTile::Ridge& r : b.ridges) {
@@ -1038,7 +1045,9 @@ void BuildingTwin::kit_walls(const passes::BuildingTile& b, std::span<const std:
     };
     std::vector<shaders::BuildingRoofLine> lines;
     for (const passes::BuildingTile::KitWall& k : b.kit_walls) {
-        const hlsl::uint4 test = {bits(k.test[0]), bits(k.test[1]), bits(k.test[2]), k.rgb};
+        const std::uint32_t rgb =
+            passes::repainted(palette_, k.light < b.lights.size() ? &b.lights[k.light] : nullptr, k.rgb);
+        const hlsl::uint4 test = {bits(k.test[0]), bits(k.test[1]), bits(k.test[2]), rgb};
         // its boards' lines: `<path d="..." stroke="..." stroke-width=".45" opacity=".32" fill="none"/>`, the lines
         // whose both ends project
         const auto lines_at = k.boards >= 2 ? placed(k.item, k.lines_near, k.lines_far) : std::nullopt;
@@ -1069,7 +1078,7 @@ void BuildingTwin::kit_walls(const passes::BuildingTile& b, std::span<const std:
                 }
                 Style style{};
                 style.join = Join::round;
-                style.stroke = Paint::colour(argb_of(shaders::building_rgb(k.rgb)));
+                style.stroke = Paint::colour(argb_of(shaders::building_rgb(rgb)));
                 style.stroke_width = static_cast<float>(passes::kit_lines_width) / 100.0F;
                 out_.at(lines_at->first, group_, item_of(b, k.item));
                 out_.path(style, subpaths_, {.opacity = opacity});
@@ -1079,7 +1088,7 @@ void BuildingTwin::kit_walls(const passes::BuildingTile& b, std::span<const std:
                                            .shadow = {},
                                            .plane = lines.front().plane,
                                            .slot = lines_at->first,
-                                           .rgb = k.rgb,
+                                           .rgb = rgb,
                                            .opacity = opacity});
                     depths_->push_back(std::move(d));
                 }

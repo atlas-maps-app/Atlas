@@ -175,7 +175,8 @@ struct Mirror {
     double min = 0.0;
     double rh = 0.0;
     std::int64_t levels = 0;
-    std::uint32_t wall = 0; ///< surface_colour(b, None), 0xRRGGBB
+    std::uint32_t wall = 0;      ///< surface_colour(b, None), 0xRRGGBB
+    std::uint16_t wall_slot = 0; ///< its walls' slot in the user's palette, with its bits (the tiles' wall_slot)
     std::uint32_t longest = 0;
     bool gabled = false; ///< roof == 'gabled'
     bool across = false; ///< orient == 'across'
