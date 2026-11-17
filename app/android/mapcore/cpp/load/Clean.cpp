@@ -16,6 +16,10 @@
 
 namespace atlas::load {
 
+// the sizes src/lib.rs's structs have on a 64-bit target (it asserts the same of them)
+static_assert(sizeof(atlas_clean_point) == 8 && sizeof(atlas_clean_footprint) == 32);
+static_assert(sizeof(atlas_clean_input) == 64 && sizeof(atlas_clean_counts) == 64 && sizeof(atlas_clean_output) == 104);
+
 namespace {
 
 /// The footprints as the library takes them: buildings first, then parts, each its ring then its courtyards.

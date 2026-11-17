@@ -5,15 +5,107 @@
 //! only.
 
 #![deny(unsafe_op_in_unsafe_fn)]
+// The core and alloc alone, so that the standard library's panic and backtrace machinery is never linked (it was
+// 1.5 MB of each ABI's libatlasmap.so): a panic aborts as the core's asserts do, and memory comes from the C library's
+// malloc. Its tests and examples (feature `std`) have the standard library.
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
+
+extern crate alloc;
 
 pub mod arrange;
 pub mod bridge;
 pub mod clean;
 pub mod geom;
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use clean::{Footprint, Params};
+use core::ffi::c_void;
 use geom::P;
-use std::ffi::c_void;
+
+#[cfg(not(any(test, feature = "std")))]
+mod runtime {
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::ffi::c_void;
+
+    unsafe extern "C" {
+        fn malloc(size: usize) -> *mut c_void;
+        fn free(p: *mut c_void);
+        fn realloc(p: *mut c_void, size: usize) -> *mut c_void;
+        fn posix_memalign(out: *mut *mut c_void, align: usize, size: usize) -> i32;
+        fn write(fd: i32, buf: *const u8, n: usize) -> isize;
+        fn abort() -> !;
+    }
+
+    /// The C library's allocator; posix_memalign where an alignment is past malloc's 16 bytes.
+    struct Malloc;
+
+    // SAFETY: the C library's allocator gives memory of the size and alignment asked for, or null
+    unsafe impl GlobalAlloc for Malloc {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            if l.align() <= 16 {
+                // SAFETY: the C library's malloc
+                return unsafe { malloc(l.size()) }.cast();
+            }
+            let mut p = core::ptr::null_mut();
+            // SAFETY: an alignment of a power of two past 16, a multiple of the pointer's size
+            if unsafe { posix_memalign(&mut p, l.align(), l.size()) } == 0 { p.cast() } else { core::ptr::null_mut() }
+        }
+        unsafe fn dealloc(&self, p: *mut u8, _: Layout) {
+            // SAFETY: p came from alloc
+            unsafe { free(p.cast()) }
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
+            if l.align() <= 16 {
+                // SAFETY: p came from malloc
+                return unsafe { realloc(p.cast(), size) }.cast();
+            }
+            // SAFETY: the layout of the new size, its alignment the old one's
+            let q = unsafe { self.alloc(Layout::from_size_align_unchecked(size, l.align())) };
+            if !q.is_null() {
+                // SAFETY: both hold at least the lesser size, and do not overlap
+                unsafe { core::ptr::copy_nonoverlapping(p, q, l.size().min(size)) };
+                // SAFETY: p came from alloc
+                unsafe { self.dealloc(p, l) };
+            }
+            q
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: Malloc = Malloc;
+
+    /// Writes `bytes` to the standard error, as the core's asserts do before they abort.
+    fn say(bytes: &[u8]) {
+        // SAFETY: a buffer of its length
+        let _ = unsafe { write(2, bytes.as_ptr(), bytes.len()) };
+    }
+
+    #[panic_handler]
+    fn panic(info: &core::panic::PanicInfo) -> ! {
+        // where, without the formatting machinery: `atlas_clean: panic at <file>:<line>`
+        say(b"atlas_clean: panic at ");
+        if let Some(at) = info.location() {
+            say(at.file().as_bytes());
+            let mut digits = [0u8; 10];
+            let mut n = at.line();
+            let mut k = digits.len();
+            loop {
+                k -= 1;
+                digits[k] = b'0' + (n % 10) as u8;
+                n /= 10;
+                if n == 0 || k == 0 {
+                    break;
+                }
+            }
+            say(b":");
+            say(&digits[k..]);
+        }
+        say(b"\n");
+        // SAFETY: the C library's abort
+        unsafe { abort() }
+    }
+}
 
 /// A grid point: latitude and longitude in 1e-7 degrees.
 #[repr(C)]
@@ -88,6 +180,13 @@ pub struct AtlasCleanOutput {
 pub const STATE_DRAWN: u8 = 1;
 pub const STATE_RING: u8 = 2;
 
+// the sizes load/CleanAbi.h's structs have on a 64-bit target (load/Clean.cpp asserts the same of them)
+const _: () = assert!(core::mem::size_of::<AtlasCleanPoint>() == 8);
+const _: () = assert!(core::mem::size_of::<AtlasCleanFootprint>() == 32);
+const _: () = assert!(core::mem::size_of::<AtlasCleanInput>() == 64);
+const _: () = assert!(core::mem::size_of::<AtlasCleanCounts>() == 64);
+const _: () = assert!(core::mem::size_of::<AtlasCleanOutput>() == 104);
+
 struct Owned {
     state: Vec<u8>,
     min: Vec<f64>,
@@ -102,7 +201,7 @@ unsafe fn slice<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
         &[]
     } else {
         // SAFETY: the caller's contract
-        unsafe { std::slice::from_raw_parts(ptr, len) }
+        unsafe { core::slice::from_raw_parts(ptr, len) }
     }
 }
 
@@ -149,12 +248,12 @@ pub unsafe extern "C" fn atlas_clean_run(input: *const AtlasCleanInput, out: *mu
         )
     };
     *out = AtlasCleanOutput {
-        state: std::ptr::null(),
-        min: std::ptr::null(),
-        ring_first: std::ptr::null(),
-        points: std::ptr::null(),
+        state: core::ptr::null(),
+        min: core::ptr::null(),
+        ring_first: core::ptr::null(),
+        points: core::ptr::null(),
         counts: AtlasCleanCounts::default(),
-        owner: std::ptr::null_mut(),
+        owner: core::ptr::null_mut(),
     };
     let Some(footprints) = footprints(points, sizes, fps) else { return 1 };
     let c = clean::clean(&footprints, Params::new(input.metres_per_lon, input.metres_per_lat));
@@ -212,7 +311,7 @@ pub unsafe extern "C" fn atlas_clean_free(out: *mut AtlasCleanOutput) {
     if !out.owner.is_null() {
         // SAFETY: owner is the Box atlas_clean_run leaked
         drop(unsafe { Box::from_raw(out.owner.cast::<Owned>()) });
-        out.owner = std::ptr::null_mut();
+        out.owner = core::ptr::null_mut();
     }
 }
 

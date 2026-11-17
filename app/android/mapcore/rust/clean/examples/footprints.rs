@@ -1,7 +1,7 @@
 //! Cleans a file of footprints and writes what is drawn as Overpass's JSON, for the fault detectors to read
 //! (~/atlas/home/fleet/architect/fault-detectors): a tool for looking, not part of the core.
 //!
-//!   cargo run --release --example footprints -- <in.fp> <out.json> [lat]
+//!   cargo run --release --features std --example footprints -- <in.fp> <out.json> [lat]
 //!
 //! The file holds, per footprint, `F <part 0|1> <min> <top> <id> <rings>` and each ring as `<n> <lat> <lon> ...` in
 //! grid units. It prints the counts and the time the cleaning took.

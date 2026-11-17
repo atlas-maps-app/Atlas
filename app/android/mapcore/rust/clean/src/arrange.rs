@@ -7,7 +7,8 @@
 use crate::geom::{
     area2, cross, crossing, dot, proper_cross, strictly_inside_segment, winding_scaled, Where, P,
 };
-use std::collections::HashMap;
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// A piece of an edge, with what it adds to the winding numbers of A and B on its left.
 #[derive(Clone, Copy, Debug)]
@@ -124,7 +125,7 @@ fn node(mut segs: Vec<Seg>) -> Option<Vec<Seg>> {
         }
         let mut out = Vec::with_capacity(n + n / 2);
         for (i, s) in segs.iter().enumerate() {
-            let mut pts = std::mem::take(&mut splits[i]);
+            let mut pts = core::mem::take(&mut splits[i]);
             if pts.is_empty() {
                 out.push(*s);
                 continue;
@@ -248,10 +249,14 @@ fn later_ccw(d: P, o: P, p: P) -> bool {
 /// The half-edges walked into rings: at each vertex the next half-edge is the one turning most clockwise from the
 /// way back, so that rings that touch at a vertex part there.
 fn walk(half: &[(P, P)]) -> Option<Vec<Vec<P>>> {
-    let mut from: HashMap<P, Vec<usize>> = HashMap::with_capacity(half.len());
-    for (k, h) in half.iter().enumerate() {
-        from.entry(h.0).or_default().push(k);
-    }
+    // the half-edges by the vertex they leave
+    let mut by: Vec<usize> = (0..half.len()).collect();
+    by.sort_unstable_by_key(|&k| (half[k].0, k));
+    let leaving = |v: P| -> &[usize] {
+        let lo = by.partition_point(|&k| half[k].0 < v);
+        let hi = by.partition_point(|&k| half[k].0 <= v);
+        &by[lo..hi]
+    };
     let mut used = vec![false; half.len()];
     let mut rings = Vec::new();
     for start in 0..half.len() {
@@ -268,7 +273,7 @@ fn walk(half: &[(P, P)]) -> Option<Vec<Vec<P>>> {
             let (u, v) = half[cur];
             ring.push(u);
             let back = P::new(u.x - v.x, u.y - v.y);
-            let outs = from.get(&v)?;
+            let outs = leaving(v);
             let mut best: Option<usize> = None;
             for &o in outs {
                 let dir = P::new(half[o].1.x - v.x, half[o].1.y - v.y);

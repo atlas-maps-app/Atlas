@@ -9,8 +9,10 @@
 use crate::arrange::{area2_of, boolean, rings_of, Op, Poly};
 use crate::bridge::bridge;
 use crate::geom::{area2, cross, interiors_overlap, Box2, P};
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashSet};
+use alloc::collections::BinaryHeap;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cmp::Reverse;
 
 /// A footprint as mapped: its outer ring, then its inner rings; the heights its walls span, in metres.
 #[derive(Clone, Debug)]
@@ -95,6 +97,16 @@ pub struct Cleaned {
     pub uncovered: Vec<f64>,
 }
 
+/// The square root, correctly rounded as IEEE 754 has every platform's (the C library's: core has none).
+fn sqrt(x: f64) -> f64 {
+    unsafe extern "C" {
+        #[link_name = "sqrt"]
+        fn c_sqrt(x: f64) -> f64;
+    }
+    // SAFETY: the C library's sqrt, of any double
+    unsafe { c_sqrt(x) }
+}
+
 /// Rings as the operations take them: closing points and repeats dropped, the outer counterclockwise and the inner
 /// rings clockwise; a ring of fewer than three points left out.
 fn orient(rings: &[Vec<P>]) -> Vec<Vec<P>> {
@@ -149,7 +161,8 @@ struct Run {
     p: Params,
     orig: Vec<Vec<Vec<P>>>,
     cur: Vec<Option<Vec<Poly>>>,
-    keep: HashSet<P>,
+    /// The vertices as mapped, sorted: a cut keeps them.
+    keep: Vec<P>,
     counts: Counts,
 }
 
@@ -179,7 +192,12 @@ impl Run {
         if !interiors_overlap(&a, &b) {
             return 0.0;
         }
-        match boolean(&a, &b, Op::Inter) {
+        self.inter(&a, &b)
+    }
+
+    /// The area two sets of rings share, m².
+    fn inter(&mut self, a: &[Vec<P>], b: &[Vec<P>]) -> f64 {
+        match boolean(a, b, Op::Inter) {
             Some(x) => self.m2(area2_of(&x)),
             None => {
                 self.counts.unsettled += 1;
@@ -208,7 +226,7 @@ impl Run {
             let n = r.len();
             let found = (from..n).find(|&i| {
                 let (u, v, w) = (r[(i + n - 1) % n], r[i], r[(i + 1) % n]);
-                cross(u, v, w) == 0 && !self.keep.contains(&v)
+                cross(u, v, w) == 0 && self.keep.binary_search(&v).is_err()
             });
             match found {
                 Some(i) => {
@@ -245,7 +263,7 @@ impl Run {
                     let (u, v) = (poly.outer[i], poly.outer[(i + 1) % n]);
                     let dx = (v.x - u.x) as f64 * self.p.ux;
                     let dy = (v.y - u.y) as f64 * self.p.uy;
-                    len += (dx * dx + dy * dy).sqrt();
+                    len += sqrt(dx * dx + dy * dy);
                 }
                 if len > 0.0 && 2.0 * a / len < self.p.thin_m {
                     continue;
@@ -262,10 +280,9 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     let n = fps.len();
     let orig: Vec<Vec<Vec<P>>> = fps.iter().map(|f| orient(&f.rings)).collect();
     let boxes: Vec<Box2> = orig.iter().map(|r| Box2::of(r)).collect();
-    let mut keep = HashSet::new();
-    for r in orig.iter().flatten() {
-        keep.extend(r.iter().copied());
-    }
+    let mut keep: Vec<P> = orig.iter().flatten().flatten().copied().collect();
+    keep.sort_unstable();
+    keep.dedup();
     let mut run = Run { p, orig, cur: vec![None; n], keep, counts: Counts::default() };
     let mut drawn: Vec<bool> = (0..n).map(|k| !run.orig[k].is_empty()).collect();
     let mut min: Vec<f64> = fps.iter().map(|f| f.min).collect();
@@ -290,17 +307,22 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     let whole: Vec<Option<Vec<Poly>>> = run.cur.clone();
     let mut touched = vec![false; n];
 
+    // the pairs whose interiors meet: the cleaning only takes from a footprint, so no other pair can come to overlap
+    let meeting: Vec<(usize, usize)> = pairs(&boxes)
+        .into_iter()
+        .filter(|&(i, j)| drawn[i] && drawn[j] && interiors_overlap(&run.shape(i), &run.shape(j)))
+        .collect();
+
     // 2. coverage: an outline less the parts overlapping it
-    let all = pairs(&boxes);
     let mut covers: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for &(i, j) in &all {
+    for &(i, j) in &meeting {
         let (o, q) = match (fps[i].part, fps[j].part) {
             (false, true) => (i, j),
             (true, false) => (j, i),
             _ => continue,
         };
         // a part with no height draws nothing, so covers nothing
-        if drawn[o] && drawn[q] && fps[q].top - fps[q].min > p.height_m && run.shared(o, q) > p.overlap_m2 {
+        if fps[q].top - fps[q].min > p.height_m && run.shared(o, q) > p.overlap_m2 {
             covers[o].push(q);
         }
     }
@@ -322,7 +344,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
 
     // the drawn footprints that overlap in plan, and how much
     let mut over: Vec<(usize, usize, f64)> = Vec::new();
-    for &(i, j) in &all {
+    for &(i, j) in &meeting {
         if drawn[i] && drawn[j] {
             let a = run.shared(i, j);
             if a > p.overlap_m2 {
@@ -423,8 +445,8 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         }
     }
 
-    // the counts of what is drawn
-    for &(i, j) in &all {
+    // the counts of what is drawn: only a pair that overlapped can still
+    for &(i, j, _) in &over {
         if !drawn[i] || !drawn[j] {
             continue;
         }

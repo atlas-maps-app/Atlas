@@ -2,6 +2,8 @@
 //! every predicate is decided in integers (i128 where products may pass i64), so the answers are the same on every
 //! platform and never depend on rounding.
 
+use alloc::vec::Vec;
+
 /// A point on the grid: x the longitude, y the latitude, in grid units.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug, Default)]
 pub struct P {

@@ -390,7 +390,7 @@ if(ATLAS_TESTS)
     # the buildings' cleaning's own tests (rust/clean, cargo's), built in a folder of their own
     if(ATLAS_HOST)
         add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests" --
-                 "${ATLAS_CARGO}" test --offline --locked --quiet WORKING_DIRECTORY "${ATLAS_RUST_DIR}/clean")
+                 "${ATLAS_CARGO}" test --offline --locked --quiet --features std WORKING_DIRECTORY "${ATLAS_RUST_DIR}/clean")
         set_tests_properties(rust/clean PROPERTIES LABELS "atlas_tests;load")
     endif()
 endif()

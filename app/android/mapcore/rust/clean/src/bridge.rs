@@ -5,6 +5,8 @@
 
 use crate::arrange::Poly;
 use crate::geom::{cross, proper_cross, strictly_inside_segment, winding_scaled, Where, P};
+use alloc::vec;
+use alloc::vec::Vec;
 
 /// Whether the segment (a, b) can be a seam among `rings`: it crosses none of their edges, passes through none of their
 /// vertices, and its middle lies inside them (`inside`: a courtyard's seam) or outside (a piece's).

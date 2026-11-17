@@ -10,6 +10,14 @@ publish = false
 [lib]
 crate-type = ["staticlib", "rlib"]
 
+[features]
+# the standard library, for the examples (the tests have it anyway); the library linked into the core is no_std
+std = []
+
+[[example]]
+name = "footprints"
+required-features = ["std"]
+
 [profile.release]
 # small and whole: one unit, LTO over the crate and the standard library it calls, no unwinding (a panic aborts, as
 # the core's asserts do), no debug info
