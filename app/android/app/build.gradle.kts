@@ -97,8 +97,8 @@ android {
                 it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
                 it.systemProperty("atlas.repo", rootProject.file("../..").absolutePath)
                 // MineStateTest holds About & licences (res/raw/mine_licences.json) to the LICENSES.md files it is made
-                // from, so a change to one of them runs the tests again.
-                it.inputs.files(rootProject.fileTree(rootProject.projectDir) { include("*/LICENSES.md", "mapcore/cpp/LICENSES.md", "app/src/main/kotlin/app/atlas/ui/*/LICENSES.md") })
+                // from and the licence texts taken into art/licences/, so a change to one of them runs the tests again.
+                it.inputs.files(rootProject.fileTree(rootProject.projectDir) { include("*/LICENSES.md", "mapcore/cpp/LICENSES.md", "app/src/main/kotlin/app/atlas/ui/*/LICENSES.md", "app/src/main/kotlin/app/atlas/ui/mine/art/licences/*") })
                     .withPropertyName("licenceFiles").withPathSensitivity(PathSensitivity.RELATIVE)
                 // Screenshot tests always record, so a plain test run leaves the PNGs to look at (CI keeps them).
                 it.systemProperty("roborazzi.test.record", "true")
