@@ -10,8 +10,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <thread>
 #include <tuple>
 
 using namespace atlas;
@@ -43,6 +45,10 @@ private:
 
 #if !defined(__ANDROID__)
 TEST_CASE("frames: a slot the GPU does not finish fails its next frame within the bound, then draws once it does") {
+    // lavapipe runs a submission in the thread that submits it, and a command's wait on a host event there spins that
+    // thread, the one to set the event: Mesa's submit thread runs submissions apart, as a GPU does (read as the device
+    // opens, before its threads; other drivers leave it alone)
+    ::setenv("MESA_VK_ENABLE_SUBMIT_THREAD", "1", 0); // NOLINT(concurrency-mt-unsafe)
     auto s = test::open_session();
     if (!s) return;
     auto output = gpu::Offscreen::create(*s->device, {.width = 64, .height = 64}, 2);
@@ -78,8 +84,25 @@ TEST_CASE("frames: a slot the GPU does not finish fails its next frame within th
     ATLAS_REQUIRE(first.has_value(), first.error().text());
     // the second frame's commands wait for the host; the third's, on the first's slot, behind them in the queue
     content.hold = true;
+    // a driver that runs the held frame in this thread all the same would hold the run: a watchdog lets the GPU go
+    // after 30 s, and the test fails saying so
+    std::atomic<bool> submitted{false};
+    std::atomic<bool> let_go{false};
+    std::thread watchdog([&] {
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        while (!submitted && std::chrono::steady_clock::now() < until) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!submitted) {
+            let_go = true;
+            std::ignore = event->set();
+        }
+    });
     auto held = (*renderer)->draw(0);
+    submitted = true;
+    watchdog.join();
     ATLAS_REQUIRE(held.has_value(), held.error().text());
+    if (let_go) FAIL("the device ran the held frame in the thread that submitted it: its wait was let go after 30 s");
     content.hold = false;
     auto queued = (*renderer)->draw(0);
     ATLAS_REQUIRE(queued.has_value(), queued.error().text());
