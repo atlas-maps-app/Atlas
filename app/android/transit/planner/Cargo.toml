@@ -1,0 +1,44 @@
+# Atlas's public transport planner (src/lib.rs) over its timetable file (../FORMAT.md), and the command-line tool
+# atlas-transit (src/bin). The standard library only: a crate from the network is a fetch, and nothing is fetched
+# without the user's word. The library is core and alloc alone (no_std), so that linked into an app it carries none of
+# the standard library's panic and backtrace code; the tool and the tests have std.
+[package]
+name = "atlas_transit"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+# An rlib only: in an app it is one crate of the single Rust static library a binary may have (the core's), which
+# brings the allocator and the panic handler. So there is no unsafe code here at all.
+
+[features]
+default = ["std"]
+# the tool, the reference scan and the fuzzing driver; the library linked into an app is built with
+# --no-default-features
+std = []
+
+[[bin]]
+name = "atlas-transit"
+required-features = ["std"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+incremental = false
+
+[profile.dev]
+panic = "abort"
+
+# The tests search a real city's timetable: optimised, with a debug build's checks left on (an overflow fails).
+[profile.test]
+opt-level = 2
+
+# The fuzzing runs: as fast as a release, with the checks of a debug build, so that an overflow is a failure too.
+[profile.fuzz]
+inherits = "release"
+overflow-checks = true
+debug-assertions = true
