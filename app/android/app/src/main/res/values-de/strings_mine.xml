@@ -781,6 +781,8 @@
     <string name="mine_look_add_button">Hinzufügen</string>
     <string name="mine_look_switch_on">an</string>
     <string name="mine_look_switch_off">aus</string>
+    <string name="mine_look_name_taken">Du hast schon eine Palette namens %1$s</string>
+    <string name="mine_look_name_blank">Eine Palette braucht einen Namen</string>
     <string name="mine_colour_leave">Schließen</string>
     <string name="mine_colour_undo">Rückgängig</string>
     <string name="mine_colour_save">Speichern</string>
@@ -792,7 +794,7 @@
     <string name="mine_colour_night">nachts</string>
     <string name="mine_colour_lit_cd">Wie das Licht es zeichnet</string>
     <string name="mine_colour_lightness">Helligkeit</string>
-    <string name="mine_colour_chroma">Farbe</string>
+    <string name="mine_colour_chroma">Sättigung</string>
     <string name="mine_colour_hue">Farbton</string>
     <string name="mine_colour_groups_cd">Farbgruppen</string>
     <string name="mine_colour_family">%1$s · %2$d</string>
@@ -819,8 +821,8 @@
     <string name="mine_colour_all_night">Alles Nacht und Licht</string>
     <string name="mine_colour_tap_guessed_roof">%1$s · ein vermutetes Dach</string>
     <string name="mine_colour_tap_guessed_wall">%1$s · eine vermutete Wand</string>
-    <string name="mine_colour_tap_plain_roof">%1$s · ein vermutetes Dach, schlicht gezeichnet</string>
-    <string name="mine_colour_tap_plain_wall">%1$s · eine vermutete Wand, schlicht gezeichnet</string>
+    <string name="mine_colour_tap_plain_roof">%1$s · ein vermutetes Dach, schlicht, solange die Vermutungen von Atlas aus sind</string>
+    <string name="mine_colour_tap_plain_wall">%1$s · eine vermutete Wand, schlicht, solange die Vermutungen von Atlas aus sind</string>
     <string name="mine_colour_tap_mapped_roof">%1$s · ein kartiertes Dach</string>
     <string name="mine_colour_tap_mapped_wall">%1$s · eine kartierte Wand</string>
     <string name="mine_colour_tap_own_roof">Ein kartiertes Dach in eigener Farbe</string>
@@ -839,6 +841,10 @@
     <string name="mine_colour_save_title">Palette speichern</string>
     <string name="mine_colour_save_replaces">Ersetzt %1$s</string>
     <string name="mine_colour_save_new">Wird als neue Palette gespeichert</string>
+    <string name="mine_colour_tap_none_ground">Nicht in der Palette · die eigene Farbe des Bodens</string>
+    <string name="mine_colour_tap_nothing">Hier gibt es keine Karte zum Auswählen: Wähle unten eine Farbe</string>
+    <string name="mine_colour_tap_follow">Kartierte Farben folgen lassen</string>
+    <string name="mine_colour_hex_bad">Keine Farbe: Tippe sie wie #A0522D</string>
     <string name="mine_slot_paper">Papier</string>
     <string name="mine_slot_paper_sub">freier Boden am Tag, wo nichts kartiert ist</string>
     <string name="mine_slot_lawn">Rasen</string>

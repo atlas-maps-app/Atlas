@@ -781,6 +781,8 @@
     <string name="mine_look_add_button">Toevoegen</string>
     <string name="mine_look_switch_on">aan</string>
     <string name="mine_look_switch_off">uit</string>
+    <string name="mine_look_name_taken">Je hebt al een palet dat %1$s heet</string>
+    <string name="mine_look_name_blank">Een palet heeft een naam nodig</string>
     <string name="mine_colour_leave">Sluiten</string>
     <string name="mine_colour_undo">Ongedaan maken</string>
     <string name="mine_colour_save">Bewaren</string>
@@ -792,7 +794,7 @@
     <string name="mine_colour_night">’s nachts</string>
     <string name="mine_colour_lit_cd">Hoe het licht het tekent</string>
     <string name="mine_colour_lightness">Helderheid</string>
-    <string name="mine_colour_chroma">Kleur</string>
+    <string name="mine_colour_chroma">Verzadiging</string>
     <string name="mine_colour_hue">Tint</string>
     <string name="mine_colour_groups_cd">Kleurgroepen</string>
     <string name="mine_colour_family">%1$s · %2$d</string>
@@ -819,8 +821,8 @@
     <string name="mine_colour_all_night">Alle nacht en licht</string>
     <string name="mine_colour_tap_guessed_roof">%1$s · een gegist dak</string>
     <string name="mine_colour_tap_guessed_wall">%1$s · een gegiste muur</string>
-    <string name="mine_colour_tap_plain_roof">%1$s · een gegist dak, kaal getekend</string>
-    <string name="mine_colour_tap_plain_wall">%1$s · een gegiste muur, kaal getekend</string>
+    <string name="mine_colour_tap_plain_roof">%1$s · een gegist dak, kaal zolang de gissingen van Atlas uit staan</string>
+    <string name="mine_colour_tap_plain_wall">%1$s · een gegiste muur, kaal zolang de gissingen van Atlas uit staan</string>
     <string name="mine_colour_tap_mapped_roof">%1$s · een gekarteerd dak</string>
     <string name="mine_colour_tap_mapped_wall">%1$s · een gekarteerde muur</string>
     <string name="mine_colour_tap_own_roof">Een gekarteerd dak in een eigen kleur</string>
@@ -839,6 +841,10 @@
     <string name="mine_colour_save_title">Palet bewaren</string>
     <string name="mine_colour_save_replaces">Vervangt %1$s</string>
     <string name="mine_colour_save_new">Bewaard als nieuw palet</string>
+    <string name="mine_colour_tap_none_ground">Niet in het palet · de eigen kleur van de grond</string>
+    <string name="mine_colour_tap_nothing">Hier is geen kaart om uit te kiezen: kies hieronder een kleur</string>
+    <string name="mine_colour_tap_follow">Laat gekarteerde kleuren volgen</string>
+    <string name="mine_colour_hex_bad">Geen kleur: typ hem als #A0522D</string>
     <string name="mine_slot_paper">Papier</string>
     <string name="mine_slot_paper_sub">kale grond overdag, waar niets is gekarteerd</string>
     <string name="mine_slot_lawn">Gazon</string>

@@ -781,6 +781,8 @@
     <string name="mine_look_add_button">Add</string>
     <string name="mine_look_switch_on">on</string>
     <string name="mine_look_switch_off">off</string>
+    <string name="mine_look_name_taken">You already have a palette called %1$s</string>
+    <string name="mine_look_name_blank">A palette needs a name</string>
     <string name="mine_colour_leave">Close</string>
     <string name="mine_colour_undo">Undo</string>
     <string name="mine_colour_save">Save</string>
@@ -792,7 +794,7 @@
     <string name="mine_colour_night">at night</string>
     <string name="mine_colour_lit_cd">How the light draws it</string>
     <string name="mine_colour_lightness">Lightness</string>
-    <string name="mine_colour_chroma">Colour</string>
+    <string name="mine_colour_chroma">Saturation</string>
     <string name="mine_colour_hue">Hue</string>
     <string name="mine_colour_groups_cd">Colour groups</string>
     <string name="mine_colour_family">%1$s · %2$d</string>
@@ -819,8 +821,8 @@
     <string name="mine_colour_all_night">All night &amp; light</string>
     <string name="mine_colour_tap_guessed_roof">%1$s · a guessed roof</string>
     <string name="mine_colour_tap_guessed_wall">%1$s · a guessed wall</string>
-    <string name="mine_colour_tap_plain_roof">%1$s · a guessed roof, drawn plain</string>
-    <string name="mine_colour_tap_plain_wall">%1$s · a guessed wall, drawn plain</string>
+    <string name="mine_colour_tap_plain_roof">%1$s · a guessed roof, plain while Atlas’s guesses are off</string>
+    <string name="mine_colour_tap_plain_wall">%1$s · a guessed wall, plain while Atlas’s guesses are off</string>
     <string name="mine_colour_tap_mapped_roof">%1$s · a mapped roof</string>
     <string name="mine_colour_tap_mapped_wall">%1$s · a mapped wall</string>
     <string name="mine_colour_tap_own_roof">A mapped roof in its own colour</string>
@@ -839,6 +841,10 @@
     <string name="mine_colour_save_title">Save palette</string>
     <string name="mine_colour_save_replaces">Replaces %1$s</string>
     <string name="mine_colour_save_new">Saved as a new palette</string>
+    <string name="mine_colour_tap_none_ground">Not in the palette · the ground’s own colour</string>
+    <string name="mine_colour_tap_nothing">No map to pick from here: choose a colour below</string>
+    <string name="mine_colour_tap_follow">Let mapped colours follow</string>
+    <string name="mine_colour_hex_bad">Not a colour: type it like #A0522D</string>
     <string name="mine_slot_paper">Paper</string>
     <string name="mine_slot_paper_sub">bare ground by day, where nothing is mapped</string>
     <string name="mine_slot_lawn">Lawn</string>

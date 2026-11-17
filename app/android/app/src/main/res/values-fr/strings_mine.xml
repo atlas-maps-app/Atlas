@@ -781,6 +781,8 @@
     <string name="mine_look_add_button">Ajouter</string>
     <string name="mine_look_switch_on">activé</string>
     <string name="mine_look_switch_off">désactivé</string>
+    <string name="mine_look_name_taken">Vous avez déjà une palette nommée %1$s</string>
+    <string name="mine_look_name_blank">Une palette a besoin d’un nom</string>
     <string name="mine_colour_leave">Fermer</string>
     <string name="mine_colour_undo">Annuler</string>
     <string name="mine_colour_save">Enregistrer</string>
@@ -792,7 +794,7 @@
     <string name="mine_colour_night">la nuit</string>
     <string name="mine_colour_lit_cd">Comment la lumière le dessine</string>
     <string name="mine_colour_lightness">Clarté</string>
-    <string name="mine_colour_chroma">Couleur</string>
+    <string name="mine_colour_chroma">Saturation</string>
     <string name="mine_colour_hue">Teinte</string>
     <string name="mine_colour_groups_cd">Groupes de couleurs</string>
     <string name="mine_colour_family">%1$s · %2$d</string>
@@ -819,8 +821,8 @@
     <string name="mine_colour_all_night">Toute la nuit et la lumière</string>
     <string name="mine_colour_tap_guessed_roof">%1$s · un toit supposé</string>
     <string name="mine_colour_tap_guessed_wall">%1$s · un mur supposé</string>
-    <string name="mine_colour_tap_plain_roof">%1$s · un toit supposé, dessiné simple</string>
-    <string name="mine_colour_tap_plain_wall">%1$s · un mur supposé, dessiné simple</string>
+    <string name="mine_colour_tap_plain_roof">%1$s · un toit supposé, simple tant que les suppositions d’Atlas sont désactivées</string>
+    <string name="mine_colour_tap_plain_wall">%1$s · un mur supposé, simple tant que les suppositions d’Atlas sont désactivées</string>
     <string name="mine_colour_tap_mapped_roof">%1$s · un toit cartographié</string>
     <string name="mine_colour_tap_mapped_wall">%1$s · un mur cartographié</string>
     <string name="mine_colour_tap_own_roof">Un toit cartographié dans sa propre couleur</string>
@@ -839,6 +841,10 @@
     <string name="mine_colour_save_title">Enregistrer la palette</string>
     <string name="mine_colour_save_replaces">Remplace %1$s</string>
     <string name="mine_colour_save_new">Enregistrée comme nouvelle palette</string>
+    <string name="mine_colour_tap_none_ground">Hors de la palette · la couleur propre du sol</string>
+    <string name="mine_colour_tap_nothing">Pas de carte où choisir ici : choisissez une couleur ci-dessous</string>
+    <string name="mine_colour_tap_follow">Faire suivre les couleurs cartographiées</string>
+    <string name="mine_colour_hex_bad">Pas une couleur : saisissez-la comme #A0522D</string>
     <string name="mine_slot_paper">Papier</string>
     <string name="mine_slot_paper_sub">sol nu le jour, là où rien n’est cartographié</string>
     <string name="mine_slot_lawn">Pelouse</string>
