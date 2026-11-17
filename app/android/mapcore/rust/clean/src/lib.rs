@@ -16,6 +16,8 @@ pub mod arrange;
 pub mod bridge;
 pub mod clean;
 pub mod geom;
+#[cfg(test)]
+mod props;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -74,6 +76,11 @@ mod runtime {
 
     #[global_allocator]
     static ALLOCATOR: Malloc = Malloc;
+
+    /// The unwinder's personality the prebuilt compiler_builtins names (it was built to unwind); never called, as a
+    /// panic aborts.
+    #[unsafe(no_mangle)]
+    extern "C" fn rust_eh_personality() {}
 
     /// Writes `bytes` to the standard error, as the core's asserts do before they abort.
     fn say(bytes: &[u8]) {
@@ -157,9 +164,12 @@ pub struct AtlasCleanCounts {
     pub vanished: u32,
     pub seamed: u32,
     pub unsettled: u32,
-    pub unjoined: u32,
+    pub unmeasured: u32,
     pub uncovered_m2: f64,
     pub sliver_m2: f64,
+    pub dropped_m2: f64,
+    pub pairs_before: u32,
+    pub pad: u32,
 }
 
 /// Per footprint: whether it is drawn (STATE_DRAWN) and whether its ring changed (STATE_RING: the points from
@@ -184,8 +194,8 @@ pub const STATE_RING: u8 = 2;
 const _: () = assert!(core::mem::size_of::<AtlasCleanPoint>() == 8);
 const _: () = assert!(core::mem::size_of::<AtlasCleanFootprint>() == 32);
 const _: () = assert!(core::mem::size_of::<AtlasCleanInput>() == 64);
-const _: () = assert!(core::mem::size_of::<AtlasCleanCounts>() == 64);
-const _: () = assert!(core::mem::size_of::<AtlasCleanOutput>() == 104);
+const _: () = assert!(core::mem::size_of::<AtlasCleanCounts>() == 80);
+const _: () = assert!(core::mem::size_of::<AtlasCleanOutput>() == 120);
 
 struct Owned {
     state: Vec<u8>,
@@ -291,9 +301,12 @@ pub unsafe extern "C" fn atlas_clean_run(input: *const AtlasCleanInput, out: *mu
             vanished: k.vanished,
             seamed: k.seamed,
             unsettled: k.unsettled,
-            unjoined: k.unjoined,
+            unmeasured: k.unmeasured,
             uncovered_m2: k.uncovered_m2,
             sliver_m2: k.sliver_m2,
+            dropped_m2: k.dropped_m2,
+            pairs_before: k.pairs_before,
+            pad: 0,
         },
         owner: Box::into_raw(owned).cast(),
     };
@@ -322,8 +335,9 @@ pub unsafe extern "C" fn atlas_clean_free(out: *mut AtlasCleanOutput) {
 /// `xz` points to 2 × `count` doubles and `out` to `count` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atlas_clean_seams(xz: *const f64, count: usize, out: *mut u8) -> usize {
+    let Some(doubles) = count.checked_mul(2) else { return 0 };
     // SAFETY: the caller's contract
-    let v = unsafe { slice(xz, 2 * count) };
+    let v = unsafe { slice(xz, doubles) };
     let keys: Vec<(u64, u64)> = (0..count).map(|i| (v[2 * i].to_bits(), v[2 * i + 1].to_bits())).collect();
     let s = bridge::seams(&keys);
     let mut n = 0;
@@ -333,4 +347,77 @@ pub unsafe extern "C" fn atlas_clean_seams(xz: *const f64, count: usize, out: *m
         n += b as usize;
     }
     n
+}
+
+/// A seamed ring's rings again (crate::bridge::rings): every ring's points one after another, each ring's first point
+/// (ring_count + 1 offsets), and its piece (a piece's first ring its outer, then its courtyards). The rings run as
+/// the tiles hold them: an outer ring clockwise as latitude and longitude are read, a courtyard the other way.
+#[repr(C)]
+#[derive(Debug)]
+pub struct AtlasCleanRings {
+    pub points: *const AtlasCleanPoint,
+    pub ring_first: *const usize,
+    pub piece: *const u32,
+    pub ring_count: usize,
+    pub owner: *mut c_void,
+}
+
+struct OwnedRings {
+    points: Vec<AtlasCleanPoint>,
+    ring_first: Vec<usize>,
+    piece: Vec<u32>,
+}
+
+/// The rings of the closed ring of `count` points (as the tiles hold a building's) into `out`: 0 done; 1 a ring the
+/// cleaning did not make (`out` then holds nothing).
+///
+/// # Safety
+/// `ring` points to `count` points and `out` to a value to fill.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn atlas_clean_rings(ring: *const AtlasCleanPoint, count: usize, out: *mut AtlasCleanRings) -> i32 {
+    // SAFETY: the caller's contract
+    let (v, out) = unsafe { (slice(ring, count), &mut *out) };
+    *out = AtlasCleanRings {
+        points: core::ptr::null(),
+        ring_first: core::ptr::null(),
+        piece: core::ptr::null(),
+        ring_count: 0,
+        owner: core::ptr::null_mut(),
+    };
+    // counterclockwise for the walk, as the cleaning makes it; back as the tiles hold it after
+    let ccw: Vec<P> = v.iter().rev().map(|q| P::new(q.lon as i64, q.lat as i64)).collect();
+    let Some(polys) = bridge::rings(&ccw) else { return 1 };
+    let mut o = OwnedRings { points: Vec::with_capacity(v.len()), ring_first: Vec::new(), piece: Vec::new() };
+    for (k, poly) in polys.iter().enumerate() {
+        for r in core::iter::once(&poly.outer).chain(poly.holes.iter()) {
+            o.ring_first.push(o.points.len());
+            o.piece.push(k as u32);
+            o.points.extend(r.iter().rev().map(|p| AtlasCleanPoint { lat: p.y as i32, lon: p.x as i32 }));
+        }
+    }
+    o.ring_first.push(o.points.len());
+    let owned = Box::new(o);
+    *out = AtlasCleanRings {
+        points: owned.points.as_ptr(),
+        ring_first: owned.ring_first.as_ptr(),
+        piece: owned.piece.as_ptr(),
+        ring_count: owned.piece.len(),
+        owner: Box::into_raw(owned).cast(),
+    };
+    0
+}
+
+/// Frees what atlas_clean_rings made.
+///
+/// # Safety
+/// `out` is an output atlas_clean_rings filled, freed at most once.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn atlas_clean_rings_free(out: *mut AtlasCleanRings) {
+    // SAFETY: the caller's contract
+    let out = unsafe { &mut *out };
+    if !out.owner.is_null() {
+        // SAFETY: owner is the Box atlas_clean_rings leaked
+        drop(unsafe { Box::from_raw(out.owner.cast::<OwnedRings>()) });
+        out.owner = core::ptr::null_mut();
+    }
 }

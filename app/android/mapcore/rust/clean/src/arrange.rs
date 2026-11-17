@@ -61,6 +61,10 @@ pub fn area2_of(polys: &[Poly]) -> i128 {
 /// Rounds of splitting before the arrangement is taken as one that does not settle.
 const ROUNDS: usize = 24;
 
+/// The most pieces of edges an arrangement takes: past it, it is taken as one that does not settle (its winding
+/// numbers cost the square of its pieces).
+pub const MAX_SEGMENTS: usize = 6000;
+
 fn segments(a: &[Vec<P>], b: &[Vec<P>]) -> Vec<Seg> {
     let mut out = Vec::new();
     for (label, rings) in [(0usize, a), (1usize, b)] {
@@ -89,6 +93,9 @@ fn segments(a: &[Vec<P>], b: &[Vec<P>]) -> Vec<Seg> {
 fn node(mut segs: Vec<Seg>) -> Option<Vec<Seg>> {
     for _ in 0..ROUNDS {
         let n = segs.len();
+        if n > MAX_SEGMENTS {
+            return None;
+        }
         let mut order: Vec<usize> = (0..n).collect();
         order.sort_by_key(|&i| (segs[i].a.x.min(segs[i].b.x), i));
         let mut splits: Vec<Vec<P>> = vec![Vec::new(); n];
@@ -344,8 +351,13 @@ fn holds(outer: &[P], inner: &[P]) -> bool {
     false
 }
 
-/// The arrangement of `a` and `b` and what `op` keeps of it, as polygons; None where its splitting does not settle or
-/// its rings do not close.
+/// Half-edges walked into rings and sorted into polygons (crate::bridge::rings).
+pub fn polygons_of(half: &[(P, P)]) -> Option<Vec<Poly>> {
+    Some(polygons(walk(half)?))
+}
+
+/// The arrangement of `a` and `b` and what `op` keeps of it, as polygons; None where its splitting does not settle,
+/// it holds more than MAX_SEGMENTS pieces, or its rings do not close.
 pub fn boolean(a: &[Vec<P>], b: &[Vec<P>], op: Op) -> Option<Vec<Poly>> {
     let segs = merge(node(segments(a, b))?);
     let sides = sides(&segs);

@@ -55,16 +55,28 @@ fn dist2(a: P, b: P) -> i128 {
     dx * dx + dy * dy
 }
 
+/// The edges a footprint's joining may test its seams against, in all: past it, the footprint has no ring (and its
+/// group is put back as it was mapped).
+pub const BUDGET: u64 = 1 << 24;
+
 /// Joins `ring` into `into` by a seam from one of its vertices to one of into's, the nearest clear pair, trying ring's
-/// vertices from its least; `others` are the rings still to join. False where no pair is clear.
-fn join(into: &mut Vec<P>, ring: &[P], others: &[&[P]], inside: bool) -> bool {
+/// vertices from its least; `others` are the rings still to join. False where no pair is clear, or the budget is spent.
+fn join(into: &mut Vec<P>, ring: &[P], others: &[&[P]], inside: bool, budget: &mut u64) -> bool {
+    if ring.is_empty() || into.is_empty() {
+        return false;
+    }
     let mut all: Vec<&[P]> = vec![into.as_slice(), ring];
     all.extend_from_slice(others);
+    let cost: u64 = all.iter().map(|r| r.len() as u64).sum();
     for hi in by_place(ring) {
         let h = ring[hi];
         let mut cands: Vec<usize> = (0..into.len()).collect();
         cands.sort_by_key(|&ci| (dist2(into[ci], h), ci));
         for ci in cands {
+            if *budget < cost {
+                return false;
+            }
+            *budget -= cost;
             if clear(into[ci], h, &all, inside) {
                 let mut out = Vec::with_capacity(into.len() + ring.len() + 2);
                 out.extend_from_slice(&into[..=ci]);
@@ -80,10 +92,10 @@ fn join(into: &mut Vec<P>, ring: &[P], others: &[&[P]], inside: bool) -> bool {
     false
 }
 
-/// The polygons as one ring (counterclockwise round its inside), and the twice-area of what could not be joined
-/// (left out).
-pub fn bridge(polys: &[Poly]) -> (Vec<P>, i128) {
-    let mut lost: i128 = 0;
+/// The polygons as one ring (counterclockwise round its inside), or none where a courtyard or a piece cannot be
+/// joined within the budget.
+pub fn bridge(polys: &[Poly]) -> Option<Vec<P>> {
+    let mut budget = BUDGET;
     let mut pieces: Vec<Vec<P>> = Vec::new();
     for p in polys {
         let mut ring = p.outer.clone();
@@ -91,23 +103,38 @@ pub fn bridge(polys: &[Poly]) -> (Vec<P>, i128) {
         holes.sort_by_key(|h| h.iter().min().copied());
         for (k, h) in holes.iter().enumerate() {
             let rest: Vec<&[P]> = holes[k + 1..].iter().map(|r| r.as_slice()).collect();
-            if !join(&mut ring, h, &rest, true) {
-                lost -= crate::geom::area2(h); // a courtyard left out is covered
+            if !join(&mut ring, h, &rest, true, &mut budget) {
+                return None;
             }
         }
         pieces.push(ring);
     }
     pieces.sort_by_key(|r| r.iter().min().copied());
     let mut it = pieces.into_iter();
-    let Some(mut ring) = it.next() else { return (Vec::new(), lost) };
+    let mut ring = it.next()?;
     let rest: Vec<Vec<P>> = it.collect();
     for (k, r) in rest.iter().enumerate() {
         let others: Vec<&[P]> = rest[k + 1..].iter().map(|r| r.as_slice()).collect();
-        if !join(&mut ring, r, &others, false) {
-            lost += crate::geom::area2(r);
+        if !join(&mut ring, r, &others, false, &mut budget) {
+            return None;
         }
     }
-    (ring, lost)
+    Some(ring)
+}
+
+/// The rings a seamed ring joins (crate::bridge's inverse): each seam, an edge run there and back, cut out, and what
+/// is left walked into rings: the outer rings counterclockwise round their inside, the courtyards clockwise, each
+/// in its piece. None where the ring is not one this crate made (a seam that is not one edge both ways, or what is
+/// left does not walk into rings).
+pub fn rings(ring: &[P]) -> Option<Vec<crate::arrange::Poly>> {
+    let n = ring.len();
+    let seam = seams(ring);
+    if seam.iter().all(|&s| !s) {
+        return Some(vec![crate::arrange::Poly { outer: ring.to_vec(), holes: Vec::new() }]);
+    }
+    // the edges but the seams, walked: each vertex's next edge the one that turns most clockwise from the way back
+    let half: Vec<(P, P)> = (0..n).filter(|&i| !seam[i]).map(|i| (ring[i], ring[(i + 1) % n])).collect();
+    crate::arrange::polygons_of(&half)
 }
 
 /// For each edge of a closed ring (from vertex i to i + 1), whether it is a seam: its reverse is an edge of the ring
@@ -152,8 +179,7 @@ mod tests {
     #[test]
     fn a_courtyard_joins_by_a_seam() {
         let polys = boolean(&[sq(0, 0, 10, 10)], &[sq(4, 4, 6, 6)], Op::Diff).unwrap();
-        let (ring, lost) = bridge(&polys);
-        assert_eq!(lost, 0);
+        let ring = bridge(&polys).unwrap();
         assert_eq!(ring.len(), 4 + 4 + 2);
         assert_eq!(area2(&ring), 200 - 8);
         let s = seams(&ring);
@@ -167,8 +193,7 @@ mod tests {
     #[test]
     fn pieces_join_by_a_seam_outside() {
         let polys = boolean(&[sq(0, 0, 30, 10)], &[sq(10, -5, 20, 15)], Op::Diff).unwrap();
-        let (ring, lost) = bridge(&polys);
-        assert_eq!(lost, 0);
+        let ring = bridge(&polys).unwrap();
         assert_eq!(area2(&ring), 400);
         let r = vec![ring.clone()];
         assert_eq!(winding(&r, P::new(15, 5)), Where::Winding(0));

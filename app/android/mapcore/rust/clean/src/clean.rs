@@ -74,15 +74,23 @@ pub struct Counts {
     pub vanished: u32,
     /// Footprints left in more than one piece, or with courtyards: their rings carry seams.
     pub seamed: u32,
-    /// Operations whose arrangement did not settle: their footprints are left as they were.
+    /// Groups of footprints an operation could not clean (past its bounds, or not settling): each put back as it was
+    /// mapped, its courtyards cut out where that held; and footprints whose courtyards could not be cut out.
     pub unsettled: u32,
-    /// Footprints with a courtyard or piece that no seam could join (left out).
-    pub unjoined: u32,
+    /// Outlines whose uncovered area could not be measured (their arrangement past its bounds).
+    pub unmeasured: u32,
     /// Area drawn by nothing that the mapped outlines cover (m²), but slivers and crumbs.
     pub uncovered_m2: f64,
     /// Slivers and crumbs of the mapped outlines that nothing draws (m²): narrower than Params::thin_m, or smaller
     /// than Params::small_m2.
     pub sliver_m2: f64,
+    /// What the cuts left that went as slivers or crumbs, of every footprint (m²).
+    pub dropped_m2: f64,
+    /// Pairs of drawn footprints overlapping in plan and in height before any was clipped (after coverage): what the
+    /// clipping had to do; none for footprints already cleaned.
+    pub pairs_before: u32,
+    /// The work done, of WORK.
+    pub work: u64,
 }
 
 /// What the cleaning makes of each footprint: whether it is drawn, its ring where it changed (counterclockwise round
@@ -136,28 +144,53 @@ fn orient(rings: &[Vec<P>]) -> Vec<Vec<P>> {
     out
 }
 
-/// The pairs of boxes that meet, each once (lesser index first), in order.
-fn pairs(boxes: &[Box2]) -> Vec<(usize, usize)> {
+/// The work one cleaning may do, in edge pairs tested (an arrangement of n edges costs n², a pair of footprints of n
+/// and m edges n × m, a step of the sweep over the boxes 1): some thousand times what the canal ring's 26,623
+/// footprints take whole, and past it every further operation fails, so its footprints stay as mapped. So the
+/// cleaning ends on any input, in a time this bounds.
+pub const WORK: u64 = 1 << 36;
+
+/// The most pairs of boxes a cleaning looks at.
+const PAIRS: usize = 1 << 22;
+
+/// The pairs of boxes that meet, each once (lesser index first), in order; and whether those are all of them (the
+/// sweep stayed within `work` steps and PAIRS pairs).
+fn pairs(boxes: &[Box2], work: &mut u64) -> (Vec<(usize, usize)>, bool) {
     let mut order: Vec<usize> = (0..boxes.len()).filter(|&k| !boxes[k].is_empty()).collect();
     order.sort_by_key(|&k| (boxes[k].x0, k));
     let mut out = Vec::new();
-    for (oi, &i) in order.iter().enumerate() {
+    let mut whole = true;
+    'sweep: for (oi, &i) in order.iter().enumerate() {
         let b = boxes[i];
         for &j in &order[oi + 1..] {
             let c = boxes[j];
             if c.x0 > b.x1 {
                 break;
             }
+            if *work == 0 || out.len() >= PAIRS {
+                whole = false;
+                break 'sweep;
+            }
+            *work -= 1;
             if c.y0 <= b.y1 && b.y0 <= c.y1 {
                 out.push((i.min(j), i.max(j)));
             }
         }
     }
     out.sort_unstable();
-    out
+    (out, whole)
+}
+
+fn edges(rings: &[Vec<P>]) -> u64 {
+    rings.iter().map(|r| r.len() as u64).sum()
 }
 
 struct Run {
+    /// Per footprint, whether an operation that changes it, or measures it against another, failed.
+    failed: Vec<bool>,
+    /// The work left (WORK), and whether an operation was refused for it.
+    work: u64,
+    spent: bool,
     p: Params,
     orig: Vec<Vec<Vec<P>>>,
     cur: Vec<Option<Vec<Poly>>>,
@@ -186,21 +219,41 @@ impl Run {
         }
     }
 
-    /// The area two footprints share, m² (0 where it cannot be found).
-    fn shared(&mut self, i: usize, j: usize) -> f64 {
-        let (a, b) = (self.shape(i), self.shape(j));
-        if !interiors_overlap(&a, &b) {
-            return 0.0;
+    /// An arrangement within the work left, or none.
+    fn arrange(&mut self, a: &[Vec<P>], b: &[Vec<P>], op: Op) -> Option<Vec<Poly>> {
+        let n = edges(a) + edges(b);
+        let cost = n.saturating_mul(n).max(1);
+        if cost > self.work {
+            self.spent = true;
+            return None;
         }
-        self.inter(&a, &b)
+        self.work -= cost;
+        boolean(a, b, op)
     }
 
-    /// The area two sets of rings share, m².
-    fn inter(&mut self, a: &[Vec<P>], b: &[Vec<P>]) -> f64 {
-        match boolean(a, b, Op::Inter) {
+    /// Whether the interiors of two footprints meet (false where the work is spent).
+    fn meets(&mut self, i: usize, j: usize) -> bool {
+        let (a, b) = (self.shape(i), self.shape(j));
+        let cost = edges(&a).saturating_mul(edges(&b)).max(1);
+        if cost > self.work {
+            self.spent = true;
+            return false;
+        }
+        self.work -= cost;
+        interiors_overlap(&a, &b)
+    }
+
+    /// The area two footprints share, m² (0 where it cannot be found: both then fail).
+    fn shared(&mut self, i: usize, j: usize) -> f64 {
+        if !self.meets(i, j) {
+            return 0.0;
+        }
+        let (a, b) = (self.shape(i), self.shape(j));
+        match self.arrange(&a, &b, Op::Inter) {
             Some(x) => self.m2(area2_of(&x)),
             None => {
-                self.counts.unsettled += 1;
+                self.failed[i] = true;
+                self.failed[j] = true;
                 0.0
             }
         }
@@ -209,10 +262,11 @@ impl Run {
     /// `k` less the footprints `by`, its pieces tidied; None where the arrangement does not settle.
     fn less(&mut self, k: usize, by: &[usize]) -> Option<Vec<Poly>> {
         let b: Vec<Vec<P>> = by.iter().flat_map(|&j| self.shape(j)).collect();
-        match boolean(&self.shape(k), &b, Op::Diff) {
+        let a = self.shape(k);
+        match self.arrange(&a, &b, Op::Diff) {
             Some(r) => Some(self.tidy(r, true)),
             None => {
-                self.counts.unsettled += 1;
+                self.failed[k] = true;
                 None
             }
         }
@@ -241,7 +295,7 @@ impl Run {
 
     /// The pieces of a result as they may stand: straightened, courtyards too small to be one filled, and pieces too
     /// small (or, for what a cut left, too thin) left out.
-    fn tidy(&self, polys: Vec<Poly>, cut: bool) -> Vec<Poly> {
+    fn tidy(&mut self, polys: Vec<Poly>, cut: bool) -> Vec<Poly> {
         let mut out = Vec::with_capacity(polys.len());
         for p in polys {
             let outer = self.straighten(p.outer);
@@ -254,6 +308,9 @@ impl Run {
             let poly = Poly { outer, holes };
             let a = self.m2(poly.area2());
             if a < self.p.small_m2 {
+                if cut {
+                    self.counts.dropped_m2 += a;
+                }
                 continue;
             }
             if cut {
@@ -266,6 +323,7 @@ impl Run {
                     len += sqrt(dx * dx + dy * dy);
                 }
                 if len > 0.0 && 2.0 * a / len < self.p.thin_m {
+                    self.counts.dropped_m2 += a;
                     continue;
                 }
             }
@@ -275,7 +333,37 @@ impl Run {
     }
 }
 
-/// Cleans the footprints of a window (in the scene's order, which decides the ties).
+/// What happened to a footprint (Cleaned's counts are made of these, once a group that could not be cleaned is put
+/// back as it was).
+const COVERED: u8 = 1;
+const HIDDEN: u8 = 2;
+const CLIPPED: u8 = 4;
+const RAISED: u8 = 8;
+const VANISHED: u8 = 16;
+
+/// The groups of footprints whose interiors meet, one after another: each footprint's group's least member.
+fn groups(n: usize, meeting: &[(usize, usize)]) -> Vec<usize> {
+    let mut up: Vec<usize> = (0..n).collect();
+    fn root(up: &mut [usize], mut k: usize) -> usize {
+        while up[k] != k {
+            up[k] = up[up[k]];
+            k = up[k];
+        }
+        k
+    }
+    for &(i, j) in meeting {
+        let (a, b) = (root(&mut up, i), root(&mut up, j));
+        if a != b {
+            let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+            up[hi] = lo;
+        }
+    }
+    (0..n).map(|k| root(&mut up, k)).collect()
+}
+
+/// Cleans the footprints of a window (in the scene's order, which decides the ties). Whatever it is given it ends:
+/// an operation past its bounds (crate::arrange's, crate::bridge's) fails, and a group of footprints where one failed
+/// is put back as it was mapped (its courtyards cut out where that held), counted as unsettled.
 pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     let n = fps.len();
     let orig: Vec<Vec<Vec<P>>> = fps.iter().map(|f| orient(&f.rings)).collect();
@@ -283,35 +371,54 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     let mut keep: Vec<P> = orig.iter().flatten().flatten().copied().collect();
     keep.sort_unstable();
     keep.dedup();
-    let mut run = Run { p, orig, cur: vec![None; n], keep, counts: Counts::default() };
+    let mut run = Run {
+        p,
+        orig,
+        cur: vec![None; n],
+        keep,
+        counts: Counts::default(),
+        failed: vec![false; n],
+        work: WORK,
+        spent: false,
+    };
     let mut drawn: Vec<bool> = (0..n).map(|k| !run.orig[k].is_empty()).collect();
     let mut min: Vec<f64> = fps.iter().map(|f| f.min).collect();
+    let mut what = vec![0u8; n];
 
     // 1. courtyards: the outer ring by even-odd (a ring that crosses itself keeps both its lobes), less its inner
-    // rings by nonzero (one mapped partly outside it adds nothing)
+    // rings by nonzero (one mapped partly outside it adds nothing); where that fails, the outer ring alone
+    let mut courtyards = vec![false; n];
     for k in 0..n {
         if run.orig[k].len() > 1 {
-            match boolean(&run.orig[k][..1], &run.orig[k][1..], Op::Diff) {
+            let (outer, inner) = (run.orig[k][..1].to_vec(), run.orig[k][1..].to_vec());
+            match run.arrange(&outer, &inner, Op::Diff) {
                 Some(r) => {
                     let r = run.tidy(r, false);
                     if r.is_empty() {
                         drawn[k] = false;
                     }
                     run.cur[k] = Some(r);
-                    run.counts.courtyards += 1;
+                    courtyards[k] = true;
                 }
-                None => run.counts.unsettled += 1,
+                None => {
+                    run.orig[k].truncate(1);
+                    run.counts.unsettled += 1;
+                }
             }
         }
     }
     let whole: Vec<Option<Vec<Poly>>> = run.cur.clone();
-    let mut touched = vec![false; n];
+    let drawn_whole = drawn.clone();
 
     // the pairs whose interiors meet: the cleaning only takes from a footprint, so no other pair can come to overlap
-    let meeting: Vec<(usize, usize)> = pairs(&boxes)
-        .into_iter()
-        .filter(|&(i, j)| drawn[i] && drawn[j] && interiors_overlap(&run.shape(i), &run.shape(j)))
-        .collect();
+    let (near_boxes, whole_sweep) = pairs(&boxes, &mut run.work);
+    run.spent |= !whole_sweep;
+    let mut meeting: Vec<(usize, usize)> = Vec::new();
+    for (i, j) in near_boxes {
+        if drawn[i] && drawn[j] && run.meets(i, j) {
+            meeting.push((i, j));
+        }
+    }
 
     // 2. coverage: an outline less the parts overlapping it
     let mut covers: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -330,14 +437,13 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         if covers[o].is_empty() {
             continue;
         }
-        touched[o] = true;
         if let Some(r) = run.less(o, &covers[o]) {
             if r.is_empty() {
                 drawn[o] = false;
-                run.counts.hidden += 1;
+                what[o] |= HIDDEN;
             } else {
                 run.cur[o] = Some(r);
-                run.counts.covered += 1;
+                what[o] |= COVERED;
             }
         }
     }
@@ -371,13 +477,14 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
             continue;
         }
         let b: Vec<Vec<P>> = lowers.iter().flat_map(|&l| run.shape(l)).collect();
-        let Some(x) = boolean(&run.shape(u), &b, Op::Inter) else {
-            run.counts.unsettled += 1;
+        let a = run.shape(u);
+        let Some(x) = run.arrange(&a, &b, Op::Inter) else {
+            run.failed[u] = true;
             continue;
         };
         if run.m2(area2_of(&x)) >= 0.5 * run.area_m2(u) {
             min[u] = lowers.iter().map(|&l| fps[l].top).fold(min[u], f64::max);
-            run.counts.raised += 1;
+            what[u] |= RAISED;
         }
     }
 
@@ -389,6 +496,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         if !(shared_h > p.height_m) {
             continue;
         }
+        run.counts.pairs_before += 1;
         let i_in_j = min[j] <= min[i] && fps[i].top <= fps[j].top;
         let j_in_i = min[i] <= min[j] && fps[j].top <= fps[i].top;
         let loser = if i_in_j && j_in_i {
@@ -409,7 +517,8 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         beats[winner].push(loser);
     }
     let mut waiting: Vec<usize> = (0..n).map(|k| beaten[k].len()).collect();
-    let mut ready: BinaryHeap<Reverse<usize>> = (0..n).filter(|&k| waiting[k] == 0 && !beats[k].is_empty()).map(Reverse).collect();
+    let mut ready: BinaryHeap<Reverse<usize>> =
+        (0..n).filter(|&k| waiting[k] == 0 && !beats[k].is_empty()).map(Reverse).collect();
     let mut done = vec![false; n];
     let left: Vec<usize> = (0..n).filter(|&k| waiting[k] > 0).collect();
     loop {
@@ -426,22 +535,71 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         done[k] = true;
         let winners: Vec<usize> = beaten[k].iter().copied().filter(|&w| done[w] && drawn[w]).collect();
         if !winners.is_empty() && drawn[k] {
-            touched[k] = true;
             if let Some(r) = run.less(k, &winners) {
                 if r.is_empty() {
                     drawn[k] = false;
-                    run.counts.vanished += 1;
+                    what[k] |= VANISHED;
                 } else {
                     run.cur[k] = Some(r);
-                    run.counts.clipped += 1;
+                    what[k] |= CLIPPED;
                 }
             }
         }
         for &l in &beats[k] {
-            waiting[l] -= 1;
+            waiting[l] = waiting[l].saturating_sub(1);
             if waiting[l] == 0 {
                 ready.push(Reverse(l));
             }
+        }
+    }
+
+    // one ring each: what is drawn, or for an outline not drawn its courtyards as mapped
+    let changed = |k: usize, what: &[u8]| what[k] != 0 || courtyards[k];
+    let mut ring: Vec<Option<Vec<P>>> = vec![None; n];
+    for k in 0..n {
+        if !changed(k, &what) {
+            continue;
+        }
+        let polys = if drawn[k] { run.cur[k].as_ref() } else { whole[k].as_ref() };
+        let Some(polys) = polys else { continue };
+        if polys.is_empty() {
+            continue;
+        }
+        match bridge(polys) {
+            Some(r) => ring[k] = Some(r),
+            None => run.failed[k] = true,
+        }
+    }
+
+    // a group where an operation failed, put back as it was: each its courtyards cut out (where that joined), drawn
+    let group = groups(n, &meeting);
+    let mut failed_group = vec![false; n];
+    for k in 0..n {
+        if run.failed[k] {
+            failed_group[group[k]] = true;
+        }
+    }
+    for k in 0..n {
+        if !failed_group[group[k]] {
+            continue;
+        }
+        if group[k] == k {
+            run.counts.unsettled += 1;
+        }
+        what[k] = 0;
+        drawn[k] = drawn_whole[k];
+        min[k] = fps[k].min;
+        run.cur[k] = whole[k].clone();
+        ring[k] = match &whole[k] {
+            Some(polys) if !polys.is_empty() => bridge(polys),
+            _ => None,
+        };
+        if whole[k].is_some() && ring[k].is_none() {
+            // its courtyards do not join either: as mapped, its outer ring alone
+            run.cur[k] = None;
+            run.orig[k].truncate(1);
+            courtyards[k] = false;
+            drawn[k] = !run.orig[k].is_empty();
         }
     }
 
@@ -457,7 +615,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     }
     let mut uncovered = vec![0.0; n];
     for o in 0..n {
-        if fps[o].part || !touched[o] {
+        if fps[o].part || what[o] & (COVERED | HIDDEN | CLIPPED | VANISHED) == 0 {
             continue;
         }
         let full: Vec<Vec<P>> = match &whole[o] {
@@ -468,11 +626,14 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
             .filter(|&k| drawn[k] && boxes[k].meets(&boxes[o]))
             .flat_map(|k| run.shape(k))
             .collect();
-        match boolean(&full, &by, Op::Diff) {
+        match run.arrange(&full, &by, Op::Diff) {
             Some(r) => {
                 // slivers (an outline mapped a little wider than its parts) and crumbs count apart
                 run.counts.sliver_m2 += run.m2(area2_of(&r));
-                let a = run.m2(area2_of(&run.tidy(r, true)));
+                let dropped = run.counts.dropped_m2;
+                let kept = run.tidy(r, true);
+                let a = run.m2(area2_of(&kept));
+                run.counts.dropped_m2 = dropped;
                 run.counts.sliver_m2 -= a;
                 uncovered[o] = a;
                 run.counts.uncovered_m2 += a;
@@ -480,26 +641,24 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
                     run.counts.uncovered_outlines += 1;
                 }
             }
-            None => run.counts.unsettled += 1,
+            None => run.counts.unmeasured += 1,
         }
     }
-
-    // one ring each: what is drawn, or for an outline not drawn its courtyards as mapped
-    let mut ring: Vec<Option<Vec<P>>> = vec![None; n];
+    if run.spent {
+        run.counts.unsettled += 1; // the work's bound: what it did not reach stays as mapped
+    }
+    run.counts.work = WORK - run.work;
     for k in 0..n {
-        let polys = if drawn[k] { run.cur[k].as_ref() } else { whole[k].as_ref() };
-        let Some(polys) = polys else { continue };
-        if polys.is_empty() {
-            continue;
+        let w = what[k];
+        run.counts.covered += u32::from(w & COVERED != 0);
+        run.counts.hidden += u32::from(w & HIDDEN != 0);
+        run.counts.clipped += u32::from(w & CLIPPED != 0);
+        run.counts.raised += u32::from(w & RAISED != 0);
+        run.counts.vanished += u32::from(w & VANISHED != 0);
+        run.counts.courtyards += u32::from(courtyards[k]);
+        if let Some(r) = &ring[k] {
+            run.counts.seamed += u32::from(crate::bridge::seams(r).iter().any(|&s| s));
         }
-        if polys.len() > 1 || polys.iter().any(|q| !q.holes.is_empty()) {
-            run.counts.seamed += 1;
-        }
-        let (r, lost) = bridge(polys);
-        if lost != 0 {
-            run.counts.unjoined += 1;
-        }
-        ring[k] = Some(r);
     }
     Cleaned { drawn, ring, min, counts: run.counts, uncovered }
 }
@@ -604,6 +763,6 @@ mod tests {
         let c = clean(&fps, params());
         assert!(c.ring.iter().all(Option::is_none));
         assert!(c.drawn.iter().all(|&d| d));
-        assert_eq!(c.counts, Counts::default());
+        assert_eq!(Counts { work: 0, ..c.counts }, Counts::default());
     }
 }
