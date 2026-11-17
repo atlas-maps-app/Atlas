@@ -1,9 +1,10 @@
-// What a pack's values make past the buildings' records (twin/building/BuildingTile.cpp's heap_words): a height no
-// building has (a double in the tile's column: 4.4e85 m, an infinity, a NaN) in a level's tile, held at its grid's
-// edge; a wall of more near cells than the cells' record holds (a byte each of its wall's columns and rows), a shed
-// 2.6 km long, whose long walls stage T cuts into 288 bays of 9 m, as a node mapped a degree off makes one: its cells
-// left out and the wall drawn as its one cell near too, never an end of the process, each other wall keeping its
-// cells.
+// What a pack's values make past the buildings' records (twin/building/BuildingTile.cpp's heap_words, the frame's
+// window jobs): a height no building has (a double in the tile's column: 4.4e85 m, an infinity, a NaN) in a level's
+// tile, held at its grid's edge; a wall of more near cells than the cells' record holds (a byte each of its wall's
+// columns and rows), a shed 2.6 km long, whose long walls stage T cuts into 288 bays of 9 m, as a node mapped a degree
+// off makes one: its cells left out and the wall drawn as its one cell near too, never an end of the process, each
+// other wall keeping its cells; and the windows of a job's walls, whose sum passes 32 bits where the tile's running
+// count wraps.
 #include "base/arena.hpp"
 #include "geometry/Walls.hpp"
 #include "tests/base/require.hpp"
@@ -154,4 +155,16 @@ TEST_CASE("buildings: a wall of more cells than their record holds is drawn as i
     }
     CHECK(near_walls == 2); // the shed's long walls
     CHECK(far_walls == 2);  // the house's long walls, drawn by their cells up close
+}
+
+TEST_CASE("buildings: a job's windows are counted exactly though the tile's running count wraps") {
+    // two walls of 4e9 windows each (each below 2^32, as levels times bays are), their running count wrapped
+    atlas::passes::BuildingTile layout;
+    constexpr std::uint64_t each = 4'000'000'000;
+    layout.window_at = {0, static_cast<std::uint32_t>(each), static_cast<std::uint32_t>((2 * each) & 0xFFFF'FFFFU)};
+    CHECK(layout.windows_of(0, 1) == each);
+    CHECK(layout.windows_of(1, 1) == each);
+    CHECK(layout.windows_of(0, 2) == 2 * each);
+    // what the jobs' cap read before (the running count's difference in 32 bits): far below the frame's 2^20
+    CHECK(layout.window_at[2] - layout.window_at[0] == 3'705'032'704U);
 }
