@@ -28,6 +28,7 @@ import kotlinx.coroutines.runBlocking
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -166,6 +167,73 @@ class MineScreenshotTest {
             assertTrue("the page scrolls on from $at", page.fetchSemanticsNode().config[range].value() > at)
         }
         assertTrue("$n screens", n >= 2)
+    }
+
+    @Test
+    @Config(qualifiers = "nl-w360dp-h800dp-xhdpi")
+    fun aboutInDutchOnANarrowPhone() {
+        show(Dest.About, phone())
+        capture("mine_about_nl")
+    }
+
+    /** About's scrolling page. */
+    private fun aboutPage() = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange) and hasAnyDescendant(hasText("OkHttp", substring = true)))
+
+    private fun scrolled(node: androidx.compose.ui.test.SemanticsNodeInteraction) = node.fetchSemanticsNode().config[SemanticsProperties.VerticalScrollAxisRange].value()
+
+    /** Scrolls About to its line [what] and taps it; waits for [words] of the licence it opens. Where the list was. */
+    private fun open(what: String, words: String): Float {
+        compose.onNodeWithText(what).performScrollTo()
+        compose.waitForIdle()
+        val at = scrolled(aboutPage())
+        compose.onNodeWithText(what).performClick()
+        compose.waitUntil(20_000) { compose.onAllNodesWithText(words, substring = true).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        return at
+    }
+
+    @Test
+    fun aShortLicenceOpensWholeAndBackReturnsToTheListWhereItWas() {
+        // Earcut, ISC: its own notices (the core's port and the map core's copy), then the ISC License's text whole
+        show(Dest.About, phone())
+        val at = open("Earcut", "Permission to use, copy, modify")
+        assertTrue("scrolled down to Earcut first: $at", at > 0f)
+        compose.onNodeWithText("Copyright (c) 2026, Mapbox", substring = true).assertExists()
+        compose.onNodeWithText("OR PERFORMANCE OF THIS SOFTWARE.", substring = true).assertExists()
+        capture("mine_licence_isc")
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodes(hasText("OkHttp", substring = true)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        assertEquals("back on the list where it was", at, scrolled(aboutPage()), 1f)
+    }
+
+    @Test
+    fun aFontsLicenceOpensWithItsReservedNameThenTheOpenFontLicenceWhole() {
+        show(Dest.About, phone())
+        open("Orbitron", "SIL OPEN FONT LICENSE Version 1.1")
+        compose.onNodeWithText("with Reserved Font Name: \"Orbitron\"", substring = true).assertExists()
+        capture("mine_licence_ofl")
+        // and down to its last words, a screen at a time
+        val range = SemanticsProperties.VerticalScrollAxisRange
+        val page = compose.onNode(SemanticsMatcher.keyIsDefined(range) and hasAnyDescendant(hasText("PREAMBLE", substring = true)))
+        var n = 1
+        while (true) {
+            val node = page.fetchSemanticsNode()
+            if (node.config[range].value() >= node.config[range].maxValue()) break
+            page.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, node.size.height * 0.9f) }
+            capture("mine_licence_ofl_${++n}")
+        }
+        compose.onNodeWithText("OTHER DEALINGS IN THE FONT SOFTWARE.", substring = true).assertExists()
+    }
+
+    @Test
+    @Config(qualifiers = "nl-w360dp-h800dp-xhdpi")
+    fun aLicenceInDutchOnANarrowPhoneKeepsItsOwnWords() {
+        // the page's own words in Dutch; the licence as written, in English
+        show(Dest.About, phone())
+        open("Polylabel", "Permission to use, copy, modify")
+        compose.onNodeWithText("Licentie").assertExists()
+        capture("mine_licence_nl")
     }
 
     @Test

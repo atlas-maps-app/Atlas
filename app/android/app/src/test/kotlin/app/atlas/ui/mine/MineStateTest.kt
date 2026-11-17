@@ -300,6 +300,130 @@ class MineStateTest {
         assertTrue(now.keys.toString(), "app/LICENSES.md" in now && "places/LICENSES.md" in now && "mapcore/cpp/LICENSES.md" in now)
         val behind = (made.keys + now.keys).filter { made[it] != now[it] }.sorted()
         assertTrue("About & licences is behind ${behind.joinToString()}: run app/src/main/kotlin/app/atlas/ui/mine/art/mine_licences.py", behind.isEmpty())
+        // and so are the texts it opens, behind the files they are cut from
+        val from = Json.parseToJsonElement(licenceList()).jsonObject["texts_from"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
+        assertTrue(from.keys.toString(), from.size > 10)
+        val stale = from.filter { (path, sha) -> File(android, path).let { !it.isFile || sha256(it.readText().replace("\r\n", "\n")) != sha } }.keys
+        assertTrue("The licence texts are behind ${stale.joinToString()}: run app/src/main/kotlin/app/atlas/ui/mine/art/mine_licences.py", stale.isEmpty())
+    }
+
+    // ---- the licence texts a line opens ----
+
+    private fun licenceTexts(): String = RuntimeEnvironment.getApplication().resources.openRawResource(app.atlas.R.raw.mine_licence_texts).bufferedReader().use { it.readText() }
+
+    private fun words(text: String) = text.trim().split(Regex("""\s+"""))
+
+    /**
+     * Every line of About that names a licence and opens nothing, and why, so none is forgotten: what is in the public
+     * domain, a service's own terms, data whose licence is the source's own, and two whose text is not yet in the app.
+     */
+    private val opensNothing = setOf(
+        "SGP4 and SDP4" to "Public domain", // David Vallado's code, in the public domain
+        "Natural Earth" to "Public domain",
+        "Fast Hilbert curve algorithm" to "Public domain",
+        "SQLite" to "Public domain",
+        "fdlibm" to "SunPro License", // its credit on the list is its licence whole
+        // the licence is published as a PDF only; its notices (Art. 6) are the credit on the list
+        "Copernicus DEM GLO-30" to "Licence for the use of the Copernicus WorldDEM-30",
+        "Copernicus DEM GLO-90" to "Licence for the use of the Copernicus WorldDEM-90",
+        "CelesTrak and ARISS" to "Public data",
+        "Wikimedia Commons" to "Per picture", // each picture shows its own licence
+        "Foursquare" to "Foursquare terms",
+        "Yelp" to "Yelp API terms",
+        "Tripadvisor" to "Tripadvisor terms",
+        "NDW (Netherlands)" to "Open data, licence not stated by NDW",
+        "OpenAddresses" to "Each source's own: CC0, CC BY, Licence Ouverte…", // each address carries its source's
+    )
+
+    @Test
+    fun everyLineThatNamesALicenceOpensItsTextOrIsNamedAsOpeningNothing() {
+        val list = Licences.read(licenceList())
+        val texts = Licences.texts(licenceTexts())
+        // the lines, the credits card's sources, Atlas at the top and the map data's card
+        val rows = list.items.map { it.what to it.licence } + Licences.credits().map { it.name to it.licence } +
+            (Licences.ATLAS to "MIT License") + ("© OpenStreetMap contributors" to "ODbL")
+        val none = rows.filter { Licences.line(list, it.first, it.second) == null }.toSet()
+        assertEquals("open nothing", opensNothing, none)
+        for ((what, licence) in rows - none) {
+            val line = Licences.line(list, what, licence)!!
+            for (id in line.texts) assertTrue("$what opens $id, which is not there", id in texts)
+        }
+        assertTrue("Atlas opens its own MIT licence with its notice", list.atlas.notice!!.startsWith("Copyright (c) 2026 atlas-maps-app") && list.atlas.texts == listOf("mit"))
+    }
+
+    @Test
+    fun aLineOpensEachLicenceItNamesAfterItsOwnNotice() {
+        val list = Licences.read(licenceList())
+        val names = list.names
+        assertEquals(listOf("mit", "apache-2.0"), Licences.textsOf("MIT License and Apache License 2.0", names))
+        assertEquals(listOf("apache-2.0", "mit"), Licences.textsOf("Apache License 2.0 or MIT License", names))
+        assertEquals(listOf("cc-by-4.0"), Licences.textsOf("CC BY 4.0 (EEA); Public Domain (zwemwater.nl)", names))
+        assertEquals(listOf("mit-attribution", "cdla-permissive-2.0"), Licences.textsOf("MIT with attribution; CDLA-Permissive-2.0", names))
+        assertEquals(emptyList<String>(), Licences.textsOf("Public domain", names))
+        assertEquals(listOf("w3c-software-2023"), Licences.textsOf("W3C Software and Document License", names))
+        // a font's notice is its credit: its copyright and its Reserved Font Name
+        val orbitron = Licences.line(list, "Orbitron", "SIL Open Font License 1.1")!!
+        assertTrue(orbitron.notice!!, orbitron.notice!!.contains("Reserved Font Name") && orbitron.texts == listOf("ofl-1.1"))
+        // a port's notice is its own copyright lines, not the list's short credit; HarfBuzz opens both its licences
+        assertEquals("Copyright (c) 2026, Mapbox\nCopyright (c) 2015, Mapbox", Licences.line(list, "Earcut", "ISC License")!!.notice)
+        val harfbuzz = Licences.line(list, "HarfBuzz", "Old MIT License and MIT License")!!
+        assertEquals(listOf("old-mit", "mit"), harfbuzz.texts)
+        assertTrue(harfbuzz.notice!!.lines().size > 10 && harfbuzz.notice!!.endsWith("Copyright (c) Microsoft Corporation."))
+        // the same name on the credits card and the list: BRouter's routing data (ODbL) and its library (MIT)
+        assertEquals("Copyright (c) 2019 BRouter contributors", Licences.line(list, "BRouter", "MIT License")!!.notice)
+        val data = Licences.line(list, "BRouter", "ODbL")!!
+        assertTrue(data.notice!!, data.notice!!.startsWith("Routing data") && data.texts == listOf("odbl-1.0"))
+    }
+
+    @Test
+    fun eachTextIsStoredOnceAndWholeAsTheFileItIsTakenFromHoldsIt() {
+        val texts = Licences.texts(licenceTexts())
+        val android = File(System.getProperty("atlas.repo")!!, "app/android")
+        val from = Json.parseToJsonElement(licenceList()).jsonObject["texts_from"]!!.jsonObject.keys
+        val files = from.map { File(android, it).readText().replace("\r\n", "\n") }
+        for ((id, t) in texts) assertTrue("$id is cut from a file it is taken from, as it is there", files.any { it.contains(t.text) })
+        assertEquals("a text stored twice", texts.size, texts.values.map { words(it.text) }.toSet().size)
+        // each from its first words to its last: none cut short
+        val ends = mapOf(
+            "ofl-1.1" to ("----------------------------------------------------------- SIL OPEN FONT LICENSE Version 1.1" to "OTHER DEALINGS IN THE FONT SOFTWARE."),
+            "apache-2.0" to ("Apache License Version 2.0, January 2004" to "limitations under the License."),
+            "mit" to ("Permission is hereby granted, free of charge" to "OTHER DEALINGS IN THE SOFTWARE."),
+            "isc" to ("Permission to use, copy, modify" to "PERFORMANCE OF THIS SOFTWARE."),
+            "bsd-2-clause" to ("Redistribution and use" to "POSSIBILITY OF SUCH DAMAGE."),
+            "bsd-3-clause" to ("Redistribution and use" to "POSSIBILITY OF SUCH DAMAGE."),
+            "bsd-3-clause-zstd" to ("Redistribution and use" to "POSSIBILITY OF SUCH DAMAGE."),
+            "old-mit" to ("Permission is hereby granted, without written agreement" to "ENHANCEMENTS, OR MODIFICATIONS."),
+            "psf-2.0" to ("PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2" to "terms and conditions of this License Agreement."),
+            "w3c-software-2023" to ("This work is being provided" to "will at all times remain with copyright holders."),
+            "cc0-1.0" to ("Creative Commons Legal Code CC0 1.0 Universal" to "this CC0 or use of the Work."),
+            "cc-by-4.0" to ("Attribution 4.0 International" to "Creative Commons may be contacted at creativecommons.org."),
+            "cc-by-sa-4.0" to ("Attribution-ShareAlike 4.0 International" to "Creative Commons may be contacted at creativecommons.org."),
+            "odbl-1.0" to ("## ODC Open Database License (ODbL)" to "in order to meet the terms of this License."),
+            "nlod-2.0" to ("Preface of licence" to "where the intellectual property rights are sought enforced."),
+            "mit-attribution" to ("MIT License with Attribution Requirement" to "OTHER DEALINGS IN THE SOFTWARE."),
+            "cdla-permissive-2.0" to ("# Community Data License Agreement - Permissive - Version 2.0" to "machine learning models and models' insights."),
+        )
+        assertEquals("a text whose ends the test does not know", ends.keys, texts.keys)
+        for ((id, e) in ends) {
+            val w = words(texts[id]!!.text).joinToString(" ")
+            assertTrue("$id starts \"${e.first}\": ${w.take(80)}", w.startsWith(e.first))
+            assertTrue("$id ends \"${e.second}\": ${w.takeLast(80)}", w.endsWith(e.second))
+        }
+    }
+
+    @Test
+    fun aTextsParagraphsKeepEveryWordInItsOrder() {
+        val texts = Licences.texts(licenceTexts())
+        for ((id, t) in texts) {
+            val shown = Licences.paragraphs(t.text)
+            assertEquals(id, words(t.text), words(shown.joinToString(" ") { it.text }))
+        }
+        // a text wrapped at its width is its paragraphs; one written a paragraph a line stays so
+        assertEquals(2, Licences.paragraphs(texts["isc"]!!.text).size)
+        assertEquals(3, Licences.paragraphs(texts["mit"]!!.text).size)
+        // a heading, a rule and a list's item each start a paragraph of their own
+        val ofl = Licences.paragraphs(texts["ofl-1.1"]!!.text).map { it.text }
+        assertTrue(ofl.take(4).toString(), "PREAMBLE" in ofl && ofl.any { it.startsWith("1) Neither the Font Software") } && ofl.first().all { it == '-' })
     }
 
     /** The LICENSES.md files mine_licences.py reads: a module's, an app screen package's, and the map core's C++ one. */
