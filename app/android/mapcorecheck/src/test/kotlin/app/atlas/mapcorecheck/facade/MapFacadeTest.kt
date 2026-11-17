@@ -235,8 +235,18 @@ class MapFacadeTest {
                 assertEquals("", Native.passes(handle, "composite,ground,ground_text,routes,markers,labels,overlays,world"))
                 assertEquals("no pass named sun", Native.passes(handle, "ground,sun"))
                 assertEquals("", Native.passes(handle, ""))
-                assertEquals("", Native.passCounts(handle))
+                // the counts by pass of the frame builder made with the map (none drawn: hosts have no window), in the
+                // registry's order
+                assertEquals(
+                    listOf("composite", "frosted", "ground", "buildings", "house", "trees", "things", "items", "doors", "shopfronts",
+                        "ground_text", "routes", "markers", "labels", "overlays", "world"),
+                    Native.passCounts(handle).lines().filter { it.isNotBlank() }.map { it.substringBefore(' ') },
+                )
                 Native.publishRecords(handle) // VK bench's records handed on as a measurement ends: none drawn yet
+                // the stage F by part, kept only while asked: the parts a frame first, and no frame drawn
+                Native.stageF(handle, true)
+                val parts = Native.stageF(handle, false)
+                assertEquals(1, parts.size)
 
                 // Off, and modes the façade does not have.
                 assertEquals("", Native.map(handle, 0))

@@ -47,7 +47,8 @@ namespace atlas::jni {
 /// Native.worldKeptRange (a fetched range of one of them kept). 32: Native.worldDrop says whether the pinned keep stays
 /// (a new world's keep is whole before the old world's goes). 33: Native.passes (the passes the map's frames record,
 /// by name: VK bench's configurations and its split of the GPU's time by pass), Native.passCounts and
-/// Native.publishRecords (every frame record handed on as a measurement ends).
+/// Native.publishRecords (every frame record handed on as a measurement ends) and Native.stageF (the map's stage F by
+/// part, kept while VK bench asks).
 inline constexpr jint abi = 33;
 
 /// The Kotlin class whose static natives the library registers.

@@ -312,6 +312,34 @@ std::string MapFrame::set_passes_named(std::string_view keep) {
     return {};
 }
 
+void MapFrame::keep_stage_f() const noexcept {
+    constexpr std::size_t most_frames = 16384;
+    const std::scoped_lock lock(stage_f_mutex_);
+    if (!stage_f_keep_) return;
+    const FrameBuilder::StageFParts& p = builder_->stage_f_parts();
+    const std::size_t width = 3 + p.pass_ms.size();
+    if (width != stage_f_width_) {
+        stage_f_log_.clear();
+        stage_f_width_ = width;
+    }
+    if (stage_f_log_.size() >= most_frames * width) return;
+    stage_f_log_.push_back(p.scene_ms);
+    stage_f_log_.push_back(p.globals_ms);
+    stage_f_log_.push_back(p.ranks_ms);
+    stage_f_log_.insert(stage_f_log_.end(), p.pass_ms.begin(), p.pass_ms.end());
+}
+
+std::vector<double> MapFrame::take_stage_f(bool keep) {
+    const std::scoped_lock lock(stage_f_mutex_);
+    std::vector<double> out;
+    out.reserve(stage_f_log_.size() + 1);
+    out.push_back(static_cast<double>(stage_f_width_));
+    out.insert(out.end(), stage_f_log_.begin(), stage_f_log_.end());
+    stage_f_log_.clear();
+    stage_f_keep_ = keep;
+    return out;
+}
+
 std::string MapFrame::passes_line() const {
     if (!builder_) return {};
     std::string out;
@@ -441,6 +469,7 @@ bool MapFrame::make_noise(const style::CameraState& camera) {
 
 standin::MapCounts MapFrame::counts() const noexcept {
     if (!made()) return {};
+    keep_stage_f();
     const Count c = builder_->total();
     return {.stage_f_ms = builder_->stage_f_ms(),
             .record_ms = builder_->record_ms(),

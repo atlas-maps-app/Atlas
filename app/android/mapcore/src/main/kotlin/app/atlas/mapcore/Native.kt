@@ -191,6 +191,13 @@ object Native {
      */
     @JvmStatic external fun publishRecords(handle: Long)
 
+    /**
+     * The map's stage F part by part of the frames drawn since the last call: the parts a frame first (the scene's
+     * update, the globals, the ranks, then each pass's select and update in the registry's order), then each frame's,
+     * ms, oldest first; kept from now on for the next call where [keep] (VK bench, around a measurement), else none kept.
+     */
+    @JvmStatic external fun stageF(handle: Long, keep: Boolean): DoubleArray
+
     @JvmStatic external fun stats(handle: Long): String
 
     /**

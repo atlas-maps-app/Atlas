@@ -552,6 +552,9 @@ public:
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity) { return session_->records(out, capacity); }
     void publish_records() { session_->publish_records(); }
+    /// The map's stage F by part of the frames drawn since the last call, kept from now on where `keep` (MapFrame's
+    /// take_stage_f: any thread).
+    [[nodiscard]] std::vector<double> stage_f(bool keep) { return map_->take_stage_f(keep); }
 
     /// The frame loop's health (Session::health): any thread, never waiting for the render thread, so the panel still
     /// answers while a frame is stuck.
@@ -1047,6 +1050,17 @@ jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
 /// Every frame record written handed on now (Session::publish_records: VK bench, as a measurement ends).
 void native_publish_records(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
     if (Core* core = core_of(handle); core != nullptr) core->publish_records();
+}
+
+/// The map's stage F by part of the frames drawn since the last call (frame/MapFrame.hpp's take_stage_f): the parts a
+/// frame, then each frame's; kept from now on where `keep`. Empty without a core.
+jdoubleArray native_stage_f(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean keep) {
+    Core* core = core_of(handle);
+    const std::vector<double> parts = core == nullptr ? std::vector<double>{} : core->stage_f(keep == JNI_TRUE);
+    jdoubleArray out = env->NewDoubleArray(static_cast<jsize>(parts.size()));
+    if (out != nullptr && !parts.empty())
+        env->SetDoubleArrayRegion(out, 0, static_cast<jsize>(parts.size()), parts.data());
+    return out;
 }
 
 void native_trim(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jint level) {
@@ -2048,8 +2062,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 71>& methods() {
-    static const std::array<JNINativeMethod, 71> table{{
+const std::array<JNINativeMethod, 72>& methods() {
+    static const std::array<JNINativeMethod, 72> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2068,6 +2082,7 @@ const std::array<JNINativeMethod, 71>& methods() {
         method("bench", "(JIIIIII)Ljava/lang/String;", fn(&native_bench)),
         method("records", "(JLjava/nio/ByteBuffer;)I", fn(&native_records)),
         method("publishRecords", "(J)V", fn(&native_publish_records)),
+        method("stageF", "(JZ)[D", fn(&native_stage_f)),
         method("stats", "(J)Ljava/lang/String;", fn(&native_stats)),
         method("health", "(J)Ljava/lang/String;", fn(&native_health)),
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),

@@ -244,6 +244,12 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      */
     fun publishRecords() = core.call(Unit) { Native.publishRecords(it) }
 
+    /**
+     * The map's stage F by part of the frames drawn since the last call ([Native.stageF]: the parts a frame, then each
+     * frame's), and kept from now on where [keep]; empty without a core. Any thread.
+     */
+    fun stageF(keep: Boolean): DoubleArray = core.call(DoubleArray(0)) { Native.stageF(it, keep) }
+
     /** The panel's line. */
     fun stats(): String = core.call("vk no core") { Native.stats(it) }
 
