@@ -390,6 +390,7 @@ struct Slots {
     std::uint8_t orient;
     std::uint8_t mat_draw;
     std::uint8_t wall_rgb;
+    std::uint8_t wall_slot;
     std::uint8_t hidden;
     std::uint8_t no_win;
     std::uint8_t flags;
@@ -409,6 +410,7 @@ consteval Slots slots_in(const Columns& c) {
             tl::slot_of(c, "orient"),
             tl::slot_of(c, "mat_draw"),
             tl::slot_of(c, "wall_rgb"),
+            tl::slot_of(c, "wall_slot"),
             tl::slot_of(c, "hidden"),
             tl::slot_of(c, "no_win"),
             tl::slot_of(c, "flags"),
@@ -433,7 +435,8 @@ struct Values {
     std::optional<std::string_view> roof;
     std::optional<std::string_view> orient;
     std::optional<std::string_view> mat_draw;
-    std::uint32_t wall_rgb = 0; ///< surface_colour(b, None)
+    std::uint32_t wall_rgb = 0;  ///< surface_colour(b, None)
+    std::uint16_t wall_slot = 0; ///< the walls' slot in the user's palette, with its bits (style/Palette.hpp)
     std::optional<std::string_view> btype;
     bool part_tag = false;
     std::optional<std::string_view> direction;
@@ -457,6 +460,7 @@ struct Values {
     v.orient = l.string(s.orient, i);
     v.mat_draw = l.string(s.mat_draw, i);
     v.wall_rgb = static_cast<std::uint32_t>(l.integer(s.wall_rgb, i)) & 0xFF'FFFFU;
+    v.wall_slot = static_cast<std::uint16_t>(l.integer(s.wall_slot, i) & 0x3FF);
     v.btype = l.string(s.tag_building, i);
     v.part_tag = l.string(s.tag_part, i).has_value();
     v.direction = l.string(s.tag_direction, i);
@@ -1314,6 +1318,7 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
                      .rh = in(v.roof, reflected) && v.roof_h != 0.0 ? v.roof_h : 0.0,
                      .levels = v.levels,
                      .wall = v.wall_rgb,
+                     .wall_slot = v.wall_slot,
                      .longest = 0,
                      .gabled = is(v.roof, "gabled"),
                      .across = is(v.orient, "across"),

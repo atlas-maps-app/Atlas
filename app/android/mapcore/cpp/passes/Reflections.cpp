@@ -32,9 +32,12 @@
 #include "geometry/RoofShapes.hpp"
 #include "passes/Ground.hpp"
 #include "passes/Team.hpp"
+#include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
 #include "style/Light.hpp"
+#include "style/Palette.hpp"
 #include "sun/Samples.hpp"
+#include "twin/building/BuildingTile.hpp"
 
 #include <algorithm>
 #include <array>
@@ -760,12 +763,19 @@ void Ground::decide_reflections(const frame::FrameState& state) {
     const bool overcast = state.theme.has(style::theme_flag::overcast) && state.theme.sky_k != 0.0;
     lay_reflections();
     ReflectionsKept& k = reflections_kept_;
-    // the moment the walls' colours are made in: they stand while it does
-    std::vector<std::uint8_t> moment(sizeof(shaders::Theme) + sizeof(f.light) + 2);
+    // the moment the walls' colours are made in, and the user's palette they are painted by: they stand while both do
+    const style::PaletteBlock today{};
+    const style::PaletteBlock& palette = state.palette != nullptr ? *state.palette : today;
+    std::vector<std::uint8_t> moment(sizeof(shaders::Theme) + sizeof(f.light) + 2 + sizeof(palette));
     std::memcpy(moment.data(), &theme, sizeof(shaders::Theme));
     std::memcpy(moment.data() + sizeof(shaders::Theme), f.light.data(), sizeof(f.light));
-    moment[moment.size() - 2] = night ? 1U : 0U;
-    moment[moment.size() - 1] = overcast ? 1U : 0U;
+    moment[sizeof(shaders::Theme) + sizeof(f.light)] = night ? 1U : 0U;
+    moment[sizeof(shaders::Theme) + sizeof(f.light) + 1] = overcast ? 1U : 0U;
+    std::memcpy(moment.data() + sizeof(shaders::Theme) + sizeof(f.light) + 2, &palette, sizeof(palette));
+    // the mirrored trees' crowns go with the leaves, whose own colour is the style's leaf
+    const tiles::Style* style =
+        state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
+    const std::uint32_t leaf = style != nullptr ? style->trees.leaf : 0U;
     if (moment != k.moment) {
         k.moment = std::move(moment);
         ++k.generation;
@@ -874,9 +884,10 @@ void Ground::decide_reflections(const frame::FrameState& state) {
                 // without its samples (its tile drawn before its first bits) lit by day, never as if in the shade
                 const bool lit = toward && (!sampled || sun_bit(t, at));
                 if (own.made[wi] != k.generation) {
-                    // its colours in the moment's light, once a moment
-                    own.lit[wi] = mirrored(theme, m.wall, nrm, toward, dk);
-                    own.unlit[wi] = toward ? mirrored(theme, m.wall, nrm, false, dk) : own.lit[wi];
+                    // its colours in the moment's light, once a moment, its walls' as the palette paints them
+                    const std::uint32_t wall = painted(state.palette, {.base = m.wall, .slot = m.wall_slot});
+                    own.lit[wi] = mirrored(theme, wall, nrm, toward, dk);
+                    own.unlit[wi] = toward ? mirrored(theme, wall, nrm, false, dk) : own.lit[wi];
                     own.made[wi] = k.generation;
                 }
                 const std::uint32_t lit_c = own.lit[wi];
@@ -1019,11 +1030,13 @@ void Ground::decide_reflections(const frame::FrameState& state) {
         }
         const std::span<const double> d =
             std::span<const double>(own.draws).subspan(static_cast<std::size_t>(first), tree_draws);
+        const std::uint32_t crown = night ? g.reflection_style.trees.night : g.reflection_style.trees.day;
         Reflection e{.kind = Reflection::Kind::tree,
                      .tile = tr.tile,
                      .first = static_cast<std::uint32_t>(f.reflection_circles.size()),
                      .count = 5,
-                     .colour = night ? g.reflection_style.trees.night : g.reflection_style.trees.day,
+                     .colour =
+                         leaf != 0U ? style::paint(state.palette, style::palette_slot::leaves, leaf, crown) : crown,
                      .anchor = leaf_anchor(tt.id[tr.index])};
         for (std::size_t c = 0; c < 5; ++c) {
             const double cx = p.x + (d[3 * c] * rr);
