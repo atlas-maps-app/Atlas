@@ -86,7 +86,7 @@ std::vector<std::vector<std::uint32_t>> pieces_xz(std::span<const double> xz, st
         return in;
     };
     std::vector<std::uint32_t> piece(walks.size());
-    std::iota(piece.begin(), piece.end(), 0U);
+    std::ranges::iota(piece, 0U);
     const auto root = [&](std::uint32_t w) {
         while (piece[w] != w) w = piece[w] = piece[piece[w]];
         return w;

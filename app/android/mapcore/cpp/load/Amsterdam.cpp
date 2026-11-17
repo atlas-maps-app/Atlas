@@ -47,7 +47,6 @@ constexpr std::array<std::string_view, 3> flat_roof_cols = {"#7E7A74", "#8C8882"
     return v.has_value() && one_of(*v, set);
 }
 
-using geometry::centroid;
 using geometry::dist;
 using geometry::pip;
 using geometry::signed_area;
@@ -360,7 +359,7 @@ void place(Scene& s) {
         }
         if (found) {
             s.buildings[*found].places.push_back(k);
-            n.building = *found;
+            n.building = found;
         }
     }
 }
@@ -656,7 +655,7 @@ void count_flat_roofs(Scene& s) {
     std::uint32_t by_piece = 0;
     for (const auto* list : {&s.buildings, &s.parts}) {
         for (const Building& b : *list) {
-            if (b.hidden || !truthy(b.roof) || *b.roof == "flat") continue;
+            if (b.hidden || !b.roof.has_value() || !truthy(b.roof) || *b.roof == "flat") continue;
             if (!geometry::drawn_pitched(b.roof, b.roof_h.value_or(0.0), false)) {
                 ++flat; // a shape stage T does not draw, or no height
                 continue;

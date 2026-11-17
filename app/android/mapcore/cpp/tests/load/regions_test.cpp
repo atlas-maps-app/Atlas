@@ -91,7 +91,8 @@ std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& reg
     }
     for (const auto* list : {&loaded.buildings, &loaded.parts}) {
         for (const load::Building& b : *list) {
-            if (b.hidden || !gm::drawn_pitched(b.roof, b.roof_h.value_or(0.0), false)) continue;
+            const double roof_h = b.roof_h.value_or(0.0);
+            if (b.hidden || !gm::drawn_pitched(b.roof, roof_h, false)) continue;
             const std::vector<std::uint8_t> seam = gm::seams(b.poly);
             if (seam.empty()) continue;
             bool courtyard = false;
@@ -116,7 +117,7 @@ std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& reg
                     area2 += (p.x * q.z) - (q.x * p.z);
                     around += std::sqrt(((q.x - p.x) * (q.x - p.x)) + ((q.z - p.z) * (q.z - p.z)));
                 }
-                if (around > 0.0 && 2.0 * std::fabs(area2) / around < *b.roof_h) ++narrow;
+                if (around > 0.0 && 2.0 * std::fabs(area2) / around < roof_h) ++narrow;
             }
             both += courtyard && alone ? 1U : 0U;
             Group& g = courtyard ? flat : roofed;
@@ -128,12 +129,12 @@ std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& reg
             const bool hidden_before = list == &loaded.buildings && hid.contains({b.relation, b.id});
             if (hidden_before) ++g.hidden_before;
             if (listed.is_open()) {
-                const load::V2 at = b.at ? *b.at : gm::centroid(b.poly);
+                const load::V2 at = b.at.value_or(gm::centroid(b.poly));
                 const atlas::tiles::GridPoint on = atlas::tiles::nearest_grid(region.frame, at.x, at.z);
                 listed << std::format("{}\t{}{}\t{}\t{:.7f}\t{:.7f}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{:.0f}\n", region.name,
                                       b.relation ? "r" : "w", b.id, list == &loaded.parts ? "part" : "building",
-                                      on.lat / 1e7, on.lon / 1e7, *b.roof, *b.roof_h, with_courtyard, by_itself,
-                                      cause.empty() ? "-" : cause, hidden_before ? 1 : 0,
+                                      on.lat / 1e7, on.lon / 1e7, b.roof.value_or(""), roof_h, with_courtyard,
+                                      by_itself, cause.empty() ? "-" : cause, hidden_before ? 1 : 0,
                                       std::fabs(gm::signed_area(b.poly)));
             }
         }
@@ -354,7 +355,7 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
     CHECK(loaded->land.size() == 2384);
     CHECK(loaded->water.size() == 331);
     // ATLAS_CLEAN_DUMP: what is drawn, as Overpass's JSON, for the fault detectors (an outline not drawn tagged
-    // atlas:drawn=no)
+    // atlas:drawn=no, and atlas:underground=yes where that is by the rule for what lies below the ground)
     if (const std::string out = atlas::test::environment("ATLAS_CLEAN_DUMP"); !out.empty()) {
         std::ofstream f(out, std::ios::binary);
         f << R"({"version":0.6,"elements":[)";
@@ -365,7 +366,7 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
                 f << (first ? "" : ",") << R"({"type":"way","id":)" << (b.relation ? 9000000000000 + b.id : b.id)
                   << R"(,"tags":{")" << (part ? "building:part" : "building") << R"(":"yes","height":")" << b.h
                   << R"(","min_height":")" << b.min << R"(","atlas:drawn":")" << (b.hidden ? "no" : "yes")
-                  << R"("},"geometry":[)";
+                  << R"(","atlas:underground":")" << (b.underground ? "yes" : "no") << R"("},"geometry":[)";
                 first = false;
                 for (std::size_t i = 0; i <= b.poly.size(); ++i) {
                     const load::V2 p = b.poly[i % b.poly.size()];
@@ -413,8 +414,9 @@ TEST_CASE("load: every region's buildings, with nothing that cannot be there and
         if (origin.size() != 2 || bbox.size() != 4) continue;
         const double lat0 = origin.child(0).number().value_or(0);
         std::shared_ptr<const load::Tradition> tradition;
-        if (const auto t = r->root().find("tradition"); t && t->string())
-            tradition = load::tradition_named(*t->string());
+        if (const auto t = r->root().find("tradition")) {
+            if (const auto named = t->string()) tradition = load::tradition_named(*named);
+        }
         const load::RegionConfig region{.name = name,
                                         .frame = {.lat0 = lat0,
                                                   .lon0 = origin.child(1).number().value_or(0),

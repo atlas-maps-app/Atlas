@@ -707,6 +707,7 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
     };
     const auto grid_of = [](const tl::Frame& f, const std::vector<load::V2>& poly) {
         std::vector<tl::GridPoint> out;
+        out.reserve(poly.size());
         for (const load::V2& p : poly) {
             out.emplace_back(tl::grid_lat(f, p.z).value_or(0), tl::grid_lon(f, p.x).value_or(0));
         }

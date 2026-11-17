@@ -475,6 +475,7 @@ TEST_CASE("buildings: a courtyard's seams draw nothing, and a pitched roof over 
     CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
     // the ring's seams, as stage T finds them: the two edges between the block and its courtyard
     std::vector<gm::V2> ring;
+    ring.reserve(block.lat.size());
     for (std::size_t k = 0; k < block.lat.size(); ++k)
         ring.emplace_back(f.head.frame.x(block.lon[k]), f.head.frame.z(block.lat[k]));
     const std::vector<std::uint8_t> seams = gm::seams(ring);
@@ -529,6 +530,7 @@ TEST_CASE("buildings: a ring of two pieces is roofed piece by piece, the house g
     const Checked c = check_tile(g, st);
     CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
     std::vector<gm::V2> ring;
+    ring.reserve(both.lat.size());
     for (std::size_t k = 0; k < both.lat.size(); ++k)
         ring.emplace_back(f.head.frame.x(both.lon[k]), f.head.frame.z(both.lat[k]));
     const std::vector<std::uint8_t> seams = gm::seams(ring);

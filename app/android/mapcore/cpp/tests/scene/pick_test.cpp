@@ -360,12 +360,12 @@ TEST_CASE("pick: a ring with seams is met piece by piece, a piece without a cour
     };
     // straight down: the house's lid a pitched roof's, the block's a flat top's, the courtyard nothing's
     const auto house = down(at(5880 + 735, 900));
-    REQUIRE(house.has_value());
+    ATLAS_REQUIRE(house.has_value());
     CHECK(house->id == 400);
     CHECK(house->roof);
     CHECK(house->slot == red_tiles);
     const auto block = down(at(300, 300));
-    REQUIRE(block.has_value());
+    ATLAS_REQUIRE(block.has_value());
     CHECK(block->id == 400);
     CHECK(block->roof);
     CHECK(block->slot == flat_red_tiles);
@@ -377,7 +377,7 @@ TEST_CASE("pick: a ring with seams is met piece by piece, a piece without a cour
         CAPTURE(y);
         const auto met = scene::pick_building(store, packs, ground, {house_nw[0] + 1.0, y, house_nw[1] - 60.0},
                                               {0.0, -1e-4, 1.0}, false);
-        REQUIRE(met.has_value());
+        ATLAS_REQUIRE(met.has_value());
         CHECK(met->roof == roof);
         CHECK(met->rgb == (roof ? 0x9E5038U : 0x8E5A46U));
         if (roof) CHECK(met->slot == red_tiles);
@@ -386,7 +386,7 @@ TEST_CASE("pick: a ring with seams is met piece by piece, a piece without a cour
     const std::array<double, 2> block_w = at(0, 1350);
     const auto wall =
         scene::pick_building(store, packs, ground, {block_w[0] - 60.0, 12.0, block_w[1]}, {1.0, -1e-4, 0.0}, false);
-    REQUIRE(wall.has_value());
+    ATLAS_REQUIRE(wall.has_value());
     CHECK_FALSE(wall->roof);
     CHECK(wall->rgb == 0x8E5A46U);
     std::error_code ignored;
