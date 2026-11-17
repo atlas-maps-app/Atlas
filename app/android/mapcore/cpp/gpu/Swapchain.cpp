@@ -167,7 +167,7 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
 
 Acquired Swapchain::acquire(vk::Semaphore acquired, std::uint32_t& index) {
     // within the frame loop's bound: an image the presentation engine never gives back fails the frame (timeout)
-    const vk::ResultValue<std::uint32_t> r = swapchain_.acquireNextImage(Frames::wait_ns, acquired, nullptr);
+    const vk::ResultValue<std::uint32_t> r = swapchain_.acquireNextImage(Frames::wait_ns(*device_), acquired, nullptr);
     switch (r.result) {
     case vk::Result::eSuccess: index = r.value; return Acquired::ok;
     case vk::Result::eSuboptimalKHR:
@@ -195,9 +195,9 @@ Acquired Swapchain::present(std::uint32_t index, std::uint64_t frame, std::uint6
     if (*present_fences_[index]) {
         // within the frame loop's bound: a fence still held (a hang) stays pending, unreset, and this present goes
         // without one (a null fence is allowed); the next present of the image waits for it again
-        const bool free =
-            !fence_pending_[index] ||
-            device_->handle().waitForFences(*present_fences_[index], vk::True, Frames::wait_ns) == vk::Result::eSuccess;
+        const bool free = !fence_pending_[index] ||
+                          device_->handle().waitForFences(*present_fences_[index], vk::True,
+                                                          Frames::wait_ns(*device_)) == vk::Result::eSuccess;
         if (free) {
             std::ignore = device_->handle().resetFences(
                 *present_fences_[index]); // fails only on a lost device, which the present reports

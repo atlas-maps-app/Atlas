@@ -13,9 +13,16 @@ namespace {
 constexpr std::uint32_t marks = static_cast<std::uint32_t>(Mark::count);
 } // namespace
 
+std::uint64_t Frames::wait_ns(const Device& device) noexcept {
+    const vk::PhysicalDeviceType type = device.facts().type;
+    const bool gpu = type == vk::PhysicalDeviceType::eIntegratedGpu || type == vk::PhysicalDeviceType::eDiscreteGpu;
+    return gpu ? 2'000'000'000ULL : 60'000'000'000ULL;
+}
+
 Result<Frames> Frames::create(const Device& device) {
     Frames frames;
     frames.device_ = &device;
+    frames.slot_wait_ns_ = wait_ns(device);
     const vk::raii::Device& d = device.handle();
     for (std::uint32_t i = 0; i < in_flight; ++i) {
         FrameSlot& s = frames.slots_[i];
@@ -94,7 +101,7 @@ Result<FrameSlot*> Frames::begin(std::uint64_t number) {
     waited_ms_ = 0;
     if (slot.pending) {
         const auto waiting = std::chrono::steady_clock::now();
-        const vk::Result waited = d.waitForFences(*slot.done, vk::True, wait_ns);
+        const vk::Result waited = d.waitForFences(*slot.done, vk::True, slot_wait_ns_);
         waited_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waiting).count();
         if (waited != vk::Result::eSuccess) return fail(waited, "a frame's fence"); // the slot kept for the next begin
         read_back(slot);

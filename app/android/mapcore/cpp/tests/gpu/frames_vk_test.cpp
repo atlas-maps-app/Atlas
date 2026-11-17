@@ -52,6 +52,9 @@ TEST_CASE("frames: a slot the GPU does not finish fails its next frame within th
     Held content(*event);
     auto renderer = gpu::Renderer::create(*s->device, **output, content, s->device->facts().choice);
     ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+    // a phone GPU's bound, though the device be CI's lavapipe (whose bound is longer): this content draws nothing
+    (*renderer)->frames().limit_slot_wait(2'000'000'000);
+    const std::uint64_t bound = (*renderer)->frames().slot_wait_ns();
     // whatever the checks find, the GPU is let go and drained before the event and the renderer go
     class Release {
     public:
@@ -86,8 +89,8 @@ TEST_CASE("frames: a slot the GPU does not finish fails its next frame within th
     const auto waited = std::chrono::steady_clock::now() - waiting;
     REQUIRE_FALSE(timed_out.has_value());
     CHECK(timed_out.error().code == vk::Result::eTimeout);
-    CHECK(waited >= std::chrono::nanoseconds(gpu::Frames::wait_ns));
-    CHECK(waited < std::chrono::nanoseconds(4 * gpu::Frames::wait_ns));
+    CHECK(waited >= std::chrono::nanoseconds(bound));
+    CHECK(waited < std::chrono::nanoseconds(4 * bound));
     // let go: the same slot is waited for again, and the frames draw on
     ATLAS_REQUIRE(event->set().has_value());
     for (int i = 0; i < 3; ++i) {
