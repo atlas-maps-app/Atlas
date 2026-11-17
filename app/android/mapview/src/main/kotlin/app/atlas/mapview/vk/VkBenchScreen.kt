@@ -69,14 +69,23 @@ import app.atlas.mapcore.FrameRecords
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
+import app.atlas.mapview.MapController
 import app.atlas.mapview.MapEngine
+import app.atlas.mapview.MapParts
+import app.atlas.mapview.palette.Slot
 import app.atlas.render.live.Moment
 import app.atlas.render.live.RegionFrame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -162,6 +171,8 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
     // The last run's report as recorded on disk, when that run never finished (a native crash, in its colour stage
     // perhaps): shown, and kept in front of the next run's lines, so Copy always carries it.
     var kept by remember { mutableStateOf<List<String>>(emptyList()) }
+    // The real map's table (MapBench.table), once its run has made it: what the phone sends back.
+    var table by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         val unfinished = withContext(Dispatchers.IO) { BenchReport.unfinished(context) }
@@ -181,7 +192,8 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             for (l in said) Log.i(MapEngine.TAG, l)
             Log.i(MapEngine.TAG, "vkbench done")
         } else {
-            status = keptNote + "Ready. Quick takes about 4 minutes, Full about 20 (keep the phone unplugged for the battery figure). " +
+            status = keptNote + "Ready. Map: the real map's lap in three setups, about ${MapBench.timing(VkBench.Length.MAP).minutes.roundToInt() + 2} " +
+                "minutes (unplugged, for the power figure), then Share table. Quick takes about 4 minutes, Full about 20. " +
                 "Pills: start the phone's screen recorder first; 20 s of moving pills to film."
         }
     }
@@ -249,6 +261,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         run.plainPills = { plain -> pillsPlain = plain }
         run.fade = { alpha -> fadeLayer = alpha }
         run.status = { status = it }
+        run.table = { table = it }
         lines.clear()
         lines += kept
         try {
@@ -258,7 +271,8 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             run.leaveColour()
             activeRun = null
         }
-        status = "Done. Copy the report and paste it back."
+        status = if (table.isNotEmpty()) "Done. Tap Share table and pick the app to send it with (or Copy table, and paste it)."
+        else "Done. Copy the report and paste it back."
         Log.i(MapEngine.TAG, "vkbench done")
     }
 
@@ -268,11 +282,15 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             BasicText(status, style = TextStyle(fontSize = 12.sp, color = if (core == null && refused.isNotEmpty()) Color(0xFFB00020) else Color.Black))
             Row(Modifier.padding(vertical = 6.dp)) {
                 if (chosen == null && core != null) {
+                    Button("Map") { chosen = VkBench.Length.MAP }
                     Button("Quick") { chosen = VkBench.Length.QUICK }
                     Button("Full") { chosen = VkBench.Length.FULL }
                     Button("Pills") { chosen = VkBench.Length.PILLS }
                 }
-                if (lines.isNotEmpty()) {
+                if (table.isNotEmpty()) {
+                    Button("Share table") { share(context, "Atlas: the real map's bench", table) }
+                    Button("Copy table") { copy(context, "Atlas real-map bench", table) }
+                } else if (lines.isNotEmpty()) {
                     Button("Copy") { copy(context, "Atlas VK bench", lines.joinToString("\n")) }
                     Button("Share") { share(context, "Atlas: VK bench", lines.joinToString("\n")) }
                 }
@@ -446,6 +464,41 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
     @Volatile var completeIndex = 0L
     private val cam = VkBench.Camera()
 
+    /**
+     * The real map's lap in this setup ([MapBench]), or null: while set, the camera is the lap's ([MapBench.cameraAt])
+     * at [lapAt], or moving round it over [periodSeconds] from [startNs] where [lapAt] is negative, written with the
+     * parts it leaves out ([lapParts]) and the flags the app's map writes ([worldUnder], [lightCascades]).
+     */
+    @Volatile var lap: MapBench.Setup? = null
+    @Volatile var lapAt = -1.0
+    @Volatile var lapParts = 0L
+    @Volatile var worldUnder = false
+    @Volatile var lightCascades = false
+
+    /**
+     * The map at rest (the real map's zero frames at rest): the lap's camera at [lapAt] written once, flagged at rest,
+     * and then no frame asked, as the app's map asks none while it lies still (MapCameraSource), so that every frame
+     * presented after is one the core drew of its own.
+     */
+    @Volatile var rest = false
+        set(on) {
+            field = on
+            restWritten = false
+        }
+
+    @Volatile private var restWritten = false
+
+    /** Where the last camera written stood (the main thread's world-under rule reads it). */
+    @Volatile var lastLatitude = 0.0
+    @Volatile var lastLongitude = 0.0
+
+    /** Run after each frame presented (the world's names' step, CoreNames.framePresented), or null. */
+    @Volatile var onPresented: Runnable? = null
+
+    override fun redraw() {
+        restWritten = false
+    }
+
     override fun camera(vsyncNanos: Long, out: ByteBuffer): Boolean {
         val w = widthPx
         val h = heightPx
@@ -453,9 +506,23 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
         val d = density
         val t = (vsyncNanos - startNs) / 1e9
         val map = mapView
-        if (map != null) VkBench.mapCameraAt(path, map, t, periodSeconds, cam) else VkBench.cameraAt(path, view, t, periodSeconds, cam)
-        state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
-        if (map != null) {
+        val setup = lap
+        if (setup != null) {
+            if (rest && restWritten) return false
+            val at = lapAt
+            MapBench.cameraAt(if (at >= 0.0) at else MapBench.phase(t, periodSeconds), setup, cam)
+            if (at >= 0.0 && !rest) cam.bearing = MapBench.normalised(cam.bearing + MapBench.sway(t))
+            state.write(out, MapBench.flags(rest, worldUnder, lightCascades), cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
+            CameraWriter.parts(out, lapParts)
+            if (rest) restWritten = true
+        } else {
+            if (map != null) VkBench.mapCameraAt(path, map, t, periodSeconds, cam) else VkBench.cameraAt(path, view, t, periodSeconds, cam)
+            state.write(out, 0, cam.latitude, cam.longitude, cam.bearing, cam.pitch, cam.distance, w / d / 2, h / d * 0.48, w, h, d)
+            CameraWriter.parts(out, 0L)
+        }
+        lastLatitude = cam.latitude
+        lastLongitude = cam.longitude
+        if (map != null || setup != null) {
             val pack = packs?.named(cam.latitude, cam.longitude)
             CameraWriter.pack(out, pack?.number ?: 0L, pack?.profile ?: 0)
         }
@@ -473,6 +540,7 @@ internal class BenchSource(private val state: CameraState, private val shapes: C
             completeAtNs = System.nanoTime()
             completeIndex = n
         }
+        onPresented?.run()
     }
 }
 
@@ -576,6 +644,9 @@ private class BenchRun(
     /** Puts the map and its pills under a layer of this alpha (the fade probe; 1: none). */
     var fade: (Float) -> Unit = {}
     var status: (String) -> Unit = {}
+
+    /** Hands the screen the real map's table once it is made ([realMap]): Share table sends it. */
+    var table: (String) -> Unit = {}
 
     /** Records the report on disk as the bench reaches a step ([VkBench.recorded]), before anything of it is drawn. */
     var record: suspend (String) -> Unit = {}
@@ -735,6 +806,15 @@ private class BenchRun(
             bench("the end", null, false, pickCode, pickRoute, pickForm, pickTarget, pills = false, texture = false)
             return
         }
+        if (plan == VkBench.Length.MAP) {
+            // The real map alone (MapBench): its lap in three setups, at rest and by pass, then the table to send.
+            record("the real map")
+            realMap(facts)
+            source.running = false
+            record(VkBench.COMPLETE)
+            bench("the end", null, false, pickCode, pickRoute, pickForm, pickTarget, pills = false, texture = false)
+            return
+        }
         val matrix = VkBench.matrix(available, dynamic, tiler)
         status("1/6: ${matrix.size} configurations × 2 views")
         for (view in VkBench.View.entries) {
@@ -781,6 +861,14 @@ private class BenchRun(
         record("the map")
         status("3/6: the map at its real views")
         mapStage()
+
+        // 3b. The real map (MapBench), shorter on CI's bench, so that an alpha never ships one that does not run: its lap
+        // in the three setups, at rest and by pass, and its table.
+        if (plan == VkBench.Length.CI) {
+            record("the real map")
+            status("3/6: the real map's lap in three setups")
+            realMap(facts)
+        }
 
         // 4. The pills moving over the SurfaceView.
         record("the pills")
@@ -1003,6 +1091,459 @@ private class BenchRun(
             source.packs = null
             core.map(false)
         }
+    }
+
+    /** The packs handed to the core last, by their list's revision ([handPacks]); under [handLock]. */
+    private var handedRevision = -1
+    private val handLock = Any()
+
+    /**
+     * The packs as listed now handed to the core, as the app's map hands them (CoreMap.handPacks): where they changed,
+     * the world's cache told first, so that the world's remote packs open from their heads in it. The core's lines, or
+     * "" where nothing changed. Off the main thread.
+     */
+    private fun handPacks(packs: PackList): String = synchronized(handLock) {
+        packs.load()
+        if (packs.revision == handedRevision) return ""
+        handedRevision = packs.revision
+        if (packs.worldRefs.any { it.identity != null }) {
+            MapEngine.worldCacheDir()?.let { dir ->
+                val why = core.worldCache(dir.path, MapEngine.worldCacheBytes)
+                if (why.isNotEmpty()) emitLater("vkbench real: the world's cache not opened: $why")
+            }
+        }
+        core.packs(packs.refs())
+    }
+
+    /** A line from another thread, emitted on the main thread. */
+    private fun emitLater(line: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post { emit(line) }
+    }
+
+    /** Why the real map fetches no windows or no world here, or null where it fetches both, as the app's map does. */
+    private fun fetchWhy(): String? {
+        if (plan == VkBench.Length.CI) return "CI's bench fetches nothing: it draws the canal ring CI puts on the device"
+        val windows = MapEngine.windows() == null
+        val world = MapEngine.worldReads == null
+        return when {
+            windows && world -> "neither the windows nor the world fetched (the app gave the bench no network: MapEngine.windows() and MapEngine.worldReads are off)"
+            windows -> "the windows not fetched (MapEngine.windows() is off: offline, or the app gave the bench no network)"
+            world -> "the world not fetched (MapEngine.worldReads is not made: the app gave the bench no world)"
+            else -> null
+        }
+    }
+
+    /**
+     * The windows and the world the map wants, fetched as the app's map fetches them (MapController.update): twice a
+     * second, the windows' step (the nearest window from the Netherlands' tiles, or built) and the world's (a block's
+     * head, then its tiles' chunks), and the packs handed again where a step wrote one, at once then. Until cancelled;
+     * not while the app is away, nor on CI's bench. [fetched] counts the steps that wrote a pack.
+     */
+    private suspend fun fetchLoop(packs: PackList, fetched: java.util.concurrent.atomic.AtomicInteger) {
+        if (plan == VkBench.Length.CI) return
+        while (currentCoroutineContext().isActive) {
+            var wrote = false
+            if (!paused) {
+                MapEngine.windows()?.let { w -> if (runCatching { w.step(core) }.getOrDefault(false)) wrote = true }
+                MapEngine.worldReads?.let { r -> if (runCatching { r.step(core) }.getOrDefault(false)) wrote = true }
+                if (wrote) {
+                    fetched.incrementAndGet()
+                    runCatching { handPacks(packs) }
+                }
+            }
+            if (!wrote) delay(500)
+        }
+    }
+
+    /** The world-under rule at the last camera written (MapEngine.worldUnder: no country's levels there), as the app's map writes it. */
+    private fun updateUnder() {
+        source.worldUnder = MapEngine.worldUnder(source.lastLatitude, source.lastLongitude)
+    }
+
+    /** [setup] from now on: its passes (the core's pass switch), its screen effects, and the parts its frames leave out. */
+    private suspend fun applySetup(setup: MapBench.Setup) {
+        awaitApp("the real map's ${setup.key} setup", VkHost.SURFACE)
+        source.lapParts = setup.parts(MapEngine.leftOut)
+        source.lightCascades = MapParts.lightCascades(MapEngine.leftOut)
+        source.lap = setup
+        val why = withContext(Dispatchers.Default) {
+            core.screenEffects(setup.screen(MapEngine.haze), setup.screen(MapEngine.vignette), setup.screen(MapEngine.grain))
+            core.passes(setup.passes)
+        }
+        if (why.isNotEmpty()) emit("vkbench real ${setup.key}: the passes not set ($why)")
+    }
+
+    /**
+     * The battery's power over [block] into [power]: the current and the voltage four times a second (MapBench.watts),
+     * or why there is none (plugged in: the battery is then charged, not drawn on).
+     */
+    private suspend fun <T> metered(power: MapBench.Power, block: suspend () -> T): T = coroutineScope {
+        val battery = context.getSystemService(BatteryManager::class.java)
+        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        val sticky = context.registerReceiver(null, filter)
+        if ((sticky?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0) power.why = "plugged in: unplug the phone for the power figure"
+        val sampler = launch(Dispatchers.Default) {
+            var voltage = sticky?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
+            var n = 0
+            while (isActive) {
+                if (n++ % 8 == 7) voltage = context.registerReceiver(null, filter)?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, voltage) ?: voltage
+                power.add(MapBench.watts(battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) ?: Int.MIN_VALUE, voltage))
+                delay(250)
+            }
+        }
+        try {
+            block()
+        } finally {
+            sampler.cancelAndJoin()
+        }
+    }
+
+    /**
+     * The real map ([MapBench]; the Architect's order of 16 November 2026, point 2): the map as the app draws it for the
+     * user (the packs as the app lists and hands them, the world's cache first; the world's names, drawn and handed as
+     * the app's map does; its palette and tone, the parts its Look settings leave out and its frames' flags; the sunny
+     * moment, so that every run draws the same), the windows and the world fetched as the app fetches them, on the
+     * phone and not on CI's bench. First the lap's views are waited for, each until its picture is complete (its tiles
+     * fetched and built); then the lap in each setup, the rounds taking turns; then each setup at rest at the home's
+     * look, and the GPU's time by pass at the lap's stops. Last, the table ([MapBench.table]), its lines logged
+     * (`vkbench table: …`), for Share table. The map goes off after.
+     */
+    private suspend fun realMap(facts: List<String>) {
+        fun fact(name: String) = facts.firstOrNull { it.startsWith("$name: ") }?.substringAfter(": ") ?: "?"
+        val timing = MapBench.timing(plan)
+        status("the real map: its views first, then a ${timing.lapSeconds.roundToInt()} s lap in each of three setups, " +
+            "${timing.rounds} rounds, at rest and by pass (about ${timing.minutes.roundToInt() + 1} minutes besides the tiles' fetch)")
+        val surface = switchHost(VkHost.SURFACE, "the real map")
+        if (!surface.attached) {
+            emit("vkbench real: the SurfaceView did not attach (${surface.error})")
+            return
+        }
+        val packs = MapEngine.packs()
+        awaitApp("the real map", VkHost.SURFACE)
+        handedRevision = -1
+        val home = MapBench.LAP.first()
+        val zone = packs.named(home.latitude, home.longitude)?.zone ?: ZoneId.of("Europe/Amsterdam")
+        val (said, lit) = withContext(Dispatchers.Default) {
+            val opened = runCatching { handPacks(packs) }.getOrElse { "the packs: ${it.message ?: it}" }
+            val lit = runCatching {
+                // the app's palette and tone, as CoreMap.moment hands them, at the lap's place
+                val palette = MapEngine.palette
+                val block = PaletteBlock.allocate()
+                PaletteBlock.write(block, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
+                core.palette(block).takeIf { it.isNotEmpty() }?.let { error(it) }
+                val theme = ThemeBlock.allocate()
+                CoreMoment.write(theme, Moment.Named("sunny"), zone, MapEngine.DAYLIGHT, MapEngine.tone, palette, home.latitude, home.longitude)
+                core.moment(theme)
+            }.getOrElse { "the moment could not be made: ${it.message ?: it}" }
+            opened to lit
+        }
+        emit("vkbench real: the packs (${said.lines().filter { it.isNotBlank() }.size} handed: ${packs.packs.size} windows and packs listed, " +
+            "${packs.worldRefs.size} of the world), the sunny moment, haze ${if (MapEngine.haze) "on" else "off"}, vignette " +
+            "${if (MapEngine.vignette) "on" else "off"}, grain ${if (MapEngine.grain) "on" else "off"}, parts the app leaves out " +
+            "${java.lang.Long.bitCount(MapParts.cameraBits(MapEngine.leftOut))}")
+        if (lit.isNotEmpty()) {
+            emit("vkbench real: unavailable ($lit)")
+            return
+        }
+        core.setPacing(MapEngine.paced)
+        // the world's names, as the app's map draws and hands them (CoreNames), after each frame presented
+        val names = CoreNames(core, android.os.Handler(android.os.Looper.getMainLooper()))
+        names.look = CoreNames.Look(source.density.toFloat(), MapEngine.nameTypeface, MapEngine.globeTypeface, MapController.READABLE_SP * context.resources.configuration.fontScale)
+        source.onPresented = Runnable { names.framePresented() }
+        source.packs = packs
+        source.periodSeconds = timing.lapSeconds
+        applySetup(MapBench.Setup.FULL)
+        val on = core.map(true, texture = false)
+        val results = MapBench.Setup.entries.map { MapBench.Result(it) }
+        val fetched = java.util.concurrent.atomic.AtomicInteger()
+        val fetchNote = fetchWhy()
+        if (fetchNote != null) emit("vkbench real: $fetchNote")
+        val power = context.getSystemService(PowerManager::class.java)
+        fun headroom(): String = if (Build.VERSION.SDK_INT >= 30) power?.getThermalHeadroom(10)?.takeIf { !it.isNaN() }?.let { "%.2f".format(java.util.Locale.ROOT, it) } ?: "—" else "—"
+        try {
+            if (on.isNotEmpty()) {
+                emit("vkbench real: unavailable ($on)")
+                return
+            }
+            coroutineScope {
+                val fetch = launch(Dispatchers.IO) { fetchLoop(packs, fetched) }
+                try {
+                    // 1. The lap's views, each until its picture is complete: its tiles fetched and built.
+                    val warmFrom = activeNs()
+                    var complete = 0
+                    for (at in timing.warm) {
+                        if (awaitLapPicture(at, timing.waitCapSeconds)) complete++
+                    }
+                    emit("vkbench real tiles: ${timing.warm.size} views of the lap waited for, $complete complete, in " +
+                        "${VkBench.ms((activeNs() - warmFrom) / 1e6)} ms; ${fetched.get()} fetches wrote a pack; " +
+                        "${packs.packs.size} windows and packs, ${packs.worldRefs.size} of the world listed")
+                    val thermalFrom = headroom()
+                    // 2. The laps, the setups taking turns in each round.
+                    for (round in 1..timing.rounds) {
+                        for (r in results) {
+                            applySetup(r.setup)
+                            val lap = lap(r.setup, timing, round)
+                            r.laps.add(lap)
+                        }
+                    }
+                    // 3. At rest, and by pass at the stops.
+                    for (r in results) {
+                        applySetup(r.setup)
+                        val rest = rest(r.setup, timing)
+                        r.rest = rest
+                        emit(MapBench.restLine(r.setup, rest))
+                        for (stop in timing.stops) {
+                            val split = split(r.setup, stop, timing)
+                            r.splits += split
+                            emit(MapBench.splitLine(r.setup, split))
+                        }
+                    }
+                    for (r in results) {
+                        val s = r.laps.summary()
+                        emit(VkBench.line(MapBench.lapLabel(r.setup), s, graphicsMb(), nativeMb(), lapExtra(r.laps)))
+                    }
+                    val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                    val level = battery?.let { b -> b.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) * 100 / b.getIntExtra(BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1) } ?: -1
+                    val plugged = (battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+                    val celsius = (battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE) ?: Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }?.let { it / 10.0 }
+                    val head = MapBench.Head(
+                        date = java.time.ZonedDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm z", java.util.Locale.ROOT)),
+                        device = "${Build.MANUFACTURER} ${Build.MODEL}",
+                        android = "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+                        gpu = "${fact("gpu")}, driver ${fact("driver.version")}, config ${fact("config").substringBefore(" ")}",
+                        build = "build " + (runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"),
+                        timing = timing,
+                        tiles = "${packs.packs.size} windows and packs, ${packs.worldRefs.size} of the world" +
+                            (fetchNote?.let { "; $it" } ?: "; fetched as the app fetches them, every view of the lap waited for ($complete of ${timing.warm.size} complete)"),
+                        battery = (if (level >= 0) "$level %" else "?") + (if (plugged) ", plugged in" else ", unplugged") +
+                            (celsius?.let { ", %.1f °C".format(java.util.Locale.ROOT, it) } ?: ""),
+                        thermal = "$thermalFrom at the first lap, ${headroom()} at the end (1 is throttling)",
+                        look = "The sunny moment; the app's palette and Look settings (haze ${if (MapEngine.haze) "on" else "off"}, " +
+                            "vignette ${if (MapEngine.vignette) "on" else "off"}, grain ${if (MapEngine.grain) "on" else "off"}, " +
+                            "${java.lang.Long.bitCount(MapParts.cameraBits(MapEngine.leftOut))} parts left out); the world's names; pills on",
+                    )
+                    val text = MapBench.table(head, results)
+                    for (l in MapBench.tableLines(text)) emit(l)
+                    table(text)
+                } finally {
+                    fetch.cancel()
+                }
+            }
+        } finally {
+            source.running = false
+            source.lap = null
+            source.rest = false
+            source.lapAt = -1.0
+            source.onPresented = null
+            source.packs = null
+            names.close()
+            withContext(NonCancellable + Dispatchers.Default) {
+                core.passes("")
+                core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
+                core.map(false)
+            }
+        }
+    }
+
+    /** A lap line's words after VK bench's numbers: its complete frames, its power, the native heap and the core's GPU memory. */
+    private fun lapExtra(laps: MapBench.Laps): String =
+        "complete ${laps.complete} of ${laps.presented} power ${laps.power.said()} heap ${VkBench.ms(laps.heapMb)} MB gpu memory ${VkBench.ms(laps.gpuMemMb)} MB"
+
+    /**
+     * The lap's camera standing at [at] (swaying slightly) until a complete picture of it is presented, or until the map
+     * stalls on its way there ([VkBench.PictureWait], on a clock that stands still while the app is away), or after
+     * [capSeconds] where given (CI's): whether it was complete; a line where it was not.
+     */
+    private suspend fun awaitLapPicture(at: Double, capSeconds: Double?): Boolean {
+        awaitApp("the real map's view at ${"%.2f".format(java.util.Locale.ROOT, at)} of its lap", VkHost.SURFACE)
+        source.rest = false
+        val base = source.presentedCount
+        val from = System.nanoTime()
+        source.lapAt = at
+        source.startNs = from
+        source.running = true
+        drain()
+        val wait = VkBench.PictureWait(activeNs(), from, base)
+        val until = capSeconds?.let { activeNs() + (it * 1e9).toLong() }
+        var back = awayNs
+        while (true) {
+            if (!paused) core.requestFrame()
+            delay(50)
+            val now = activeNs()
+            val drawing = VkBench.drawingMs(core.health())
+            wait.tick(now, source.presentedCount, drawing)
+            for (r in drain()) if (r.startNs >= from && !r.skipped) wait.frame(r.endNs, r.cpuMs, r.draws, r.trianglesK)
+            updateUnder()
+            if (paused) continue
+            if (awayNs != back) {
+                back = awayNs
+                wait.cameBack(System.nanoTime())
+            }
+            if (source.completeIndex > base + VkBench.IN_FLIGHT) return true
+            val stalled = wait.stall(now, drawing) ?: if (until != null && now >= until) "not complete within ${capSeconds.roundToInt()} s" else null
+            if (stalled != null) {
+                emit("vkbench real view at ${"%.2f".format(java.util.Locale.ROOT, at)} of the lap (${MapBench.partAt(at)}): $stalled (${wait.said()})")
+                return false
+            }
+        }
+    }
+
+    /**
+     * One lap of [setup] ([MapBench.cameraAt] over [MapBench.Timing.lapSeconds], after half a second at its start), its
+     * frames and power; measured again once where the app's going to the background cut it short. Its own line,
+     * `vkbench real <key> round <n>: …`.
+     */
+    private suspend fun lap(setup: MapBench.Setup, timing: MapBench.Timing, round: Int): MapBench.Laps {
+        val step = "the real map's ${setup.key} lap"
+        awaitApp(step, VkHost.SURFACE)
+        val stopsBefore = stops
+        var laps = lapOnce(timing)
+        if (stops != stopsBefore) {
+            emit(VkBench.cutShort("real ${setup.key} round $round"))
+            awaitApp(step, VkHost.SURFACE)
+            hostSwitch(VkHost.SURFACE)
+            laps = lapOnce(timing)
+        }
+        emit(VkBench.line("real ${setup.key} round $round", laps.summary(), graphicsMb(), nativeMb(), lapExtra(laps)))
+        return laps
+    }
+
+    private suspend fun lapOnce(timing: MapBench.Timing): MapBench.Laps {
+        val laps = MapBench.Laps()
+        measureStartNs = System.nanoTime()
+        source.rest = false
+        source.lapAt = 0.0
+        source.startNs = System.nanoTime()
+        source.running = true
+        if (!paused) core.requestFrame()
+        delay(500)
+        drain()
+        val presented0 = source.presentedCount
+        val complete0 = source.completeCount
+        val from = System.nanoTime()
+        source.periodSeconds = timing.lapSeconds
+        source.startNs = from
+        source.lapAt = -1.0
+        val got = ArrayList<FrameRecords.Record>()
+        val endAt = from + (timing.lapSeconds * 1e9).toLong()
+        metered(laps.power) {
+            while (System.nanoTime() < endAt) {
+                delay(100)
+                got += drain().filter { it.startNs >= from }
+                updateUnder()
+                if (!paused) core.requestFrame()
+            }
+        }
+        // held at the lap's end (the home's look) while its last frames come in
+        source.lapAt = 1.0
+        source.startNs = System.nanoTime()
+        delay(250)
+        got += drain().filter { it.startNs >= from && it.vsyncNs <= endAt }
+        laps.presented = source.presentedCount - presented0
+        laps.complete = source.completeCount - complete0
+        val frames = got.filter { !it.skipped && it.vsyncNs <= endAt }.sortedBy { it.frame }
+        val shown = frames.filter { it.presented }
+        val seconds = timing.lapSeconds
+        if (shown.size >= 2) {
+            for (k in 1 until shown.size) laps.interval((shown[k].vsyncNs - from) / 1e9 / seconds, (shown[k].presentedNs - shown[k - 1].presentedNs) / 1e6)
+        } else {
+            laps.presentedBy = "vsync"
+            for (k in 1 until frames.size) laps.interval((frames[k].vsyncNs - from) / 1e9 / seconds, (frames[k].vsyncNs - frames[k - 1].vsyncNs) / 1e6)
+        }
+        for (f in frames) {
+            if (f.gpuValid) laps.gpu += f.gpuMs.toDouble()
+            laps.cpu += f.cpuMs
+            laps.record += f.recordMs.toDouble()
+            laps.prepare += f.prepareMs.toDouble()
+        }
+        laps.frames = frames.size
+        laps.draws = frames.lastOrNull()?.draws ?: 0
+        laps.trianglesK = frames.lastOrNull()?.trianglesK ?: 0
+        laps.memory(nativeMb(), MapBench.gpuMemory(withContext(Dispatchers.Default) { runCatching { core.stats() }.getOrDefault("") }))
+        return laps
+    }
+
+    /**
+     * [setup] at rest at the home's look: its picture first (as long as the map makes progress, or CI's cap), then the
+     * camera written once and no frame asked ([BenchSource.rest]); after [MapBench.Timing.settleSeconds] (a fade, the
+     * names coming), the frames presented over [MapBench.Timing.restSeconds] and the power then. Measured again once
+     * where the app's going to the background cut it short.
+     */
+    private suspend fun rest(setup: MapBench.Setup, timing: MapBench.Timing): MapBench.Rest {
+        val step = "the real map's ${setup.key} rest"
+        awaitApp(step, VkHost.SURFACE)
+        val stopsBefore = stops
+        var rest = restOnce(timing)
+        if (stops != stopsBefore) {
+            emit(VkBench.cutShort("real ${setup.key} rest"))
+            awaitApp(step, VkHost.SURFACE)
+            hostSwitch(VkHost.SURFACE)
+            rest = restOnce(timing)
+        }
+        return rest
+    }
+
+    private suspend fun restOnce(timing: MapBench.Timing): MapBench.Rest {
+        val complete = awaitLapPicture(0.0, timing.waitCapSeconds ?: VkBench.MAP_WAIT_SECONDS.toDouble())
+        source.rest = true
+        if (!paused) core.requestFrame() // the camera at rest, written once
+        delay((timing.settleSeconds * 1000).toLong())
+        val power = MapBench.Power()
+        val before = source.presentedCount
+        metered(power) { delay((timing.restSeconds * 1000).toLong()) }
+        val frames = source.presentedCount - before
+        source.rest = false
+        return MapBench.Rest(frames, timing.restSeconds, power, complete)
+    }
+
+    /**
+     * The GPU's time by pass for [setup] at [stop] (as pinch_audit_vk_test's ATLAS_PINCH_COST measures it, by leaving a
+     * pass out through the core's pass switch): the stop's picture first, the GPU's median with every pass of the setup,
+     * then without each pass that drew there (MapCore.passCounts), the composite kept; what each saves. The setup's
+     * passes again after.
+     */
+    private suspend fun split(setup: MapBench.Setup, stop: MapBench.Stop, timing: MapBench.Timing): MapBench.Split {
+        awaitLapPicture(stop.t, timing.waitCapSeconds ?: VkBench.MAP_WAIT_SECONDS.toDouble())
+        val every = gpuMedian(timing)
+        val drew = MapBench.split(setup, withContext(Dispatchers.Default) { core.passCounts() })
+        val saves = ArrayList<Pair<String, Double>>()
+        try {
+            for (p in drew) {
+                awaitApp("the real map's ${setup.key} passes at ${stop.key}", VkHost.SURFACE)
+                val why = withContext(Dispatchers.Default) { core.passes(MapBench.without(setup, p)) }
+                saves += p to if (why.isNotEmpty()) Double.NaN else every - gpuMedian(timing)
+            }
+        } finally {
+            withContext(NonCancellable + Dispatchers.Default) { core.passes(setup.passes) }
+        }
+        return MapBench.Split(stop, every, saves)
+    }
+
+    /**
+     * The GPU's median over the frames begun from now (the pass switch just set): at least [MapBench.Timing.splitFrames]
+     * frames presented and [MapBench.Timing.splitSeconds] seconds, at most [MapBench.Timing.splitCapSeconds]; each
+     * record's GPU time is an earlier frame's, so only those of frames begun from now count.
+     */
+    private suspend fun gpuMedian(timing: MapBench.Timing): Double {
+        drain()
+        val from = System.nanoTime()
+        val presented0 = source.presentedCount
+        if (!paused) core.requestFrame()
+        val got = ArrayList<FrameRecords.Record>()
+        val minAt = from + (timing.splitSeconds * 1e9).toLong()
+        val capAt = from + (timing.splitCapSeconds * 1e9).toLong()
+        while (true) {
+            delay(50)
+            got += drain()
+            if (!paused) core.requestFrame()
+            val now = System.nanoTime()
+            if (now >= capAt || (now >= minAt && source.presentedCount - presented0 >= timing.splitFrames)) break
+        }
+        delay(150)
+        got += drain()
+        val begun = got.filter { it.startNs > from && !it.skipped }.mapTo(HashSet()) { it.frame }
+        val ms = got.filter { it.gpuValid && it.gpuFrame in begun }.map { it.gpuMs.toDouble() }.toDoubleArray()
+        return VkBench.percentile(ms, ms.size, 50.0)
     }
 
     /**
