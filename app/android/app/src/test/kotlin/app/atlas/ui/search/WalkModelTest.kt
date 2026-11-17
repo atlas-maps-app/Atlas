@@ -117,8 +117,8 @@ class WalkModelTest {
         val m = model()
         entered(m)
         m.roundWalk(40)
+        // asked for at once; the walk itself comes when it comes (a fast answer may be there already)
         assertEquals(40, m.state.value.walking?.minutes)
-        assertNull("looking", m.state.value.walking?.walk)
         until { m.state.value.walking?.walk != null }
         val found = m.state.value.walking!!.walk!!
         assertEquals("Het Grote Park", found.through)
@@ -136,10 +136,13 @@ class WalkModelTest {
         entered(m)
         m.roundWalk(20)
         until { m.state.value.walking?.walk != null }
-        val short = m.state.value.walking!!.walk!!.route.distance
+        val first = m.state.value.walking!!.walk!!
+        val short = first.route.distance
         m.roundWalk(60)
         assertEquals(60, m.state.value.walking?.minutes)
-        assertNull("the old one is gone", m.state.value.walking?.walk)
+        // the old one is gone at once: nothing yet, or already the longer walk where the answer was fast (the release
+        // build of alpha 36 failed here on 17 November, the new walk having come before this line read the state)
+        assertTrue("the old one is gone", m.state.value.walking?.walk !== first)
         until { m.state.value.walking?.walk != null }
         assertTrue(m.state.value.walking!!.walk!!.route.distance > short * 2)
     }

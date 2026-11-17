@@ -35,6 +35,12 @@ object VkBench {
         QUICK("quick (about 4 minutes, a 1-minute soak)", 2.0, 6.0, 5.0, 60.0),
         CI("CI (about 1 minute, no soak)", 0.8, 1.5, 1.0, 0.0),
         PILLS("pills (20 s of the pills moving, to film with the screen recorder)", 0.0, 0.0, 20.0, 0.0),
+
+        /**
+         * The real map alone ([MapBench]): its lap over the world and the Netherlands' tiles in three setups, at rest and
+         * by pass, then the table the phone sends back. CI's bench runs it too, shorter ([MapBench.timing]).
+         */
+        MAP("map (the real map's lap in three setups, then the table to send)", 0.0, 0.0, 0.0, 0.0),
     }
 
     /** The two views of A0: the Main board's (2.3 km at map pitch 46°) and the map's steepest pitch (70°). */

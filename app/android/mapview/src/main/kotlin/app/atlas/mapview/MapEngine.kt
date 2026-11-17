@@ -87,9 +87,11 @@ object MapEngine {
     var host: VkHost = VkHost.SURFACE
 
     /**
-     * The screen's haze, vignette and grain (the app's Look settings; off by default, as each costs frame time: the user,
-     * 27 October; on, the renders' look): off, the core draws the map without them, its own colours there and less work
-     * a pixel. Each map binding hands them to the core; [screenEffects] hands them to the running core at once.
+     * The screen's haze, vignette and grain (the app's Look settings, each on when unset: alpha 22's look, the user, 4
+     * November; MapData hands them over as the app starts, before any screen, VK bench's too): off, the core draws the
+     * map without them, its own colours there and less work a pixel (the user, 27 October: each costs frame time). Each
+     * map binding hands them to the core; [screenEffects] hands them to the running core at once. False here only until
+     * the app has handed them.
      */
     @Volatile
     var haze: Boolean = false

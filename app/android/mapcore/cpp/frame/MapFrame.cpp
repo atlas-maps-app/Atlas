@@ -13,8 +13,10 @@
 
 #include <algorithm>
 #include <format>
+#include <iterator>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
@@ -291,6 +293,63 @@ std::string MapFrame::apply_shape_records() {
     return "no buildings pass";
 }
 
+std::string MapFrame::set_passes_named(std::string_view keep) {
+    // the map's frame builders make every registered pass (make_passes()), so bit i is the registry's pass i
+    const std::span<const Registration> all = registrations();
+    if (all.size() > 64) return "more passes than the switch has bits";
+    std::uint64_t bits = keep.empty() ? ~std::uint64_t{0} : 0U;
+    std::string_view rest = keep;
+    while (!rest.empty()) {
+        const std::size_t comma = rest.find(',');
+        const std::string_view name = rest.substr(0, comma);
+        rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        if (name.empty()) continue;
+        const auto found = std::ranges::find(all, name, &Registration::name);
+        if (found == all.end()) return std::format("no pass named {}", name);
+        bits |= std::uint64_t{1} << static_cast<unsigned>(std::distance(all.begin(), found));
+    }
+    set_passes(bits);
+    return {};
+}
+
+void MapFrame::keep_stage_f() const noexcept {
+    constexpr std::size_t most_frames = 16384;
+    const std::scoped_lock lock(stage_f_mutex_);
+    if (!stage_f_keep_) return;
+    const FrameBuilder::StageFParts& p = builder_->stage_f_parts();
+    const std::size_t width = 3 + p.pass_ms.size();
+    if (width != stage_f_width_) {
+        stage_f_log_.clear();
+        stage_f_width_ = width;
+    }
+    if (stage_f_log_.size() >= most_frames * width) return;
+    stage_f_log_.push_back(p.scene_ms);
+    stage_f_log_.push_back(p.globals_ms);
+    stage_f_log_.push_back(p.ranks_ms);
+    stage_f_log_.insert(stage_f_log_.end(), p.pass_ms.begin(), p.pass_ms.end());
+}
+
+std::vector<double> MapFrame::take_stage_f(bool keep) {
+    const std::scoped_lock lock(stage_f_mutex_);
+    std::vector<double> out;
+    out.reserve(stage_f_log_.size() + 1);
+    out.push_back(static_cast<double>(stage_f_width_));
+    out.insert(out.end(), stage_f_log_.begin(), stage_f_log_.end());
+    stage_f_log_.clear();
+    stage_f_keep_ = keep;
+    return out;
+}
+
+std::string MapFrame::passes_line() const {
+    if (!builder_) return {};
+    std::string out;
+    for (const PassCounters& c : builder_->counters()) {
+        const Count& t = c.total();
+        out += std::format("{} {} {} {}\n", c.pass(), t.draws, t.dispatches, t.triangles);
+    }
+    return out;
+}
+
 void MapFrame::release(gpu::PipelineWatch* watch) noexcept {
     if (!made()) return;
     {
@@ -412,6 +471,7 @@ bool MapFrame::make_noise(const style::CameraState& camera) {
 
 standin::MapCounts MapFrame::counts() const noexcept {
     if (!made()) return {};
+    keep_stage_f();
     const Count c = builder_->total();
     return {.stage_f_ms = builder_->stage_f_ms(),
             .record_ms = builder_->record_ms(),

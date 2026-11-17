@@ -1,0 +1,164 @@
+# The tester's emulator (home's fleet/roles/tester.md): an alpha's APK on a fresh emulator, a flow the tester writes as
+# text run on it by app/android/ci/tester.py, and what each step left kept as one artifact: a screenshot a step, steps.tsv
+# (step, line, start, milliseconds, result), the log, any crash or ANR, and the steps' table in the job's summary. The
+# flow's lines are app/android/ci/tester-flows.md's.
+#
+#   gh workflow run tester.yml -R atlas-maps-app/Atlas --ref app -f tag=v0.1.0-alpha.33 -f label=search \
+#     -f flow="$(cat search.flow)"
+#
+# Run by hand only, never on a push or a schedule. It builds nothing and publishes nothing: the APK is the release's,
+# the emulator android.yml's emulator job's (the same image, the same pinned packages through app/android/ci/sdkpkg.py,
+# the same caches, restored and never saved here). The job is red only when the harness failed (a flow that does not
+# parse, no such alpha, no emulator, an install that failed); what the flow's steps did is in the artifact and the
+# summary, whatever it was.
+name: Tester
+
+run-name: Tester ${{ inputs.tag || 'the newest alpha' }}, ${{ inputs.label }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The alpha's tag, such as v0.1.0-alpha.33 (empty = the newest alpha)
+        type: string
+        default: ''
+      flow:
+        description: The flow, one line a step (or steps parted by ;), as app/android/ci/tester-flows.md has them
+        type: string
+        required: true
+      label:
+        description: The flow's name, for the run's title and its artifact (letters, digits, - and _)
+        type: string
+        default: flow
+      animations:
+        description: Keep Android's animations on (off as on CI by default, so screenshots and the screen's texts settle)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  flow:
+    name: tester ${{ inputs.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # The emulator's system image: the action's api-level, target and arch, as android.yml's emulator job has it.
+      IMAGE: system-images;android-35;google_apis;x86_64
+    steps:
+      - uses: actions/checkout@v7
+      # Before anything is fetched: a flow that does not parse ends the run here, with the line that does not.
+      - name: The flow
+        env:
+          FLOW: ${{ inputs.flow }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          [[ "$LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$ ]] || { echo "::error::the label is letters, digits, - and _: '$LABEL'"; exit 1; }
+          printf '%s\n' "$FLOW" > "$RUNNER_TEMP/flow.txt"
+          python3 -I app/android/ci/tester.py check "$RUNNER_TEMP/flow.txt"
+      - name: The alpha's APK
+        id: alpha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -o pipefail
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release list -R "$GITHUB_REPOSITORY" --limit 50 --exclude-drafts --json tagName,isPrerelease,createdAt \
+              --jq '[.[] | select(.isPrerelease and (.tagName | test("alpha")))] | sort_by(.createdAt) | last | .tagName // ""')
+            [ -n "$TAG" ] || { echo "::error::no alpha among the releases"; exit 1; }
+          fi
+          [[ "$TAG" =~ ^v[0-9A-Za-z.-]+$ ]] || { echo "::error::not an alpha's tag: '$TAG'"; exit 1; }
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p "atlas-$TAG.apk" -D apk \
+            || { echo "::error::the release $TAG has no atlas-$TAG.apk"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          ls -l apk/ | sed 's/^/  /'
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # From here to the emulator, android.yml's emulator job's steps as they are (its comments say why), less the two
+      # that keep the archives in the caches: this workflow only restores what android.yml's runs on app keep.
+      - name: The pinned emulator build
+        id: emulator
+        run: |
+          pin() { sed -n "s/^emulator\.$1=//p" app/android/mapcore/tools.properties; }
+          file=$(pin linux-x86_64.file); sha1=$(pin linux-x86_64.sha1); version=$(pin version)
+          [ -n "$file" ] && [ -n "$sha1" ] && [ -n "$version" ] || { echo "::error::tools.properties names no emulator build"; exit 1; }
+          { echo "file=$file"; echo "sha1=$sha1"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+      - name: The SDK's packages
+        id: sdk
+        run: |
+          set -o pipefail
+          repo=https://dl.google.com/android/repository
+          python3 -I app/android/ci/sdkpkg.py describe "$repo/sys-img/google_apis/sys-img2-3.xml" "$IMAGE" "$RUNNER_TEMP/sdk/image.xml" --prefix image_ | tee -a "$GITHUB_OUTPUT"
+          python3 -I app/android/ci/sdkpkg.py describe "$repo/repository2-3.xml" emulator "$RUNNER_TEMP/sdk/emulator.xml" --prefix emulator_ | tee -a "$GITHUB_OUTPUT"
+      - name: The system image from the caches
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/sdk-archives/${{ steps.sdk.outputs.image_file }}
+          key: sdk-${{ env.IMAGE }}-${{ steps.sdk.outputs.image_revision }}-${{ steps.sdk.outputs.image_sha1 }}
+      - name: The emulators from the caches
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/sdk-archives/${{ steps.sdk.outputs.emulator_file }}
+            ${{ runner.temp }}/sdk-archives/${{ steps.emulator.outputs.file }}
+          key: sdk-emulator-${{ steps.sdk.outputs.emulator_revision }}-${{ steps.sdk.outputs.emulator_sha1 }}-${{ steps.emulator.outputs.version }}-${{ steps.emulator.outputs.sha1 }}
+      - name: The SDK's packages, checked
+        env:
+          IMAGE_URL: ${{ steps.sdk.outputs.image_url }}
+          IMAGE_SIZE: ${{ steps.sdk.outputs.image_size }}
+          IMAGE_SHA1: ${{ steps.sdk.outputs.image_sha1 }}
+          IMAGE_FILE: ${{ steps.sdk.outputs.image_file }}
+          EMULATOR_URL: ${{ steps.sdk.outputs.emulator_url }}
+          EMULATOR_SIZE: ${{ steps.sdk.outputs.emulator_size }}
+          EMULATOR_SHA1: ${{ steps.sdk.outputs.emulator_sha1 }}
+          EMULATOR_FILE: ${{ steps.sdk.outputs.emulator_file }}
+          PINNED_SHA1: ${{ steps.emulator.outputs.sha1 }}
+          PINNED_FILE: ${{ steps.emulator.outputs.file }}
+        run: |
+          dir=$RUNNER_TEMP/sdk-archives
+          python3 -I app/android/ci/sdkpkg.py fetch "$IMAGE_URL" "$IMAGE_SIZE" "$IMAGE_SHA1" "$dir/$IMAGE_FILE"
+          python3 -I app/android/ci/sdkpkg.py fetch "$EMULATOR_URL" "$EMULATOR_SIZE" "$EMULATOR_SHA1" "$dir/$EMULATOR_FILE"
+          python3 -I app/android/ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$PINNED_FILE" - "$PINNED_SHA1" "$dir/$PINNED_FILE"
+      - name: The SDK's packages, installed
+        env:
+          IMAGE_FILE: ${{ steps.sdk.outputs.image_file }}
+          EMULATOR_FILE: ${{ steps.sdk.outputs.emulator_file }}
+          PINNED_FILE: ${{ steps.emulator.outputs.file }}
+        run: |
+          dir=$RUNNER_TEMP/sdk-archives
+          python3 -I app/android/ci/sdkpkg.py install "$dir/$IMAGE_FILE" "$RUNNER_TEMP/sdk/image.xml" "$IMAGE"
+          python3 -I app/android/ci/sdkpkg.py install "$dir/$EMULATOR_FILE" "$RUNNER_TEMP/sdk/emulator.xml" emulator
+          rm "$dir/$IMAGE_FILE"
+          [ "$EMULATOR_FILE" = "$PINNED_FILE" ] || rm "$dir/$EMULATOR_FILE"
+          df -h "$RUNNER_TEMP" "$ANDROID_HOME" | sed 's/^/  /'
+      # The emulator as android.yml's emulator job starts it; the script is the flow instead of smoke.sh. tester.py exits
+      # non-zero only when the harness failed, so a flow's failed steps leave the job green.
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          disable-animations: ${{ !inputs.animations }}
+          emulator-options: -no-window -gpu lavapipe -noaudio -no-boot-anim -camera-back none
+          pre-emulator-launch-script: >-
+            python3 -I app/android/ci/sdkpkg.py install "${{ runner.temp }}/sdk-archives/${{ steps.emulator.outputs.file }}"
+            "${{ runner.temp }}/sdk/emulator.xml" emulator --revision "${{ steps.emulator.outputs.version }}"
+          script: python3 -I app/android/ci/tester.py run "${{ runner.temp }}/flow.txt" --apk "apk/atlas-${{ steps.alpha.outputs.tag }}.apk" --out tester --tag "${{ steps.alpha.outputs.tag }}" --label "${{ inputs.label }}"
+      - name: The steps' table
+        if: always()
+        run: |
+          if [ -f tester/summary.md ]; then cat tester/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else echo "No steps ran: the harness's log above says why." >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Keep what the flow left
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tester-${{ inputs.label }}
+          path: tester/
+          if-no-files-found: ignore

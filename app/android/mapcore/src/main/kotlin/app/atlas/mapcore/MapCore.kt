@@ -238,6 +238,19 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** Copies the frame records not read yet into [out] ([FrameRecords.allocate]); how many. */
     fun records(out: ByteBuffer): Int = core.call(0) { Native.records(it, out) }
 
+    /**
+     * Every frame record written handed on to [records] now ([Native.publishRecords]): as a measurement ends, so that its
+     * last frames' records come with it, not eight frames later (on a device that gives no presentation times, after the
+     * next path's start); a record whose presentation time has not come yet goes on without it.
+     */
+    fun publishRecords() = core.call(Unit) { Native.publishRecords(it) }
+
+    /**
+     * The map's stage F by part of the frames drawn since the last call ([Native.stageF]: the parts a frame, then each
+     * frame's), and kept from now on where [keep]; empty without a core. Any thread.
+     */
+    fun stageF(keep: Boolean): DoubleArray = core.call(DoubleArray(0)) { Native.stageF(it, keep) }
+
     /** The panel's line. */
     fun stats(): String = core.call("vk no core") { Native.stats(it) }
 
@@ -490,6 +503,20 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * was made); "vk no core" without a core. Off the main thread: it waits for the render thread.
      */
     fun shapeRecords(on: Boolean): String = core.call("vk no core") { Native.shapeRecords(it, on) }
+
+    /**
+     * The passes the map's frames record from now on (VK bench's configurations and its split of the GPU's time by
+     * pass): those named in [keep] ([Native.passes]' names, comma-separated), every one for "". "" or why not.
+     */
+    fun passes(keep: String): String = core.call("vk no core") { Native.passes(it, keep) }
+
+    /** The map's last frame's counts by pass ([Native.passCounts]): name to draws plus dispatches, in the registry's order. */
+    fun passCounts(): Map<String, Int> = core.call(emptyMap()) { h ->
+        Native.passCounts(h).lines().mapNotNull { line ->
+            val f = line.split(' ')
+            if (f.size < 3) null else f[0] to ((f[1].toIntOrNull() ?: 0) + (f[2].toIntOrNull() ?: 0))
+        }.toMap()
+    }
 
     /**
      * Where the fling under way lands: the camera at its end, which the map knows as the fling begins. The core builds

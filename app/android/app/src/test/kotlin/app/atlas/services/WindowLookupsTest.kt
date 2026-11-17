@@ -176,6 +176,35 @@ class WindowLookupsTest {
         assertEquals(1, reads)
     }
 
+    /**
+     * The wheel's question ([LayeredPlaceFinder.nearbyMany]) for a circle the phone's one kept window holds only a part
+     * of goes on to Overpass for the rest, as the same category asked alone ([LayeredPlaceFinder.nearby]) does (the
+     * reviewer, 17 November 2026: until then the part was taken for the whole, an empty list included).
+     */
+    @Test
+    fun theWheelAsksOnWhereTheWindowHoldsOnlyAPartOfTheCircle() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        // the one window the phone keeps holds a supermarket and no café; 2 km reaches far past it
+        val dir = tmp.newFolder("one").also {
+            File(it, "${tile.z}-${tile.x}-${tile.y}.json.gz").writeBytes(
+                gz("""{"version":0.6,"elements":[{"type":"node","id":2,${at(-150.0, 0.0)},"tags":{"shop":"supermarket","name":"Albert Heijn"}}]}"""),
+            )
+        }
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }))
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val alone = finder.nearby("eat", here, 2_000.0, 20).toList()
+        assertEquals(listOf("Café de Vliet", "Café de Overkant", "Café Ver Weg"), alone.last().places.map { it.name() })
+        val many = finder.nearbyMany(listOf("eat"), here, 2_000.0, 20)
+        assertEquals(listOf("Café de Vliet", "Café de Overkant", "Café Ver Weg"), many.getValue("eat").places.map { it.name() })
+    }
+
     private fun gz(text: String): ByteArray = ByteArrayOutputStream().also { o -> GZIPOutputStream(o).use { it.write(text.toByteArray()) } }.toByteArray()
 
     /** A window's Overpass answer around [here]: a café 60 m off, an Albert Heijn 150 m off, a bench, a café 600 m off. */

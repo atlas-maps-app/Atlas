@@ -243,6 +243,10 @@ public:
     [[nodiscard]] std::string health() const;
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity);
+    /// Every record written final now, whether or not the display has said when it showed its frame (VK bench, as a
+    /// measurement ends: where the device gives no presentation times, as on CI's emulator, a record is otherwise
+    /// handed on only eight frames later, and a slow device's last frames of a path would come after it). Any thread.
+    void publish_records();
     /// The ADPF hint session's state, for the "vk path" line (the phone's; "none" otherwise).
     void set_hint(std::string hint) { hint_ = std::move(hint); }
 
