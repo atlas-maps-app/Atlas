@@ -15,6 +15,7 @@
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
+#include "passes/Ground.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
 #include "scene/World.hpp"
@@ -441,6 +442,20 @@ private:
     return static_cast<std::size_t>(std::ranges::count(v, true));
 }
 
+/// The colours of the mirrored trees the map's ground pass decided for its last frame.
+[[nodiscard]] std::vector<std::uint32_t> mirrored_trees(const frame::MapFrame& map) {
+    std::vector<std::uint32_t> out;
+    for (const std::unique_ptr<frame::Pass>& p : map.builder()->passes()) {
+        if (p->name() != "ground") continue;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast): "ground" is passes::Ground
+        const auto& ground = static_cast<const passes::Ground&>(*p);
+        for (const passes::Reflection& e : ground.decided().reflections) {
+            if (e.kind == passes::Reflection::Kind::tree) out.push_back(e.colour);
+        }
+    }
+    return out;
+}
+
 /// A slot whose kind no bundled pack draws in this test's views, and the test that holds its colour instead.
 struct Held {
     std::uint32_t code = 0;
@@ -696,47 +711,65 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
     map.set_theme(sunny());
     map.set_screen(false, false, false);
-    // the walls over the home view's canals (the ground's reflections test's view), the trees over a canal from 120 m
-    // (the reflected trees' leaf filter test's, tests/ground/ripple_vk_test.cpp): each mirrored in the water
+    // the walls over the home view's canals (the ground's reflections test's view); the trees over the first of a few
+    // canal views whose frame mirrors one (a tree within 9 m of a quay, 30 m on: none in the home view)
     const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
     style::PaletteBlock walls{};
     for (std::uint32_t code = 48; code <= 63; ++code) walls.colours.at(code) = 0x01FF00FFU;
     style::PaletteBlock leaves = only(style::palette_slot::leaves, 0xFF00FFU);
     leaves.colours.at(style::palette_slot::evergreen) = 0x01FF00FFU;
-    struct Mirror {
-        std::string_view name;
-        style::CameraState on;
-        style::PaletteBlock palette;
-    };
-    const std::array<Mirror, 2> mirrors{{
-        {.name = "walls",
-         .on = camera_at(52.3746 + (30.0 / 110540.0), 4.8840 - (10.0 / kx), 52.0, 52.0, 430.0, 1),
-         .palette = walls},
-        {.name = "leaves", .on = camera_at(52.3747, 4.8852, 52.0, 60.0, 120.0, 1), .palette = leaves},
-    }};
     const style::PaletteBlock today{};
-    for (const Mirror& m : mirrors) {
-        style::CameraState off = m.on;
+    const style::CameraState home = camera_at(52.3746 + (30.0 / 110540.0), 4.8840 - (10.0 / kx), 52.0, 52.0, 430.0, 1);
+    const std::array<style::CameraState, 4> canals{{
+        camera_at(52.3747, 4.8852, 52.0, 60.0, 120.0, 1), // the reflected trees' leaf filter test's
+        camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 1),
+        camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 60.0, 120.0, 1),
+        camera_at(52.3747, 4.8852, 232.0, 60.0, 120.0, 1),
+    }};
+    const auto measure_mirror = [&](std::string_view name, const style::CameraState& on,
+                                    const style::PaletteBlock& palette, std::size_t least) {
+        style::CameraState off = on;
         off.parts = style::camera_part::reflections;
         map.set_palette(today);
-        ATLAS_REQUIRE(draw_still(session, map, m.on), std::string(m.name) + " never complete");
-        const gpu::Pixels today_on = settled(session, map, *kept, m.on, sunny());
+        const gpu::Pixels today_on = settled(session, map, *kept, on, sunny());
+        const std::vector<std::uint32_t> trees = mirrored_trees(map);
         const gpu::Pixels today_off = settled(session, map, *kept, off, sunny());
         // where the reflections draw
         const std::vector<bool> mirrored = changed(today_on, today_off);
-        CHECK_MESSAGE(count(mirrored) > 100, m.name);
-        map.set_palette(m.palette);
-        const std::vector<bool> with = changed(today_on, settled(session, map, *kept, m.on, sunny()));
+        CHECK_MESSAGE(count(mirrored) > 100, name);
+        map.set_palette(palette);
+        const std::vector<bool> with = changed(today_on, settled(session, map, *kept, on, sunny()));
+        const std::vector<std::uint32_t> painted_trees = mirrored_trees(map);
         const std::vector<bool> without = changed(today_off, settled(session, map, *kept, off, sunny()));
         // the pixels the palette moved with the reflections drawn and not without them, where they draw
         std::size_t theirs = 0;
         for (std::size_t i = 0; i < with.size(); ++i) theirs += with[i] && !without[i] && mirrored[i] ? 1U : 0U;
-        MESSAGE(m.name << ": " << theirs << " of the reflections' " << count(mirrored) << " pixels moved");
-        CHECK_MESSAGE(theirs > 20, m.name);
-        // and today's palette mirrors them as before (but for work that lands late, as measure allows)
+        // and the mirrored trees' colours, each moved where the leaves are the user's
+        std::size_t moved_trees = 0;
+        for (std::size_t i = 0; i < trees.size() && i < painted_trees.size(); ++i) {
+            moved_trees += trees[i] != painted_trees[i] ? 1U : 0U;
+        }
+        MESSAGE(name << ": " << theirs << " of the reflections' " << count(mirrored) << " pixels moved; " << moved_trees
+                     << " of " << trees.size() << " mirrored trees' colours");
+        CHECK_MESSAGE(theirs >= least, name);
+        // today's palette mirrors them as before (but for work that lands late, as measure allows)
         map.set_palette(today);
-        CHECK_MESSAGE(count(changed(today_on, settled(session, map, *kept, m.on, sunny()))) <= 8, m.name);
+        CHECK_MESSAGE(count(changed(today_on, settled(session, map, *kept, on, sunny()))) <= 8, name);
+        return std::pair{trees.size(), moved_trees};
+    };
+    ATLAS_REQUIRE(draw_still(session, map, home), "home never complete");
+    (void)measure_mirror("walls", home, walls, 21);
+    bool found = false;
+    for (const style::CameraState& on : canals) {
+        map.set_palette(today);
+        ATLAS_REQUIRE(draw_still(session, map, on), "a canal never complete");
+        if (mirrored_trees(map).empty()) continue;
+        const auto [trees, moved_trees] = measure_mirror("leaves", on, leaves, 1);
+        CHECK(moved_trees == trees);
+        found = true;
+        break;
     }
+    CHECK_MESSAGE(found, "none of the canal views mirrors a tree");
 }
 
 #endif
