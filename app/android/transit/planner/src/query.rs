@@ -226,6 +226,16 @@ impl Query {
     }
 }
 
+impl Query {
+    /// The real seconds a search follows: nothing before the first, nothing after the second. From the asked
+    /// moment over the window and the horizon, in the direction asked.
+    pub fn followed(&self) -> (i32, i32) {
+        let time = self.time.min(MAX_QUERY_TIME) as i32;
+        let span = self.window.min(MAX_WINDOW) as i32 + self.limits.horizon.clamp(3600, 2 * 86_400) as i32;
+        if self.arrive_by { (time - span, time) } else { (time, time + span) }
+    }
+}
+
 pub(crate) const MAX_RIDES: u32 = 16;
 pub(crate) const MAX_WINDOW: u32 = 86_400;
 pub(crate) const MAX_PENALTY: u32 = 86_400;

@@ -12,6 +12,12 @@
 //! take. So an arrival by a trip that a rule names at that stop is kept out of the stop's bag, where earlier beats
 //! later: it is *held* apart, beats nothing, and is boarded from under its rules.
 //!
+//! **Over a window the search is aimed.** The first search, from the window's far end, says how late a journey may
+//! end; then every stop within that reach of the journey's end gets the least time and the fewest rides from there
+//! to the end that any timetable could give (the shortest way over each line's fastest hops, counted back from the
+//! end once a query). A label that even so could not end sooner than a journey leaving later already does is not
+//! made. So the searches for the earlier departures follow only what can still be an option.
+//!
 //! **What bounds it** ([`Limits`]): rounds by `max_rides`; searches by `departures`; labels and steps by their
 //! caps; time by the window and the horizon. Every loop over the file's data counts steps.
 
@@ -20,8 +26,10 @@ use crate::geo::distance_mm;
 use crate::journey::{Journey, Leg, Spot};
 use crate::query::{MAX_PENALTY, MAX_QUERY_TIME, MAX_RIDES, MAX_WINDOW, Place, Prefs, Query, bit, cost};
 use crate::NONE;
+use alloc::collections::{BinaryHeap, VecDeque};
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cmp::Reverse;
 
 const DAY: i32 = 86_400;
 const ACCESS: u8 = 0;
@@ -118,6 +126,8 @@ struct Index {
     bound: [Bound; 2],
     /// No trip's time in its service day passes this.
     max_time: i32,
+    /// Beside the file's pattern stops: the least seconds any trip takes from that stop of the pattern to the next.
+    hop: Vec<u32>,
 }
 
 #[derive(Default)]
@@ -127,17 +137,76 @@ struct Bound {
     stops: Vec<u32>,
 }
 
+/// The trips that run on one day, route by route in each route's order: what a boarding searches, so that it never
+/// steps over the trips of the file's other days.
+struct DayTrips {
+    day: i32,
+    /// By route, and one more: where its trips of the day start in `trips`.
+    first: Vec<u32>,
+    trips: Vec<u32>,
+    /// Beside `trips`: each one's first departure and where its times lie, so that finding the trip to board reads
+    /// a few lines of memory side by side and not the file's trips all over.
+    times: Vec<(u32, u32)>,
+    /// By route: its earliest first departure of the day, and the latest time any of its trips has. A boarding
+    /// that can't fall between them needs no search.
+    span: Vec<(u32, u32)>,
+}
+
+/// A route's trips of one day.
+#[derive(Clone, Copy)]
+struct Run<'s> {
+    trips: &'s [u32],
+    times: &'s [(u32, u32)],
+    span: (u32, u32),
+}
+
+const NO_RUN: Run<'static> = Run { trips: &[], times: &[], span: (u32::MAX, 0) };
+
+impl DayTrips {
+    fn of(tt: &Timetable, day: i32) -> DayTrips {
+        let mut first = Vec::with_capacity(tt.routes() as usize + 1);
+        let (mut trips, mut times, mut span) = (Vec::new(), Vec::new(), Vec::with_capacity(tt.routes() as usize));
+        for r in 0..tt.routes() {
+            first.push(trips.len() as u32);
+            let route = tt.route(r);
+            let (mut earliest, mut latest) = (u32::MAX, 0);
+            for t in route.first_trip..route.first_trip.saturating_add(route.trips) {
+                if tt.runs(tt.trip(t).service, day) {
+                    let at = tt.trip_times(t);
+                    trips.push(t);
+                    times.push(at);
+                    earliest = earliest.min(at.0);
+                    latest = latest.max(tt.time(at, route.stops.saturating_sub(1)).1);
+                }
+            }
+            span.push((earliest, latest));
+        }
+        first.push(trips.len() as u32);
+        DayTrips { day, first, trips, times, span }
+    }
+}
+
+/// How many days' lists a planner keeps.
+const KEPT_DAYS: usize = 16;
+
+/// A stop in a round: the first label of the bag of those who arrived there by a ride (0) and of those ready to
+/// board (1), and the earliest time of any such label with that many rides or fewer. Together, so that a route's
+/// walk past a stop reads one line of memory.
+#[derive(Clone, Copy)]
+struct Cell {
+    head: [u32; 2],
+    best: [i32; 2],
+}
+
+const EMPTY: Cell = Cell { head: [NONE; 2], best: [NEVER; 2] };
+
 /// What a search writes, kept between searches so that it is allocated once.
 #[derive(Default)]
 struct Work {
     labels: Vec<Label>,
-    /// By stop and round (`stop * rounds + round`): the first label of the bag of those who arrived by a ride, and
-    /// of those ready to board; and the earliest time of any such label with that many rides or fewer.
+    /// By stop and round (`stop * rounds + round`), a cell.
     rounds: usize,
-    arrived: Vec<u32>,
-    ready: Vec<u32>,
-    best_arrived: Vec<i32>,
-    best_ready: Vec<i32>,
+    cells: Vec<Cell>,
     /// The stops written to, to wipe them; a stop is in it once.
     touched: Vec<u32>,
     is_touched: Vec<bool>,
@@ -158,19 +227,33 @@ struct Work {
     fresh: Vec<u32>,
     /// The rides that ended this round by a trip the feed has a rule for at that stop.
     special: Vec<u32>,
-    /// By round: the labels held apart; and a bit a round for each stop that has one.
+    /// By round: the labels held apart, and where those of the search under way begin (the earlier ones boarded
+    /// all they could in the search that made them); and a bit a round for each stop that has one.
     held: Vec<Vec<Held>>,
+    held_from: Vec<usize>,
     held_rounds: Vec<u32>,
     /// By round: the rides held so far in this query, as (stop, trip, day offset, cost).
     special_seen: Vec<Vec<(u32, u32, i32, u32)>>,
     found: Vec<Found>,
     front: Vec<Found>,
+    /// By rides: the earliest end of a journey found with that many or fewer.
+    end_best: [i32; MAX_RIDES as usize + 1],
+    /// Once a search is aimed: by stop, the least seconds and the fewest rides from there to the journey's end
+    /// (`u32::MAX` and 255 where not worked out: further than `reach` seconds); and the stops that have them.
+    least: Vec<u32>,
+    fewest: Vec<u8>,
+    aimed: Vec<u32>,
+    reach: u32,
+    /// By pattern, while the rides are counted: how far along it has been reached.
+    along: Vec<u32>,
 }
 
 /// A timetable ready to be asked.
 pub struct Planner<'a> {
     tt: Timetable<'a>,
     ix: Index,
+    /// The lists of the days asked about lately.
+    days: Vec<DayTrips>,
     work: Work,
 }
 
@@ -260,6 +343,26 @@ impl<'a> Planner<'a> {
                 }
             }
         }
+        // each pattern's fastest hops: over the profiles its trips use, each once a route
+        let mut hop = vec![u32::MAX; tt.pattern_stops() as usize];
+        let mut folded = vec![NONE; tt.profiles() as usize];
+        for r in 0..tt.routes() {
+            let route = tt.route(r);
+            for t in route.first_trip..route.first_trip.saturating_add(route.trips) {
+                let profile = tt.trip(t).profile;
+                match folded.get_mut(profile as usize) {
+                    Some(f) if *f != r => *f = r,
+                    _ => continue,
+                }
+                let times = tt.trip_times(t);
+                for pos in 0..route.stops.saturating_sub(1) {
+                    let took = tt.time(times, pos + 1).0.saturating_sub(tt.time(times, pos).1);
+                    if let Some(h) = hop.get_mut((route.first_stop + pos) as usize) {
+                        *h = (*h).min(took);
+                    }
+                }
+            }
+        }
         for b in bound.iter_mut() {
             b.trips.sort_unstable();
             b.trips.dedup();
@@ -269,7 +372,7 @@ impl<'a> Planner<'a> {
             b.stops.dedup();
         }
         let max_time = (latest.saturating_add(longest)).min(2 * MAX_TIME) as i32;
-        Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, bound, max_time }, work: Work::default() }
+        Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, bound, max_time, hop }, days: Vec::new(), work: Work::default() }
     }
 
     pub fn timetable(&self) -> &Timetable<'a> {
@@ -359,9 +462,32 @@ impl<'a> Planner<'a> {
         let back = q.arrive_by;
         let time = q.time.min(MAX_QUERY_TIME) as i32;
         let window = q.window.min(MAX_WINDOW) as i32;
-        let horizon = q.limits.horizon.clamp(3600, 2 * DAY as u32) as i32;
-        let (earliest, latest) = if back { (time - window - horizon, time) } else { (time, time + window + horizon) };
+        let (earliest, latest) = q.followed();
+        let horizon = latest - earliest - window;
         let (off_lo, off_hi) = self.offsets(earliest, latest);
+        let day = q.day.clamp(-100_000, 100_000);
+        // the lists of the days this search can touch; a day outside the file has no trips and needs none
+        let mut day_lists = [usize::MAX; KEPT_DAYS];
+        for off in off_lo..=off_hi {
+            let d = day + off;
+            if d < 0 || d >= self.tt.days() as i32 {
+                continue;
+            }
+            if !self.days.iter().any(|l| l.day == d) {
+                if self.days.len() >= KEPT_DAYS {
+                    // make room: a day this search does not touch goes
+                    if let Some(old) = self.days.iter().position(|l| l.day < day + off_lo || l.day > day + off_hi) {
+                        self.days.swap_remove(old);
+                    }
+                }
+                self.days.push(DayTrips::of(&self.tt, d));
+            }
+        }
+        for off in off_lo..=off_hi {
+            if let Some(at) = self.days.iter().position(|l| l.day == day + off) {
+                day_lists[(off - off_lo) as usize] = at;
+            }
+        }
         let start = if back { -time } else { time };
         let max_rides = q.max_rides.clamp(1, MAX_RIDES) as usize;
         let (first, last) = if back { (&ends.to, &ends.from) } else { (&ends.from, &ends.to) };
@@ -372,7 +498,9 @@ impl<'a> Planner<'a> {
             prefs: &prefs,
             soft: prefs.soft(),
             back,
-            day: q.day.clamp(-100_000, 100_000),
+            day,
+            days: &self.days,
+            day_lists,
             off_lo,
             off_hi,
             limit: start + window + horizon,
@@ -383,6 +511,7 @@ impl<'a> Planner<'a> {
             max_labels: q.limits.labels.clamp(1024, 16_000_000) as usize,
             max_steps: q.limits.steps.clamp(10_000, 10_000_000_000),
             steps: 0,
+            aimed: false,
             cut: false,
             stops: self.tt.stops() as usize,
         };
@@ -397,6 +526,10 @@ impl<'a> Planner<'a> {
         }
         s.rounds();
         if window > 0 {
+            // how late any option may end: the end of the one with the fewest rides
+            if let Some(&latest) = s.w.end_best.iter().find(|e| **e != NEVER) {
+                s.aim(last, (latest - start).max(0) as u32);
+            }
             // then one search for each moment inside the window at which a trip leaves a first stop, the latest first
             let mut events = s.departures(first, start, window);
             let cap = q.limits.departures.clamp(1, 100_000) as usize;
@@ -488,8 +621,10 @@ struct Search<'s, 'a> {
     prefs: &'s Prefs,
     soft: bool,
     back: bool,
-    /// The query's service day, and the days around it whose trips are looked at.
+    /// The query's service day, and the days around it whose trips are looked at, with each one's list.
     day: i32,
+    days: &'s [DayTrips],
+    day_lists: [usize; KEPT_DAYS],
     off_lo: i32,
     off_hi: i32,
     /// Nothing later than this is followed.
@@ -503,22 +638,24 @@ struct Search<'s, 'a> {
     steps: u64,
     cut: bool,
     stops: usize,
+    /// Whether the least seconds and fewest rides to the end are worked out (`Search::aim`).
+    aimed: bool,
 }
 
-impl Search<'_, '_> {
+impl<'s> Search<'s, '_> {
     /// Wipes what the search before wrote, and sets where this one ends.
     fn reset(&mut self, last: &[(u32, u32)]) {
         let rounds = self.max_rides + 1;
         let w = &mut *self.w;
         let size = self.stops * rounds;
-        if w.rounds != rounds || w.arrived.len() != size {
+        if w.rounds != rounds || w.cells.len() != size {
             w.rounds = rounds;
-            w.arrived = vec![NONE; size];
-            w.ready = vec![NONE; size];
-            w.best_arrived = vec![NEVER; size];
-            w.best_ready = vec![NEVER; size];
+            w.cells = vec![EMPTY; size];
             w.is_touched = vec![false; self.stops];
             w.last = vec![NONE; self.stops];
+            w.least = vec![u32::MAX; self.stops];
+            w.fewest = vec![255; self.stops];
+            w.aimed.clear();
             w.held_rounds = vec![0; self.stops];
             w.mark_stamp = vec![0; self.stops];
             w.route_from = vec![0; self.tt.routes() as usize];
@@ -530,10 +667,7 @@ impl Search<'_, '_> {
         }
         for &s in w.touched.iter() {
             let at = s as usize * rounds;
-            w.arrived[at..at + rounds].fill(NONE);
-            w.ready[at..at + rounds].fill(NONE);
-            w.best_arrived[at..at + rounds].fill(NEVER);
-            w.best_ready[at..at + rounds].fill(NEVER);
+            w.cells[at..at + rounds].fill(EMPTY);
             w.held_rounds[s as usize] = 0;
             w.is_touched[s as usize] = false;
         }
@@ -549,8 +683,14 @@ impl Search<'_, '_> {
             w.search = 0;
         }
         w.labels.clear();
+        for &s in w.aimed.iter() {
+            w.least[s as usize] = u32::MAX;
+            w.fewest[s as usize] = 255;
+        }
+        w.aimed.clear();
         w.found.clear();
         w.front.clear();
+        w.end_best = [NEVER; MAX_RIDES as usize + 1];
         w.marks.resize_with(rounds, Vec::new);
         w.held.resize_with(rounds, Vec::new);
         for h in w.held.iter_mut() {
@@ -571,6 +711,8 @@ impl Search<'_, '_> {
     /// Starts one search: nothing is marked yet.
     fn begin(&mut self) {
         self.w.search += 1;
+        self.w.held_from.clear();
+        self.w.held_from.extend(self.w.held.iter().map(|h| h.len()));
         for m in self.w.marks.iter_mut() {
             m.clear();
         }
@@ -598,10 +740,32 @@ impl Search<'_, '_> {
         (if self.back { ps.pickup } else { ps.drop_off }) != 1
     }
 
-    /// The trip of a rank in a route: the ranks rise with the time of boarding.
+    /// A route's trips that run on a day offset, in the route's order.
     #[inline]
-    fn trip_at(&self, route: &Route, rank: u32) -> u32 {
-        route.first_trip + if self.back { route.trips - 1 - rank } else { rank }
+    fn run(&self, r: u32, off: i32) -> Run<'s> {
+        let days: &'s [DayTrips] = self.days;
+        let Some(list) = self.day_lists.get((off - self.off_lo) as usize).and_then(|at| days.get(*at)) else { return NO_RUN };
+        let (Some(&lo), Some(&hi), Some(&span)) = (list.first.get(r as usize), list.first.get(r as usize + 1), list.span.get(r as usize)) else { return NO_RUN };
+        match (list.trips.get(lo as usize..hi as usize), list.times.get(lo as usize..hi as usize)) {
+            (Some(trips), Some(times)) => Run { trips, times, span },
+            _ => NO_RUN,
+        }
+    }
+
+    /// Whether any trip of a day's run can be boarded at `time` or later: by the run's first and last moments alone.
+    #[inline]
+    fn in_reach(&self, run: &Run, off: i32, time: i32) -> bool {
+        if run.trips.is_empty() {
+            return false;
+        }
+        if self.back { -(off * DAY + run.span.0 as i32) >= time } else { off * DAY + run.span.1 as i32 >= time }
+    }
+
+    /// The trip of a rank in a day's run of a route, with its times: the ranks rise with the time of boarding.
+    #[inline]
+    fn trip_at(&self, run: &Run, rank: u32) -> (u32, (u32, u32)) {
+        let at = if self.back { run.trips.len() - 1 - rank as usize } else { rank as usize };
+        (run.trips[at], run.times[at])
     }
 
     /// No trip of this day offset boards before this.
@@ -619,21 +783,164 @@ impl Search<'_, '_> {
 
     /// Whether a journey already found makes anything at this time and cost, after `rides` rides, pointless.
     fn beaten_at_end(&self, rides: usize, time: i32, cost: u32) -> bool {
-        self.w.front.iter().any(|f| f.time <= time && f.cost <= cost && f.rides as usize <= rides)
+        if time < self.w.end_best[rides.min(MAX_RIDES as usize)] {
+            return false;
+        }
+        !self.soft || self.w.front.iter().any(|f| f.time <= time && f.cost <= cost && f.rides as usize <= rides)
+    }
+
+    /// Whether nothing can come of being at `stop` at `time` after `rides` rides: it is past the limit, or a journey
+    /// already found ends no later with no more rides and at no more cost. Once the search is aimed, "ends" and
+    /// "rides" are the least the stop still needs on top.
+    fn pointless(&self, rides: usize, stop: u32, time: i32, cost: u32) -> bool {
+        if !self.aimed {
+            return time > self.limit || self.beaten_at_end(rides, time, cost);
+        }
+        let least = self.w.least[stop as usize].min(self.w.reach.saturating_add(1)).min(MAX_TIME * 4) as i32;
+        let more = match self.w.fewest[stop as usize] {
+            255 => 0,
+            n => n as usize,
+        };
+        let end = time.saturating_add(least);
+        end > self.limit || rides + more > self.max_rides || self.beaten_at_end(rides + more, end, cost)
+    }
+
+    /// Aims the search: for every stop within `reach` seconds of the journey's end, the least seconds from there
+    /// to the end (the shortest way over each pattern's fastest hops and the walks, by Dijkstra's method from the
+    /// end's stops) and the fewest rides (counted back level by level, a walk costing none).
+    fn aim(&mut self, last: &[(u32, u32)], reach: u32) {
+        let reach = reach.min(MAX_TIME * 4);
+        self.w.reach = reach;
+        let mut heap: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for &(s, secs) in last {
+            if (s as usize) < self.stops && !bit(&self.prefs.closed, s) && secs <= reach && secs < self.w.least[s as usize] {
+                if self.w.least[s as usize] == u32::MAX {
+                    self.w.aimed.push(s);
+                }
+                self.w.least[s as usize] = secs;
+                heap.push(Reverse((secs, s)));
+            }
+        }
+        while let Some(Reverse((d, v))) = heap.pop() {
+            if d > self.w.least[v as usize] {
+                continue;
+            }
+            let mut relax = |w: &mut Work, u: u32, nd: u32| {
+                if nd <= reach && nd < w.least[u as usize] {
+                    if w.least[u as usize] == u32::MAX {
+                        w.aimed.push(u);
+                    }
+                    w.least[u as usize] = nd;
+                    heap.push(Reverse((nd, u)));
+                }
+            };
+            // the stop before this one on each route through it, in the direction searched
+            let (lo, hi) = self.tt.routes_at(v);
+            self.steps += (hi - lo) as u64 + 1;
+            for e in lo..hi {
+                let (r, pos) = self.tt.route_at(e);
+                let route = self.tt.route(r);
+                let (at, hop) = if self.back { (pos + 1, pos) } else { (pos.wrapping_sub(1), pos.wrapping_sub(1)) };
+                if at >= route.stops {
+                    continue;
+                }
+                let took = self.ix.hop.get((route.first_stop + hop) as usize).copied().unwrap_or(0);
+                if took != u32::MAX {
+                    relax(self.w, self.tt.pattern_stop(route.first_stop + at).stop, d.saturating_add(took));
+                }
+            }
+            // and the stops a walk leads here from
+            if self.back {
+                let (lo, hi) = self.tt.walks_from(v);
+                self.steps += (hi - lo) as u64;
+                for i in lo..hi {
+                    let (u, secs) = self.tt.walk(i);
+                    relax(self.w, u, d.saturating_add(secs));
+                }
+            } else {
+                let (lo, hi) = (self.ix.back_first[v as usize] as usize, self.ix.back_first[v as usize + 1] as usize);
+                self.steps += (hi - lo) as u64;
+                for &(u, secs) in &self.ix.back[lo..hi] {
+                    relax(self.w, u, d.saturating_add(secs));
+                }
+            }
+        }
+        // the fewest rides: from the end's stops outward, a ride one level on, a walk none
+        if self.w.along.len() != self.tt.patterns() as usize {
+            self.w.along = vec![NONE; self.tt.patterns() as usize];
+        }
+        let mut patterns: Vec<u32> = Vec::new();
+        for &(s, _) in last {
+            if (s as usize) < self.stops && self.w.least[s as usize] != u32::MAX && self.w.fewest[s as usize] == 255 {
+                self.w.fewest[s as usize] = 0;
+                queue.push_back(s);
+            }
+        }
+        while let Some(v) = queue.pop_front() {
+            let level = self.w.fewest[v as usize];
+            // a walk into v costs no ride: those stops are of v's level, and go first
+            let walks: &[(u32, u32)] = if self.back { &[] } else { &self.ix.back[self.ix.back_first[v as usize] as usize..self.ix.back_first[v as usize + 1] as usize] };
+            let (wlo, whi) = if self.back { self.tt.walks_from(v) } else { (0, walks.len() as u32) };
+            self.steps += (whi - wlo) as u64 + 1;
+            for i in wlo..whi {
+                let u = if self.back { self.tt.walk(i).0 } else { walks[i as usize].0 };
+                if self.w.least[u as usize] != u32::MAX && self.w.fewest[u as usize] > level {
+                    self.w.fewest[u as usize] = level;
+                    queue.push_front(u);
+                }
+            }
+            if level as usize >= self.max_rides {
+                continue;
+            }
+            // every stop before v on a route through it is one ride from v; a pattern is walked once, as far as
+            // it was not walked from a stop of an earlier or equal level
+            let (lo, hi) = self.tt.routes_at(v);
+            for e in lo..hi {
+                let (r, pos) = self.tt.route_at(e);
+                let route = self.tt.route(r);
+                let p = route.pattern as usize;
+                let Some(&done) = self.w.along.get(p) else { continue };
+                // forward: positions below pos, down to where an earlier walk of the pattern began; back: above pos
+                let (from, to) = if self.back {
+                    (pos + 1, if done == NONE { route.stops } else { done.min(route.stops) })
+                } else {
+                    (if done == NONE { 0 } else { done.saturating_add(1) }, pos)
+                };
+                if from >= to {
+                    continue;
+                }
+                if done == NONE {
+                    patterns.push(p as u32);
+                }
+                self.w.along[p] = if self.back { pos + 1 } else { pos.saturating_sub(1) };
+                self.steps += (to - from) as u64;
+                for at in from..to {
+                    let u = self.tt.pattern_stop(route.first_stop + at).stop;
+                    if self.w.least[u as usize] != u32::MAX && self.w.fewest[u as usize] > level + 1 {
+                        self.w.fewest[u as usize] = level + 1;
+                        queue.push_back(u);
+                    }
+                }
+            }
+        }
+        for p in patterns {
+            self.w.along[p as usize] = NONE;
+        }
+        self.aimed = true;
     }
 
     /// Whether a label of this stop with no more rides is no later and no dearer.
     fn beaten(&self, ready: bool, rounds: usize, stop: u32, time: i32, cost: u32) -> bool {
         let at = stop as usize * self.w.rounds;
-        let (best, heads) = if ready { (&self.w.best_ready, &self.w.ready) } else { (&self.w.best_arrived, &self.w.arrived) };
-        if time < best[at + rounds] {
+        if time < self.w.cells[at + rounds].best[ready as usize] {
             return false;
         }
         if !self.soft {
             return true;
         }
         for k in 0..=rounds {
-            let mut l = heads[at + k];
+            let mut l = self.w.cells[at + k].head[ready as usize];
             while l != NONE {
                 let lab = &self.w.labels[l as usize];
                 if lab.time <= time && lab.cost <= cost {
@@ -653,10 +960,10 @@ impl Search<'_, '_> {
         let w = &mut *self.w;
         let index = w.labels.len() as u32;
         w.labels.push(label);
-        let heads = if ready { &mut w.ready } else { &mut w.arrived };
+        let which = ready as usize;
         // the bag anew: the label first, then the ones it does not beat
-        let mut old = heads[at + round];
-        heads[at + round] = index;
+        let mut old = w.cells[at + round].head[which];
+        w.cells[at + round].head[which] = index;
         let mut tail = index;
         let mut count = 1;
         while old != NONE {
@@ -675,7 +982,7 @@ impl Search<'_, '_> {
         if count > self.bag {
             // the one whose time and cost together are worst goes; of equals, the older
             let (mut worst, mut worst_sum, mut before_worst) = (NONE, i64::MIN, NONE);
-            let (mut l, mut before) = (heads[at + round], NONE);
+            let (mut l, mut before) = (w.cells[at + round].head[which], NONE);
             while l != NONE {
                 let lab = &w.labels[l as usize];
                 let sum = lab.time as i64 + lab.cost as i64;
@@ -687,25 +994,24 @@ impl Search<'_, '_> {
             }
             let after = w.labels[worst as usize].next;
             if before_worst == NONE {
-                heads[at + round] = after;
+                w.cells[at + round].head[which] = after;
             } else {
                 w.labels[before_worst as usize].next = after;
             }
             w.labels[worst as usize].kind |= DEAD;
         }
-        let best = if ready { &mut w.best_ready } else { &mut w.best_arrived };
         for k in round..w.rounds {
-            if label.time >= best[at + k] {
+            if label.time >= w.cells[at + k].best[which] {
                 break;
             }
-            best[at + k] = label.time;
+            w.cells[at + k].best[which] = label.time;
         }
         index
     }
 
     /// A first stop of the journey, reached on foot at `time`.
     fn offer_first(&mut self, stop: u32, time: i32, secs: u32) {
-        if stop as usize >= self.stops || bit(&self.prefs.closed, stop) || self.beaten(true, 0, stop, time, 0) || self.w.labels.len() >= self.max_labels {
+        if stop as usize >= self.stops || bit(&self.prefs.closed, stop) || self.pointless(0, stop, time, 0) || self.beaten(true, 0, stop, time, 0) || self.w.labels.len() >= self.max_labels {
             return;
         }
         self.put(true, 0, Label { time, cost: 0, prev: NONE, next: NONE, stop, trip: secs, from: 0, to: 0, off: 0, kind: ACCESS });
@@ -739,15 +1045,19 @@ impl Search<'_, '_> {
                 }
                 let from = start + secs as i32;
                 for off in self.off_lo..=self.off_hi {
-                    let mut rank = self.first_rank(&route, pos, off, from);
-                    while rank < route.trips {
+                    let run = self.run(r, off);
+                    if !self.in_reach(&run, off, from) {
+                        continue;
+                    }
+                    let mut rank = self.first_rank(&run, pos, off, from);
+                    while (rank as usize) < run.trips.len() {
                         self.steps += 1;
-                        let trip = self.trip_at(&route, rank);
-                        let t = self.board_time(self.tt.trip_times(trip), pos, off);
+                        let (trip, times) = self.trip_at(&run, rank);
+                        let t = self.board_time(times, pos, off);
                         if t > from + window || self.steps > self.max_steps {
                             break;
                         }
-                        if self.tt.runs(self.tt.trip(trip).service, self.day + off) && !bit(&self.prefs.trip_closed, trip) {
+                        if !bit(&self.prefs.trip_closed, trip) {
                             out.push((t - secs as i32, at as u32));
                         }
                         rank += 1;
@@ -758,13 +1068,13 @@ impl Search<'_, '_> {
         out
     }
 
-    /// The first rank in a route whose trip, on a day offset, boards at a place at `time` or later; the number of
-    /// trips when none does.
-    fn first_rank(&self, route: &Route, pos: u32, off: i32, time: i32) -> u32 {
-        let (mut lo, mut hi) = (0u32, route.trips);
+    /// The first rank in a day's run of a route whose trip boards at a place at `time` or later; the number of trips
+    /// when none does.
+    fn first_rank(&self, run: &Run, pos: u32, off: i32, time: i32) -> u32 {
+        let (mut lo, mut hi) = (0u32, run.trips.len() as u32);
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
-            if self.board_time(self.tt.trip_times(self.trip_at(route, mid)), pos, off) < time { lo = mid + 1 } else { hi = mid }
+            if self.board_time(self.trip_at(run, mid).1, pos, off) < time { lo = mid + 1 } else { hi = mid }
         }
         lo
     }
@@ -862,7 +1172,7 @@ impl Search<'_, '_> {
 
     /// One is at `stop` at `time`, off the ride of label `prev`, and may board there.
     fn offer_ready(&mut self, round: usize, stop: u32, time: i32, cost: u32, prev: u32) {
-        if time > self.limit || bit(&self.prefs.closed, stop) || self.beaten_at_end(round, time, cost) || self.beaten(true, round, stop, time, cost) {
+        if bit(&self.prefs.closed, stop) || self.pointless(round, stop, time, cost) || self.beaten(true, round, stop, time, cost) {
             return;
         }
         if self.w.labels.len() >= self.max_labels {
@@ -876,7 +1186,7 @@ impl Search<'_, '_> {
     /// One is at `stop` at `time` off the ride of label `prev`, by a trip the feed has rules for: held apart from the
     /// stop's bag. With `rule`, it is the one thing that rule says waits.
     fn hold(&mut self, round: usize, stop: u32, time: i32, cost: u32, prev: u32, rule: u32) {
-        if time > self.limit || bit(&self.prefs.closed, stop) || self.beaten_at_end(round, time, cost) {
+        if bit(&self.prefs.closed, stop) || self.pointless(round, stop, time, cost) {
             return;
         }
         // under rules that only bar, one who is there no later and no dearer without rules can do all this one can
@@ -955,6 +1265,12 @@ impl Search<'_, '_> {
             let pos = if self.back { route.stops - 1 - i } else { i };
             let ps = self.tt.pattern_stop(route.first_stop + pos);
             let stop = ps.stop;
+            // Only at a stop marked in the round before does anyone board: a label there from an earlier search
+            // has boarded all it can, in the search that made it. With nobody riding, there is nothing to do.
+            let marked = self.w.mark_stamp[stop as usize] == self.w.search * 32 + round as u32 - 1;
+            if riding.is_empty() && !marked {
+                continue;
+            }
             let closed = bit(&self.prefs.closed, stop);
             let here = cost(&self.prefs.pass_cost, stop);
             if !riding.is_empty() && !closed && self.can_alight(ps) {
@@ -972,25 +1288,26 @@ impl Search<'_, '_> {
                     e.cost = e.cost.saturating_add(here);
                 }
             }
-            if i + 1 < route.stops && !closed && self.can_board(ps) {
-                let mut l = self.w.ready[stop as usize * self.w.rounds + round - 1];
+            if marked && i + 1 < route.stops && !closed && self.can_board(ps) {
+                let mut l = self.w.cells[stop as usize * self.w.rounds + round - 1].head[1];
                 while l != NONE {
                     let lab = self.w.labels[l as usize];
-                    self.board(&mut riding, &route, pos, l, &lab, line_cost.saturating_add(here), false);
+                    self.board(&mut riding, r, &route, pos, l, &lab, line_cost.saturating_add(here), false);
                     l = lab.next;
                 }
                 if self.w.held_rounds[stop as usize] >> (round - 1) & 1 == 1 {
                     let held = core::mem::take(&mut self.w.held[round - 1]);
-                    self.steps += held.len() as u64;
-                    for h in held.iter() {
+                    let from = self.w.held_from.get(round - 1).copied().unwrap_or(0).min(held.len());
+                    self.steps += (held.len() - from) as u64;
+                    for h in held[from..].iter() {
                         let lab = self.w.labels[h.label as usize];
                         if lab.stop != stop {
                             continue;
                         }
                         if h.rule == NONE {
-                            self.board(&mut riding, &route, pos, h.label, &lab, line_cost.saturating_add(here), true);
+                            self.board(&mut riding, r, &route, pos, h.label, &lab, line_cost.saturating_add(here), true);
                         } else {
-                            self.board_waiting(&mut riding, &route, pos, h, &lab, line_cost.saturating_add(here));
+                            self.board_waiting(&mut riding, r, &route, pos, h, &lab, line_cost.saturating_add(here));
                         }
                     }
                     self.w.held[round - 1] = held;
@@ -1006,11 +1323,12 @@ impl Search<'_, '_> {
 
     /// A ride ends at `stop` at `time`.
     fn offer_arrived(&mut self, round: usize, stop: u32, time: i32, cost: u32, e: &Riding, pos: u32) {
-        if time > self.limit || self.beaten_at_end(round, time, cost) {
+        if self.pointless(round, stop, time, cost) {
             return;
         }
         // by a trip the feed has rules for here, the arrival is unlike any other: it is held apart
-        let special = self.rules && self.has_rules(e.trip, stop);
+        let any = if self.back { &self.ix.rule_to } else { &self.ix.rule_from };
+        let special = self.rules && any.get((stop >> 6) as usize).is_some_and(|w| w >> (stop & 63) & 1 == 1) && self.has_rules(e.trip, stop);
         if !special && self.beaten(false, round, stop, time, cost) {
             return;
         }
@@ -1047,6 +1365,9 @@ impl Search<'_, '_> {
                 let f = Found { time: end, cost, rides: round as u32, label: index, secs };
                 self.w.front.retain(|o| !(f.time <= o.time && f.cost <= o.cost && f.rides <= o.rides));
                 self.w.front.push(f);
+                for best in self.w.end_best[round.min(MAX_RIDES as usize)..].iter_mut() {
+                    *best = (*best).min(end);
+                }
                 if self.w.found.len() < 4096 {
                     self.w.found.push(f);
                 } else {
@@ -1116,21 +1437,23 @@ impl Search<'_, '_> {
 
     /// The one thing a rule says waits for the ride before a held label: its trip of this route, or the first trip
     /// of its line, leaving once the ride before is in.
-    fn board_waiting(&mut self, riding: &mut Vec<Riding>, route: &Route, pos: u32, h: &Held, lab: &Label, cost_here: u32) {
-        let r = self.tt.rule(h.rule);
-        let (_, to) = self.sides(&r);
+    fn board_waiting(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, h: &Held, lab: &Label, cost_here: u32) {
+        let rule = self.tt.rule(h.rule);
+        let (_, to) = self.sides(&rule);
         if !fits(to.2, route.line) || bit(&self.prefs.line_closed, route.line) {
             return;
         }
         let base = lab.cost.saturating_add(cost(&self.prefs.stop_cost, lab.stop)).saturating_add(cost_here);
         let mut best: Option<(i32, Riding)> = None;
         for off in self.off_lo..=self.off_hi {
-            let mut rank = if to.1 == NONE { self.first_rank(route, pos, off, lab.time) } else { 0 };
-            while rank < route.trips {
+            // the rule's own trip if it names one, else the line's first of the day that can be caught
+            let run = self.run(r, off);
+            let mut rank = if to.1 == NONE { self.first_rank(&run, pos, off, lab.time) } else { 0 };
+            while to.1 != NONE || (rank as usize) < run.trips.len() {
                 self.steps += 1;
-                let trip = if to.1 == NONE { self.trip_at(route, rank) } else { to.1 };
+                let trip = if to.1 == NONE { self.trip_at(&run, rank).0 } else { to.1 };
                 rank += 1;
-                if trip < route.first_trip || trip >= route.first_trip + route.trips {
+                if trip < route.first_trip || trip >= route.first_trip.saturating_add(route.trips) {
                     break;
                 }
                 let times = self.tt.trip_times(trip);
@@ -1152,11 +1475,18 @@ impl Search<'_, '_> {
     }
 
     /// Those of label `lab`, ready at a stop, board the first trip of the route they can catch.
-    fn board(&mut self, riding: &mut Vec<Riding>, route: &Route, pos: u32, l: u32, lab: &Label, cost_here: u32, held: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn board(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, l: u32, lab: &Label, cost_here: u32, held: bool) {
         let stop = lab.stop;
         // only a held label comes off a trip the feed has rules for
-        let before = if held { self.before(lab, stop) } else { None };
         let base = lab.cost.saturating_add(cost(&self.prefs.stop_cost, stop)).saturating_add(cost_here);
+        // Whoever rides a trip that leaves here no later than this label is ready, at no more cost, is ahead of
+        // anything the label can catch: the usual case along a route, and no search for a trip is needed. (Not so
+        // where trips differ in cost, or the label is under the feed's rules.)
+        if !held && self.prefs.trip_cost.is_none() && riding.iter().any(|e| e.cost <= base && self.board_time(e.times, pos, e.off) <= lab.time) {
+            return;
+        }
+        let before = if held { self.before(lab, stop) } else { None };
         let trip_costs = self.prefs.trip_cost.is_some();
         let mut best = NEVER;
         let step = if self.back { -1 } else { 1 };
@@ -1166,16 +1496,20 @@ impl Search<'_, '_> {
                 break;
             }
             // the first trip of this day that can be caught, and with costly trips a few later and cheaper ones
-            let mut rank = self.first_rank(route, pos, off, lab.time);
+            let run = self.run(r, off);
+            if !self.in_reach(&run, off, lab.time) {
+                off += step;
+                continue;
+            }
+            let mut rank = self.first_rank(&run, pos, off, lab.time);
             let (mut cheapest, mut looked) = (u32::MAX, 0);
-            while rank < route.trips && looked < 32 {
+            while (rank as usize) < run.trips.len() && looked < 32 {
                 self.steps += 1;
-                let trip = self.trip_at(route, rank);
+                let (trip, times) = self.trip_at(&run, rank);
                 rank += 1;
-                if !self.tt.runs(self.tt.trip(trip).service, self.day + off) || bit(&self.prefs.trip_closed, trip) {
+                if bit(&self.prefs.trip_closed, trip) {
                     continue;
                 }
-                let times = self.tt.trip_times(trip);
                 let time = self.board_time(times, pos, off);
                 if time > self.limit {
                     break;

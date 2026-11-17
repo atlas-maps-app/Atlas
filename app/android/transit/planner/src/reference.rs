@@ -4,7 +4,8 @@
 //! memory, so it is the tests' and the tool's, not the phone's.
 //!
 //! It knows no cost of wishes, no cap on rides and none of the feed's rules between trips: a query it is compared on
-//! sets `rules` off and `max_rides` high.
+//! sets `rules` off and `max_rides` high. It does keep to the seconds the query's search follows ([`Query::followed`]):
+//! what ends past them is no answer to either.
 
 use crate::NONE;
 use crate::file::Timetable;
@@ -105,9 +106,10 @@ impl Reference {
             }
         }
         let mut best = i32::MAX;
+        let until = q.followed().1.max(time);
         let start = self.connections.partition_point(|c| c.depart < time);
         for c in &self.connections[start..] {
-            if c.depart >= best {
+            if c.depart >= best || c.depart > until {
                 break;
             }
             if !on[c.ride as usize] {
@@ -121,10 +123,10 @@ impl Reference {
                 on[c.ride as usize] = false;
                 continue;
             }
-            if !c.alight || bit(&prefs.closed, c.to) {
+            if !c.alight || bit(&prefs.closed, c.to) || c.arrive > until {
                 continue;
             }
-            if last[c.to as usize] != NONE {
+            if last[c.to as usize] != NONE && c.arrive + last[c.to as usize] as i32 <= until {
                 best = best.min(c.arrive + last[c.to as usize] as i32);
             }
             if c.arrive < arrived[c.to as usize] {
@@ -163,10 +165,11 @@ impl Reference {
             }
         }
         let mut best = i32::MIN;
+        let since = q.followed().0.min(time);
         let start = self.by_arrival.partition_point(|i| self.connections[*i as usize].arrive > time);
         for i in &self.by_arrival[start..] {
             let c = &self.connections[*i as usize];
-            if c.arrive <= best {
+            if c.arrive <= best || c.arrive < since {
                 break;
             }
             if !on[c.ride as usize] {
@@ -180,10 +183,10 @@ impl Reference {
                 on[c.ride as usize] = false;
                 continue;
             }
-            if !c.board || bit(&prefs.closed, c.from) {
+            if !c.board || bit(&prefs.closed, c.from) || c.depart < since {
                 continue;
             }
-            if first[c.from as usize] != NONE {
+            if first[c.from as usize] != NONE && c.depart - first[c.from as usize] as i32 >= since {
                 best = best.max(c.depart - first[c.from as usize] as i32);
             }
             if c.depart > left[c.from as usize] {

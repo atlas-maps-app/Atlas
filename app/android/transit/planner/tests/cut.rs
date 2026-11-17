@@ -180,7 +180,7 @@ fn the_answers_are_the_same_everywhere() {
             }
         }
     }
-    assert_eq!((journeys, sum), (1171, 17_126_150_580_712_469_092));
+    assert_eq!((journeys, sum), (1171, 3_551_298_446_134_272_512));
 }
 
 #[test]

@@ -135,7 +135,7 @@ pub fn query(tt: &Timetable, rng: &mut Rng) -> Query {
             0 => What::Stop { stop: rng.below(stops + 1) as u32, through },
             1 => What::Station { station: rng.below(stops + 1) as u32, through },
             2 => What::Area { area: Area::Circle { lat: s.lat, lon: s.lon, radius_m: rng.word() }, through },
-            3 => What::Area { area: Area::Box { south: s.lat - 50_000, west: s.lon - 50_000, north: s.lat + 50_000, east: s.lon + 50_000 }, through },
+            3 => What::Area { area: Area::Box { south: s.lat.saturating_sub(50_000), west: s.lon.saturating_sub(50_000), north: s.lat.saturating_add(50_000), east: s.lon.saturating_add(50_000) }, through },
             4 => What::Area { area: Area::Outline((0..rng.below(6)).map(|_| (rng.next() as i32, rng.next() as i32)).collect()), through },
             5 => What::Line(rng.below(tt.lines() as u64 + 1) as u32),
             6 => What::Operator(rng.below(tt.operators() as u64 + 1) as u32),

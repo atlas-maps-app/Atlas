@@ -480,6 +480,10 @@ impl<'a> Timetable<'a> {
     pub fn walks(&self) -> u32 {
         self.sec[XFER].n
     }
+    /// How many pattern stops there are: every pattern's stops, one after another.
+    pub fn pattern_stops(&self) -> u32 {
+        self.sec[PSTP].n
+    }
     pub fn rules(&self) -> u32 {
         self.sec[TRUL].n
     }
