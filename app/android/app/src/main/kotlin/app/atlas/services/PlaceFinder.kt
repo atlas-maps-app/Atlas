@@ -130,10 +130,14 @@ class LayeredPlaceFinder(
                     out[id] = NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE)
                     continue
                 }
-                val packed = inPacks(centre, radiusM, filter, limit) ?: inWindowPacks(centre, radiusM, filter, limit)
-                if (packed != null) {
-                    out[id] = NearbyPlaces(packed.value, PlaceOrigin.PACK)
-                    continue
+                // as [nearby]: what the phone holds, then the windows Atlas's packs add to it; a whole circle is the
+                // answer, a part of one only the first answer, and Overpass is asked for the rest
+                var packed = inPacks(centre, radiusM, filter, limit)
+                if (packed == null || packed.partial) inWindowPacks(centre, radiusM, filter, limit)?.let { packed = it }
+                val first = packed
+                if (first != null) {
+                    out[id] = NearbyPlaces(first.value, PlaceOrigin.PACK)
+                    if (!first.partial) continue
                 }
                 val selectors = OverpassSelectors.of(filter) ?: continue
                 ask[id] = filter to selectors
@@ -153,7 +157,11 @@ class LayeredPlaceFinder(
             for ((id, f) in ask) {
                 out[id] = answer.fold(
                     { all -> NearbyPlaces(nearest(all.filter { f.first.matches(it.tags) }, centre, limit), PlaceOrigin.ONLINE) },
-                    { e -> NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, e.message ?: if (e is IOException) "offline" else e.toString()) },
+                    { e ->
+                        // where Overpass fails, the part the phone had stays, with what went wrong
+                        val why = e.message ?: if (e is IOException) "offline" else e.toString()
+                        out[id]?.copy(error = why) ?: NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, why)
+                    },
                 )
             }
             out
