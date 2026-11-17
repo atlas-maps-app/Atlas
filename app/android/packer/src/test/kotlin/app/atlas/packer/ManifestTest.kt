@@ -77,7 +77,7 @@ class ManifestTest {
         val file = File(System.getProperty("atlas.repo"), "app/android/packs/regions.json")
         val r = Manifest.readRegions(file)
         assertEquals(
-            listOf("netherlands", "belgium", "luxembourg", "new-york", "paris", "tuscany", "norway", "greater-london"),
+            listOf("netherlands", "belgium", "luxembourg", "new-york", "paris", "tuscany", "norway", "germany", "greater-london"),
             r.map { it.id },
         )
         for (region in r) {
@@ -87,8 +87,8 @@ class ManifestTest {
             assertTrue(region.id, region.country!!.length == 2)
         }
         assertEquals(listOf("tuscany"), r.filter { it.clip }.map { it.id })
-        // Norway's polygon holds some 4.4 million L14 windows: an index too big for the phone to download whole
-        assertEquals(listOf("norway"), r.filter { !it.windows }.map { it.id })
+        // every region gets its windows' data and tiles, Norway's open sea and Germany too
+        assertEquals(emptyList<String>(), r.filter { !it.windows }.map { it.id })
     }
 
     @Test
