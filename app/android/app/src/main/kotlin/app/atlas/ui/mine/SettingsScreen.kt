@@ -116,11 +116,8 @@ fun SettingsScreen(args: Dest.Settings, nav: Navigator) {
     val noneYet = stringResource(R.string.mine_settings_offline_none)
     val noCar = stringResource(R.string.mine_settings_car_none)
     val offlineValue = if (details.isEmpty()) "" else stringResource(R.string.mine_settings_offline_value, details.size, RegionEngine.size(details.sumOf { it.bytes }))
-    val look = when (theme) {
-        "DAY" -> stringResource(R.string.mine_theme_day)
-        "NIGHT" -> stringResource(R.string.mine_theme_night)
-        else -> stringResource(R.string.mine_settings_look_auto)
-    }
+    // the look's name, then the theme where it isn't Auto, as the Layers sheet's row says it
+    val look = lookRowValue(settings)
     BoardPage(stringResource(R.string.mine_settings_title), onBack = { nav.back() }, scrollState = scroll) {
         // The voice: the steel knob, what it says and its buttons (the board's card: 4 px in, a 96 px row, 14 px gaps).
         BoardCard(Modifier.onGloballyPositioned { marks["voice"] = it.positionInParent().y }, padding = PaddingValues(horizontal = 14.dp, vertical = 4.dp)) {

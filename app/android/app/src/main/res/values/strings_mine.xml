@@ -120,7 +120,6 @@
     <string name="mine_settings_24h">24 h</string>
     <string name="mine_settings_12h">12 h</string>
     <string name="mine_settings_look">Map look</string>
-    <string name="mine_settings_look_auto">auto day / night</string>
     <string name="mine_settings_names">Names on the map</string>
     <string name="mine_settings_names_local">local names</string>
     <string name="mine_settings_text_size">Text size</string>
@@ -372,7 +371,6 @@
     <string name="mine_layers_grain">Grain</string>
     <string name="mine_layers_glass">Frosted glass</string>
     <string name="mine_layers_tone">Tone</string>
-    <string name="mine_layers_tone_today">%1$d %% · today</string>
     <string name="mine_layers_tone_value">%1$d %%</string>
     <string name="mine_layers_tone_off">Off</string>
     <string name="mine_layers_tone_cd">Tone %1$d %%</string>
