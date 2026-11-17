@@ -222,7 +222,9 @@
     <string name="mine_about_s_places">Symbolen, voorinstellingen en merken</string>
     <string name="mine_about_s_code">Lettertypen, overgenomen code en gegevens</string>
     <string name="mine_about_s_libs">Bibliotheken</string>
-    <string name="mine_about_mit">Atlas zelf valt onder de MIT-licentie. De volledige teksten van de licenties staan in de broncode in de LICENSES.md van elke module.</string>
+    <string name="mine_about_mit">Atlas zelf valt onder de MIT-licentie.</string>
+    <string name="mine_about_licence">Licentie</string>
+    <string name="mine_about_read">Lees de licentie</string>
     <string name="mine_phone_title">Nieuwe telefoon</string>
     <string name="mine_phone_text">Neem je instellingen, bewaarde plekken en lijsten mee naar een andere telefoon als één gewoon bestand: zet het op een schijf, stuur het naar jezelf en open het daar. Niets gaat via Atlas.</string>
     <string name="mine_phone_in_file">In het bestand</string>

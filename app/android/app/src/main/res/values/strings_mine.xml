@@ -222,7 +222,9 @@
     <string name="mine_about_s_places">Symbols, presets and brands</string>
     <string name="mine_about_s_code">Fonts, ported code and data</string>
     <string name="mine_about_s_libs">Libraries</string>
-    <string name="mine_about_mit">Atlas itself is under the MIT licence. The full texts of the licences ship with the app\'s source in each module\'s LICENSES.md.</string>
+    <string name="mine_about_mit">Atlas itself is under the MIT licence.</string>
+    <string name="mine_about_licence">Licence</string>
+    <string name="mine_about_read">Read the licence</string>
     <string name="mine_phone_title">New phone</string>
     <string name="mine_phone_text">Take your settings, saved places and lists to another phone as one plain file: put it on a drive, send it to yourself, then open it there. Nothing goes through Atlas.</string>
     <string name="mine_phone_in_file">In the file</string>

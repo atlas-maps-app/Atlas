@@ -18,8 +18,17 @@ line, with each credit they give (a font two modules carry, a family's regular a
 that shows it (Licences.section in AboutScreen.kt, mirrored by section() below). A card shows the fonts first: the
 lines of a table headed Font, or with a Family column.
 
-The list keeps a hash of each licence file (`made_from`). MineStateTest hashes them again and fails while the list is
-behind its files: run this again after changing one. Python 3 standard library only.
+A tap on a line opens its licence in full. The two tables of `ui/mine/LICENSES.md` marked "the licence texts" and "the
+notices" say which: each text once, cut whole from the file that holds it (a copy the repository ships, or one taken
+from the licence's publisher into `art/licences/`), with the licence names that open it; and the lines whose own notice
+or texts are not their credit and their licence's name. The texts go to `res/raw/mine_licence_texts.json`, read only
+when one is opened; the list gets which text each licence name opens (`names`) and each line's notice and texts.
+
+Atlas's own licence (the repository's `LICENSE`, the MIT License) opens from the top of the screen (`atlas`).
+
+The list keeps a hash of each licence file (`made_from`) and of each file a text or notice is taken from
+(`texts_from`). MineStateTest hashes them again and fails while the list is behind its files: run this again after
+changing one. Python 3 standard library only.
 """
 import glob
 import hashlib
@@ -33,6 +42,8 @@ while not os.path.isdir(os.path.join(ROOT, 'app', 'android')):  # the repository
     ROOT = os.path.dirname(ROOT)
 ANDROID = os.path.join(ROOT, 'app', 'android')
 OUT = os.path.join(ANDROID, 'app', 'src', 'main', 'res', 'raw', 'mine_licences.json')
+TEXTS_OUT = os.path.join(ANDROID, 'app', 'src', 'main', 'res', 'raw', 'mine_licence_texts.json')
+TEXTS = os.path.join(HERE, '..', 'LICENSES.md')  # ui/mine/LICENSES.md: the texts and the notices
 
 # The Gradle catalogue's libraries in the APK: name, credit, licence.
 LIBRARIES = [
@@ -76,23 +87,121 @@ def made_from(path):
         return hashlib.sha256(f.read().replace(b'\r\n', b'\n')).hexdigest()
 
 
-def about_tables(path):
-    """The rows of each table of a licence file, but a table marked not to be on About."""
+def read(path):
+    """A file's text, line ends as \\n."""
     with open(path, encoding='utf-8', newline='') as f:
-        lines = f.read().replace('\r\n', '\n').split('\n')
+        return f.read().replace('\r\n', '\n')
+
+
+def tables(path):
+    """(the nearest line above, the rows) of each table of a licence file."""
     out, rows, above = [], None, ''
-    for line in lines:
+    for line in read(path).split('\n'):
         if line.startswith('|'):
             if rows is None:
                 rows = []
-                if not MARK.match(above):
-                    out.append(rows)
+                out.append((above, rows))
             rows.append(line)
         else:
             rows = None
         if line.strip():
             above = line.strip()
     return out
+
+
+def about_tables(path):
+    """The rows of each table of a licence file, but a table marked not to be on About."""
+    return [rows for above, rows in tables(path) if not MARK.match(above)]
+
+
+def records(rows):
+    """A table's rows as {heading: cell}, the headings in lower case, the cells cleaned."""
+    head, out = None, []
+    for line in rows:
+        cells = [c.strip() for c in line.strip().strip('|').split('|')]
+        if all(re.fullmatch(r':?-{2,}:?', c) for c in cells):
+            continue
+        if head is None:
+            head = [c.lower() for c in cells]
+            continue
+        out.append({h: clean(cells[i]) if i < len(cells) else '' for i, h in enumerate(head)})
+    return out
+
+
+def marked(path, what):
+    """The records of the table of [path] marked "not on About: [what]"."""
+    found = [records(rows) for above, rows in tables(path) if MARK.match(above) and what in above]
+    if len(found) != 1:
+        raise SystemExit('%s has %d tables marked "%s"' % (path, len(found), what))
+    return found[0]
+
+
+def find(lines, cell, after, path):
+    """The index of the first line from [after] that is [cell] (a cell ending in … is a line's start)."""
+    for i in range(after, len(lines)):
+        line = lines[i].strip()
+        if line == cell or (cell.endswith('…') and line.startswith(cell[:-1])):
+            return i
+    raise SystemExit('%s has no line %r' % (path, cell))
+
+
+def cut(path, start, end):
+    """The lines of [path] from the line [start] to the line [end], whole (the first and last line when blank)."""
+    lines = read(path).split('\n')
+    while lines and not lines[-1].strip():
+        lines.pop()
+    a = find(lines, start, 0, path) if start else next(i for i, l in enumerate(lines) if l.strip())
+    b = find(lines, end, a, path) if end else len(lines) - 1
+    return '\n'.join(lines[a:b + 1])
+
+
+def words(text):
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def licence_texts(items):
+    """The texts, by id ({title, text}); which text each licence name opens; and the files they are taken from. Each
+    line of [items] that has a notice or texts of its own gets them."""
+    texts, names, used = {}, {}, set()
+    for r in marked(TEXTS, 'the licence texts'):
+        tid, path = r['text'], os.path.join(ANDROID, r['file'])
+        if tid in texts:
+            raise SystemExit('the licence text %s twice' % tid)
+        texts[tid] = {'title': r['title'], 'text': cut(path, r['from'], r['to'])}
+        used.add(path)
+        for name in filter(None, (n.strip() for n in r['licences'].split(';'))):
+            if names.setdefault(name, tid) != tid:
+                raise SystemExit('the licence %s opens %s and %s' % (name, names[name], tid))
+    by_what = {i['what']: i for i in items}
+    for r in marked(TEXTS, 'the notices'):
+        item = by_what.get(r['what'])
+        if item is None:
+            raise SystemExit('the notice of %s, which About does not list' % r['what'])
+        paths = [os.path.join(ANDROID, p.strip()) for p in r['taken from'].split(';') if p.strip()]
+        used.update(paths)
+        held = ' '.join(words(read(p)) for p in paths)
+        notice = [l.strip() for l in r['notice'].split('<br>') if l.strip()]
+        for line in notice:
+            if words(line) not in held:
+                raise SystemExit('the notice of %s: %r is in none of %s' % (r['what'], line, r['taken from']))
+        if notice:
+            item['notice'] = '\n'.join(notice)
+        own = [t.strip() for t in r['texts'].split(';') if t.strip()]
+        for t in own:
+            if t not in texts:
+                raise SystemExit('the notice of %s names the text %s, which the texts table lacks' % (r['what'], t))
+        if own:
+            item['texts'] = own
+    # Atlas's own licence, the repository's LICENSE: its copyright line, then the MIT License's text
+    own = os.path.join(ROOT, 'LICENSE')
+    lines = [l for l in read(own).split('\n') if l.strip()]
+    notice = [l for l in lines if l.startswith('Copyright')]
+    if len(notice) != 1 or words(read(own)).partition(notice[0])[2].strip() != words(texts['mit']['text']):
+        raise SystemExit('LICENSE is no longer the MIT License with its copyright line')
+    used.add(own)
+    atlas = {'notice': notice[0], 'texts': ['mit']}
+    files = {os.path.relpath(p, ANDROID).replace(os.sep, '/'): made_from(p) for p in sorted(used)}
+    return texts, names, files, atlas
 
 
 def lines_of(path, module):
@@ -158,11 +267,17 @@ def main():
     for what, credit, lic in LIBRARIES:
         found.append({'module': 'libraries', 'what': what, 'licence': lic, 'credit': credit})
     items = once(found)
+    texts, names, texts_from, atlas = licence_texts(items)
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, 'w', encoding='utf-8') as f:
-        json.dump({'items': items, 'made_from': hashes}, f, ensure_ascii=False, separators=(',', ':'))
+        json.dump({'items': items, 'names': names, 'atlas': atlas, 'made_from': hashes, 'texts_from': texts_from}, f,
+                  ensure_ascii=False, separators=(',', ':'))
         f.write('\n')
-    print(len(items), 'licence lines from', len(paths), 'files')
+    with open(TEXTS_OUT, 'w', encoding='utf-8') as f:
+        json.dump({'texts': texts}, f, ensure_ascii=False, separators=(',', ':'))
+        f.write('\n')
+    print(len(items), 'licence lines from', len(paths), 'files;', len(texts), 'licence texts,',
+          sum(len(t['text'].encode('utf-8')) for t in texts.values()), 'bytes')
 
 
 if __name__ == '__main__':
