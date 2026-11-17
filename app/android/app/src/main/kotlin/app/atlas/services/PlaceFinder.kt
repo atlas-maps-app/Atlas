@@ -60,8 +60,9 @@ const val NEARBY_ONLINE_MS = 15_000L
 
 /**
  * Places by category in layers: the downloaded regions' place stores first (offline, every tag); where they have
- * nothing, the map's packs on the phone ([LocalData.inPacks]: offline, every tag), and Overpass when [online] where no
- * pack holds the whole circle (every tag, so opening hours and facts).
+ * nothing, the map's packs and windows on the phone ([LocalData.inPacks]: offline, every tag), online the windows the
+ * phone keeps no data for from Atlas's packs ([LocalData.inWindowPacks]), and Overpass when [online] where they do not
+ * hold the whole circle (every tag, so opening hours and facts).
  */
 class LayeredPlaceFinder(
     private val local: () -> LocalData?,
@@ -83,6 +84,12 @@ class LayeredPlaceFinder(
             emit(NearbyPlaces(packed.value, PlaceOrigin.PACK))
             // Packs around the whole circle answer fully, with every tag: nothing more to ask.
             if (!packed.partial) return@flow
+        }
+        // online, the map's windows the phone keeps no data for from Atlas's packs, before Overpass
+        val windows = inWindowPacks(centre, radiusM, filter, limit)
+        if (windows != null) {
+            if (packed == null || windows.partial != packed.partial || windows.value.map { it.key } != packed.value.map { it.key }) emit(NearbyPlaces(windows.value, PlaceOrigin.PACK))
+            if (!windows.partial) return@flow
         }
         val op = overpass()
         if (op != null && online()) {
@@ -123,7 +130,7 @@ class LayeredPlaceFinder(
                     out[id] = NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE)
                     continue
                 }
-                val packed = inPacks(centre, radiusM, filter, limit)
+                val packed = inPacks(centre, radiusM, filter, limit) ?: inWindowPacks(centre, radiusM, filter, limit)
                 if (packed != null) {
                     out[id] = NearbyPlaces(packed.value, PlaceOrigin.PACK)
                     continue
@@ -162,9 +169,18 @@ class LayeredPlaceFinder(
             .takeIf { it.isNotEmpty() }
     }
 
-    /** What the map's packs on the phone hold of [filter] within [radiusM] of [centre]; null where none holds the centre. */
+    /** What the map's packs and windows on the phone hold of [filter] within [radiusM] of [centre]; null where none holds any of it. */
     private fun inPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int): LocalAnswer<List<Place>>? = try {
         local()?.inPacks(centre, radiusM, filter, limit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
+    /** [inPacks] once, online, the windows the phone keeps no data for came from Atlas's packs ([LocalData.inWindowPacks]); null offline. */
+    private suspend fun inWindowPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int): LocalAnswer<List<Place>>? = try {
+        if (online()) local()?.inWindowPacks(centre, radiusM, filter, limit) else null
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {

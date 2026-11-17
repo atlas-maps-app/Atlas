@@ -202,7 +202,7 @@ class GoModelsTest {
     fun earsOnlyCallsOutTheWesterkerksSurroundings() = runBlocking {
         val s = testServices(places = true)
         val voice = NoVoice()
-        val ears = EarsSession(voice, GuideSettings(mode = Mode.WALK), CoroutineScope(Dispatchers.Unconfined), s.go::placesAround, s.clock.zone)
+        val ears = EarsSession(voice, GuideSettings(mode = Mode.WALK), CoroutineScope(Dispatchers.Unconfined), s.go::placesNow, s.clock.zone)
         val at = Fix(Services.WESTERKERK, s.clock.instant(), 5.0, 0.0, null)
         ears.onFix(at)
         val v = ears.view.value

@@ -132,12 +132,14 @@ fun BrandsScreen(args: Dest.Brands, nav: Navigator) {
     var showHidden by rememberSaveable { mutableStateOf(false) }
     val hidden by services.saved.hiddenBrands.collectAsStateWithLifecycle()
     val filter = remember(args.category) { args.category?.let { Categories.byId(it) }?.let { LayeredPlaceFinder.filterOf(it) } }
+    // the phone's chains at once, then what the network adds
     val around by produceState<Around?>(null, here, filter) {
-        val all = BrandsAround.near(services, here, BRANDS_RADIUS_M)
-        val n = if (filter == null) all else BrandsAround.split(
-            (all.chains.flatMap { it.branches } + all.independents).filter { filter.matches(it.tags) }, here, BRANDS_RADIUS_M, all.origin,
-        )
-        value = Around(n, withContext(Dispatchers.Default) { BrandsAround.stacks(n.chains) })
+        BrandsAround.nearAsFound(services, here, BRANDS_RADIUS_M).collect { all ->
+            val n = if (filter == null) all else BrandsAround.split(
+                (all.chains.flatMap { it.branches } + all.independents).filter { filter.matches(it.tags) }, here, BRANDS_RADIUS_M, all.origin,
+            )
+            value = Around(n, withContext(Dispatchers.Default) { BrandsAround.stacks(n.chains) })
+        }
     }
     val n = around?.nearby
     // the hidden brands leave their stacks, unless they are shown

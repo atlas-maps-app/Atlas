@@ -55,6 +55,7 @@ import app.atlas.nav.Navigator
 import app.atlas.providers.Forecast
 import app.atlas.providers.WeatherHour
 import app.atlas.services.Units
+import app.atlas.services.soonest
 import app.atlas.ui.kit.CurrentWeather
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
@@ -120,7 +121,8 @@ fun WeatherScreen(args: Dest.Weather, nav: Navigator) {
     LaunchedEffect(at, advice.any { it.kind == Advice.Kind.RAIN_SOON || it.kind == Advice.Kind.RAIN_NOW }) {
         if (advice.any { it.kind == Advice.Kind.RAIN_SOON || it.kind == Advice.Kind.RAIN_NOW }) {
             // a café is a kind (a preset) of the restaurants' category, not a category of its own
-            cafe = runCatching { services.localData.places(at, 800.0, CAFE, 3).value.firstOrNull() }.getOrNull()
+            // the phone's café at once where it holds one; the network only where it holds none
+            cafe = runCatching { services.localData.placesAsFound(at, 800.0, CAFE, 3).soonest().value.firstOrNull() }.getOrNull()
         }
     }
     val log = remember(f, live) { services.mine.pressure.readings() }

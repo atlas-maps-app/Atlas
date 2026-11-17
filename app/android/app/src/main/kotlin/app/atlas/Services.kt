@@ -260,7 +260,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         SearchEngine(placeStores, geocoder = if (config.offline) null else geocoder, overpass = if (config.offline) null else overpass)
     }
 
-    /** Nearby places by category (the Map home's row and needs): the place stores, else the map's packs, then online. */
+    /** Nearby places by category (the Map home's row and needs): the place stores, else the map's packs and windows, then online. */
     val places: PlaceFinder by lazy {
         LayeredPlaceFinder(
             local = { localData },
@@ -461,6 +461,11 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
             kept = { x, y -> app.atlas.mapview.MapEngine.windowsDir()?.let { File(it, "${app.atlas.tiles.WindowPacks.LEVEL}-$x-$y.json.gz") } },
             packed = { x, y -> if (config.offline || !connectivity.online.value) null else mapData.packedWindow(x, y) },
         )
+        // every other lookup's places where nothing on the phone holds them: the same windows' data, kept or from the packs
+        val windowPlaces = app.atlas.services.WindowPlaces(
+            dir = { app.atlas.mapview.MapEngine.windowsDir() },
+            packed = { x, y -> if (config.offline || !connectivity.online.value) throw java.io.IOException("offline") else mapData.packedWindow(x, y) },
+        )
         app.atlas.services.LocalData(
             stores = { placeStores },
             packs = shelf,
@@ -468,6 +473,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
             isOnline = { !config.offline && connectivity.online.value },
             onClose = shelf::close,
             windows = { at, radiusM -> windows.around(at, radiusM, HERE_WINDOW_MS) },
+            windowPlaces = windowPlaces,
         )
     }
 

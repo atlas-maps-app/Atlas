@@ -146,8 +146,8 @@ class GoTabViewModel(private val services: Services) : ViewModel() {
         val readiness = if (services.segments.has(tile)) Readiness.Ready
         else Readiness.Missing(SegmentNeed(tile.removeSuffix(".rd5"), SegmentOffer.size(services.context, services.segments, tile, services.connectivity.online.value)))
         state.update { it.copy(readiness = readiness) }
-        val around = hub.placesAround(at, MOVING_RADIUS_M)
-        state.update { it.copy(moving = count(around, at)) }
+        // the phone's places at once, then what the network adds
+        hub.placesAround(at, MOVING_RADIUS_M).collect { around -> state.update { it.copy(moving = count(around, at)) } }
     }
 
     /** Plans the way to each sign by the chosen mode, so the sign shows its time; signs keep their crow-fly distance until then. */
