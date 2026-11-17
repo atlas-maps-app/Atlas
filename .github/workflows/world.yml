@@ -1021,7 +1021,7 @@ jobs:
     env:
       TAG: ${{ github.event.inputs.refs || needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
-      # apk's Gradle caches, read only, as android.yml's likeness job reads them
+      # apk's Gradle caches, read only, as android.yml's mapcorecheck job reads them
       GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
       # the references' views, which WorldPackRefsTest draws
       VIEWS: app/android/mapcorecheck/src/test/resources/likeness/world-refs.json
@@ -1196,7 +1196,7 @@ jobs:
             echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | head -1
-      # android.yml's likeness job's ccache and lavapipe, read only: this job saves no cache
+      # android.yml's mapcorecheck job's ccache and lavapipe, read only: this job saves no cache
       - uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ccache-host
@@ -1249,7 +1249,7 @@ jobs:
           # on a failure the test's message too (the frames not drawn whole, with their notes), which Gradle's log gives
           # as its class and line alone
           if ! ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
-            -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
+            -Datlas.likeness.platform=lavapipe-x86_64 \
             -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace; then
             grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
             exit 1
@@ -1286,7 +1286,7 @@ jobs:
           draw() {
             # on a failure the test's message too (the frames not drawn whole, with their notes), as above
             if ! ATLAS_WORLD_REFS="$1" ./gradlew --no-configuration-cache :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
-              -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
+              -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 \
               -Datlas.likeness.report="$L" --rerun --stacktrace; then
               grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
               exit 1

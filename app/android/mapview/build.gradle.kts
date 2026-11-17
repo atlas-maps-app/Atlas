@@ -13,9 +13,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures { compose = true }
-    // The CPU raster of the renders' SVG, today's map's on the phone until the core drew every place (ENGINE.md step 3):
-    // in tests alone, as the likeness oracle (:likeness compiles the same folder into its tests), never in the APK.
-    sourceSets { getByName("test") { kotlin.srcDir("src/raster/kotlin") } }
     testOptions {
         unitTests {
             // Robolectric draws real pixels (native graphics) at SDK 34, the highest JDK 17 runs.
@@ -29,12 +26,6 @@ android {
                 // Screenshot tests always record, so a plain test run leaves the PNGs to look at (CI keeps them).
                 it.systemProperty("roborazzi.test.record", "true")
                 it.systemProperty("atlas.shots", layout.buildDirectory.dir("outputs/roborazzi").get().asFile.absolutePath)
-                // -Datlas.svg.only=<prefix> limits the SVG reference comparison to some files while working on them.
-                providers.systemProperty("atlas.svg.only").orNull?.let { only -> it.systemProperty("atlas.svg.only", only) }
-                providers.systemProperty("atlas.svg.file").orNull?.let { file -> it.systemProperty("atlas.svg.file", file) }
-                providers.systemProperty("atlas.svg.mode").orNull?.let { mode -> it.systemProperty("atlas.svg.mode", mode) }
-                // -Datlas.calibrate=true reruns the likeness calibration over every D8 case and rewrites likeness.json (G1)
-                providers.systemProperty("atlas.calibrate").orNull?.let { c -> it.systemProperty("atlas.calibrate", c) }
             }
         }
     }
@@ -55,7 +46,7 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
-    // The renders' SVG model and parser the CPU raster draws (src/raster), and their test fixtures.
+    // The anchors' test fixtures: AnchorCases, the regions' packs the tests read.
     testImplementation(project(":anchor"))
     testImplementation(testFixtures(project(":anchor")))
     testImplementation(libs.robolectric)

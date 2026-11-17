@@ -147,7 +147,7 @@ class WorldPackRefsTest {
         val proposal = JsonObject(LinkedHashMap(refs).apply {
             this["versions"] = JsonObject(LinkedHashMap(versions).apply { this[version] = JsonObject(proposed) })
         })
-        File(out, views).writeText(Ratchet.format(proposal) + "\n")
+        File(out, views).writeText(Likeness.format(proposal) + "\n")
         if (stored == null) {
             println("$name: version $version has no frames of $platform yet; this run's are in ${File(out, views)}")
             return

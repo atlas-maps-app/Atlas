@@ -289,11 +289,15 @@ class LayoutTest {
         }
         for (i in 0 until 20_000) frame(i) // warm up: the JIT compiles the writer
         val id = Thread.currentThread().id
-        val before = mx.getThreadAllocatedBytes(id)
-        for (i in 0 until 100_000) frame(i)
-        val after = mx.getThreadAllocatedBytes(id)
-        // the measurement itself costs nothing either way; anything per frame would show as megabytes
-        assertTrue("allocated ${after - before} bytes over 100,000 frames", after - before < 1024)
+        // the least of three windows: a one-off on this thread while the JIT settles (7,672 bytes once on CI, after
+        // fewer tests had run in the JVM before this one) is no frame's; anything per frame would show as megabytes in
+        // every window. The measurement itself costs nothing either way.
+        val windows = List(3) {
+            val before = mx.getThreadAllocatedBytes(id)
+            for (i in 0 until 100_000) frame(i)
+            mx.getThreadAllocatedBytes(id) - before
+        }
+        assertTrue("allocated $windows bytes over three windows of 100,000 frames", windows.min() < 1024)
     }
 }
 

@@ -28,7 +28,7 @@ class GenericTest {
     companion object {
         private lateinit var funcs: JsonObject
         private val outDir = File(Oracle.out, "port-closeup-generic")
-        private val trads = File(Oracle.repo, "render/traditions")
+        private val trads = File(Oracle.repo, "app/android/mapcore/traditions")
 
         @BeforeClass
         @JvmStatic
@@ -115,7 +115,7 @@ class GenericTest {
         val res = File(Oracle.repo, "app/android/render/src/main/resources/traditions")
         val repoFiles = trads.listFiles { f -> f.name.endsWith(".json") }!!.sortedBy { it.name }
         assertTrue(repoFiles.size >= 6)
-        for (f in repoFiles) assertEquals("resources/traditions/${f.name} is out of date with render/traditions", f.readText(), File(res, f.name).readText())
+        for (f in repoFiles) assertEquals("resources/traditions/${f.name} is out of date with mapcore/traditions", f.readText(), File(res, f.name).readText())
         Generic.tradDir = null
         for (f in repoFiles) {
             val id = f.name.removeSuffix(".json")

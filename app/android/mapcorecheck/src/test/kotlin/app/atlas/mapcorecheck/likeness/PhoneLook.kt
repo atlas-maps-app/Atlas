@@ -32,12 +32,8 @@ import java.time.ZoneId
 import javax.imageio.ImageIO
 import kotlin.concurrent.withLock
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cbrt
-import kotlin.math.hypot
 import kotlin.math.ln
 import kotlin.math.min
-import kotlin.math.pow
 
 /**
  * The JNI entry points of `CP/jni/TestLook.cpp` in the core's host build: the app's map frame (frame/MapFrame.hpp)
@@ -84,10 +80,8 @@ internal object LookHost {
 }
 
 /**
- * The phone look tool's core side (ENGINE.md, "On the user's phone first"): the core's frame of a view and moment as
- * the user's phone draws it, beside today's map's frame of the same view and moment as the phone rasterises it
- * (`:likeness`'s PhoneCanvas.kt draws that one into the same folder). Each step is the app's own code or the same
- * calls with the same inputs:
+ * The phone look tool (ENGINE.md, "On the user's phone first"): the core's frame of a view and moment as the user's
+ * phone draws it. Each step is the app's own code or the same calls with the same inputs:
  *
  * - the map: the app's map frame driven as the Bridge drives it ([LookHost]), at true depth as the phone draws it, the
  *   screen's haze, vignette and grain on (MapData.wire with the Look settings unset: MapCore.screenEffects);
@@ -110,7 +104,8 @@ internal object LookHost {
  *     ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.phonelook.out=/tmp/look \
  *         -Datlas.phonelook.views='edge=52.3735,4.8745,900,60,50'
  *
- * with the views, `-Datlas.phonelook.moment` and `-Datlas.phonelook.size` as PhoneCanvas.kt takes them, and
+ * with the views (`<name>=<lat>,<lon>,<distance>,<bearing>,<pitch>;…`), `-Datlas.phonelook.moment` (a local time,
+ * `2026-10-02T12:00`, or `named:<moment>`) and `-Datlas.phonelook.size` (S1, or `<w>x<h>@<density>`), and
  * optionally, for a place outside the countries (ENGINE.md step 3): `-Datlas.phonelook.world=<folder>` (the world on
  * the phone: world-latest's `world.json` and `world.idx`, beside which the globe and each pack holding a view's target
  * are fetched as the phone fetches them, a pack whole by its range of its part, held to the index's SHA-256, and
@@ -124,14 +119,7 @@ internal object LookHost {
  * `-Datlas.phonelook.path=22|21`, `-Datlas.phonelook.list=<packs.json>` (the published list the windows
  * are taken by, else packs-latest's) and `-Datlas.phonelook.work=<folder>` (the windows and indexes, kept between runs;
  * `<out>/core-work` by default). It writes `<name>-core<path>.png` and `.txt` (what was drawn and how it settled, the
- * windows taken, the light). Then
- *
- *     ./gradlew :mapcorecheck:test --tests '*PhoneLook.compare' -Datlas.phonelook.compare=/tmp/look
- *
- * holds each `<name>-canvas.png` to its core frames: a difference image (`<name>-diff<path>.png`, each channel's
- * difference three times over a grey middle) and `<name>-compare<path>.txt` (CIELAB means of the frame and of each
- * colour class on both sides, the class of a pixel taken from the canvas's colour, and the probes of `<name>-probes.txt`
- * if there is one: `<label> <x> <y> <w> <h>` a line, boxes in the frame's pixels).
+ * windows taken, the light).
  */
 class PhoneLook {
     @Test
@@ -174,32 +162,7 @@ class PhoneLook {
         }
     }
 
-    @Test
-    fun compare() {
-        val dir = System.getProperty("atlas.phonelook.compare")?.takeIf { it.isNotBlank() }?.let(::File)
-        assumeTrue("the phone look tool compares only when asked (-Datlas.phonelook.compare=<folder>)", dir != null)
-        val canvases = dir!!.listFiles { f -> CANVAS.matches(f.name) }.orEmpty().sortedBy { it.name }
-        assertTrue("no <name>-canvas.png in $dir", canvases.isNotEmpty())
-        for (c in canvases) {
-            val (name, side) = CANVAS.matchEntire(c.name)!!.destructured
-            // today's map as alpha 22 draws it (-canvas), or as this branch does (-canvasnext: <name>-diffnext22.png)
-            val next = if (side == "canvasnext") "next" else ""
-            val cores = Regex(Regex.escape(name) + """-core(\d+)\.png""")
-            for (core in dir.listFiles { f -> cores.matches(f.name) }.orEmpty().sortedBy { it.name }) {
-                val path = cores.matchEntire(core.name)!!.groupValues[1]
-                val a = ImageIO.read(c)
-                val b = ImageIO.read(core)
-                require(a.width == b.width && a.height == b.height) { "$c is ${a.width}x${a.height}, $core ${b.width}x${b.height}" }
-                val probes = File(dir, "$name-probes.txt").takeIf { it.isFile }?.readLines().orEmpty()
-                val report = Compare.of(a, b, probes)
-                ImageIO.write(report.diff, "png", File(dir, "$name-diff$next$path.png"))
-                File(dir, "$name-compare$next$path.txt").writeText(report.text)
-                println("phone look compare $name ($side, alpha $path):\n${report.text}")
-            }
-        }
-    }
-
-    /** The views, moment and size, read as PhoneCanvas.kt's PhoneLookSpec reads them. */
+    /** The views, moment and size. */
     internal object Spec {
         const val DEFAULT_VIEWS = "home=52.37483,4.88385,430,52,52;trees=52.3736,4.8833,320,15,56;park=52.3662,4.9150,650,40,50;" +
             "edge=52.3770,4.8790,700,0,50;ring=52.3735,4.8745,900,0,50;far=52.3745,4.8840,9200,52,40"
@@ -244,9 +207,6 @@ class PhoneLook {
     }
 
     internal companion object {
-        /** A canvas frame's file: `<name>-canvas.png` (alpha 22's) or `<name>-canvasnext.png` (this branch's). */
-        val CANVAS = Regex("""(.+)-(canvas|canvasnext)\.png""")
-
         fun png(argb: IntArray, w: Int, h: Int, file: File) {
             val img = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
             img.setRGB(0, 0, w, h, argb, 0, w)
@@ -364,8 +324,7 @@ internal class PhoneCore(
     }
 
     /**
-     * The light [CoreMoment] writes for [moment], as the port's theme names it (the same keys PhoneCanvas.kt logs for
-     * today's map): CoreMoment's steps under the engine's lock, the port's state put back after.
+     * The light [CoreMoment] writes for [moment], as the port's theme names it: CoreMoment's steps under the engine's lock, the port's state put back after.
      */
     private fun light(moment: String): String = app.atlas.render.live.LiveEngine.lock.withLock {
         val saved = app.atlas.render.live.EngineState.capture()
@@ -646,130 +605,5 @@ internal object ElementWindows {
     private fun solid(p: app.atlas.render.data.Points): app.atlas.render.data.Points {
         val keep = (0 until p.size).filter { !p.isNull(it) }
         return app.atlas.render.data.Points(DoubleArray(keep.size) { p.lat[keep[it]] }, DoubleArray(keep.size) { p.lon[keep[it]] })
-    }
-}
-
-/** A canvas frame held to a core frame: a difference image and CIELAB means, by colour class and by probe. */
-internal object Compare {
-    class Report(val diff: BufferedImage, val text: String)
-
-    /** The classes a pixel of the canvas falls in by its colour (hue in degrees, chroma and lightness in CIELAB). */
-    private val classes: List<Pair<String, (DoubleArray) -> Boolean>> = listOf(
-        "green, dark (L* < 50)" to { c -> isGreen(c) && c[0] < 50 },
-        "green, light (L* >= 50)" to { c -> isGreen(c) && c[0] >= 50 },
-        "water and blue" to { c -> chroma(c) > 8 && hue(c) in 200.0..290.0 },
-        "red and brown (roofs, brick)" to { c -> chroma(c) > 14 && (hue(c) < 70.0 || hue(c) > 340.0) },
-        "warm pale (plaster, sand, paper)" to { c -> chroma(c) in 4.0..14.0 && hue(c) in 40.0..110.0 && c[0] > 60 },
-        "neutral light (paving, roads, ground)" to { c -> chroma(c) < 6 && c[0] >= 55 },
-        "neutral dark (asphalt, shade)" to { c -> chroma(c) < 6 && c[0] < 55 },
-    )
-
-    private fun isGreen(c: DoubleArray) = chroma(c) > 8 && hue(c) in 100.0..200.0
-    private fun chroma(c: DoubleArray) = hypot(c[1], c[2])
-    private fun hue(c: DoubleArray): Double = Math.toDegrees(atan2(c[2], c[1])).let { if (it < 0) it + 360 else it }
-
-    fun of(a: BufferedImage, b: BufferedImage, probes: List<String>): Report {
-        val w = a.width; val h = a.height
-        val pa = a.getRGB(0, 0, w, h, null, 0, w)
-        val pb = b.getRGB(0, 0, w, h, null, 0, w)
-        val diff = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
-        val sumA = DoubleArray(3); val sumB = DoubleArray(3)
-        val byClassA = Array(classes.size) { DoubleArray(3) }
-        val byClassB = Array(classes.size) { DoubleArray(3) }
-        val counts = IntArray(classes.size)
-        // and by the core's colour: the core's mean there, and the canvas's at the same pixels
-        val coreA = Array(classes.size) { DoubleArray(3) }
-        val coreB = Array(classes.size) { DoubleArray(3) }
-        val ownB = IntArray(classes.size)
-        var de = 0.0
-        val row = IntArray(w)
-        for (y in 0 until h) {
-            for (x in 0 until w) {
-                val i = y * w + x
-                val ca = pa[i]; val cb = pb[i]
-                fun ch(c: Int, s: Int) = (c shr s) and 0xFF
-                fun d(s: Int) = (128 + 3 * (ch(cb, s) - ch(ca, s))).coerceIn(0, 255)
-                row[x] = (d(16) shl 16) or (d(8) shl 8) or d(0)
-                val la = lab(ca); val lb = lab(cb)
-                for (k in 0 until 3) { sumA[k] += la[k]; sumB[k] += lb[k] }
-                de += hypot(hypot(la[0] - lb[0], la[1] - lb[1]), la[2] - lb[2])
-                for ((n, cl) in classes.withIndex()) {
-                    if (cl.second(la)) {
-                        counts[n]++
-                        for (k in 0 until 3) { byClassA[n][k] += la[k]; byClassB[n][k] += lb[k] }
-                    }
-                    if (cl.second(lb)) {
-                        ownB[n]++
-                        for (k in 0 until 3) { coreA[n][k] += la[k]; coreB[n][k] += lb[k] }
-                    }
-                }
-            }
-            diff.setRGB(0, y, w, 1, row, 0, w)
-        }
-        val n = (w * h).toDouble()
-        val text = buildString {
-            appendLine("frame: canvas ${fmt(sumA, n)}, core ${fmt(sumB, n)}; Δ ${delta(sumA, sumB, n, n)}; mean ΔE76 ${"%.1f".format(de / n)}")
-            appendLine("classes by the canvas's colour (share of the frame; the core's own share of that class): canvas mean, core mean at the same pixels, Δ")
-            for ((k, cl) in classes.withIndex()) {
-                if (counts[k] == 0) continue
-                val c = counts[k].toDouble()
-                appendLine("  ${cl.first}: ${pct(counts[k], n)} (core ${pct(ownB[k], n)}): canvas ${fmt(byClassA[k], c)}, core ${fmt(byClassB[k], c)}; Δ ${delta(byClassA[k], byClassB[k], c, c)}")
-            }
-            appendLine("classes by the core's colour (its share of the frame): core mean, canvas mean at the same pixels, Δ (core - canvas)")
-            for ((k, cl) in classes.withIndex()) {
-                if (ownB[k] == 0) continue
-                val c = ownB[k].toDouble()
-                appendLine("  ${cl.first}: ${pct(ownB[k], n)}: core ${fmt(coreB[k], c)}, canvas ${fmt(coreA[k], c)}; Δ ${delta(coreA[k], coreB[k], c, c)}")
-            }
-            if (probes.isNotEmpty()) appendLine("probes (mean of the box): canvas, core, Δ")
-            for (line in probes) {
-                val p = line.trim().split(Regex("\\s+"))
-                if (p.size < 5 || line.trim().startsWith("#")) continue
-                val (px, py, pw, ph) = p.subList(1, 5).map { it.toInt() }
-                val sa = DoubleArray(3); val sb = DoubleArray(3)
-                var m = 0
-                for (yy in py until min(h, py + ph)) for (xx in px until min(w, px + pw)) {
-                    val la = lab(pa[yy * w + xx]); val lb = lab(pb[yy * w + xx])
-                    for (k in 0 until 3) { sa[k] += la[k]; sb[k] += lb[k] }
-                    m++
-                }
-                if (m == 0) continue
-                appendLine("  ${p[0]} ($px,$py ${pw}x$ph): canvas ${fmt(sa, m.toDouble())} ${hex(pa, w, px, py, pw, ph)}, core ${fmt(sb, m.toDouble())} ${hex(pb, w, px, py, pw, ph)}; Δ ${delta(sa, sb, m.toDouble(), m.toDouble())}")
-            }
-        }
-        return Report(diff, text)
-    }
-
-    private fun pct(k: Int, n: Double) = "%.1f %%".format(100.0 * k / n)
-
-    private fun fmt(s: DoubleArray, n: Double) = "L* %.1f a* %.1f b* %.1f".format(s[0] / n, s[1] / n, s[2] / n)
-
-    private fun delta(a: DoubleArray, b: DoubleArray, na: Double, nb: Double): String {
-        val dl = b[0] / nb - a[0] / na; val da = b[1] / nb - a[1] / na; val db = b[2] / nb - a[2] / na
-        return "ΔL* %+.1f Δa* %+.1f Δb* %+.1f (ΔE76 %.1f)".format(dl, da, db, hypot(hypot(dl, da), db))
-    }
-
-    /** The mean sRGB colour of a box, as hex. */
-    private fun hex(p: IntArray, w: Int, x: Int, y: Int, bw: Int, bh: Int): String {
-        var r = 0L; var g = 0L; var b = 0L; var n = 0
-        for (yy in y until y + bh) for (xx in x until x + bw) {
-            val i = yy * w + xx
-            if (i >= p.size) continue
-            r += (p[i] shr 16) and 0xFF; g += (p[i] shr 8) and 0xFF; b += p[i] and 0xFF; n++
-        }
-        if (n == 0) return "-"
-        return "#%02X%02X%02X".format((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
-    }
-
-    /** CIELAB (D65) of an sRGB colour. */
-    fun lab(argb: Int): DoubleArray {
-        fun lin(c: Int): Double = (c / 255.0).let { if (it <= 0.04045) it / 12.92 else ((it + 0.055) / 1.055).pow(2.4) }
-        val r = lin((argb shr 16) and 0xFF); val g = lin((argb shr 8) and 0xFF); val b = lin(argb and 0xFF)
-        val x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047
-        val y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b
-        val z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883
-        fun f(t: Double) = if (t > 216.0 / 24389) cbrt(t) else (24389.0 / 27 * t + 16) / 116
-        val fx = f(x); val fy = f(y); val fz = f(z)
-        return doubleArrayOf(116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
     }
 }
