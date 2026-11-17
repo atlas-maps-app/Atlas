@@ -122,7 +122,9 @@ class ColourMapShotsTest {
     fun tapWithNoMap() {
         show(Dest.ColourMap, phone())
         compose.onRoot().performTouchInput { click(androidx.compose.ui.geometry.Offset(width / 2f, height * 0.3f)) }
-        compose.settle()
+        // the map answers a tap once its wait for a second tap is over
+        val said = androidx.compose.ui.test.hasText("No map to pick from here", substring = true)
+        runCatching { compose.waitUntil(10_000) { compose.onAllNodes(said).fetchSemanticsNodes().isNotEmpty() } }
         capture("colourmap_tap_nothing")
     }
 }
