@@ -1,7 +1,7 @@
 // The user's palette through the app's map (frame/MapFrame.hpp's set_palette; ENGINE.md, "The user's palette"), on the
-// host's Vulkan: each slot of the Map look changed alone moves a frame that shows its kind, inside a country's pack
-// (the canal ring by day near and from its Main board, at a wall of shops, over the Prinsengracht by day and at
-// night) and beyond every pack (the globe, by day and night across its terminator), so a setting holds wherever the
+// host's Vulkan: each slot of the Map look changed alone moves a frame that shows its kind, inside the bundled packs
+// (the Westerkerk's home, a wall of shops, the Prinsengracht by day and at night; the canal ring from its Main
+// board) and beyond every pack (the globe, by day and night across its terminator), so a setting holds wherever the
 // core draws it; a change draws at rest with no tile built again, and today's palette again draws the first frame byte
 // for byte. The slots the moment's theme carries (the bare ground, the streets without a surface, the water and its
 // gradient, the night's ground and water, the sky, the sun, the shade's light, the shadows, the haze) move as the app
@@ -492,8 +492,8 @@ void measure(standin::Session& session, frame::MapFrame& map, KeptWindow& window
 
 } // namespace
 
-TEST_CASE("the map's palette: each slot changed alone moves a frame that shows its kind, in the canal ring's pack near "
-          "and from its board, by day and at night, and on the globe beyond every pack, by day and night; "
+TEST_CASE("the map's palette: each slot changed alone moves a frame that shows its kind, in the bundled packs near "
+          "and from the canal ring's board, by day and at night, and on the globe beyond every pack, by day and night; "
           "nothing is built again, and today's palette again draws the frame it drew") {
     const std::string tiles_dir = environment("ATLAS_TILES_DIR");
     if (tiles_dir.empty()) {
@@ -551,18 +551,18 @@ TEST_CASE("the map's palette: each slot changed alone moves a frame that shows i
         plain.shadow_blur = plain.cloud_shadows = 0.0;
         const std::array<View, 6> views{{
             {.name = "home",
-             .camera = camera_at(52.3746 + (30.0 / 110540.0), 4.8840 - (10.0 / kx), 52.0, 52.0, 430.0, 2),
+             .camera = camera_at(52.3746 + (30.0 / 110540.0), 4.8840 - (10.0 / kx), 52.0, 52.0, 430.0, 1),
              .theme = sunny()},
             {.name = "canal",
-             .camera = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 2),
+             .camera = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 1),
              .theme = sunny()},
             {.name = "shops",
              .camera = camera_at(52.3746 - (297.49641 / 110540.0), 4.8840 + (425.44906 / kx), 269.23868878579214, 60.0,
-                                 70.0, 2),
+                                 70.0, 1),
              .theme = sunny()},
             {.name = "board", .camera = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2), .theme = sunny()},
             {.name = "night",
-             .camera = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 2),
+             .camera = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 1),
              .theme = night()},
             {.name = "globe", .camera = camera_at(20.0, 10.0, 0.0, 0.0, 54'000'000.0, 0), .theme = plain},
         }};
@@ -607,10 +607,10 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     frame::MapFrame map(2, [] {}, {.cache_dir = dir});
     standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
     frame::MapPack ring;
-    ring.number = 2;
-    ring.ref.id = "grachten";
+    ring.number = 1;
+    ring.ref.id = "amsterdam";
     ring.ref.kind = tiles::PackKind::bundled;
-    ring.ref.path = (fs::path(tiles_dir) / "grachten.atlas").string();
+    ring.ref.path = (fs::path(tiles_dir) / "amsterdam.atlas").string();
     std::vector<frame::MapPack> packs;
     packs.push_back(std::move(ring));
     (void)map.set_packs(std::move(packs));
@@ -623,7 +623,7 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     map.set_screen(false, false, false);
     // over the Prinsengracht toward the sun: its houses and trees mirrored in it
     const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
-    const style::CameraState on = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 2);
+    const style::CameraState on = camera_at(52.3756, 4.8846 + (40.0 / kx), 213.5, 70.0, 260.0, 1);
     style::CameraState off = on;
     off.parts = style::camera_part::reflections;
     ATLAS_REQUIRE(draw_still(session, map, on));
