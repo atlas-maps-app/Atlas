@@ -92,9 +92,12 @@ inline constexpr std::uint32_t relief_max_reach = 32;
 
 /// A texel of normal lanes `x` and `z` (each −1 to 1) and sky-view `v` (0 to 1): VK_FORMAT_A2B10G10R10_UNORM_PACK32.
 [[nodiscard]] constexpr std::uint32_t relief_texel(double x, double z, double v) noexcept {
+    // to the nearest level, a half up, as the GPU's UNORM conversion rounds a float it writes (convertFloatToUint);
+    // whole and fraction apart, since adding 0.5 first would round 0.49999999999999994 up
     const auto lane = [](double t, double levels) {
-        const double clamped = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
-        return static_cast<std::uint32_t>((clamped * levels) + 0.5);
+        const double scaled = (t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t)) * levels;
+        const auto whole = static_cast<std::uint32_t>(scaled);
+        return whole + ((scaled - static_cast<double>(whole)) >= 0.5 ? 1U : 0U);
     };
     return lane((x * 0.5) + 0.5, 1022.0) | (lane((z * 0.5) + 0.5, 1022.0) << 10U) | (lane(v, 1023.0) << 20U) |
            (3U << 30U);

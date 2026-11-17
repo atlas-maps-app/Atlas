@@ -265,7 +265,7 @@ void write_ppm(const fs::path& path, const gpu::Pixels& pixels) {
 [[nodiscard]] shaders::float3 lanes_at(const scene::ReliefPart& part, double u, double v) {
     const fx::ReliefBake& bake = part.tile->bake;
     const double span = bake.side - 1.0;
-    const double extent = static_cast<double>(part.extent);
+    const auto extent = static_cast<double>(part.extent);
     const double x = std::clamp((static_cast<double>(part.x) + (u * extent)) * span, 0.0, span);
     const double y = std::clamp((static_cast<double>(part.y) + (v * extent)) * span, 0.0, span);
     const double column = std::min(std::floor(x), span - 1.0);
@@ -400,8 +400,8 @@ TEST_CASE("the app's map lights the ground by its terrain pack's heights: each p
         const auto& push = pass->push(state.slot);
         std::memcpy(&light, &push.light, sizeof(light));
         CHECK((light.range.z > 0.5F) == sky_view);
-        const double far_from = static_cast<double>(push.far[0]);
-        const double far_over = static_cast<double>(push.far[1]);
+        const auto far_from = static_cast<double>(push.far[0]);
+        const auto far_over = static_cast<double>(push.far[1]);
         std::size_t compared = 0;
         std::size_t close = 0;
         std::size_t shaped = 0; // where the light moves the colour by 5 % or more

@@ -162,7 +162,7 @@ double relief_strength(const ReliefStyle& style, double distance) noexcept {
 double relief_spacing(std::uint8_t z, std::uint32_t y, std::uint32_t side, std::int32_t r) noexcept {
     constexpr double equator = 2.0 * std::numbers::pi * 6'378'137.0;
     const double tiles = std::ldexp(1.0, z);
-    const double span = static_cast<double>(side - 1U);
+    const auto span = static_cast<double>(side - 1U);
     const double fraction = (static_cast<double>(y) + (static_cast<double>(r) / span)) / tiles;
     const double latitude = pymath::atan(pymath::sinh(std::numbers::pi * (1.0 - (2.0 * fraction))));
     return (equator * pymath::cos(latitude)) / (tiles * span);
