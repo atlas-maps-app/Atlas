@@ -472,6 +472,10 @@ constexpr std::array<Held, 8> held_elsewhere{{
     {.code = style::palette_slot::pylons, .where = "item/items_test (the turbines, the pylons, the woods' greens)"},
 }};
 
+/// The pixels of a frame (of 72,000) that work landing late may move between a view's first frame and its last in
+/// today's palette, in neither palette: a debug build's slower threads moved 3 and 12; a release build none.
+constexpr std::size_t late_work = 32;
+
 /// A view of the test: its name, its camera and its moment.
 struct View {
     std::string_view name;
@@ -523,11 +527,11 @@ void measure(standin::Session& session, frame::MapFrame& map, KeptWindow& window
         const gpu::Pixels again_greys = settled(session, map, window, v.camera, v.theme);
         map.set_palette(today);
         const gpu::Pixels again = settled(session, map, window, v.camera, v.theme);
-        // but for work that lands late (a debug build's slower threads: 3 pixels at night, some 40 slots on), in
-        // neither frame's palette; each slot's frame is measured against the nearer of the two
+        // but for work that lands late (debug builds alone: 3 pixels at night some 40 slots on, 12 over the canal),
+        // in neither frame's palette (late_work); each slot's frame is measured against the nearer of the two
         const std::size_t drift = count(changed(base, again));
         if (drift > noise) MESSAGE(v.name, ": ", drift, " pixels differ between today's first frame and today's again");
-        CHECK_MESSAGE(drift <= std::max<std::size_t>(noise, 8), v.name);
+        CHECK_MESSAGE(drift <= std::max(noise, late_work), v.name);
         for (const auto& [code, frame] : moved) {
             const bool g = grey(code);
             const std::size_t n =
@@ -741,9 +745,11 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
         const std::vector<bool> with = changed(today_on, settled(session, map, *kept, on, sunny()));
         const std::vector<std::uint32_t> painted_trees = mirrored_trees(map);
         const std::vector<bool> without = changed(today_off, settled(session, map, *kept, off, sunny()));
-        // the pixels the palette moved with the reflections drawn and not without them, where they draw
+        // the pixels the palette moved with the reflections drawn and not without them: the reflections' (a dark crown
+        // mirrored at the group's opacity over the dark water may lie within 8 levels of the water, so not among
+        // `mirrored`, and still take the user's colour)
         std::size_t theirs = 0;
-        for (std::size_t i = 0; i < with.size(); ++i) theirs += with[i] && !without[i] && mirrored[i] ? 1U : 0U;
+        for (std::size_t i = 0; i < with.size(); ++i) theirs += with[i] && !without[i] ? 1U : 0U;
         // and the mirrored trees' colours, each moved where the leaves are the user's
         std::size_t moved_trees = 0;
         for (std::size_t i = 0; i < trees.size() && i < painted_trees.size(); ++i) {
@@ -754,7 +760,7 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
         CHECK_MESSAGE(theirs >= least, name);
         // today's palette mirrors them as before (but for work that lands late, as measure allows)
         map.set_palette(today);
-        CHECK_MESSAGE(count(changed(today_on, settled(session, map, *kept, on, sunny()))) <= 8, name);
+        CHECK_MESSAGE(count(changed(today_on, settled(session, map, *kept, on, sunny()))) <= late_work, name);
         return std::pair{trees.size(), moved_trees};
     };
     ATLAS_REQUIRE(draw_still(session, map, home), "home never complete");
