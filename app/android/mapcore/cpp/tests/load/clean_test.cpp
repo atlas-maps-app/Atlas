@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -157,6 +158,67 @@ TEST_CASE("clean: row houses sharing their walls are left as they are") {
     CHECK(s.counts == load::BuildingCounts{});
 }
 
+TEST_CASE("clean: a ring with seams piece by piece: a courtyard's seam stays in its piece, a piece's is in none") {
+    namespace gm = atlas::geometry;
+    using Pieces = std::vector<std::vector<std::uint32_t>>;
+    const auto turned = [](std::vector<V2> ring, std::size_t by) {
+        std::ranges::rotate(ring, ring.begin() + static_cast<std::ptrdiff_t>(by));
+        return ring;
+    };
+    // no seam: the ring itself
+    const std::vector<V2> plain = {{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    CHECK(gm::pieces_of(plain, gm::seams(plain)) == Pieces{{0, 1, 2, 3}});
+    // a courtyard, joined from the outer ring's first corner: one piece of every edge, its seams with it
+    const std::vector<V2> yard = {{0, 0}, {4, 4}, {4, 6}, {6, 6}, {6, 4}, {4, 4}, {0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    const std::vector<std::uint8_t> yard_seams = gm::seams(yard);
+    CHECK(yard_seams == std::vector<std::uint8_t>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0});
+    Pieces p = gm::pieces_of(yard, yard_seams);
+    ATLAS_REQUIRE(p.size() == 1);
+    CHECK(p[0] == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    CHECK(gm::has_courtyard(p[0], yard_seams));
+    // the same ring from a point of its courtyard: the same piece
+    const std::vector<V2> yard_turned = turned(yard, 3);
+    p = gm::pieces_of(yard_turned, gm::seams(yard_turned));
+    ATLAS_REQUIRE(p.size() == 1);
+    CHECK(p[0].size() == 10);
+    // two boxes joined by a seam: each a piece of its own four edges, a simple ring, the seam in neither
+    const std::vector<V2> two = {{0, 0},   {10, 0},  {20, 10}, {20, 0},  {30, 0},
+                                 {30, 10}, {20, 10}, {10, 0},  {10, 10}, {0, 10}};
+    const std::vector<std::uint8_t> two_seams = gm::seams(two);
+    CHECK(two_seams == std::vector<std::uint8_t>{0, 1, 0, 0, 0, 0, 1, 0, 0, 0});
+    p = gm::pieces_of(two, two_seams);
+    CHECK(p == Pieces{{0, 7, 8, 9}, {2, 3, 4, 5}});
+    for (const std::vector<std::uint32_t>& piece : p) CHECK_FALSE(gm::has_courtyard(piece, two_seams));
+    std::vector<V2> second;
+    for (const std::uint32_t e : p[1]) second.push_back(two[e]);
+    CHECK(second == std::vector<V2>{{20, 10}, {20, 0}, {30, 0}, {30, 10}});
+    CHECK(gm::seams(second).empty());
+    const std::vector<V2> two_turned = turned(two, 3); // from a point of the second box
+    p = gm::pieces_of(two_turned, gm::seams(two_turned));
+    ATLAS_REQUIRE(p.size() == 2);
+    CHECK(p[0].size() == 4);
+    CHECK(p[1].size() == 4);
+    // a block round a courtyard and a house standing in the courtyard, joined to the courtyard's corner: the house a
+    // piece by itself, the block a piece with its courtyard
+    const std::vector<V2> island = {{0, 0},   {10, 10}, {13, 13}, {17, 13}, {17, 17}, {13, 17}, {13, 13}, {10, 10},
+                                    {10, 20}, {20, 20}, {20, 10}, {10, 10}, {0, 0},   {30, 0},  {30, 30}, {0, 30}};
+    const std::vector<std::uint8_t> island_seams = gm::seams(island);
+    CHECK(island_seams == std::vector<std::uint8_t>{1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0});
+    p = gm::pieces_of(island, island_seams);
+    CHECK(p == Pieces{{0, 7, 8, 9, 10, 11, 12, 13, 14, 15}, {2, 3, 4, 5}});
+    ATLAS_REQUIRE(p.size() == 2);
+    CHECK(gm::has_courtyard(p[0], island_seams));
+    CHECK_FALSE(gm::has_courtyard(p[1], island_seams));
+    // seams that do not run there and back in turn (no ring the cleaning made): the ring as it is, one piece
+    const std::vector<V2> crossed = {{0, 0}, {1, 0}, {2, 1},  {3, 0}, {4, 0}, {2, -1},
+                                     {1, 0}, {0, 0}, {2, -3}, {4, 0}, {3, 0}, {2, 3}};
+    const std::vector<std::uint8_t> crossed_seams = gm::seams(crossed);
+    CHECK(std::ranges::count(crossed_seams, std::uint8_t{1}) == 4);
+    p = gm::pieces_of(crossed, crossed_seams);
+    ATLAS_REQUIRE(p.size() == 1);
+    CHECK(p[0].size() == crossed.size());
+}
+
 TEST_CASE("clean: the seams of a ring, and a roof over one drawn flat") {
     CHECK(atlas::geometry::seams(box(0, 0, 10, 10)).empty());
     const std::vector<V2> ring = {{0, 0}, {10, 0}, {10, 10}, {4, 4}, {6, 4}, {6, 6}, {4, 6}, {4, 4}, {10, 10}, {0, 10}};
@@ -165,7 +227,7 @@ TEST_CASE("clean: the seams of a ring, and a roof over one drawn flat") {
     CHECK(seams == std::vector<std::uint8_t>{0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
     CHECK(atlas::geometry::drawn_pitched("gabled", 4.0, false));
     CHECK(atlas::geometry::drawn_pitched("quadruple_saltbox", 4.0, false));
-    CHECK(!atlas::geometry::drawn_pitched("gabled", 4.0, true));
+    CHECK(!atlas::geometry::drawn_pitched("gabled", 4.0, true)); // over a piece with a courtyard
     CHECK(!atlas::geometry::drawn_pitched("gabled", 0.0, false));
     CHECK(!atlas::geometry::drawn_pitched("double_saltbox", 4.0, false));
 }

@@ -63,8 +63,9 @@ typedef struct atlas_clean_counts {
 } atlas_clean_counts;
 
 /* Per footprint: its state (ATLAS_CLEAN_DRAWN, ATLAS_CLEAN_RING: its new ring is points[ring_first[k]] up to
- * points[ring_first[k + 1]], clockwise as latitude and longitude are read) and its base. Owned by the library until
- * atlas_clean_free. */
+ * points[ring_first[k + 1]], clockwise as latitude and longitude are read; and what changed it, ATLAS_CLEAN_COVERED:
+ * its parts cut it, ATLAS_CLEAN_CLIPPED: another footprint did, ATLAS_CLEAN_COURTYARD: it has courtyards as mapped)
+ * and its base. Owned by the library until atlas_clean_free. */
 typedef struct atlas_clean_output {
     const uint8_t* state;
     const double* min;
@@ -76,6 +77,9 @@ typedef struct atlas_clean_output {
 
 #define ATLAS_CLEAN_DRAWN 1
 #define ATLAS_CLEAN_RING 2
+#define ATLAS_CLEAN_COVERED 4
+#define ATLAS_CLEAN_CLIPPED 8
+#define ATLAS_CLEAN_COURTYARD 16
 
 /* Cleans a window's footprints into `out`: 0 done, 1 an input whose counts do not add up (`out` then holds nothing). */
 int32_t atlas_clean_run(const atlas_clean_input* input, atlas_clean_output* out);

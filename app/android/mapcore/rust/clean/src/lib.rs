@@ -174,8 +174,9 @@ pub struct AtlasCleanCounts {
 
 /// Per footprint: whether it is drawn (STATE_DRAWN) and whether its ring changed (STATE_RING: the points from
 /// ring_first[k] to ring_first[k + 1], clockwise on the grid as latitude and longitude are read, so counterclockwise
-/// in the scene's metres); its base (raised where it stands on another). The library owns the arrays until
-/// atlas_clean_free.
+/// in the scene's metres), and what changed it (STATE_COVERED: its parts cut it; STATE_CLIPPED: another footprint
+/// did; STATE_COURTYARD: it has courtyards as mapped); its base (raised where it stands on another). The library owns
+/// the arrays until atlas_clean_free.
 #[repr(C)]
 #[derive(Debug)]
 pub struct AtlasCleanOutput {
@@ -189,6 +190,9 @@ pub struct AtlasCleanOutput {
 
 pub const STATE_DRAWN: u8 = 1;
 pub const STATE_RING: u8 = 2;
+pub const STATE_COVERED: u8 = 4;
+pub const STATE_CLIPPED: u8 = 8;
+pub const STATE_COURTYARD: u8 = 16;
 
 // the sizes load/CleanAbi.h's structs have on a 64-bit target (load/Clean.cpp asserts the same of them)
 const _: () = assert!(core::mem::size_of::<AtlasCleanPoint>() == 8);
@@ -279,6 +283,13 @@ pub unsafe extern "C" fn atlas_clean_run(input: *const AtlasCleanInput, out: *mu
         if let Some(r) = &c.ring[k] {
             s |= STATE_RING;
             o.points.extend(r.iter().rev().map(|p| AtlasCleanPoint { lat: p.y as i32, lon: p.x as i32 }));
+        }
+        for (what, state) in
+            [(clean::COVERED, STATE_COVERED), (clean::CLIPPED, STATE_CLIPPED), (clean::COURTYARD, STATE_COURTYARD)]
+        {
+            if c.what[k] & what != 0 {
+                s |= state;
+            }
         }
         o.state.push(s);
     }

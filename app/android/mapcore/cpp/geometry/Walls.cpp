@@ -263,7 +263,7 @@ void Builder::edged(const std::array<V3, 4>& p, PrimKind kind, std::uint16_t fla
                          .polygon = no_polygon,
                          .near_slot = near,
                          .far_slot = far,
-                         .edge = static_cast<std::uint16_t>(std::min<std::uint32_t>(at.edge, 0xFFFFU)),
+                         .edge = static_cast<std::uint16_t>(std::min<std::uint32_t>(ring_edge(at.edge), 0xFFFFU)),
                          .part = static_cast<std::uint16_t>(std::min<std::uint32_t>(at.part, 0xFFFFU)),
                          .ncol = static_cast<std::uint16_t>(std::min<std::uint32_t>(at.ncol, 0xFFFFU)),
                          .nrow = static_cast<std::uint16_t>(std::min<std::uint32_t>(at.nrow, 0xFFFFU))});
@@ -287,7 +287,7 @@ void Builder::plain(const std::array<V3, 4>& p, std::uint8_t corners, PrimKind k
                          .polygon = no_polygon,
                          .near_slot = near,
                          .far_slot = far,
-                         .edge = static_cast<std::uint16_t>(std::min<std::uint32_t>(at.edge, 0xFFFFU)),
+                         .edge = static_cast<std::uint16_t>(std::min<std::uint32_t>(ring_edge(at.edge), 0xFFFFU)),
                          .part = static_cast<std::uint16_t>(std::min<std::uint32_t>(at.part, 0xFFFFU))});
 }
 
@@ -466,7 +466,8 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
                              .item = item,
                              .polygon = index,
                              .near_slot = near,
-                             .far_slot = far});
+                             .far_slot = far,
+                             .edge = static_cast<std::uint16_t>(std::min<std::uint32_t>(ring_edge(0), 0xFFFFU))});
         ++poly.count;
     }
     out.polygons.push_back(std::move(poly));
@@ -482,9 +483,10 @@ int window_cols(double elen, WindowStyle style) noexcept {
     return std::max(1, kt_int(elen / bay));
 }
 
-void walls(Builder& b, const Building& bl, std::uint16_t variant) {
+bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
     // render/amsterdam.py's _draw_building: per footprint edge of 0.3 m or more, its cells, a kit's details on it, the
     // skillion's wall, the wall's shop glazing and its windows; after them the building's plinth and cornice
+    // (facade_slots)
     const std::span<const V2> poly = bl.poly;
     const std::size_t n = poly.size();
     const double y0 = bl.y0;
@@ -716,9 +718,13 @@ void walls(Builder& b, const Building& bl, std::uint16_t variant) {
             b.far_slot += taken;
         }
     }
+    return facade_flags != 0;
+}
+
+void facade_slots(Builder& b, bool any) {
     // the plinth's path, then the cornice's, after the walls (before the roof)
     b.facade = no_facade;
-    if (facade_flags != 0) {
+    if (any) {
         b.facade = std::uint32_t{Builder::slot(b.near_slot)} | (std::uint32_t{Builder::slot(b.far_slot)} << 16U);
         b.near_slot += 2;
         b.far_slot += 2;
@@ -767,6 +773,73 @@ struct Block {
     std::uint32_t samples = 0;
     std::uint32_t windows = 0;
 };
+
+/// Lays `bl`'s roof `rh` high over its ring (0: flat): the walls' top, and a skillion's slope.
+void lay_roof(Building& bl, double rh) {
+    bl.rh = rh;
+    bl.wall_top = bl.h - bl.rh;
+    bl.guessed_shape = bl.v.shape_guessed && bl.rh != 0.0;
+    bl.skillion = is(bl.roof, "skillion") && bl.rh != 0.0;
+    if (bl.skillion) {
+        bl.dirv = roof_dir(bl.v.direction.value_or(std::string_view{}), bl.poly);
+        double lo = (bl.poly[0].x * bl.dirv.x) + (bl.poly[0].z * bl.dirv.z);
+        double hi = lo;
+        for (std::size_t k = 1; k < bl.poly.size(); ++k) {
+            const double pr = (bl.poly[k].x * bl.dirv.x) + (bl.poly[k].z * bl.dirv.z);
+            lo = pm::min(lo, pr);
+            hi = pm::max(hi, pr);
+        }
+        bl.p0 = lo;
+        bl.span = pm::max(0.5, hi - bl.p0);
+    } else {
+        bl.dirv = {};
+        bl.p0 = 0.0;
+        bl.span = 1.0;
+    }
+}
+
+/// The walls, then the roof, of `bl` (its values, its ring and its seams, its base, its top and its roof's shape set),
+/// its roof `rh` high where it is pitched. A ring without seams as it is. One with seams piece by piece
+/// (geometry/Seams.hpp): every piece's walls in the ring's order, then every piece's roof, a piece without a courtyard
+/// under the building's roof by itself, one with a courtyard flat; a primitive keeps its edge's number on the ring.
+void draw(Builder& b, Building& bl, double rh, std::uint16_t variant) {
+    if (bl.seam.empty()) {
+        lay_roof(bl, rh);
+        facade_slots(b, walls(b, bl, variant));
+        roofs(b, bl, variant);
+        return;
+    }
+    lay_roof(bl, 0.0); // the ring as a whole has no roof of its own
+    const std::vector<std::vector<std::uint32_t>> edges = pieces_of(bl.poly, bl.seam);
+    std::vector<Building> pieces(edges.size());
+    bool facade = false;
+    for (std::size_t k = 0; k < edges.size(); ++k) {
+        Building& p = pieces[k];
+        p.source = bl.source;
+        p.id = bl.id;
+        p.v = bl.v;
+        p.h = bl.h;
+        p.y0 = bl.y0;
+        p.roof = bl.roof;
+        p.edges = edges[k];
+        p.poly.reserve(p.edges.size());
+        for (const std::uint32_t e : p.edges) p.poly.push_back(bl.poly[e]);
+        const bool courtyard = has_courtyard(p.edges, bl.seam);
+        if (courtyard) {
+            p.seam.reserve(p.edges.size());
+            for (const std::uint32_t e : p.edges) p.seam.push_back(bl.seam[e]);
+        }
+        lay_roof(p, courtyard || p.poly.size() < 3 ? 0.0 : rh);
+        b.edges = p.edges;
+        facade = walls(b, p, variant) || facade;
+    }
+    facade_slots(b, facade);
+    for (const Building& p : pieces) {
+        b.edges = p.edges;
+        roofs(b, p, variant);
+    }
+    b.edges = {};
+}
 
 /// Records [from, to) of the walk into `out`, as one walk over every record makes them.
 void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
@@ -819,31 +892,10 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             bl.y0 = bl.v.min;
             bl.roof = bl.v.roof;
             if (is(bl.roof, "quadruple_saltbox")) bl.roof = "hipped"; // closest shape this renderer draws
-            bl.rh = drawn_pitched(bl.roof, bl.v.roof_h, !bl.seam.empty()) ? bl.v.roof_h : 0.0;
-            bl.wall_top = bl.h - bl.rh;
-            bl.guessed_shape = bl.v.shape_guessed && bl.rh != 0.0;
-            bl.skillion = is(bl.roof, "skillion") && bl.rh != 0.0;
-            if (bl.skillion) {
-                bl.dirv = roof_dir(bl.v.direction.value_or(std::string_view{}), bl.poly);
-                double lo = (bl.poly[0].x * bl.dirv.x) + (bl.poly[0].z * bl.dirv.z);
-                double hi = lo;
-                for (std::size_t k = 1; k < bl.poly.size(); ++k) {
-                    const double pr = (bl.poly[k].x * bl.dirv.x) + (bl.poly[k].z * bl.dirv.z);
-                    lo = pm::min(lo, pr);
-                    hi = pm::max(hi, pr);
-                }
-                bl.p0 = lo;
-                bl.span = pm::max(0.5, hi - bl.p0);
-            } else {
-                bl.dirv = {};
-                bl.p0 = 0.0;
-                bl.span = 1.0;
-            }
             const std::uint16_t variant = boat ? prim_flag::dry : 0;
             const std::size_t beams_first = made.beams.size();
             const std::size_t kits_first = made.kit_walls.size();
-            walls(b, bl, variant);
-            roofs(b, bl, variant);
+            draw(b, bl, drawn_pitched(bl.roof, bl.v.roof_h, false) ? bl.v.roof_h : 0.0, variant);
             // the reflection's samples (K16 draws it): one per wall of 0.3 m or more of a building near the water
             if ((bl.v.flags & tl::building::flag_near_water) != 0 && !bl.v.hidden && bl.v.h != 0.0) {
                 const std::size_t n = bl.poly.size();
@@ -1025,14 +1077,9 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
             }
             bl.rh = house_roof_height(bl.h, shortest);
         }
-        // a roof never taller than the walls it stands on leave room for; flat over courtyards and pieces (seams)
-        bl.rh = bl.seam.empty() ? std::min(bl.rh, std::max(0.0, bl.h - bl.y0)) : 0.0;
-        bl.wall_top = bl.h - bl.rh;
-        bl.guessed_shape = false;
-        bl.skillion = false;
-        bl.dirv = {};
-        bl.p0 = 0.0;
-        bl.span = 1.0;
+        // a roof never taller than the walls it stands on leave room for; over each piece by itself, flat over one
+        // with a courtyard (draw)
+        const double rh = std::min(bl.rh, std::max(0.0, bl.h - bl.y0));
         std::optional<TileBuildings> out(std::in_place);
         out->level = in.level;
         out->lean = true;
@@ -1044,8 +1091,7 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
             b.lean = true;
             b.cell = 0;
             b.item = 0;
-            walls(b, bl, 0);
-            roofs(b, bl, 0);
+            draw(b, bl, rh, 0);
             out->samples = b.sample;
             near_slots = Builder::slot(b.near_slot);
             far_slots = Builder::slot(b.far_slot);

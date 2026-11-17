@@ -179,6 +179,9 @@ void clean_buildings(Scene& s, const tiles::Frame& frame) {
                 if (!b.at) b.at = geometry::centroid(b.poly); // filed where it was mapped
                 b.poly = std::move(ring);
                 b.bb = box_of(b.poly);
+                b.cleaned = static_cast<std::uint8_t>(((state & ATLAS_CLEAN_COVERED) != 0 ? cut_by_parts : 0) |
+                                                      ((state & ATLAS_CLEAN_CLIPPED) != 0 ? cut_by_another : 0) |
+                                                      ((state & ATLAS_CLEAN_COURTYARD) != 0 ? courtyard_mapped : 0));
             }
             b.min = o.min[k];
             const bool drawn = (state & ATLAS_CLEAN_DRAWN) != 0;

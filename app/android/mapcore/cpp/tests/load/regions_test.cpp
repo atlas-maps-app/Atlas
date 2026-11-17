@@ -6,6 +6,8 @@
 // with nothing that cannot be there (load/Clean.hpp; ATLAS_CLEAN_DUMP writes its buildings for the fault detectors).
 // No tag's number, however large, ends a load or refuses one, in any look or cut.
 #include "base/pymath/PyMath.hpp"
+#include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
 #include "load/Generic.hpp"
@@ -31,10 +33,13 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -45,6 +50,104 @@ namespace osm = atlas::osm;
 std::string read_text(const std::filesystem::path& path) {
     std::ifstream in(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+/// A region's rings with seams under a roof stage T draws pitched, which it roofs piece by piece (geometry/Seams.hpp):
+/// those flat over a piece with a courtyard, what is left for the roofs built from any footprint, and those with every
+/// piece roofed by itself; each by what made its seams (m: a courtyard as mapped, p: its own parts cut it, a: another
+/// building did), and how many ba4a2acc did not draw at all (its hide(): an outline with a part's centroid in it,
+/// within 80 m of its own, over the outlines and parts as mapped). ATLAS_ROOFS_LIST: a file each such ring is added
+/// to, a line each (region, element, part, lat, lon, roof, its height, pieces with a courtyard, pieces roofed, causes,
+/// not drawn at ba4a2acc, m²).
+std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& region, const load::Scene& loaded) {
+    namespace gm = atlas::geometry;
+    std::set<std::pair<bool, std::int64_t>> hid;
+    if (const auto mapped = load::load_living(doc, region.frame, region.palette)) {
+        std::vector<load::V2> centres;
+        for (const load::Building& p : mapped->parts) centres.push_back(gm::centroid(p.poly));
+        for (const load::Building& b : mapped->buildings) {
+            const load::V2 bc = gm::centroid(b.poly);
+            for (const load::V2& c : centres) {
+                if (std::fabs(c.x - bc.x) < 80.0 && std::fabs(c.z - bc.z) < 80.0 && gm::pip(c.x, c.z, b.poly)) {
+                    hid.emplace(b.relation, b.id);
+                    break;
+                }
+            }
+        }
+    }
+    struct Group {
+        std::uint32_t all = 0;
+        std::uint32_t hidden_before = 0;
+        std::map<std::string, std::uint32_t> by;
+    };
+    Group flat;   // a piece with a courtyard, flat
+    Group roofed; // every piece roofed by itself
+    std::uint32_t both = 0;
+    std::uint32_t pieces = 0;
+    std::uint32_t narrow = 0;
+    std::ofstream listed;
+    if (const std::string out = atlas::test::environment("ATLAS_ROOFS_LIST"); !out.empty()) {
+        listed.open(out, std::ios::app);
+    }
+    for (const auto* list : {&loaded.buildings, &loaded.parts}) {
+        for (const load::Building& b : *list) {
+            if (b.hidden || !gm::drawn_pitched(b.roof, b.roof_h.value_or(0.0), false)) continue;
+            const std::vector<std::uint8_t> seam = gm::seams(b.poly);
+            if (seam.empty()) continue;
+            bool courtyard = false;
+            bool alone = false;
+            std::uint32_t with_courtyard = 0;
+            std::uint32_t by_itself = 0;
+            for (const std::vector<std::uint32_t>& piece : gm::pieces_of(b.poly, seam)) {
+                if (gm::has_courtyard(piece, seam)) {
+                    courtyard = true;
+                    ++with_courtyard;
+                    continue;
+                }
+                alone = true;
+                ++by_itself;
+                ++pieces;
+                // narrower than its roof is high: four times its area by its perimeter, a square's side
+                double area2 = 0.0;
+                double around = 0.0;
+                for (std::size_t k = 0; k < piece.size(); ++k) {
+                    const load::V2 p = b.poly[piece[k]];
+                    const load::V2 q = b.poly[piece[(k + 1) % piece.size()]];
+                    area2 += (p.x * q.z) - (q.x * p.z);
+                    around += std::hypot(q.x - p.x, q.z - p.z);
+                }
+                if (around > 0.0 && 2.0 * std::fabs(area2) / around < *b.roof_h) ++narrow;
+            }
+            both += courtyard && alone ? 1U : 0U;
+            Group& g = courtyard ? flat : roofed;
+            ++g.all;
+            const std::string cause = std::string((b.cleaned & load::courtyard_mapped) != 0 ? "m" : "") +
+                                      ((b.cleaned & load::cut_by_parts) != 0 ? "p" : "") +
+                                      ((b.cleaned & load::cut_by_another) != 0 ? "a" : "");
+            ++g.by[cause.empty() ? "-" : cause];
+            const bool hidden_before = list == &loaded.buildings && hid.contains({b.relation, b.id});
+            if (hidden_before) ++g.hidden_before;
+            if (listed.is_open()) {
+                const load::V2 at = b.at ? *b.at : gm::centroid(b.poly);
+                listed << std::format("{}\t{}{}\t{}\t{:.7f}\t{:.7f}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{:.0f}\n", region.name,
+                                      b.relation ? "r" : "w", b.id, list == &loaded.parts ? "part" : "building",
+                                      atlas::tiles::grid_lat(region.frame, at.z).value_or(0) / 1e7,
+                                      atlas::tiles::grid_lon(region.frame, at.x).value_or(0) / 1e7, *b.roof, *b.roof_h,
+                                      with_courtyard, by_itself, cause.empty() ? "-" : cause, hidden_before ? 1 : 0,
+                                      std::fabs(gm::signed_area(b.poly)));
+            }
+        }
+    }
+    const auto causes = [](const Group& g) {
+        std::string out;
+        for (const auto& [cause, count] : g.by) out += std::format(" {} {}", cause, count);
+        return out;
+    };
+    return std::format("flat over a courtyard {} (by{}; {} not drawn at ba4a2acc; {} of them with a piece roofed too), "
+                       "every piece roofed {} (by{}; {} not drawn at ba4a2acc); {} pieces roofed by themselves, {} "
+                       "narrower than their roof is high",
+                       flat.all, causes(flat), flat.hidden_before, both, roofed.all, causes(roofed),
+                       roofed.hidden_before, pieces, narrow);
 }
 
 std::expected<osm::Document, osm::ReadError> read(std::string_view s) {
@@ -326,17 +429,19 @@ TEST_CASE("load: every region's buildings, with nothing that cannot be there and
         ATLAS_REQUIRE(loaded.has_value(), name);
         const load::BuildingCounts& c = loaded->counts;
         const std::string line = std::format(
-            "region {}: {} buildings, {} parts; pairs {} uncovered {} flat {} (by a seam {}); underground {}+{} "
-            "doubles {} (disagreeing {}) bounded {} courtyards {} covered {} hidden {} clipped {} raised {} vanished "
-            "{} "
-            "seamed {} unsettled {} unmeasured {}; uncovered {:.1f} m², slivers {:.1f} m², dropped {:.1f} m²; {:.0f} "
-            "ms",
+            "region {}: {} buildings, {} parts; pairs {} uncovered {} flat {} (over a courtyard {}) roofed by piece "
+            "{}; underground {}+{} doubles {} (disagreeing {}) bounded {} courtyards {} covered {} hidden {} clipped "
+            "{} raised {} vanished {} seamed {} unsettled {} unmeasured {}; uncovered {:.1f} m², slivers {:.1f} m², "
+            "dropped {:.1f} m²; {:.0f} ms",
             name, loaded->buildings.size(), loaded->parts.size(), c.overlapping_pairs, c.uncovered_outlines,
-            c.flat_roofs, c.flat_by_seam, c.underground, c.underground_layer, c.doubles, c.doubles_disagree, c.bounded,
-            c.courtyards, c.covered, c.hidden, c.clipped, c.raised, c.vanished, c.seamed, c.unsettled, c.unmeasured,
-            c.uncovered_m2, c.sliver_m2, c.dropped_m2, ms);
+            c.flat_roofs, c.flat_by_seam, c.roofed_by_piece, c.underground, c.underground_layer, c.doubles,
+            c.doubles_disagree, c.bounded, c.courtyards, c.covered, c.hidden, c.clipped, c.raised, c.vanished, c.seamed,
+            c.unsettled, c.unmeasured, c.uncovered_m2, c.sliver_m2, c.dropped_m2, ms);
         MESSAGE(line);
         (void)std::printf("%s\n", line.c_str()); // NOLINT: the lines a run's log keeps
+        const std::string roofs = std::format("region {} roofs: {}", name, seamed_roofs(*doc, region, *loaded));
+        MESSAGE(roofs);
+        (void)std::printf("%s\n", roofs.c_str()); // NOLINT: the lines a run's log keeps
         CHECK_MESSAGE(c.overlapping_pairs == 0, name);
         CHECK_MESSAGE(c.uncovered_outlines == 0, name);
     }

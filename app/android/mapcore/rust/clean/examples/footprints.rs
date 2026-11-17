@@ -39,6 +39,9 @@ fn main() {
         let area: f64 = fps[*k].rings.iter().map(|r| atlas_clean::geom::area2(r) as f64).sum::<f64>().abs() * 0.5 * (kx / 1e7) * (110540.0 / 1e7);
         println!("uncovered {:7.1} m2 of {:8.1}  {} drawn {} ring {:?}", a, area, ids[*k], c.drawn[*k], c.ring[*k].as_ref().map(Vec::len));
     }
+    for k in (0..fps.len()).filter(|&k| c.uncovered[k] < 0.0) {
+        println!("unmeasured {} drawn {} rings in {} ring out {:?}", ids[k], c.drawn[k], fps[k].rings.len(), c.ring[k].as_ref().map(Vec::len));
+    }
     if let Ok(show) = std::env::var("ATLAS_CLEAN_SHOW") {
         for id in show.split(',') {
             for k in (0..fps.len()).filter(|&k| ids[k] == id) {

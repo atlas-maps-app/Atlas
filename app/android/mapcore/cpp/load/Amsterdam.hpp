@@ -106,8 +106,10 @@ inline constexpr std::int64_t max_levels = 200;
                                                           const Palette& palette, const Looks* looks = nullptr);
 
 /// Counts the roofs with a shape, as drawn (after the closest shapes and the looks: mapped or a tradition's or the
-/// guesses'), that stage T draws flat (Scene::counts' flat_roofs): a shape it does not draw, no height, or a ring with
-/// seams (geometry::drawn_pitched); and of them those only a seam makes flat (flat_by_seam).
+/// guesses'), that stage T draws flat (Scene::counts' flat_roofs): a shape it does not draw, no height, or over a
+/// piece of the ring that has a courtyard (geometry::drawn_pitched; a ring with seams is roofed piece by piece); of
+/// them those flat only over such a piece (flat_by_seam); and the rings with seams whose roof stands on a piece by
+/// itself (roofed_by_piece: a ring may be in both).
 void count_flat_roofs(Scene& s);
 
 } // namespace atlas::load

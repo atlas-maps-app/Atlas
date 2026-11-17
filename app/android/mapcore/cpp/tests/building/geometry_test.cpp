@@ -40,6 +40,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -508,6 +509,79 @@ TEST_CASE("buildings: a courtyard's seams draw nothing, and a pitched roof over 
             const gm::V3& v = p.p.at((e + 1) % m);
             CHECK_FALSE(((at(u, sw) && at(v, csw)) || (at(u, csw) && at(v, sw))));
         }
+    }
+}
+
+TEST_CASE("buildings: a ring of two pieces is roofed piece by piece, the house gabled and the block round its "
+          "courtyard flat, held to K8's samples") {
+    // tests/building/fixture.hpp's pieces_ring: a gabled block round a courtyard and, joined to it by a seam, a house
+    atlas::test::TileBytes t = atlas::test::building::pieces_tile();
+    const atlas::test::Ring both = atlas::test::building::pieces_ring();
+    Fixture f;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, two pieces");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &f.head, .level = 0, .region = {}});
+    const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
+    // every primitive's sample is K8's: its kind, its record, and its edge's number on the ring, whichever piece's
+    const Checked c = check_tile(g, st);
+    CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+    std::vector<gm::V2> ring;
+    for (std::size_t k = 0; k < both.lat.size(); ++k)
+        ring.emplace_back(f.head.frame.x(both.lon[k]), f.head.frame.z(both.lat[k]));
+    const std::vector<std::uint8_t> seams = gm::seams(ring);
+    CHECK(seams == std::vector<std::uint8_t>{1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
+    const std::vector<std::vector<std::uint32_t>> pieces = gm::pieces_of(ring, seams);
+    ATLAS_REQUIRE(pieces.size() == 2);
+    CHECK(pieces[0] == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 6, 7, 14, 15});
+    CHECK(pieces[1] == std::vector<std::uint32_t>{9, 10, 11, 12});
+    CHECK(gm::has_courtyard(pieces[0], seams));
+    CHECK_FALSE(gm::has_courtyard(pieces[1], seams));
+    // walls on every edge but the four seams; the house's reach its eaves at 10 m, the block's its top at 15 m
+    std::map<std::uint32_t, double> wall_top;
+    std::map<gm::PrimKind, std::set<std::uint32_t>> edges;
+    for (const gm::Prim& p : g.edged) {
+        edges[p.kind].insert(p.edge);
+        if (p.kind != gm::PrimKind::cell || (p.flags & gm::prim_flag::far) == 0) continue;
+        double top = p.p[0].y;
+        for (const gm::V3& v : p.p) top = std::max(top, v.y);
+        wall_top[p.edge] = top;
+    }
+    for (const gm::Prim& p : g.plain) edges[p.kind].insert(p.edge);
+    CHECK(wall_top.size() == 12);
+    for (const auto& [edge, top] : wall_top) {
+        CHECK_MESSAGE(seams[edge] == 0, "a wall on seam ", edge);
+        CHECK_MESSAGE(top == (edge >= 9 && edge <= 12 ? 10.0 : 15.0), "the wall of edge ", edge);
+    }
+    // the house's roof on its own four edges: a gable over each short wall, a slope over each long one; the block's
+    // flat top (an n-gon's primitives carry its piece's first edge)
+    CHECK(edges[gm::PrimKind::gable] == std::set<std::uint32_t>{9, 11});
+    CHECK(edges[gm::PrimKind::slope] == std::set<std::uint32_t>{10, 12});
+    CHECK(edges[gm::PrimKind::top] == std::set<std::uint32_t>{0});
+    // every other shape stage T draws pitched, the house's alone: each primitive's sample K8's
+    for (const std::string_view shape : {"hipped", "pyramidal", "skillion", "mansard", "quadruple_saltbox"}) {
+        CAPTURE(shape);
+        atlas::test::TileBytes other = atlas::test::building::pieces_tile(shape);
+        atlas::Arena memory(1U << 20U, atlas::Growth::grows, "buildings test, two pieces, a shape");
+        tl::TileDecoder reader;
+        const std::vector<std::byte> bytes = other.encode();
+        auto decoded = reader.decode(bytes, memory);
+        ATLAS_REQUIRE(decoded.has_value(), tl::describe(decoded.error()));
+        const gm::TileBuildings made =
+            gm::build_buildings({.tile = &*decoded, .head = &f.head, .level = 0, .region = {}});
+        const atlas::sun::SunTile sun = atlas::sun::make_tile(*decoded, f.head, atlas::sun::Region{}, 0, {});
+        const Checked held = check_tile(made, sun);
+        CHECK_MESSAGE(held.wrong == 0, held.first_wrong);
+        std::set<std::uint32_t> pitched; // the edges of what stands over the eaves, but a flat top
+        for (const auto* list : {&made.edged, &made.plain}) {
+            for (const gm::Prim& p : *list) {
+                if (p.kind != gm::PrimKind::cell && p.kind != gm::PrimKind::top) pitched.insert(p.edge);
+            }
+        }
+        CHECK(!pitched.empty());
+        for (const std::uint32_t e : pitched) CHECK_MESSAGE((e >= 9 && e <= 12), "a roof on edge ", e);
     }
 }
 

@@ -101,8 +101,11 @@ pub struct Cleaned {
     pub ring: Vec<Option<Vec<P>>>,
     pub min: Vec<f64>,
     pub counts: Counts,
-    /// Per footprint, an outline's area that nothing draws (m²; 0 for a part, or an outline nothing touched).
+    /// Per footprint, an outline's area that nothing draws (m²; 0 for a part, or an outline nothing touched; -1
+    /// where it could not be measured).
     pub uncovered: Vec<f64>,
+    /// Per footprint, what was done to it: COVERED, HIDDEN, CLIPPED, RAISED, VANISHED, COURTYARD.
+    pub what: Vec<u8>,
 }
 
 /// The square root, correctly rounded as IEEE 754 has every platform's (the C library's: core has none).
@@ -335,11 +338,18 @@ impl Run {
 
 /// What happened to a footprint (Cleaned's counts are made of these, once a group that could not be cleaned is put
 /// back as it was).
-const COVERED: u8 = 1;
-const HIDDEN: u8 = 2;
-const CLIPPED: u8 = 4;
-const RAISED: u8 = 8;
-const VANISHED: u8 = 16;
+/// An outline cut by its parts.
+pub const COVERED: u8 = 1;
+/// An outline its parts cover whole.
+pub const HIDDEN: u8 = 2;
+/// A footprint cut where another stands.
+pub const CLIPPED: u8 = 4;
+/// A footprint standing on others, its base raised to them.
+pub const RAISED: u8 = 8;
+/// A footprint others cover whole.
+pub const VANISHED: u8 = 16;
+/// A footprint with inner rings, its courtyards as mapped.
+pub const COURTYARD: u8 = 32;
 
 /// The groups of footprints whose interiors meet, one after another: each footprint's group's least member.
 fn groups(n: usize, meeting: &[(usize, usize)]) -> Vec<usize> {
@@ -641,7 +651,10 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
                     run.counts.uncovered_outlines += 1;
                 }
             }
-            None => run.counts.unmeasured += 1,
+            None => {
+                run.counts.unmeasured += 1;
+                uncovered[o] = -1.0;
+            }
         }
     }
     if run.spent {
@@ -660,7 +673,12 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
             run.counts.seamed += u32::from(crate::bridge::seams(r).iter().any(|&s| s));
         }
     }
-    Cleaned { drawn, ring, min, counts: run.counts, uncovered }
+    for k in 0..n {
+        if courtyards[k] {
+            what[k] |= COURTYARD;
+        }
+    }
+    Cleaned { drawn, ring, min, counts: run.counts, uncovered, what }
 }
 
 #[cfg(test)]

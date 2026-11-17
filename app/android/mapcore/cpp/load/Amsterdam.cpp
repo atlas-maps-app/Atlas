@@ -653,18 +653,31 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
 void count_flat_roofs(Scene& s) {
     std::uint32_t flat = 0;
     std::uint32_t by_seam = 0;
+    std::uint32_t by_piece = 0;
     for (const auto* list : {&s.buildings, &s.parts}) {
         for (const Building& b : *list) {
             if (b.hidden || !truthy(b.roof) || *b.roof == "flat") continue;
-            const double rh = b.roof_h.value_or(0.0);
-            const bool seamed = !geometry::seams(b.poly).empty();
-            if (geometry::drawn_pitched(b.roof, rh, seamed)) continue;
-            ++flat;
-            if (seamed && geometry::drawn_pitched(b.roof, rh, false)) ++by_seam;
+            if (!geometry::drawn_pitched(b.roof, b.roof_h.value_or(0.0), false)) {
+                ++flat; // a shape stage T does not draw, or no height
+                continue;
+            }
+            const std::vector<std::uint8_t> seam = geometry::seams(b.poly);
+            if (seam.empty()) continue;
+            bool courtyard = false;
+            bool roofed = false;
+            for (const std::vector<std::uint32_t>& piece : geometry::pieces_of(b.poly, seam)) {
+                (geometry::has_courtyard(piece, seam) ? courtyard : roofed) = true;
+            }
+            if (courtyard) {
+                ++flat;
+                ++by_seam;
+            }
+            if (roofed) ++by_piece;
         }
     }
     s.counts.flat_roofs = flat;
     s.counts.flat_by_seam = by_seam;
+    s.counts.roofed_by_piece = by_piece;
 }
 
 std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,

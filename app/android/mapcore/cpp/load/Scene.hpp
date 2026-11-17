@@ -149,6 +149,12 @@ struct Box {
     double z1 = 0.0;
 };
 
+/// What changed a building's ring in the cleaning (Building::cleaned): its parts cut it (an outline drawn less its
+/// parts), another footprint did (the two overlapped), it has courtyards as mapped.
+inline constexpr std::uint8_t cut_by_parts = 1;
+inline constexpr std::uint8_t cut_by_another = 2;
+inline constexpr std::uint8_t courtyard_mapped = 4;
+
 /// A building or a building part (amsterdam.py's `rec`): its outline, what its tags say, and what guess_tags adds.
 struct Building {
     /// The outline, its closing point dropped, turned so its signed area is positive. Once the buildings are cleaned
@@ -183,6 +189,8 @@ struct Building {
     Box bb;                            ///< `_bb`
     std::vector<std::uint32_t> places; ///< the places in it, as indices of the scene's nodes; no `places` when empty
     bool hidden = false; ///< an outline drawn by nothing of its own: its parts, or other buildings, cover it whole
+    /// What changed its ring where the cleaning did (cut_by_parts, cut_by_another, courtyard_mapped): for the counts.
+    std::uint8_t cleaned = 0;
     // regions.py's load adds:
     bool relation = false;                 ///< mapped as a multipolygon relation (`otype` 'relation'), else a way
     std::optional<std::int64_t> parent_id; ///< a part: the id of the outline it stands in
@@ -402,7 +410,8 @@ struct BuildingCounts {
     std::uint32_t overlapping_pairs = 0;  ///< drawn footprints overlapping in plan (over 1 m²) and in height (0.1 m)
     std::uint32_t uncovered_outlines = 0; ///< outlines more than 5 m² of which nothing draws
     std::uint32_t flat_roofs = 0;         ///< roofs with a shape, as drawn, that stage T draws flat
-    std::uint32_t flat_by_seam = 0;       ///< of them, those only a seam makes flat (a courtyard, a piece)
+    std::uint32_t flat_by_seam = 0;       ///< of them, those flat only over a piece with a courtyard
+    std::uint32_t roofed_by_piece = 0;    ///< rings with seams whose roof stands on a piece by itself (one or more)
     std::uint32_t underground = 0;        ///< below the ground by location=underground: hidden (a part: left out)
     std::uint32_t underground_layer = 0;  ///< below the ground by a layer under 0 alone: hidden (a part: left out)
     std::uint32_t doubles = 0;            ///< a relation's outer ring that is a building's own way, loaded once
