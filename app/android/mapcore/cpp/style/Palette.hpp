@@ -64,6 +64,7 @@ inline constexpr std::size_t turbines = 118;
 inline constexpr std::size_t pylons = 119;
 inline constexpr std::size_t night_ground = 128; // the theme's ground at night (PaletteTheme), which the pick names
 inline constexpr std::size_t night_water = 129;  // the theme's water at night
+inline constexpr std::size_t lit_windows = 130;  // a shop's glazing at night while it is open, the cities' lights
 } // namespace palette_slot
 
 /// The woods' own colour (the Woods slot's today): the canopy's matrix's .16 .24 .12 in linear light as sRGB, which
@@ -73,6 +74,14 @@ inline constexpr std::uint32_t woods_own = 0x6F8661U;
 /// The bare ground's own colour (the Paper slot's today): the live day's ground, which the built land's colours are
 /// lighter or darker tones of.
 inline constexpr std::uint32_t paper_own = 0xD6CFC2U;
+
+/// The night's ground's own colour (the Night ground slot's today): the live night's ground (the theme's), which the
+/// globe's night is a darker tone of.
+inline constexpr std::uint32_t night_ground_own = 0x12151FU;
+
+/// The lit windows' own colour (the Lit windows slot's today): a shop's glazing at night while it is open (the style's
+/// shop_glass_open, two levels apart), which the globe's cities' lights are tones of.
+inline constexpr std::uint32_t lit_windows_own = 0xFFD08AU;
 
 /// The quay walls' own colour (the Quay walls slot's today): Amsterdam's brick quays (the style's `quay_col` where a
 /// region has none of its own), which another region's walls, the copings and the waterlines are tones of.

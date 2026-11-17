@@ -13,9 +13,11 @@
 // and bytes printed, a line a level: `world level <z> ...`.
 #include "base/pymath/PyMath.hpp"
 #include "load/PackStyle.hpp"
+#include "passes/Ground.hpp"
 #include "passes/World.hpp"
 #include "scene/Cells.hpp"
 #include "scene/WorldTiles.hpp"
+#include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
@@ -28,6 +30,7 @@
 #include "tiles/Payload.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/WorldIndex.hpp"
+#include "tiles/WorldLadder.hpp"
 #include "tiles/layers/Ground.hpp"
 #include "tiles/layers/Labels.hpp"
 #include "tiles/layers/Lines.hpp"
@@ -41,6 +44,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
@@ -1516,4 +1520,119 @@ TEST_CASE("tiles: a kept country's world: its packs' heads and its tiles' chunks
     CHECK(c.pins() == 0);
     c.evict_to(0);
     CHECK(c.entries() == 0);
+}
+
+TEST_CASE(
+    "passes: the world's palette and its ladder follow the user's palette: every land kind and the asphalt as the "
+    "ground's fills of their colours, the day's ground, water and roads, the globe's ramps, coast, night and "
+    "lights; today's palette leaves every entry as it was") {
+    namespace wp = atlas::scene::world_palette;
+    namespace slot = atlas::style::palette_slot;
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    REQUIRE(world->ladder.has_value());
+    atlas::style::ThemeBlock theme{};
+    theme.ground = {.r = 0xD6, .g = 0xCF, .b = 0xC2, .a = 255};
+    theme.water = {.r = 0x4F, .g = 0x75, .b = 0x90, .a = 255};
+    theme.road = {.r = 0xC9, .g = 0xC1, .b = 0xB4, .a = 255};
+    theme.sun_elevation = 30.0;
+    const atlas::style::PaletteBlock today{};
+    for (const bool night : {false, true}) {
+        CHECK(atlas::passes::World::palette_of(theme, night, world, &today) ==
+              atlas::passes::World::palette_of(theme, night, world));
+    }
+    const atlas::tiles::WorldLadder same = atlas::passes::World::painted_ladder(*world->ladder, *world, &today);
+    CHECK(std::memcmp(&same.day_ground, &world->ladder->day_ground, sizeof same.day_ground) == 0);
+    CHECK(same.sea.at(0).colour == world->ladder->sea.at(0).colour);
+    CHECK(same.lights.at(0).colour == world->ladder->lights.at(0).colour);
+
+    // each land kind with a slot moves with it, by day and at night, exactly as the ground's fills of its colour do; a
+    // kind without one (sand, rock) stays
+    std::size_t moved_kinds = 0;
+    for (const std::size_t code :
+         {slot::paper, slot::lawn, slot::woods, slot::squares, slot::parking, slot::playground}) {
+        atlas::style::PaletteBlock p{};
+        p.colours.at(code) = 0x01FF00FFU;
+        for (const bool night : {false, true}) {
+            const std::vector<std::uint32_t> before = atlas::passes::World::palette_of(theme, night, world);
+            const std::vector<std::uint32_t> after = atlas::passes::World::palette_of(theme, night, world, &p);
+            const std::vector<std::uint32_t> table = atlas::passes::ground_palette(*world, &p, night);
+            for (std::size_t k = wp::kinds; k < wp::size && k - wp::kinds < world->land_kinds.size(); ++k) {
+                // the ground's move of this entry's colour, if any
+                std::uint32_t want = before[k];
+                for (std::uint32_t j = 0; j < atlas::passes::palette_pairs && !table.empty(); ++j) {
+                    const std::size_t at = std::size_t{2} * ((atlas::passes::palette_hash(before[k]) + j) &
+                                                             (atlas::passes::palette_pairs - 1));
+                    if (table[at] == before[k]) {
+                        want = table[at + 1];
+                        break;
+                    }
+                    if (table[at] == 0U) break;
+                }
+                CHECK_MESSAGE(after[k] == want, world->land_kinds[k - wp::kinds]);
+                if (after[k] != before[k] && !night) ++moved_kinds;
+                const std::optional<std::size_t> of = atlas::style::land_slot(world->land_kinds[k - wp::kinds]);
+                if (!of) CHECK_MESSAGE(after[k] == before[k], world->land_kinds[k - wp::kinds]);
+            }
+            // the theme's own entries are the app's to move (PaletteTheme), the rails and runways no slot's
+            for (const std::size_t e :
+                 {std::size_t{wp::land}, std::size_t{wp::water}, std::size_t{wp::road}, std::size_t{wp::rail},
+                  std::size_t{wp::runway}, std::size_t{wp::coast}, std::size_t{wp::ice}}) {
+                CHECK(after[e] == before[e]);
+            }
+        }
+    }
+    CHECK(moved_kinds > 10);
+    // the big roads' asphalt with the asphalt's slot
+    {
+        atlas::style::PaletteBlock p{};
+        p.colours.at(slot::asphalt) = 0x01FF00FFU;
+        CHECK(atlas::passes::World::palette_of(theme, false, world, &p)[wp::asphalt] !=
+              atlas::passes::World::palette_of(theme, false, world)[wp::asphalt]);
+    }
+
+    // the ladder: the day's colours are today's slots', so they become the user's exactly
+    atlas::style::PaletteBlock p{};
+    p.colours.at(slot::paper) = 0x01102030U;
+    p.colours.at(slot::water) = 0x01405060U;
+    p.colours.at(slot::street) = 0x01708090U;
+    p.colours.at(slot::lawn) = 0x01A0B0C0U;
+    p.colours.at(slot::night_ground) = 0x01302010U;
+    p.colours.at(slot::lit_windows) = 0x0100FFFFU;
+    const atlas::tiles::WorldLadder& l = *world->ladder;
+    const atlas::tiles::WorldLadder m = atlas::passes::World::painted_ladder(l, *world, &p);
+    CHECK(m.day_ground == 0x102030U);
+    CHECK(m.day_water == 0x405060U);
+    CHECK(m.day_road == 0x708090U);
+    // with grass on bare ground the day's ground is the lawns'
+    atlas::style::PaletteBlock grass = p;
+    grass.flags = atlas::style::palette_flag::grass;
+    CHECK(atlas::passes::World::painted_ladder(l, *world, &grass).day_ground == 0xA0B0C0U);
+    // the globe: the sea's stops as the water moves, the land's greens and the coast as the lawns, the snow and the ice
+    // as they are, the night as the night's ground, the lights as the lit windows
+    for (std::size_t i = 0; i < l.sea.size(); ++i) {
+        CHECK(m.sea.at(i).colour == atlas::style::palette_move(l.sea.at(i).colour, l.day_water, 0x405060U));
+        CHECK(m.sea.at(i).at == l.sea.at(i).at);
+    }
+    for (std::size_t i = 0; i + 1 < l.land.size(); ++i) {
+        CHECK(m.land.at(i).colour ==
+              atlas::style::palette_move(l.land.at(i).colour, world->area_colour("park"), 0xA0B0C0U));
+    }
+    CHECK(m.land.back().colour == l.land.back().colour);
+    CHECK(m.ice == l.ice);
+    CHECK(m.coast.colour != l.coast.colour);
+    CHECK(m.coast.opacity == l.coast.opacity);
+    CHECK(m.night == atlas::style::palette_move(l.night, atlas::style::night_ground_own, 0x302010U));
+    for (std::size_t i = 0; i < l.lights.size(); ++i) {
+        CHECK(m.lights.at(i).colour ==
+              atlas::style::palette_move(l.lights.at(i).colour, atlas::style::lit_windows_own, 0x00FFFFU));
+    }
+    CHECK(m.graticule.colour == l.graticule.colour);
+    CHECK(m.space == l.space);
+    // the day's palette under the night's caps takes the painted ladder's day colours
+    theme.flags |= atlas::style::theme_flag::night;
+    const std::vector<std::uint32_t> under = atlas::passes::World::day_palette_of(theme, world, &p);
+    CHECK(under[wp::land] == 0xFF302010U);
+    CHECK(under[wp::water] == 0xFF605040U);
+    CHECK(under[wp::road] == 0xFF908070U);
 }
