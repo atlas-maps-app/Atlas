@@ -68,6 +68,12 @@ class MainActivity : ComponentActivity() {
             setContent { app.atlas.mapview.GlCapsScreen() }
             return
         }
+        // VK bench's real map on a phone fetches the windows and the world as the app's map does (not CI's bench, which
+        // draws the canal ring it puts on the device and fetches nothing)
+        if (intent.getStringExtra(EXTRA_SCREEN) == SCREEN_VKBENCH && !intent.getBooleanExtra(EXTRA_VK_CI, false)) {
+            allowWorld(services, intent)
+            app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
+        }
         // VK facts and VK bench (plan-vector A0): the phone's Vulkan, and the stand-in measured on it
         if (showVulkanScreen(intent)) return
         offerBenchShortcuts()
