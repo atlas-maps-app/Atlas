@@ -151,9 +151,9 @@ jobs:
       # emulator's runs draw (:app's benchTiles, in the New looks), both reading ATLAS_STAGEP, so they come from the code
       # the phone builds its windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's
       # clang and libc++ (above) and the SDK's CMake and Ninja, through a ccache folder and entry of its own (unit-app
-      # restores it), the compiler known by its file's time and size. The Westerkerk's tiles are the port's cut's byte
-      # for byte: :mapcorecheck's bundled tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold
-      # the core to, as do core.yml's.
+      # restores it), the compiler known by its file's time and size. Since core-p14 the Westerkerk's tiles are the
+      # core's own (its buildings cleaned), no longer the port's: :mapcorecheck's bundled tiles stay the port's until
+      # cut 2, and the host's checks VK facts is held to (ci/hashes.env) run over the core's Westerkerk.
       - uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ccache-stagep
