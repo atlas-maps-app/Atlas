@@ -459,6 +459,20 @@ object MapBench {
         }
     }.trimEnd()
 
+    /**
+     * The table's words for what the map still wanted after the lap's views were waited for ([missing]: windows, levels
+     * and world tiles not there): that every one was there, or how many were not and the first of them, so that a
+     * number never hides a missing map.
+     */
+    fun missingWords(missing: Collection<String>): String = when {
+        missing.isEmpty() -> "every window, level and world tile the lap draws was there"
+        missing.size <= MISSING_NAMED -> "${missing.size} not there: ${missing.joinToString(", ")}"
+        else -> "${missing.size} not there: ${missing.take(MISSING_NAMED).joinToString(", ")} and ${missing.size - MISSING_NAMED} more"
+    }
+
+    /** How many of the tiles not there the table names. */
+    const val MISSING_NAMED = 8
+
     /** The table's lines as VK bench logs them (`vkbench table: …`), so that CI keeps them with the rest. */
     fun tableLines(table: String): List<String> = table.lines().map { "vkbench table: $it" }
 

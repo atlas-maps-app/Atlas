@@ -1268,15 +1268,22 @@ private class BenchRun(
             coroutineScope {
                 val fetch = launch(Dispatchers.IO) { fetchLoop(packs, fetched) }
                 try {
-                    // 1. The lap's views, each until its picture is complete: its tiles fetched and built.
+                    // 1. The cold lap, not measured: once round at the measured speed, fetching and building what the
+                    // lap draws (a lap timed while it fetches measures the network and stage P, not the frame); its
+                    // line apart. Then the lap's views, each until its picture is complete, and what the map still
+                    // wants at each (a window, a level, a world tile not there): the table names it.
                     val warmFrom = activeNs()
+                    val cold = lapOnce(timing)
+                    emit(VkBench.line("real cold lap", cold.summary(), graphicsMb(), nativeMb(), lapExtra(cold) + " (not measured: it fetches and builds)"))
                     var complete = 0
+                    val missing = LinkedHashSet<String>()
                     for (at in timing.warm) {
                         if (awaitLapPicture(at, timing.waitCapSeconds)) complete++
+                        missing += withContext(Dispatchers.Default) { wanted() }
                     }
-                    emit("vkbench real tiles: ${timing.warm.size} views of the lap waited for, $complete complete, in " +
+                    emit("vkbench real tiles: the cold lap, then ${timing.warm.size} views of the lap waited for, $complete complete, in " +
                         "${VkBench.ms((activeNs() - warmFrom) / 1e6)} ms; ${fetched.get()} fetches wrote a pack; " +
-                        "${packs.packs.size} windows and packs, ${packs.worldRefs.size} of the world listed")
+                        "${packs.packs.size} windows and packs, ${packs.worldRefs.size} of the world listed; " + MapBench.missingWords(missing))
                     val thermalFrom = headroom()
                     // 2. The laps, the setups taking turns in each round.
                     for (round in 1..timing.rounds) {
@@ -1313,8 +1320,8 @@ private class BenchRun(
                         gpu = "${fact("gpu")}, driver ${fact("driver.version")}, config ${fact("config").substringBefore(" ")}",
                         build = "build " + (runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "?"),
                         timing = timing,
-                        tiles = "${packs.packs.size} windows and packs, ${packs.worldRefs.size} of the world" +
-                            (fetchNote?.let { "; $it" } ?: "; fetched as the app fetches them, every view of the lap waited for ($complete of ${timing.warm.size} complete)"),
+                        tiles = "${packs.packs.size} windows and packs, ${packs.worldRefs.size} of the world; " + MapBench.missingWords(missing) +
+                            (fetchNote?.let { "; $it" } ?: "; fetched as the app fetches them, a cold lap first, then every view of the lap waited for ($complete of ${timing.warm.size} complete)"),
                         battery = (if (level >= 0) "$level %" else "?") + (if (plugged) ", plugged in" else ", unplugged") +
                             (celsius?.let { ", %.1f °C".format(java.util.Locale.ROOT, it) } ?: ""),
                         thermal = "$thermalFrom at the first lap, ${headroom()} at the end (1 is throttling)",
@@ -1344,6 +1351,13 @@ private class BenchRun(
             }
         }
     }
+
+    /**
+     * What the map wants at its camera now and does not have: the windows and levels no pack covers yet, and the world's
+     * tiles whose chunks are not on the phone (`window/<z>/<x>/<y>`, `world <z>/<x>/<y>`). Off the main thread.
+     */
+    private fun wanted(): List<String> =
+        core.wantedWindows().map { it.id } + core.wantedLevels().map { it.id } + core.worldWants().map { "world ${it.tile.z}/${it.tile.x}/${it.tile.y}" }
 
     /** A lap line's words after VK bench's numbers: its complete frames, its power, the native heap and the core's GPU memory. */
     private fun lapExtra(laps: MapBench.Laps): String =

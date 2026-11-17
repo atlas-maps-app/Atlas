@@ -287,6 +287,13 @@ class MapBenchTest {
         assertEquals(listOf("full", "nosun", "flat"), MapBench.Setup.entries.map { it.key })
         assertEquals(305.0, MapBench.gpuMemory("vk frame 12 cpu 4.00 ms gpu 3.00 ms record 1.00 ms draws 40 triangles 900k graphics 305.0 MB; vk tiles 3"), 0.0)
         assertTrue(MapBench.gpuMemory("vk no frames").isNaN())
+        // the table says whether the lap's map was all there, and names what was not
+        assertEquals("every window, level and world tile the lap draws was there", MapBench.missingWords(emptyList()))
+        assertEquals("2 not there: window/14/8414/5384, world 6/32/21", MapBench.missingWords(listOf("window/14/8414/5384", "world 6/32/21")))
+        assertEquals(
+            "10 not there: w0, w1, w2, w3, w4, w5, w6, w7 and 2 more",
+            MapBench.missingWords((0 until 10).map { "w$it" }),
+        )
         // CI's run is short and at one stop; the phone's takes every stop, two rounds
         assertEquals(listOf(MapBench.Stop.STREET), MapBench.timing(VkBench.Length.CI).stops)
         assertEquals(MapBench.Stop.entries, MapBench.timing(VkBench.Length.MAP).stops)
