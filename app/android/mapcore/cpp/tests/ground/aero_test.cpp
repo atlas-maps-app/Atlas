@@ -14,7 +14,10 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <span>
 #include <string>
@@ -171,4 +174,99 @@ TEST_CASE("ground: a dashed line's samples lie in its dashes, each segment from 
     CHECK(sh::in_dash(g, from_start, {40.5F, 0.8F})); // 40 = 4 into its period
     // a solid run is never cut
     CHECK(sh::in_dash(g, {0.0F, 0.0F, 0.0F, 0.0F}, {8.0F, 0.0F}));
+}
+
+namespace {
+
+/// The big roads of a window about the Westerkerk, each a motorway with one bend (300 m east, then 200 m north): way
+/// 40 untagged, then one each with a lanes or a width that no road has or that cannot be read, and way 46 with 21
+/// lanes (Germany's most, 16 November 2026).
+[[nodiscard]] std::string motorway_window() {
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [)";
+    const std::array<std::string_view, 7> tags{
+        "",
+        R"(, "lanes": "999999999999999999999")", // past a long: to_int fails
+        R"(, "lanes": "500")",                   // 499 lane lines, 1.75 km wide
+        R"(, "lanes": "-3")",                    // a negative road
+        R"(, "width": "1000000")",               // a 1,000 km road
+        R"(, "width": "-12")",                   // a negative width
+        R"(, "lanes": "21")",
+    };
+    for (std::size_t i = 0; i < tags.size(); ++i) {
+        const double lat = 52.3712 + (0.0006 * static_cast<double>(i));
+        data += std::format(R"({}{{"type": "way", "id": {}, "tags": {{"highway": "motorway"{}}}, "geometry": [)"
+                            R"({{"lat": {:.4f}, "lon": 4.8800}}, {{"lat": {:.4f}, "lon": 4.8844}}, )"
+                            R"({{"lat": {:.4f}, "lon": 4.8844}}]}})",
+                            i == 0 ? "" : ",", 40 + i, tags.at(i), lat, lat, lat + 0.0018);
+    }
+    data += "]}";
+    const auto built =
+        atlas::load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, atlas::load::place_of(k));
+    ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "motorway-window";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / "window.atlas";
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+              static_cast<std::streamsize>(built->pack.size()));
+    return file.string();
+}
+
+/// What a big road drew: its lane lines' dashes and its edge lines' distance from its centre line at its first point.
+struct BigRoad {
+    std::size_t dashes = 0;
+    double edge = 0.0;
+};
+
+} // namespace
+
+TEST_CASE("ground: a big road's lanes and width that no road has, or that cannot be read, draw as unmapped") {
+    const std::string path = motorway_window();
+    ATLAS_REQUIRE(!path.empty());
+    auto pack = atlas::test::open_pack(path);
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    const tl::RenderHead& head = *pack->head();
+    ATLAS_REQUIRE(pack->style() != nullptr);
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    atlas::Arena arena(4U << 20U, atlas::Growth::grows, "motorway test");
+    const auto chunks = pack->chunks().level(head.levels.front());
+    ATLAS_REQUIRE(!chunks.empty());
+    auto tile = pack->decode(chunks.front(), zstd, decoder, arena, raw, scratch);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const geo::P2 origin{.x = head.frame.x(tile->header.west), .z = head.frame.z(tile->header.south)};
+    const geo::GroundTile g = geo::build_ground(*tile, head, *pack->style(), 0, origin);
+    std::array<BigRoad, 7> roads{};
+    std::array<bool, 7> seen{};
+    for (const geo::Stroke& s : g.strokes) {
+        if (s.kind != geo::StrokeKind::lanes && s.kind != geo::StrokeKind::edges) continue;
+        const std::uint64_t id = (s.key.element >> 18U) & ((std::uint64_t{1} << 44U) - 1);
+        REQUIRE((id >= 40 && id < 47));
+        BigRoad& r = roads.at(id - 40);
+        seen.at(id - 40) = true;
+        if (s.kind == geo::StrokeKind::edges) {
+            const geo::P2 c = g.points[s.line];
+            const geo::P2 e = g.points[g.polylines[s.first].first];
+            r.edge = std::hypot(e.x - c.x, e.z - c.z);
+            continue;
+        }
+        r.dashes = s.count;
+    }
+    for (const bool s : seen) CHECK(s);
+    // unmapped: two lanes, 2 · 3.5 + 3 m wide, its edge lines 0.5 m in, one lane line between them (ways 41 to 45 drew
+    // as it before: the abort, 499 lane lines 1.75 km wide, a negative width, a 1,000 km road and a negative one)
+    const BigRoad& unmapped = roads[0];
+    CHECK(unmapped.edge == doctest::Approx(4.5));
+    CHECK(unmapped.dashes > 0);
+    for (std::size_t i = 1; i <= 5; ++i) {
+        INFO("way " << 40 + i);
+        CHECK(roads.at(i).edge == doctest::Approx(unmapped.edge));
+        CHECK(roads.at(i).dashes == unmapped.dashes);
+    }
+    // 21 lanes as mapped: 21 · 3.5 + 3 m, 20 lane lines
+    CHECK(roads[6].edge == doctest::Approx((((21 * 3.5) + 3) / 2) - 0.5));
+    CHECK(roads[6].dashes > 19 * unmapped.dashes);
 }

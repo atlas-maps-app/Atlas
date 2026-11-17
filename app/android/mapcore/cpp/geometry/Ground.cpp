@@ -111,6 +111,12 @@ constexpr std::array<std::string_view, 3> surfaced = {"pedestrian", "square", "p
     return decimal(s.substr(start, i - start));
 }
 
+/// A big road's lanes and width as drawn: past these no road has them (the Netherlands' extract of 16 November 2026
+/// has 14 lanes at most, Germany's 21; a width over 200 m is a river's or a mistake), and their lane lines would be
+/// drawn without bound (each lane a dashed line along an offset whose bends part by twice the offset).
+constexpr std::int64_t most_lanes = 32;
+constexpr double widest_road = 200.0;
+
 /// The cell of feature `i` of a layer (its features are sorted by cell).
 class CellOf {
 public:
@@ -571,8 +577,13 @@ private:
              std::optional<std::string_view> width_tag) {
         const bool link = hw.ends_with("link");
         const bool motorway = hw == "motorway";
-        const std::int64_t lanes = pm::to_int(num(lanes_tag, link ? 1.0 : 2.0));
-        const double w = num(width_tag, (static_cast<double>(lanes) * 3.5) + (motorway ? 3.0 : 1.0));
+        // a number that cannot be read, or that no road has, is not mapped: the default (loadfail's rule)
+        const std::int64_t unmapped = link ? 1 : 2;
+        const auto mapped = pm::checked::to_int(num(lanes_tag, static_cast<double>(unmapped)));
+        const std::int64_t lanes = mapped && *mapped >= 0 && *mapped <= most_lanes ? *mapped : unmapped;
+        const double width = num(width_tag, std::numeric_limits<double>::quiet_NaN());
+        const double w =
+            width >= 0.0 && width <= widest_road ? width : (static_cast<double>(lanes) * 3.5) + (motorway ? 3.0 : 1.0);
         const double y = 0.06 + (pm::max(0.0, layer) * 0.5);
         ribbon_.clear();
         ribbon(points(c0, n), w / 2, ribbon_);
