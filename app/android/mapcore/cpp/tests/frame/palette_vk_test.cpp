@@ -9,6 +9,7 @@
 // others by the palette's block. And the reflections under a palette: the walls' and the trees' changes move pixels the
 // reflections alone draw.
 #include "base/pymath/PyMath.hpp"
+#include "frame/Counters.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
 #include "gpu/Guard.hpp"
@@ -383,17 +384,38 @@ private:
     return false;
 }
 
-/// The frame of `camera` drawn now (two frames, the second read back).
-[[nodiscard]] gpu::Pixels frame_of(standin::Session& session, KeptWindow& window, const style::CameraState& camera) {
-    for (int i = 0; i < 2; ++i) {
+/// Whether the map's last frame shows `theme`'s colours: a new moment waits for every pass to be ready for it
+/// (FrameBuilder::take_moment), the frame showing the one before meanwhile.
+[[nodiscard]] bool shows(const frame::MapFrame& map, const style::ThemeBlock& theme) {
+    const style::ThemeBlock& shown = map.builder()->state().theme;
+    const auto same = [](const style::Rgb8& a, const style::Rgb8& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+    return same(shown.sky_top, theme.sky_top) && same(shown.sky_horizon, theme.sky_horizon) &&
+           same(shown.haze, theme.haze) && same(shown.sun, theme.sun) && same(shown.ambient, theme.ambient) &&
+           same(shown.ground, theme.ground) && same(shown.road, theme.road) && same(shown.water, theme.water) &&
+           same(shown.water_top, theme.water_top) && same(shown.water_bottom, theme.water_bottom) &&
+           same(shown.shadow, theme.shadow);
+}
+
+/// The frame of `camera` once the map shows the moment `theme` it was handed and two frames in a row are the same
+/// (the passes' work for a palette or a moment done), at most 240 frames; the last read back.
+[[nodiscard]] gpu::Pixels settled(standin::Session& session, frame::MapFrame& map, KeptWindow& window,
+                                  const style::CameraState& camera, const style::ThemeBlock& theme) {
+    std::optional<gpu::Pixels> last;
+    for (int i = 0; i < 240; ++i) {
         if (session.draw(camera, {}).stale) session.remake();
+        if (!shows(map, theme)) continue;
+        auto pixels = window.kept->read(window.kept->latest());
+        if (!pixels) {
+            FAIL_CHECK(pixels.error().text());
+            return {};
+        }
+        if (last && last->rgba == pixels->rgba) return std::move(*pixels);
+        last = std::move(*pixels);
     }
-    auto pixels = window.kept->read(window.kept->latest());
-    if (!pixels) {
-        FAIL_CHECK(pixels.error().text());
-        return {};
-    }
-    return std::move(*pixels);
+    FAIL_CHECK("the frame never settled on its moment");
+    return last ? std::move(*last) : gpu::Pixels{};
 }
 
 /// The pixels of `a` and `b` (the same size) any of whose channels differ by more than 8 levels.
@@ -415,6 +437,17 @@ private:
     return static_cast<std::size_t>(std::ranges::count(v, true));
 }
 
+/// The mirrored faces the map's last frame drew (the ground pass's "ground reflections").
+[[nodiscard]] std::uint64_t reflections_drawn(const frame::MapFrame& map) {
+    std::uint64_t n = 0;
+    for (const frame::PassCounters& c : map.builder()->counters()) {
+        for (const frame::KindCount& k : c.kinds()) {
+            if (k.kind == "ground reflections") n += k.count.triangles;
+        }
+    }
+    return n;
+}
+
 /// A view of the test: its name, its camera and its moment.
 struct View {
     std::string_view name;
@@ -434,26 +467,35 @@ struct Moves {
 void measure(standin::Session& session, frame::MapFrame& map, KeptWindow& window, std::span<const View> views,
              Moves& out) {
     const style::PaletteBlock today{};
+    // the flat roofs' three mid greys draw only with their switch on (alpha 22's): measured against the switch alone
+    style::PaletteBlock greys{};
+    greys.flags = style::palette_flag::flat_greys;
+    const auto grey = [](std::uint32_t code) { return code >= 84 && code <= 86; };
     for (const View& v : views) {
         map.set_palette(today);
         map.set_theme(v.theme);
         ATLAS_REQUIRE(draw_still(session, map, v.camera), std::string(v.name) + " never complete");
-        const gpu::Pixels base = frame_of(session, window, v.camera);
-        const std::size_t noise = count(changed(base, frame_of(session, window, v.camera)));
+        const gpu::Pixels base = settled(session, map, window, v.camera, v.theme);
+        const std::size_t noise = count(changed(base, settled(session, map, window, v.camera, v.theme)));
         out.noise.emplace_back(v.name, noise);
+        map.set_palette(greys);
+        const gpu::Pixels base_greys = settled(session, map, window, v.camera, v.theme);
         const std::vector<std::uint64_t> tiles = drawn_tiles(map);
         for (const Slot& s : slots) {
-            const style::PaletteBlock p = only(s.code, far_from(s.today));
+            style::PaletteBlock p = only(s.code, far_from(s.today));
+            if (grey(s.code)) p.flags = greys.flags;
+            const style::ThemeBlock theme = recoloured(v.theme, p);
             map.set_palette(p);
-            map.set_theme(recoloured(v.theme, p));
-            const std::size_t n = count(changed(base, frame_of(session, window, v.camera)));
+            map.set_theme(theme);
+            const gpu::Pixels moved = settled(session, map, window, v.camera, theme);
+            const std::size_t n = count(changed(grey(s.code) ? base_greys : base, moved));
             out.by_slot[s.code].emplace_back(v.name, n > noise ? n - noise : 0);
         }
         // nothing built again for a palette: the same tiles drawn
         CHECK_MESSAGE(drawn_tiles(map) == tiles, v.name);
         map.set_palette(today);
         map.set_theme(v.theme);
-        const gpu::Pixels again = frame_of(session, window, v.camera);
+        const gpu::Pixels again = settled(session, map, window, v.camera, v.theme);
         CHECK_MESSAGE(count(changed(base, again)) <= noise, v.name);
         if (noise == 0) CHECK_MESSAGE(again.rgba == base.rgba, v.name);
     }
@@ -631,8 +673,13 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     off.parts = style::camera_part::reflections;
     ATLAS_REQUIRE(draw_still(session, map, on));
     const style::PaletteBlock today{};
-    const gpu::Pixels today_on = frame_of(session, *kept, on);
-    const gpu::Pixels today_off = frame_of(session, *kept, off);
+    const gpu::Pixels today_on = settled(session, map, *kept, on, sunny());
+    const std::uint64_t faces_on = reflections_drawn(map);
+    const gpu::Pixels today_off = settled(session, map, *kept, off, sunny());
+    const std::uint64_t faces_off = reflections_drawn(map);
+    MESSAGE("the reflections' triangles: " << faces_on << " drawn, " << faces_off << " with them left out");
+    CHECK(faces_on > 0);
+    CHECK(faces_off == 0);
     // where the reflections draw
     const std::vector<bool> mirrored = changed(today_on, today_off);
     REQUIRE(count(mirrored) > 100);
@@ -640,10 +687,11 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     for (std::uint32_t code = 48; code <= 63; ++code) walls.colours.at(code) = 0x01FF00FFU;
     style::PaletteBlock leaves = only(style::palette_slot::leaves, 0xFF00FFU);
     leaves.colours.at(style::palette_slot::evergreen) = 0x01FF00FFU;
-    for (const auto& [name, palette] : {std::pair{"walls", walls}, std::pair{"leaves", leaves}}) {
+    for (const auto& [name, palette] :
+         {std::pair{std::string_view("walls"), walls}, std::pair{std::string_view("leaves"), leaves}}) {
         map.set_palette(palette);
-        const std::vector<bool> with = changed(today_on, frame_of(session, *kept, on));
-        const std::vector<bool> without = changed(today_off, frame_of(session, *kept, off));
+        const std::vector<bool> with = changed(today_on, settled(session, map, *kept, on, sunny()));
+        const std::vector<bool> without = changed(today_off, settled(session, map, *kept, off, sunny()));
         // the pixels the palette moved with the reflections drawn and not without them, where they draw
         std::size_t theirs = 0;
         for (std::size_t i = 0; i < with.size(); ++i) theirs += with[i] && !without[i] && mirrored[i] ? 1U : 0U;
@@ -651,7 +699,7 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
         CHECK_MESSAGE(theirs > 20, name);
     }
     map.set_palette(today);
-    CHECK(count(changed(today_on, frame_of(session, *kept, on))) == 0);
+    CHECK(count(changed(today_on, settled(session, map, *kept, on, sunny()))) == 0);
 }
 
 #endif
