@@ -148,9 +148,10 @@ pub fn winding(rings: &[Vec<P>], p: P) -> Where {
 }
 
 /// The same about p for the rings scaled by s (2: a middle point of two grid points, doubled).
-pub fn winding_scaled(rings: &[Vec<P>], p: P, s: i64) -> Where {
+pub fn winding_scaled<R: AsRef<[P]>>(rings: &[R], p: P, s: i64) -> Where {
     let mut w = 0;
     for r in rings {
+        let r = r.as_ref();
         let n = r.len();
         for i in 0..n {
             let a = P::new(r[i].x * s, r[i].y * s);

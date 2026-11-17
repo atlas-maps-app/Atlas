@@ -35,9 +35,8 @@ fn clear(a: P, b: P, rings: &[&[P]], inside: bool) -> bool {
             }
         }
     }
-    let owned: Vec<Vec<P>> = rings.iter().map(|r| r.to_vec()).collect();
     let m = P::new(a.x + b.x, a.y + b.y);
-    match winding_scaled(&owned, m, 2) {
+    match winding_scaled(rings, m, 2) {
         Where::Edge => false,
         Where::Winding(w) => (w != 0) == inside,
     }

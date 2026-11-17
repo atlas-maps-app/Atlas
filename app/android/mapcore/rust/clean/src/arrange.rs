@@ -332,7 +332,7 @@ fn polygons(rings: Vec<Vec<P>>) -> Vec<Poly> {
 /// Whether the ring `outer` holds the ring `inner`, which may touch it but never crosses it: by the middle of the
 /// first of inner's edges that does not lie on outer.
 fn holds(outer: &[P], inner: &[P]) -> bool {
-    let rings = [outer.to_vec()];
+    let rings = [outer];
     let n = inner.len();
     for i in 0..n {
         let m = P::new(inner[i].x + inner[(i + 1) % n].x, inner[i].y + inner[(i + 1) % n].y);
