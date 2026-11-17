@@ -10,8 +10,8 @@
 # A region with "windows": false in regions.json gets neither.
 # The region pack covers the region's `atlas` box when regions.json gives one (a city, a district: "atlas": [w, s, e, n]),
 # else its whole bbox when that is under 0.6 square degrees; a country-sized region without an `atlas` box gets none.
-# The renders' own packs (the Python engine's extracts) are made by `packer renders` on the owner's Mac and published
-# as the release packs-renders; the job renders adds their render packs there (the format-3 tiles the vector engine's
+# The renders' own packs (the Python engine's extracts) were made on the user's Mac and published as the release
+# packs-renders; the job renders adds their render packs there (the format-3 tiles the vector engine's
 # core draws, `packer render-tiles`), with packs.json naming each beside its element pack.
 # A run uploads to a dated release packs-YYYYMMDD, then writes packs.json there and to the fixed release packs-latest,
 # which the app reads (PackCatalog in :tiles). A region whose build fails keeps its previous entry in packs.json.
