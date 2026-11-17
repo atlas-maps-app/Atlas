@@ -237,6 +237,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     /** Copies the frame records not read yet into [out] ([FrameRecords.allocate]); how many. */
     fun records(out: ByteBuffer): Int = core.call(0) { Native.records(it, out) }
 
+    /**
+     * Every frame record written handed on to [records] now ([Native.publishRecords]): as a measurement ends, so that its
+     * last frames' records come with it, not eight frames later (on a device that gives no presentation times, after the
+     * next path's start); a record whose presentation time has not come yet goes on without it.
+     */
+    fun publishRecords() = core.call(Unit) { Native.publishRecords(it) }
+
     /** The panel's line. */
     fun stats(): String = core.call("vk no core") { Native.stats(it) }
 

@@ -236,6 +236,7 @@ class MapFacadeTest {
                 assertEquals("no pass named sun", Native.passes(handle, "ground,sun"))
                 assertEquals("", Native.passes(handle, ""))
                 assertEquals("", Native.passCounts(handle))
+                Native.publishRecords(handle) // VK bench's records handed on as a measurement ends: none drawn yet
 
                 // Off, and modes the façade does not have.
                 assertEquals("", Native.map(handle, 0))

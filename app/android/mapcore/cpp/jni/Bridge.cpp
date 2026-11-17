@@ -551,6 +551,7 @@ public:
 
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity) { return session_->records(out, capacity); }
+    void publish_records() { session_->publish_records(); }
 
     /// The frame loop's health (Session::health): any thread, never waiting for the render thread, so the panel still
     /// answers while a frame is stuck.
@@ -1041,6 +1042,11 @@ jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
     if (core == nullptr || address == nullptr || std::cmp_less(capacity, sizeof(FrameRecord))) return 0;
     return static_cast<jint>(
         core->records(static_cast<FrameRecord*>(address), static_cast<std::size_t>(capacity) / sizeof(FrameRecord)));
+}
+
+/// Every frame record written handed on now (Session::publish_records: VK bench, as a measurement ends).
+void native_publish_records(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
+    if (Core* core = core_of(handle); core != nullptr) core->publish_records();
 }
 
 void native_trim(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jint level) {
@@ -2042,8 +2048,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 70>& methods() {
-    static const std::array<JNINativeMethod, 70> table{{
+const std::array<JNINativeMethod, 71>& methods() {
+    static const std::array<JNINativeMethod, 71> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2061,6 +2067,7 @@ const std::array<JNINativeMethod, 70>& methods() {
         method("requestFrame", "(J)V", fn(&native_request_frame)),
         method("bench", "(JIIIIII)Ljava/lang/String;", fn(&native_bench)),
         method("records", "(JLjava/nio/ByteBuffer;)I", fn(&native_records)),
+        method("publishRecords", "(J)V", fn(&native_publish_records)),
         method("stats", "(J)Ljava/lang/String;", fn(&native_stats)),
         method("health", "(J)Ljava/lang/String;", fn(&native_health)),
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),

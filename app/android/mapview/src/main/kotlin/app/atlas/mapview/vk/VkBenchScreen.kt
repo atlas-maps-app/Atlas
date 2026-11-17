@@ -1452,6 +1452,7 @@ private class BenchRun(
         source.lapAt = 1.0
         source.startNs = System.nanoTime()
         delay(250)
+        publish()
         got += drain().filter { it.startNs >= from && it.vsyncNs <= endAt }
         laps.presented = source.presentedCount - presented0
         laps.complete = source.completeCount - complete0
@@ -1554,6 +1555,7 @@ private class BenchRun(
             if (now >= capAt || (now >= minAt && source.presentedCount - presented0 >= timing.splitFrames)) break
         }
         delay(150)
+        publish()
         got += drain()
         val begun = got.filter { it.startNs > from && !it.skipped }.mapTo(HashSet()) { it.frame }
         val ms = got.filter { it.gpuValid && it.gpuFrame in begun }.map { it.gpuMs.toDouble() }.toDoubleArray()
@@ -1750,6 +1752,7 @@ private class BenchRun(
             if (!paused) core.requestFrame() // in the background nothing is drawn (pause)
         }
         delay(250) // the last records' presentation times
+        publish() // and the records still held for theirs (a device without them: eight frames later)
         got += drain().filter { it.startNs >= from }
         if (keep) kept = got
         val frames = got.filter { !it.skipped && (tenBit == null || it.tenBit == tenBit) }.sortedBy { it.frame }
@@ -1860,6 +1863,7 @@ private class BenchRun(
             if (!records) withContext(NonCancellable + Dispatchers.Default) { core.shapeRecords(true) }
         }
         delay(250) // the last records' presentation times
+        publish() // and the records still held for theirs (a device without them: eight frames later)
         got += drain().filter { it.startNs >= from }
         // each frame's slice by when it began; a record's GPU times (and fragments) are an earlier frame's (gpuFrame)
         val frames = got.filter { !it.skipped }
@@ -1908,6 +1912,14 @@ private class BenchRun(
         )
         return summary to parts
     }
+
+    /**
+     * The core's frame records handed on now ([MapCore.publishRecords]), as a measurement ends: the core hands a record
+     * on once the display has said when it showed its frame, or eight frames later where it says nothing (CI's emulator,
+     * and any device without presentation times), so that a slow device's last records of a path came after the path,
+     * and the next one's [drain] dropped them as begun before it (CI's map paths read `frames 0` from 5 November on).
+     */
+    private fun publish() = core.publishRecords()
 
     private fun drain(): List<FrameRecords.Record> {
         val out = ArrayList<FrameRecords.Record>()

@@ -185,6 +185,12 @@ object Native {
     /** Copies the frame records not read yet into [out] (a direct buffer of [FrameRecords.SIZE]-byte records). */
     @JvmStatic external fun records(handle: Long, out: ByteBuffer): Int
 
+    /**
+     * Every frame record written handed on now, whether or not the display has said when it showed its frame: where the
+     * device gives no presentation times (CI's emulator), [records] hands one on only eight frames later.
+     */
+    @JvmStatic external fun publishRecords(handle: Long)
+
     @JvmStatic external fun stats(handle: Long): String
 
     /**
