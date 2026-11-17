@@ -1472,8 +1472,9 @@ impl<'s> Search<'s, '_> {
         };
         let secs = self.w.last[stop as usize];
         if secs != NONE {
+            // (a journey ends with its last walk: one that carries it past the limit is not one that was asked for)
             let end = time + secs as i32;
-            if !self.beaten_at_end(round, end, cost) {
+            if end <= self.limit && !self.beaten_at_end(round, end, cost) {
                 let f = Found { time: end, cost, rides: round as u32, label: index, secs };
                 self.w.front.retain(|o| !(f.time <= o.time && f.cost <= o.cost && f.rides <= o.rides));
                 self.w.front.push(f);

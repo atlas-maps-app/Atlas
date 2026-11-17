@@ -598,7 +598,8 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     }
     let mut rng = fuzz::Rng(0x9E37_79B9_7F4A_7C15);
     let (mut t_one, mut t_window, mut t_back, mut t_wish, mut t_scan) = (vec![], vec![], vec![], vec![], vec![]);
-    let (mut found, mut rides, mut options, mut wrong, mut cut, mut later) = (0, 0, 0, 0, 0, 0);
+    let (mut found, mut rides, mut options, mut wrong, mut cut, mut later) = (0, 0, 0, 0, [0u32; 3], 0);
+    let mut most = 0usize;
     for i in 0..n {
         let (a, b) = (served[rng.below(served.len() as u64) as usize], served[rng.below(served.len() as u64) as usize]);
         let spot = |s: u32| if points { Place::Point { lat: tt.stop(s).lat, lon: tt.stop(s).lon } } else { Place::Stop(s) };
@@ -608,7 +609,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let t0 = Instant::now();
         let one = planner.plan(&q);
         t_one.push(ms(t0));
-        cut += one.cut_short as u32;
+        cut[0] += one.cut_short as u32;
         // the scan follows as far as the planner did
         let followed = |q: &Query, horizon: u32| {
             let mut q = q.clone();
@@ -661,7 +662,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let t0 = Instant::now();
         let got = planner.plan(&window);
         t_window.push(ms(t0));
-        cut += got.cut_short as u32;
+        cut[1] += got.cut_short as u32;
         options += got.journeys.len();
         for j in got.journeys.iter() {
             if let Some(why) = impossible(&planner, &window, j) {
@@ -687,7 +688,8 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let t0 = Instant::now();
         let got = planner.plan(&avoid);
         t_wish.push(ms(t0));
-        cut += got.cut_short as u32;
+        cut[2] += got.cut_short as u32;
+        most = most.max(got.journeys.len());
         for j in got.journeys.iter() {
             if let Some(why) = impossible(&planner, &avoid, j) {
                 wrong += 1;
@@ -704,6 +706,6 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     line(&format!("two hours of departures ({:.1} options a pair)", options as f64 / n as f64), &mut t_window);
     line("two hours, rail avoided (15 min a ride)", &mut t_wish);
     line("the scan, one earliest arrival", &mut t_scan);
-    println!("{} of {} comparisons with the scan differ; {cut} searches were cut short by a cap; for {later} pairs avoiding rail offers both a way by rail and one without", wrong, n * 4);
+    println!("{} of {} comparisons with the scan differ; cut short by a cap: {} single departures, {} windows, {} windows with rail avoided (the most options one of those gave: {most}); for {later} pairs avoiding rail offers both a way by rail and one without", wrong, n * 4, cut[0], cut[1], cut[2]);
     Ok(if wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
