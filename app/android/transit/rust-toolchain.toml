@@ -1,0 +1,6 @@
+# The Rust the planner is built with, the same as the core's (mapcore/rust/rust-toolchain.toml on its branch): pinned
+# like the NDK and CMake. Android targets are added where an Android build needs them, not here, so that a host build
+# never fetches them.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"

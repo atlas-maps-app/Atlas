@@ -326,6 +326,31 @@ class RegionEngineTest {
         assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
     }
 
+    /**
+     * Places left out because the published store was of a schema this Atlas could not open come once this Atlas reads
+     * that same file (the next alpha reads the schema: alpha.yml's guard has the packs published before the alpha that
+     * reads them). Here the same bytes, the same SHA-256, now of the schema this Atlas reads, which is all the engine
+     * sees of an updated app (the reviewer, 17 November 2026: until then only a pack of other bytes brought them).
+     */
+    @Test
+    fun placesLeftOutComeOnceThisAtlasReadsTheSamePublishedFile() {
+        var current = packOfSchema("5")
+        val e = engine(deps({ listOf(current) }))
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        assertTrue(e.details.value.single().placesLeftOut)
+        // the same file, readable now
+        current = packOfSchema("4")
+        assertNotNull(e.readablePlaces(current))
+        assertTrue(runBlocking { e.placesAgainReadable(id) })
+        val found = runBlocking { e.checkUpdates() }
+        assertEquals("the places left out are offered once this Atlas reads them", setOf(RegionLayer.PLACES), found[id]?.layers)
+        runBlocking { e.resume(id, update = true) }
+        assertFalse(e.details.value.single().placesLeftOut)
+        assertEquals(80_000L, files.places(id).length())
+    }
+
     /** A pack's places of this Atlas's own schema are taken, however the list writes the number, and those of a list that names none. */
     @Test
     fun aPacksPlacesOfThisAtlassSchemaAreTaken() {

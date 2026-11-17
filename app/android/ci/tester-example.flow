@@ -1,0 +1,38 @@
+# The example flow (tester-flows.md): Atlas's first launch, a search for a café in central Amsterdam, and a long press
+# on the map for what is nearby. Run it with:
+#   gh workflow run tester.yml -R atlas-maps-app/Atlas --ref app -f label=example -f flow="$(cat app/android/ci/tester-example.flow)"
+
+# Where the phone is, before Atlas first asks.
+location amsterdam
+network on
+
+# The first launch: the welcome, as a user meets it.
+launch or stop
+wait "Find yourself on the map" 60s
+tap "Allow location"
+tap "While using the app"          # Android's own question
+wait "Continue" 10s
+tap "Continue"
+wait "Take the map with you" 10s
+tap "Later"
+wait "How should Atlas speak?" 10s
+tap "Continue"
+wait "Units" 10s
+tap "Done"
+wait "Search or ask" 60s or stop
+shot home
+
+# A search for a café.
+tap "Search or ask"
+type "cafe"
+key enter
+wait "Café" 30s
+shot cafes
+back 2
+
+# A long press on the map: what is here.
+wait "Search or ask" 10s
+longpress center
+wait "What's here" 30s
+wait "Nearest" 30s                 # the places around come
+shot whats-here

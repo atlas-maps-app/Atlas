@@ -3,8 +3,8 @@
 # (android.yml) built green and whose core Core (core.yml) built and tested green, on that push or, where the push left
 # the core alone, on the nearest push before it that tested it (core_word), when the app (app/) changed between the
 # last alpha and it. Writes `tag` and `sha` to $GITHUB_OUTPUT (stdout outside Actions) and the release notes (the
-# commits since the last alpha, each by its first sentence, ENGINE.md's own left out) to $NOTES. With nothing to
-# release it says why and writes neither. Reads GitHub's runs with gh; changes nothing.
+# commits since the last alpha, each by its first sentence, ENGINE.md's and engine-history's own left out) to $NOTES.
+# With nothing to release it says why and writes neither. Reads GitHub's runs with gh; changes nothing.
 set -euo pipefail
 
 repo="${GITHUB_REPOSITORY:-atlas-maps-app/Atlas}"
@@ -93,7 +93,7 @@ tag="v0.1.0-alpha.$((last + 1))"
   echo "Nightly alpha from ${green:0:7}, the latest commit of $branch that Core and Android built green."
   echo
   echo "Since $last_tag:"
-  git log --reverse --format='%s' "$last_sha..$green" -- . ':(exclude)ENGINE.md' |
+  git log --reverse --format='%s' "$last_sha..$green" -- . ':(exclude)ENGINE.md' ':(exclude)engine-history' |
     perl -pe 's/^(.*?\.)\s.*$/$1/' | cut -c1-240 | sed 's/^/- /'
 } > "$notes"
 echo "$tag from ${green:0:7} ($(git log -1 --format=%cs "$green")); its notes in $notes"
