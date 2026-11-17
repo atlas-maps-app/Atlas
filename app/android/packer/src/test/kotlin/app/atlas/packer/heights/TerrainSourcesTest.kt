@@ -42,6 +42,8 @@ class TerrainSourcesTest {
         // every source says how it is read, under which licence, and how it is credited; Copernicus's carry its notice and liability sentence
         for (s in r.sources) {
             assertTrue(s.id, s.credit.isNotBlank() && s.licence.isNotBlank() && s.hosts.all { it.startsWith("https://") } && Regex("\\d{4}-\\d{2}-\\d{2}").matches(s.date))
+            // and where the licence's text is (About & licences links it)
+            assertTrue(s.id, s.licenceUrl?.startsWith("https://") == true)
         }
         for ((id, product) in listOf("glo30" to "WorldDEM-30", "glo90" to "WorldDEM-90")) {
             val s = r.source(id)
