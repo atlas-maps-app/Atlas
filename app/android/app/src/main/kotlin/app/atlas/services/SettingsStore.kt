@@ -277,6 +277,9 @@ object SettingsKeys {
     /** The search shows the places it finds as large cards to slide through, not as rows. Rows when unset. */
     val SEARCH_CARDS = booleanPreferencesKey("search.cards")
 
+    /** The search grid shows its kinds as a list of rows, not as cards. Cards when unset. */
+    val SEARCH_KINDS_LIST = booleanPreferencesKey("search.kindsList")
+
     /** The kinds whose view shows the places of the kinds that sell its goods too and belong with it, as node ids. */
     val SEARCH_TOGETHER = stringSetPreferencesKey("search.together")
 

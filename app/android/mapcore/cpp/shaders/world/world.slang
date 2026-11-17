@@ -2,7 +2,11 @@
 // every country's tile (ENGINE.md step 5's step 2). A tile's words lie in the world's heap (scene/WorldTiles.hpp):
 // three vertex words a triangle (its box's 16-bit fractions, u in the low half and v, from the north, in the high),
 // a word a triangle (its palette entry, its cell at bit 8), then three words a line's segment (its ends, and its
-// palette entry, its cell at bit 8 and its width in decimetres from bit 16).
+// palette entry, its cell at bit 8 and its width in decimetres from bit 16). A tile no piece of the heap holds whole
+// lies in parts, each laid out so (scene::WorldPart), and is drawn as one piece all the same: its draws find each
+// triangle's, segment's and light's part in its parts' table (set 2, binding 3; part_of), so its draws are those of
+// the tile whole, vertex for vertex, and so are its pixels. (Drawn part by part, the rasteriser's ties where an edge
+// runs through a sample fell with where its parts began: the keep's pitched views, 14 November.)
 //
 //   - fill_vs and colour_fs: a tile's triangles, those of the cells the draw asks for (push.at.y), in the tile's
 //     painter's order;
@@ -52,16 +56,23 @@
 [[vk::binding(0, 2)]] StructuredBuffer<uint> world_words;
 [[vk::binding(1, 2)]] StructuredBuffer<uint> world_palette;
 [[vk::binding(2, 2)]] ConstantBuffer<WorldLookBlock> look;
+[[vk::binding(3, 2)]] StructuredBuffer<uint> world_parts;
 
 /// The palette's entries: the moment's first, then the day's (scene::world_palette's size apart).
 static const uint PALETTE_DAY = 64u;
+
+/// push.at.x's bit for a tile in parts (passes/World.cpp's in_parts): its other bits are the entry its parts' table
+/// begins at in world_parts, four words an entry: for each part its first word in the heap and its first triangle,
+/// segment and light among the tile's, then the tile's triangles, segments and lights (after a word unread).
+static const uint WORLD_PARTS = 0x80000000u;
 
 struct WorldPush {
     float4 origin; // xyz: the tile's north-west corner from the eye (frame metres, on the ground); w: the world's depth
     float4 scale;  // x: metres a unit of u spans (east), y: of v (south); z: the tile's fade (1 drawn whole); w: 1 where
                    // it fades (its triangles top first), else 0
     uint4 at;      // x: the tile's first word; y: the cells drawn (bit r * 4 + c); z: its triangles' words (3T); w: its
-                   // segments' (4T), or for its lights' draw where they begin. globe_vs's draws: x 0 space, 1 the glass
+                   // segments' (4T), or for its lights' draw where they begin. A tile in parts: x WORLD_PARTS and its
+                   // parts' table, w its parts. globe_vs's draws: x 0 space, 1 the glass
     float4 globe;  // x: the tile's north edge less the target's latitude, y: the radians of latitude a unit of v spans
                    // (south: negative); z: its west edge less the target's longitude (within ±π), w: the radians of
                    // longitude a unit of u spans
@@ -105,6 +116,43 @@ float4 unpack(uint c) {
 /// Whether the draw asks for cell `cell`.
 bool drawn(uint cell) {
     return cell < 32u && (push.at.y & (1u << cell)) != 0u;
+}
+
+/// Whether the draw's tile lies in parts (WORLD_PARTS).
+bool in_parts() {
+    return (push.at.x & WORLD_PARTS) != 0u;
+}
+
+/// The part of the draw's tile in parts that holds the tile's `index`th triangle (`lane` 1), segment (2) or light (3):
+/// its first word in the heap, its first of the lane's among the tile's, and its triangles and segments, where its
+/// segments' and its lights' words begin.
+struct Part {
+    uint word;
+    uint first;
+    uint triangles;
+    uint segments;
+};
+
+Part part_of(uint lane, uint index) {
+    uint table = push.at.x & ~WORLD_PARTS;
+    // the last of its push.at.w parts whose first is at `index` or before it
+    uint lo = 0u;
+    uint hi = push.at.w;
+    while (hi - lo > 1u) {
+        uint mid = (lo + hi) / 2u;
+        if (world_parts[(table + mid) * 4u + lane] <= index) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    uint e = (table + lo) * 4u;
+    Part p;
+    p.word = world_parts[e];
+    p.first = world_parts[e + lane];
+    p.triangles = world_parts[e + 5u] - world_parts[e + 1u];
+    p.segments = world_parts[e + 6u] - world_parts[e + 2u];
+    return p;
 }
 
 /// A vertex word's point on the bent ground, from the eye (frame metres), the ground's normal there (not of unit
@@ -173,7 +221,15 @@ Placed fill_of(uint vertex) {
     Placed o;
     // a fading tile's triangles top first, the last of its painter's order first
     uint v = push.scale.w != 0.0f ? push.at.z - 1u - vertex : vertex;
-    uint what = world_words[push.at.x + push.at.z + v / 3u];
+    // its vertex's word and its triangle's; in its part where the tile lies in parts
+    uint word = push.at.x + v;
+    uint what_at = push.at.x + push.at.z + v / 3u;
+    if (in_parts()) {
+        Part p = part_of(1u, v / 3u);
+        word = p.word + v - 3u * p.first;
+        what_at = p.word + 3u * p.triangles + (v / 3u - p.first);
+    }
+    uint what = world_words[what_at];
     o.entry = what & 0xFFu;
     o.alpha = push.scale.z;
     o.normal = float3(0.0f, 1.0f, 0.0f);
@@ -181,7 +237,7 @@ Placed fill_of(uint vertex) {
         o.position = nowhere;
         return o;
     }
-    Ground g = ground_of(world_words[push.at.x + v]);
+    Ground g = ground_of(world_words[word]);
     o.normal = g.from_centre;
     float3 k = camera_of(frame.camera, g.p);
     o.position = clip_of_camera(frame.camera, k, push.origin.w);
@@ -221,6 +277,10 @@ Placed segment_of(uint vertex, uint segment) {
     Placed o;
     FrameCamera c = frame.camera;
     uint base = push.at.x + push.at.w + segment * 3u;
+    if (in_parts()) {
+        Part p = part_of(2u, segment);
+        base = p.word + 4u * p.triangles + 3u * (segment - p.first);
+    }
     uint what = world_words[base + 2u];
     uint entry = what & 0xFFu;
     o.entry = entry;
@@ -388,6 +448,10 @@ LightOut light_vs(uint vertex : SV_VulkanVertexID, uint light : SV_VulkanInstanc
     o.position = nowhere;
     FrameCamera c = frame.camera;
     uint base = push.at.x + push.at.w + light * 2u;
+    if (in_parts()) {
+        Part p = part_of(3u, light);
+        base = p.word + 4u * p.triangles + 3u * p.segments + 2u * (light - p.first);
+    }
     uint what = world_words[base + 1u];
     if (look.weights.x <= 0.0f || !drawn((what >> 8u) & 0xFFu)) return o;
     Ground g = ground_of(world_words[base]);

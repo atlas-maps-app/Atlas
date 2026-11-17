@@ -25,9 +25,13 @@ import kotlinx.coroutines.runBlocking
 import java.time.ZonedDateTime
 import app.atlas.services.PlaceOrigin
 import app.atlas.testing.testServices
+import kotlinx.coroutines.flow.first
+import app.atlas.services.SettingsKeys
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -67,6 +71,82 @@ class SearchSheetModelTest {
         // the shelves count their kinds' places, and the Now shelf has what fits a Tuesday evening
         assertTrue(s.pulses.getValue("shelf:eat").count >= restaurants.count)
         assertTrue("now: ${s.now.map { it.node.id }}", s.now.isNotEmpty())
+    }
+
+    /**
+     * Showing the grid's kinds as a list is how the same kinds are shown (the owner, 13 November: "Only the every kind
+     * list gets the list view but the cards stay the default"): the choice is kept, and nothing is looked for or ranked
+     * again: the places counted, the moment and the picks are the very ones from before. A choice that does change what
+     * the grid shows (only the kinds near) works the moment out again, in the same step that takes the choice: that is
+     * how this test would catch the list doing so. The picks are no such witness: ranked again to the same list, they
+     * stay the state's own, as a state equal to the one before is not set anew.
+     */
+    @Test
+    fun theKindsAsAListLookNothingUpAgain() {
+        val services = testServices(places = true)
+        val m = SearchSheetModel(services, Services.WESTERKERK, "en")
+        m.moveTo(Services.WESTERKERK)
+        until { m.state.value.pulses.isNotEmpty() && m.state.value.now.isNotEmpty() }
+        // the grid at rest: no state after this one for a while (looked at once a pass: until asks once more at its end)
+        var rested = false
+        until {
+            if (!rested) {
+                val s = m.state.value
+                idle(400)
+                Thread.sleep(100)
+                rested = m.state.value === s
+            }
+            rested
+        }
+        val before = m.state.value
+        assertTrue("cards unless chosen", !before.prefs.kindsList)
+        m.showKindsList(true)
+        until { m.state.value.prefs.kindsList }
+        idle(600)
+        val listed = m.state.value
+        assertEquals(true, runBlocking { services.settings.data.first()[SettingsKeys.SEARCH_KINDS_LIST] })
+        assertSame("the grid's places are not read again", before.pulses, listed.pulses)
+        assertSame("the moment is not worked out again", before.moment, listed.moment)
+        assertSame("the picks are not ranked again", before.now, listed.now)
+        assertTrue("nothing is loading", !listed.loading)
+        m.setPref(SettingsKeys.SEARCH_NEARBY, true)
+        until { m.state.value.prefs.nearbyOnly }
+        assertNotSame("only the kinds near: the moment is worked out again", listed.moment, m.state.value.moment)
+    }
+
+    /**
+     * The way back stays on a band where back goes somewhere a pull down does not ([bandArrow]; the owner, 12 November:
+     * "Remove the back arrow in the categories because you can slide down?", then "Make the arrow stay where it makes
+     * sense"): up to the shelf a kind is under, back to the shelf a door was entered from, off a page of its own; not on
+     * a shelf or a chain opened by itself over the home's map, where back only closes the sheet.
+     */
+    @Test
+    fun theBandsArrowStaysWhereBackGoesUp() {
+        val m = SearchSheetModel(testServices(places = true), Services.WESTERKERK, "en")
+        m.moveTo(Services.WESTERKERK)
+        until { m.state.value.pulses.isNotEmpty() }
+        fun at(id: String) = until { m.state.value.results?.node?.id == id && !m.state.value.loading }
+        fun arrow(page: Boolean = false) = bandArrow(m.state.value, page)
+        m.enter("fun")
+        at("shelf:fun")
+        assertTrue("a shelf opened by itself over the home's map", !arrow())
+        assertTrue("the same shelf on a page of its own", arrow(page = true))
+        m.enter("shelf:sport")
+        at("shelf:sport")
+        assertTrue("Sport through Fun's door: back returns to Fun", arrow())
+        m.up()
+        at("shelf:fun")
+        assertTrue("back in Fun", !arrow())
+        m.up()
+        m.enter("drinks")
+        at("cat:drinks")
+        assertTrue("a kind under its shelf", arrow())
+        m.up()
+        m.close()
+        m.chain(Brands.byId("albertheijn-1cf55d")!!)
+        until { m.state.value.asked is Asked.Chain && m.state.value.results != null && !m.state.value.loading }
+        assertTrue("a chain opened by itself over the home's map", !arrow())
+        assertTrue("the same chain on a page of its own", arrow(page = true))
     }
 
     @Test

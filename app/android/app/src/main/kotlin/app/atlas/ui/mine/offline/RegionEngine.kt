@@ -3,6 +3,7 @@ package app.atlas.ui.mine.offline
 import app.atlas.geo.BBox
 import app.atlas.route.SegmentProgress
 import app.atlas.route.SegmentStore
+import app.atlas.search.PlaceStore
 import app.atlas.search.RegionImport
 import app.atlas.services.RegionLayer
 import app.atlas.tiles.Pack
@@ -72,7 +73,13 @@ interface WorldKeep {
 }
 
 /** What a region would take: the bytes of each layer (null when unknown) and the pack behind it, if one is used. */
-data class RegionEstimate(val bytes: Map<RegionLayer, Long?>, val pack: Pack?, val mapKind: MapKind) {
+data class RegionEstimate(
+    val bytes: Map<RegionLayer, Long?>,
+    val pack: Pack?,
+    val mapKind: MapKind,
+    /** How much of the map's bytes is the world kept with a country's tiles (ENGINE.md step 11); 0 where none is. */
+    val world: Long = 0L,
+) {
     val total: Long get() = bytes.values.sumOf { it ?: 0L }
 }
 
@@ -83,7 +90,13 @@ class RegionException(message: String, cause: Throwable? = null) : IOException(m
 class RegionGone(id: String) : CancellationException("region $id was deleted")
 
 /** What taking several boxes would download together: routing tiles two boxes share are counted once. */
-data class AreaEstimate(val bytes: Map<RegionLayer, Long?>, val packed: Boolean, val kind: MapKind) {
+data class AreaEstimate(
+    val bytes: Map<RegionLayer, Long?>,
+    val packed: Boolean,
+    val kind: MapKind,
+    /** How much of the map's bytes is the world kept with the countries' tiles; 0 where none is. */
+    val world: Long = 0L,
+) {
     val total: Long get() = bytes.values.sumOf { it ?: 0L }
 }
 
@@ -113,7 +126,7 @@ class RegionEngine(
         state.value = files.list().map { m ->
             val sizes = sizesOf(m)
             val complete = m.wanted.isEmpty() || m.wanted.all { it in m.layers }
-            RegionDetail(m, sizes, complete && m.layers.isNotEmpty(), progress[m.id], errors[m.id], updates[m.id])
+            RegionDetail(m, sizes, complete && m.layers.isNotEmpty(), progress[m.id], errors[m.id], updates[m.id], worldOf(m))
         }
     }
 
@@ -186,10 +199,57 @@ class RegionEngine(
      * nor the tiles of another core: neither is downloaded.
      */
     fun countryBytes(pack: Pack): Long =
-        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes + worldBytes(pack) } ?: pack.atlas?.bytes ?: 0L) + (pack.places?.diskBytes ?: 0L)
+        (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes + worldBytes(pack) } ?: pack.atlas?.bytes ?: 0L) + (readablePlaces(pack)?.diskBytes ?: 0L)
+
+    /**
+     * [pack]'s place store where this Atlas can read it ([PlaceStore.reads]: a store of its own schema, or one the list
+     * names no schema for); null where it has none, or one this Atlas cannot open, which is then never downloaded (the
+     * user, 12 November: "When I download the map in the latest alpha it says places are unreadable").
+     */
+    fun readablePlaces(pack: Pack?): PackFile? = pack?.places?.takeIf { f -> f.schema == null || f.schemaVersion?.let(PlaceStore::reads) == true }
+
+    /**
+     * How the places of [bbox] would be taken from [pack]: its store where this Atlas reads it, else an Overpass import
+     * where there is no pack's store or the phone can build the area ([BUILD_MAX_KM2], as it builds a city's map), else
+     * none: a country whose published store this Atlas cannot read goes without its places until the pack is published
+     * again.
+     */
+    private fun placesWay(bbox: BBox, pack: Pack?): PlacesWay = when {
+        readablePlaces(pack) != null -> PlacesWay.PACK
+        pack?.places == null || buildable(bbox) -> PlacesWay.IMPORT
+        else -> PlacesWay.NONE
+    }
+
+    private enum class PlacesWay { PACK, IMPORT, NONE }
+
+    /**
+     * Whether taking the places of region [id] again would bring a store this Atlas reads: its pack's, where it reads it,
+     * or an import ([placesWay]). The card of a region whose places it cannot read offers them again only then.
+     */
+    suspend fun placesAgainReadable(id: String): Boolean {
+        val m = files.get(id) ?: return false
+        val packs = runCatching { deps.packs() }.getOrDefault(emptyList())
+        val pack = m.packId?.let { pid -> packs.firstOrNull { it.id == pid } } ?: choosePack(m.bbox, packs)
+        return placesWay(m.bbox, pack) != PlacesWay.NONE
+    }
 
     /** What the world kept with [pack]'s tiles takes (ENGINE.md step 11); 0 where the world on the phone lists none for it. */
-    private fun worldBytes(pack: Pack?): Long = pack?.let { p -> runCatching { deps.world?.bytes(p.id) }.getOrNull() } ?: 0L
+    fun worldBytes(pack: Pack?): Long = pack?.let { p -> runCatching { deps.world?.bytes(p.id) }.getOrNull() } ?: 0L
+
+    /** Whether a country is kept by its tiles: its world is kept with them, and a new version of the world waits for its own keep. */
+    fun keepsWorld(): Boolean = runCatching { keptCountries().isNotEmpty() }.getOrDefault(false)
+
+    /**
+     * The world's share of the map of region [m] kept by its country's tiles: what the world on the phone lists for
+     * its country, else (no list on the phone now) what its download recorded beyond its tiles and their index. 0 for
+     * a region that keeps none.
+     */
+    private fun worldOf(m: RegionMeta): Long {
+        val rec = m.layers[RegionLayer.MAP]?.takeIf { it.kind == MapKind.TILES.id } ?: return 0L
+        m.packId?.let { id -> runCatching { deps.world?.bytes(id) }.getOrNull() }?.let { return it }
+        val tiles = files.tiles(m.id).takeIf { it.isFile } ?: return 0L
+        return (rec.bytes - tiles.length() - files.tilesIndex(m.id).length()).coerceAtLeast(0L)
+    }
 
     /** The packs whose countries the phone keeps by their tiles: theirs are the worlds kept. */
     private fun keptCountries(): Set<String> =
@@ -210,18 +270,23 @@ class RegionEngine(
         val pack = choosePack(bbox, packs)
         val out = LinkedHashMap<RegionLayer, Long?>()
         var kind = MapKind.NONE
+        var world = 0L
         if (RegionLayer.MAP in layers) {
             val atlas = pack?.atlas
             val tiles = tilesOf(pack)
             when {
-                tiles != null -> { kind = MapKind.TILES; out[RegionLayer.MAP] = tiles.tiles.bytes + tiles.index.bytes + worldBytes(pack) }
+                tiles != null -> { kind = MapKind.TILES; world = worldBytes(pack); out[RegionLayer.MAP] = tiles.tiles.bytes + tiles.index.bytes + world }
                 atlas != null -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = atlas.bytes }
                 deps.mapBuilder != null && buildable(bbox) -> { kind = MapKind.ATLAS; out[RegionLayer.MAP] = estimateBuilt(bbox) }
                 else -> out[RegionLayer.MAP] = null
             }
         }
         if (RegionLayer.PLACES in layers) {
-            out[RegionLayer.PLACES] = pack?.places?.bytes ?: (RegionImport.tiles(bbox).size * PLACES_PER_TILE)
+            out[RegionLayer.PLACES] = when (placesWay(bbox, pack)) {
+                PlacesWay.PACK -> readablePlaces(pack)?.bytes ?: 0L
+                PlacesWay.IMPORT -> RegionImport.tiles(bbox).size * PLACES_PER_TILE
+                PlacesWay.NONE -> 0L
+            }
         }
         if (RegionLayer.ROUTING in layers) {
             val sizes = runCatching { deps.segmentSizes() }.getOrDefault(emptyMap())
@@ -229,7 +294,7 @@ class RegionEngine(
             out[RegionLayer.ROUTING] = want.filter { deps.segments?.has(it) != true }.sumOf { sizes[it] ?: SEGMENT_GUESS }
         }
         if (RegionLayer.VOICE in layers) out[RegionLayer.VOICE] = 0L
-        return RegionEstimate(out, pack, kind)
+        return RegionEstimate(out, pack, kind, world)
     }
 
     /**
@@ -240,10 +305,12 @@ class RegionEngine(
         val sums = LinkedHashMap<RegionLayer, Long?>()
         var packed = boxes.isNotEmpty()
         var kind = MapKind.NONE
+        var world = 0L
         for (b in boxes) {
             val e = estimate(b, layers - RegionLayer.ROUTING)
             if (e.pack == null) packed = false
             kind = e.mapKind
+            world += e.world
             for ((l, v) in e.bytes) sums[l] = if (sums.containsKey(l) && sums[l] == null || v == null) null else (sums[l] ?: 0L) + v
         }
         if (RegionLayer.ROUTING in layers) {
@@ -251,7 +318,7 @@ class RegionEngine(
             val want = boxes.flatMap { SegmentStore.tilesIn(it) }.toSet()
             sums[RegionLayer.ROUTING] = want.filter { deps.segments?.has(it) != true }.sumOf { sizes[it] ?: SEGMENT_GUESS }
         }
-        return AreaEstimate(sums, packed, kind)
+        return AreaEstimate(sums, packed, kind, world)
     }
 
     /** Takes region [id] offline as [begin] set it up, from the layer it stopped at. Throws on failure after noting it. */
@@ -348,8 +415,18 @@ class RegionEngine(
             }
             RegionLayer.PLACES -> {
                 val target = files.places(meta.id)
-                val packed = pack?.places
-                val record = if (packed != null) {
+                val packed = readablePlaces(pack)
+                val way = placesWay(meta.bbox, pack)
+                val unread = pack?.places
+                if (way == PlacesWay.NONE && pack != null && unread != null) {
+                    // the pack's store is of a schema this Atlas cannot open: not downloaded, and the region holds what it
+                    // held (a store taken before stays). Recorded with the pack's file, so the card says why and a pack
+                    // published again shows as an update.
+                    val had = files.get(meta.id)?.layers?.get(layer)?.takeIf { target.isFile && it.kind != PLACES_LEFT_OUT }
+                    record(meta.id, layer, had?.copy(sha = unread.sha256) ?: LayerRecord(PLACES_LEFT_OUT, 0L, now, unread.sha256, pack.osmTimestamp))
+                    return
+                }
+                val record = if (way == PlacesWay.PACK && pack != null && packed != null) {
                     deps.packDownloader.download(packed, target) { report(it.fraction.toFloat()) }
                     LayerRecord("pack", target.length(), now, packed.sha256, pack.osmTimestamp)
                 } else {
@@ -474,9 +551,9 @@ class RegionEngine(
             out[layer] = when (layer) {
                 RegionLayer.MAP -> when (rec.kind) {
                     MapKind.ATLAS.id -> files.atlas(m.id).takeIf { it.isFile }?.length() ?: rec.bytes
-                    // its tiles and their index as they are on the phone, and the world kept with them as recorded
+                    // its tiles and their index as they are on the phone, and the world kept with them
                     MapKind.TILES.id -> files.tiles(m.id).takeIf { it.isFile }
-                        ?.let { t -> maxOf(rec.bytes, t.length() + files.tilesIndex(m.id).length()) } ?: rec.bytes
+                        ?.let { t -> t.length() + files.tilesIndex(m.id).length() + worldOf(m) } ?: rec.bytes
                     else -> rec.bytes
                 }
                 RegionLayer.PLACES -> files.places(m.id).takeIf { it.isFile }?.length() ?: rec.bytes
@@ -494,6 +571,9 @@ class RegionEngine(
 
     companion object {
         val LAYER_ORDER = listOf(RegionLayer.MAP, RegionLayer.PLACES, RegionLayer.ROUTING, RegionLayer.VOICE)
+
+        /** The kind of a places layer left out: its pack's store is of a schema this Atlas cannot open ([readablePlaces]). */
+        const val PLACES_LEFT_OUT = "left-out"
 
         /** A pack is used when the area asked for is at least this share of the pack (else only the area is fetched). */
         const val PACK_SHARE = 0.15

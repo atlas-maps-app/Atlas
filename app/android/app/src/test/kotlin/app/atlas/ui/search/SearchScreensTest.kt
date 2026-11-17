@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -114,6 +115,17 @@ class SearchScreensTest {
     private fun waitFor(text: String, timeout: Long = 15_000) =
         compose.waitUntil(timeout) { compose.onAllNodes(hasText(text, substring = true, ignoreCase = true)).fetchSemanticsNodes().isNotEmpty() }
 
+    /**
+     * The phone's back, as the system sends it: the way out of a kind opened over the home's map, whose band has no
+     * arrow, since a pull down closes it too (the owner, 12 November: "Remove the back arrow in the categories because
+     * you can slide down?", then "Make the arrow stay where it makes sense").
+     */
+    private fun phoneBack() {
+        val activity = (compose as AndroidComposeTestRule<*, *>).activity
+        compose.runOnUiThread { activity.onBackPressedDispatcher.onBackPressed() }
+        compose.waitForIdle()
+    }
+
     @Test
     fun searchCafes() {
         open(Dest.Search("cafe"))
@@ -146,7 +158,7 @@ class SearchScreensTest {
         // the one search's collection of every kind of place, under the recents
         waitFor("Every kind")
         capture("search_empty")
-        // The ways to find where they are used: the wheel first of the hero's picks, a list among what is yours, the
+        // The ways to find where they are used: the wheel first of the picks under the hero, a list among what is yours, the
         // brands around under the kinds, the quests last.
         compose.onNodeWithContentDescription("Where to?").performClick()
         compose.waitForIdle()
@@ -657,7 +669,10 @@ class SearchScreensTest {
         capture("cards_groceries")
     }
 
-    /** Where the nearest is the point (a toilet), the way to it leads as a card of its own over the rest. */
+    /**
+     * Where the nearest is the point (a toilet), the way to it leads in a warm panel of its own over the rest, as "AT
+     * THIS SPOT" leads What's here.
+     */
     @Test
     fun categoryNearest() {
         open(Dest.Category("toilets"))
@@ -931,11 +946,12 @@ class SearchScreensTest {
         waitFor("All filters", 20_000)
         assertEquals("the search opened over the map, not on a page", Dest.Home(), nav.current)
         capture("home_eat")
-        // a kind stays when it is pulled down: it comes to rest at its peek, with its own way back
+        // a kind stays when it is pulled down: it comes to rest at its peek
         compose.onRoot().performTouchInput { swipeDown(startY = bottom * 0.52f, endY = bottom * 0.75f) }
         compose.waitForIdle()
-        // a kind from the row: its band's way back is the map again
-        compose.onNodeWithContentDescription("Back").performClick()
+        // a kind from the row: the phone's back is the map again (its band has no arrow)
+        compose.onNodeWithContentDescription("Back").assertDoesNotExist()
+        phoneBack()
         compose.waitForIdle()
         compose.onNodeWithText("Search or ask").performClick()
         waitFor("Every kind", 20_000)

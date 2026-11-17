@@ -28,8 +28,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -129,9 +131,15 @@ fun CarteScreen(nav: Navigator) {
                 i += 1 + ch.lines.size
             }
         }
-        val current = carte?.chapters?.let { chs ->
-            val first = list.firstVisibleItemIndex
-            chs.lastOrNull { (chapterIndex[it.family] ?: Int.MAX_VALUE) <= first + 1 }?.family ?: chs.firstOrNull()?.family
+        // The chapter in view, derived from the list's first line: a line scrolling past within a chapter recomposes
+        // nothing here, only a change of chapter does.
+        val current by remember(carte) {
+            derivedStateOf {
+                carte?.chapters?.let { chs ->
+                    val first = list.firstVisibleItemIndex
+                    chs.lastOrNull { (chapterIndex[it.family] ?: Int.MAX_VALUE) <= first + 1 }?.family ?: chs.firstOrNull()?.family
+                }
+            }
         }
         LazyColumn(
             Modifier.fillMaxSize(),

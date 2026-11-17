@@ -20,11 +20,17 @@ import app.atlas.services.LocalData
 import app.atlas.services.Units
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -140,7 +146,7 @@ class GoHub(private val services: Services) {
     fun startEars(context: Context, headings: kotlinx.coroutines.flow.Flow<Double?>? = null): EarsSession {
         earsState.value?.let { return it }
         val session = EarsSession(services.voice, GuideSettings(mode = Mode.WALK, language = Locale.getDefault().toLanguageTag(), zone = services.clock.zone),
-            services.scope, ::placesAround, services.clock.zone)
+            services.scope, ::placesNow, services.clock.zone)
         earsState.value = session
         session.start(services.location.fixes(LocationQuality.NAVIGATION), headings)
         NavigationService.start(context)
@@ -164,14 +170,21 @@ class GoHub(private val services: Services) {
     }
 
     /**
-     * The places within [radiusM] of [at] with every tag: from the offline place store where it covers [at], else the
-     * map's packs on the phone, else Overpass online ([LocalData.places]).
+     * The places within [radiusM] of [at] with every tag, as they are found: from the offline place store where it
+     * covers [at], else the map's packs and windows on the phone at once, then online what completes them
+     * ([LocalData.placesAsFound]); none where a read failed.
      */
-    suspend fun placesAround(at: LatLon, radiusM: Double): List<Place> = withContext(Dispatchers.IO) {
+    fun placesAround(at: LatLon, radiusM: Double): Flow<List<Place>> = flow {
         val store = services.placeStores
-        if (store.covers(at)) return@withContext runCatching { store.within(at, radiusM).map { it.place } }.getOrDefault(emptyList())
-        runCatching { services.localData.places(at, radiusM, ANY_PLACE, 300).value }.getOrDefault(emptyList())
-    }
+        if (store.covers(at)) {
+            emit(runCatching { store.within(at, radiusM).map { it.place } }.getOrDefault(emptyList()))
+            return@flow
+        }
+        emitAll(services.localData.placesAsFound(at, radiusM, ANY_PLACE, 300).map { it.value }.catch { emit(emptyList()) })
+    }.flowOn(Dispatchers.IO)
+
+    /** [placesAround]'s first answer: what the phone holds, at once, or where it holds nothing, the network's. */
+    suspend fun placesNow(at: LatLon, radiusM: Double): List<Place> = placesAround(at, radiusM).first()
 
     private companion object {
         val LEFT_HAND = setOf("GB", "IE", "JP", "AU", "NZ", "IN", "ZA", "MT", "CY", "SG", "MY", "TH", "ID", "HK", "KE", "TZ", "UG", "PK", "BD", "LK", "JM")

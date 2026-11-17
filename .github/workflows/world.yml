@@ -1021,7 +1021,7 @@ jobs:
     env:
       TAG: ${{ github.event.inputs.refs || needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
-      # apk's Gradle caches, read only, as android.yml's likeness job reads them
+      # apk's Gradle caches, read only, as android.yml's mapcorecheck job reads them
       GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
       # the references' views, which WorldPackRefsTest draws
       VIEWS: app/android/mapcorecheck/src/test/resources/likeness/world-refs.json
@@ -1196,7 +1196,7 @@ jobs:
             echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | head -1
-      # android.yml's likeness job's ccache and lavapipe, read only: this job saves no cache
+      # android.yml's mapcorecheck job's ccache and lavapipe, read only: this job saves no cache
       - uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ccache-host
@@ -1249,7 +1249,7 @@ jobs:
           # on a failure the test's message too (the frames not drawn whole, with their notes), which Gradle's log gives
           # as its class and line alone
           if ! ./gradlew :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' -Datlas.likeness.require=true \
-            -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
+            -Datlas.likeness.platform=lavapipe-x86_64 \
             -Datlas.likeness.report=${{ github.workspace }}/likeness --rerun --stacktrace; then
             grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
             exit 1
@@ -1268,10 +1268,10 @@ jobs:
         # holds no trace of the others, so a tile the keep lacks is to the core as an empty one: only the pixels tell).
         # The frames leave the world's names out (world-keep.json's names: a frame keeps the names it picked while its
         # tiles came, so where more than 64 stand in reach two draws can name it otherwise): a tile of the walk the keep
-        # lacks, its names with it, is the step above's --kept line. The views whose pixels are false (the pitched ones
-        # from 60 to 1,000 km, which the core does not yet draw whole over the world alone: ENGINE.md step 11's Left) are
-        # held by that line alone. A check of its own: it runs where the references' frames above moved too, once the
-        # kept tiles are cut
+        # lacks, its names with it, is the step above's --kept line. A view whose pixels are false would be held by that
+        # line alone: none is since the world pass draws a tile in parts as one piece (ENGINE.md step 11; the pitched
+        # views from 60 to 1,000 km were till then). A check of its own: it runs where the references' frames above moved
+        # too, once the kept tiles are cut
         if: ${{ !cancelled() && env.ATLAS_WORLD_KEEP != '' }}
         working-directory: app/android
         env:
@@ -1286,7 +1286,7 @@ jobs:
           draw() {
             # on a failure the test's message too (the frames not drawn whole, with their notes), as above
             if ! ATLAS_WORLD_REFS="$1" ./gradlew --no-configuration-cache :mapcorecheck:test --tests 'app.atlas.mapcorecheck.likeness.WorldPackRefsTest' \
-              -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 -Datlas.likeness.commit=${{ github.sha }} \
+              -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64 \
               -Datlas.likeness.report="$L" --rerun --stacktrace; then
               grep -o '<failure message="[^"]*"' mapcorecheck/build/test-results/test/TEST-*WorldPackRefsTest.xml || true
               exit 1
@@ -1324,7 +1324,9 @@ jobs:
             exit 1
           fi
           echo "### A kept country drawn offline" >> "$GITHUB_STEP_SUMMARY"
-          echo "- the Netherlands' $all views from 18.5 km to 20,000 km: $n of them each frame over its kept tiles as over its own walk's (without the world's names), the other $((all - n)) (pitched, from 60 to 1,000 km) by their tiles alone; kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
+          alone=""
+          if [ "$n" -lt "$all" ]; then alone=", the other $((all - n)) by their tiles alone (their pixels false)"; fi
+          echo "- the Netherlands' $all views from 18.5 km to 20,000 km: $n of them each frame over its kept tiles as over its own walk's (without the world's names)$alone; kept for it: ${kept#world-refs: kept for netherlands: }" >> "$GITHUB_STEP_SUMMARY"
       - name: The frames
         if: ${{ !cancelled() }}
         run: |

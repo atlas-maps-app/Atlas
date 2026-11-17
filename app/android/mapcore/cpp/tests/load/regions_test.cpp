@@ -2,10 +2,14 @@
 // its island, land cover in LAND's order, a big road in a tunnel left out, the closest roof shape, Douglas-Peucker's
 // simplify, a theme park's coaster tracks (load/Coasters.hpp) and Python's float() they read a layer with, and where
 // ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it
-// (its counts are RegionsParityTest's, which holds every record to the port's Regions.load).
+// (its counts are RegionsParityTest's, which holds every record to the port's Regions.load). No tag's number, however
+// large, ends a load or refuses one, in any look or cut.
+#include "load/Amsterdam.hpp"
+#include "load/Cut.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
 #include "load/Regions.hpp"
+#include "load/Tradition.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
@@ -15,10 +19,14 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -232,15 +240,107 @@ TEST_CASE("load: a theme park's coaster tracks, as coasters.py loads them") {
     CHECK(t[5].ride == "Mono");
     CHECK(t[5].role == "mono");
     CHECK(t[5].ys.front() == 3.5);
-    // a layer Python's float() cannot read refuses the load, as the renders stop there
-    std::string bad(park);
-    bad.replace(bad.find(R"("layer": "2")"), 12, R"("layer": "2;3")");
-    const auto refused = read(bad);
-    ATLAS_REQUIRE(refused.has_value());
-    const auto failed = load::load_region(*refused, region);
-    ATLAS_REQUIRE(!failed.has_value());
-    CHECK(failed.error().fault == load::LoadError::Fault::not_a_number);
-    CHECK(failed.error().element == 12);
+    // a layer Python's float() cannot read, where the renders stopped, never refuses the load: it is the number it
+    // starts with ("2;3" is 2), or 0 ("inf", "high")
+    const auto ys_with = [&](std::string_view layer) -> std::vector<double> {
+        std::string other(park);
+        other.replace(other.find(R"("layer": "2")"), 12, std::format(R"("layer": "{}")", layer));
+        const auto d = read(other);
+        ATLAS_REQUIRE_OR_RETURN({}, d.has_value());
+        const auto l = load::load_region(*d, region);
+        ATLAS_REQUIRE_OR_RETURN({}, l.has_value(), layer);
+        ATLAS_REQUIRE_OR_RETURN({}, l->coasters.size() == 6, layer);
+        return l->coasters[2].ys;
+    };
+    CHECK(ys_with("2;3") == t[2].ys);
+    CHECK(ys_with("inf") == ys_with("0"));
+    CHECK(ys_with("high") == ys_with("0"));
+    CHECK(ys_with("0") != t[2].ys);
     // no park, no tracks
     CHECK(load::load_region(*doc, amsterdam_region())->coasters.empty());
+}
+
+TEST_CASE("load: no tag's number ends the load, however large, in every look and cut") {
+    // CI's fuzz_load, 14 and 16 Nov 2026: a `height` of 7e26 m ended the process in a tradition's look, where the
+    // levels were round((h - roof_h) / floor_h) as a Long. Every number the loader reads from a tag, past any Long's
+    // floors, past the largest double (infinite) and negative, on each kind of record that reads one.
+    const std::string huge = "7" + std::string(26, '0');
+    const std::string endless(400, '9');
+    load::RideProfiles rides;
+    const auto tradition = load::read_tradition(std::as_bytes(std::span(std::string_view(R"(
+{"name": "n", "says": "s", "floor_h": 3.0, "levels": {"default": 2}, "walls": {"default": [["brick", "#8E5A46", 1]]},
+ "roof": {"default": {"shapes": [["mansard", 1], ["gabled", 1], ["skillion", 1], ["flat", 1]], "material": "metal",
+                      "colours": ["#737E88"]}}})"))));
+    ATLAS_REQUIRE(tradition.has_value());
+    for (const std::string& v : {huge, "-" + huge, endless, "-" + endless}) {
+        std::string doc = R"({"elements": [)";
+        std::int64_t id = 0;
+        const auto square = [&](std::string_view tags) {
+            // a 12 m square, each a little east of the last
+            const double lon = 4.8800 + (0.0003 * static_cast<double>(id));
+            doc += std::format(
+                R"({}{{"type": "way", "id": {}, "tags": {{{}}}, "geometry": [{{"lat": 52.3700, "lon": {:.4f}}},
+ {{"lat": 52.3700, "lon": {:.4f}}}, {{"lat": 52.37011, "lon": {:.4f}}}, {{"lat": 52.37011, "lon": {:.4f}}},
+ {{"lat": 52.3700, "lon": {:.4f}}}]}})",
+                id == 0 ? "" : ",\n", id + 1, tags, lon, lon + 0.00018, lon + 0.00018, lon, lon);
+            ++id;
+        };
+        const auto line = [&](std::string_view tags) {
+            doc += std::format(R"(,
+{{"type": "way", "id": {}, "tags": {{{}}}, "geometry": [{{"lat": 52.3720, "lon": 4.8800}}, {{"lat": 52.3725, "lon": 4.8830}}]}})",
+                               ++id, tags);
+        };
+        const auto node = [&](std::string_view tags) {
+            ++id;
+            doc += std::format(R"(,
+{{"type": "node", "id": {}, "lat": 52.3740, "lon": {:.4f}, "tags": {{{}}}}})",
+                               id, 4.8800 + (0.0002 * static_cast<double>(id)), tags);
+        };
+        for (const std::string_view b : {"house", "apartments", "yes", "office"}) {
+            square(std::format(R"("building": "{}", "height": "{}")", b, v));
+            square(std::format(R"("building": "{}", "height": "15", "roof:levels": "{}")", b, v));
+            square(std::format(R"("building": "{}", "building:levels": "{}", "roof:levels": "{}")", b, v, v));
+            square(std::format(R"("building": "{}", "roof:shape": "gabled", "roof:height": "{}")", b, v));
+            square(std::format(R"("building": "{}", "roof:shape": "mansard", "height": "{}", "roof:levels": "{}")", b,
+                               v, v));
+            square(std::format(R"("building": "{}", "min_height": "{}", "height": "{}")", b, v, v));
+        }
+        square(std::format(R"("building:part": "yes", "height": "{}", "roof:levels": "{}")", v, v));
+        line(std::format(R"("highway": "primary", "width": "{}", "lanes": "{}", "layer": "{}")", v, v, v));
+        line(std::format(R"("highway": "motorway", "lanes": "{}")", v));
+        line(std::format(R"("aeroway": "runway", "width": "{}")", v));
+        line(std::format(R"("roller_coaster": "track", "layer": "{}")", v));
+        line(std::format(R"("man_made": "gantry", "height": "{}")", v));
+        node(std::format(R"("natural": "tree", "height": "{}", "diameter_crown": "{}")", v, v));
+        node(std::format(R"("man_made": "mast", "height": "{}")", v));
+        node(std::format(R"("man_made": "tower", "height": "{}")", v));
+        node(std::format(R"("power": "tower", "height": "{}")", v));
+        node(std::format(R"("power": "generator", "generator:source": "wind", "height": "{}", "rotor:diameter": "{}")",
+                         v, v));
+        doc += "]}";
+        const auto read_doc = read(doc);
+        ATLAS_REQUIRE(read_doc.has_value(), osm::name_of(read_doc.error().fault), " at ", read_doc.error().at);
+        for (const std::string_view name : {"test", "paris"}) {
+            for (const std::shared_ptr<const load::Tradition>& t :
+                 {std::shared_ptr<const load::Tradition>(), *tradition}) {
+                load::RegionConfig region = amsterdam_region();
+                region.name = name;
+                region.tradition = t;
+                region.park = &rides;
+                const auto loaded = load::load_region(*read_doc, region);
+                ATLAS_REQUIRE(loaded.has_value(), v.size(), " ", name);
+                CHECK(loaded->buildings.size() == 24);
+                for (const load::Building& b : loaded->buildings) CHECK(b.levels >= 1);
+                // a track below ground is left out; one infinitely far below is read as layer 0
+                CHECK(loaded->coasters.size() == (v.starts_with("-7") ? 0U : 1U));
+                CHECK(load::cut_region(*loaded, region.frame, {}).has_value());
+            }
+        }
+        const load::Looks looks{.region = "ams", .landuse = load::LandUseFrom::areas, .keep_homes = true};
+        for (const load::Looks* l : {&looks, static_cast<const load::Looks*>(nullptr)}) {
+            const auto living = load::load_amsterdam(*read_doc, load::westerkerk_frame(), load::amsterdam_palette(), l);
+            ATLAS_REQUIRE(living.has_value());
+            CHECK(load::cut_living(*living, load::westerkerk_frame()).has_value());
+        }
+    }
 }

@@ -55,10 +55,10 @@ class EngineRefsTest {
         assumeTrue("no frame could be drawn here: $missing", drawn.isNotEmpty())
         val stored = refs["versions"]?.jsonObject?.get(version)?.jsonObject?.get("platforms")?.jsonObject?.get(platform)?.jsonObject
         val proposal = withFrames(refs, version, platform, drawn)
-        File(out, "engine.json").writeText(Ratchet.format(proposal) + "\n")
+        File(out, "engine.json").writeText(Likeness.format(proposal) + "\n")
         if (System.getProperty("atlas.engine.record") == "true") {
             check(missing.isEmpty()) { "every frame is recorded at once; not drawn: $missing" }
-            file.writeText(Ratchet.format(proposal) + "\n")
+            file.writeText(Likeness.format(proposal) + "\n")
             println("engine refs: version $version's frames on $platform recorded in $file")
             return
         }

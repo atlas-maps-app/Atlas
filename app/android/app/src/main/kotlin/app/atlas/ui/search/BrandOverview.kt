@@ -89,8 +89,10 @@ import java.util.Locale
 /**
  * A brand's band, its sign grown out to the sheet's edges: its colour (the neutral sign's where it is not known, never
  * one made up), its logo on it as on its fascia, its name, what it is (as Wikidata says, else its kind), how many of
- * its branches are near, how many open and the minutes to the nearest; the way back at one end and the way its
- * branches are shown, as rows or cards, at the other. It stays the sheet's top while they scroll under it.
+ * its branches are near, how many open and the minutes to the nearest; the way back at one end where it has one
+ * ([onBack], [bandArrow]) and the way its branches are shown, as rows or cards, at the other. A hero as a kind's band
+ * is: its colour up to the sheet's top edge, under the grabber (the owner, 12 November, of the paper left over it: "I
+ * think the blue should fill up to the top?"). It stays the sheet's top while its branches scroll under it.
  */
 @Composable
 internal fun BrandBand(
@@ -99,7 +101,7 @@ internal fun BrandBand(
     wiki: WikidataEntity?,
     cards: Boolean,
     lang: String,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onCards: (Boolean) -> Unit,
     starred: Boolean,
     onStar: (Boolean) -> Unit,
@@ -116,10 +118,11 @@ internal fun BrandBand(
             .fillMaxWidth()
             .background(signBrush(sign))
             .then(if (melts) Modifier.drawBehind { drawLine(EDGE_ON_DARK, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) } else Modifier)
-            .padding(start = 4.dp, end = 8.dp, top = 14.dp, bottom = 12.dp),
+            // the grabber's room at its top is the band's own now
+            .padding(start = if (onBack != null) 4.dp else BAND_START, end = 8.dp, top = 22.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BandBack(stringResource(R.string.find_up), onBack, tint = ink)
+        if (onBack != null) BandBack(stringResource(R.string.find_up), onBack, tint = ink)
         Fascia(brand, ink, FASCIA)
         Column(Modifier.weight(1f).padding(start = 12.dp, end = 8.dp)) {
             Text(brandName(brand), Modifier.semantics { heading() }, style = indexTitle(21f), color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)

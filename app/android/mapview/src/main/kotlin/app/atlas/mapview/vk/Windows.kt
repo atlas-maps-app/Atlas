@@ -76,9 +76,12 @@ import java.util.zip.GZIPOutputStream
  *
  * A window the phone has nothing of, where neither gives its data, comes from the element packs on the phone before
  * Overpass, and offline too ([local]: an offline region's map, a place's published pack; until 5 November today's map
- * drew them itself): built at once from what they hold of its box, its data kept as due and as never fetched whole, so
- * online the window's own whole answer comes next and the packs' picture stands until it has. Where the core refuses
- * their data, the window goes on as if they held none of it.
+ * drew them itself): built at once from what they hold of its box. Where a pack holds its whole box, its data is whole
+ * as of the pack's date and counts as checked when it was built, as a window from the tiles does: it is asked for
+ * Overpass's changes a week later, and whole again only once that date is [WHOLE_MS] old, so a kept region's windows
+ * ask Overpass nothing at the first connection. Where the packs hold part of its box alone, its data says it was never
+ * fetched whole and is kept as due, so online the window's own whole answer comes next and the packs' picture stands
+ * until it has. Where the core refuses their data, the window goes on as if they held none of it.
  *
  * A frame cell's levels' tiles (ENGINE.md one pack per country, step 7: the L12 and L13 tiles the core derives from a
  * cell's windows and draws beyond their reach) come from the country's tiles alone, as the core asks for them
@@ -736,8 +739,11 @@ class Windows(
     /**
      * Builds window [w], which the phone has nothing of, from the element packs on the phone ([local]): true when built,
      * null where they hold none of it, none no older than [kept], or the core refused their data (the window goes on as
-     * if they held none: its refusal holds back no network answer). Its data is kept as due at once, so online the
-     * window's own whole answer comes next ([aged]; the data says it was never fetched whole).
+     * if they held none: its refusal holds back no network answer). Data that is whole (a pack holds the window's whole
+     * box: [Head.never] is false) counts as checked now, as a pack from the tiles does ([tiled]), so the window stays
+     * on it for [REFRESH_MS] and then takes Overpass's changes since its date. Data that says it was never fetched
+     * whole (the window reaches beyond its packs) is kept as due at once, so online the window's own whole answer
+     * comes next ([aged]).
      */
     private fun fromLocal(core: Core, w: MapCore.Window, now: Long, kept: Instant?): Boolean? {
         val source = local ?: return null
@@ -752,11 +758,13 @@ class Windows(
                 null
             } ?: return null
             val how = packed(w, kept, answer, got, t0) ?: return null
+            // data without a date is not whole either: nothing since could be asked for
+            val never = runCatching { headOf(answer, false) }.getOrNull()?.never ?: true
             if (!build(core, w, answer, now, "$how, on the phone")) {
                 failed.remove(w)
                 return null
             }
-            dataOf(w).setLastModified(now - REFRESH_MS - 1)
+            if (never) dataOf(w).setLastModified(now - REFRESH_MS - 1)
             return true
         } finally {
             answer.delete()
@@ -874,6 +882,9 @@ class Windows(
 
     /** What a window's data says of itself: its date, and when it was last fetched whole (the core's merges say). */
     data class Head(val base: Instant, val whole: Instant) {
+        /** The data was never fetched whole (what the element packs on the phone hold of part of a window's box). */
+        val never: Boolean get() = whole == Instant.EPOCH
+
         companion object {
             private val BASE = Regex(""""timestamp_osm_base"\s*:\s*"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"""")
             private val WHOLE = Regex(""""whole"\s*:\s*"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)"""")
@@ -956,6 +967,14 @@ class Windows(
                 }
             }
         }
+
+        /**
+         * What the map says while the app fetches the pack of the place it shows ([name]; [done] of [bytes], either
+         * not known where it is not positive): which map is on its way and how far, where the windows' own line said
+         * only that the area was being fetched (13 November; until then the windows' step fetched the pack itself).
+         */
+        fun packLine(name: String, done: Long, bytes: Long): String =
+            if (bytes > 0 && done >= 0) "Downloading the map of %s… %d %%".format(Locale.getDefault(), name, (done * 100 / bytes).coerceIn(0, 100)) else "Downloading the map of $name…"
 
         /** How old a window's data may grow before it is built again: a week. */
         const val REFRESH_MS = 7 * 24 * 3600 * 1000L

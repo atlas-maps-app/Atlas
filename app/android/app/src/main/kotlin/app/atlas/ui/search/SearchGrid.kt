@@ -118,7 +118,7 @@ import kotlinx.coroutines.launch
 
 /**
  * The grid, its form following what its kinds are doing (the user, 3 November, of concept 6 and concept 5 slid up):
- * the one hero for now (the wheel the last of its picks), what is yours (the lists kept, the searches made), the kinds
+ * the one hero for now, the wheel and the moment's other picks in a row under it, what is yours (the lists kept, the searches made), the kinds
  * about to close on a shelf with the time to spare once there, every kind as a card in its colour, the chains around by
  * their signs, those there at any hour as small tokens, those asleep as a deck, and last the questions about places
  * around the map cannot answer yet. The ways to find that were keys of their own are where they are used (the owner, 4
@@ -146,7 +146,10 @@ internal fun LazyListScope.gridPane(
     val lead = s.now.firstOrNull()?.takeIf { known }
     val states = if (smart) kindStates(s, now, lead?.node?.id) else NO_STATES
     val wheel: () -> Unit = { nav.go(Dest.Where) }
-    item(key = "hero") { if (lead != null) LeadHero(lead, s, find, lang, now, wheel) else MomentHero(s, find, lang, now, wheel) }
+    item(key = "hero") { if (lead != null) LeadHero(lead, find, lang, now) else MomentHero(now) }
+    // the wheel and the moment's other picks in a row of their own under the hero, on the sheet's paper (the owner, 13
+    // November: "the top gets seperated, the part with the wheel and suggestions move below the top suggestion")
+    item(key = "picks") { Picks(if (lead != null) s.now.drop(1).take(PICKS - 1) else s.now.take(PICKS), find, lang, now.toLocalTime(), wheel) }
     val kept = lists.filter { it.places.isNotEmpty() }
     if (kept.isNotEmpty() || recents.isNotEmpty()) item(key = "yours") {
         Yours(kept, recents.take(RECENTS), onList = { nav.go(Dest.Lists(it.id)) }, onText, onPlace, onPoint = { p -> nav.go(Dest.WhatsHere(p.lat, p.lon, go = true)) }, onClear = onClear)
@@ -157,7 +160,11 @@ internal fun LazyListScope.gridPane(
     val (everything, kinds) = shelves.partition { it.category.family == CategoryTree.OSM }
     // the kind that matters most now on a card of its own, then two by two; under a lead hero, which says it, all two by two
     val rows = if (kinds.isEmpty() || lead != null) kinds.chunked(2) else listOf(kinds.take(1)) + kinds.drop(1).chunked(2)
-    rows.forEachIndexed { i, row ->
+    // as a list, where that is chosen under "Every kind"'s key: the kinds as the rows of one panel, as the places inside
+    // a kind are (the owner, 13 November: "Only the every kind list gets the list view but the cards stay the default")
+    if (s.prefs.kindsList) kinds.forEachIndexed { i, shelf ->
+        item(key = "cards:" + shelf.id) { KindLine(shelf, s.pulses[shelf.id]?.takeIf { known }, lang, PanelSeat.of(i, kinds.size), first = i == 0, find, onExplain) }
+    } else rows.forEachIndexed { i, row ->
         val height = when {
             i == 0 && lead == null -> 156.dp
             row.size == 1 -> 112.dp
@@ -198,13 +205,12 @@ private enum class Daypart(val title: Int, val sky: List<Long>, val stars: Boole
 
 /**
  * The moment as the sheet's band where no place around is known: the part of the day on its own sky ("This evening",
- * the date over it) as the sheet's top, out to its edges, then the wheel and what fits now as chips, each a press into
- * its kind.
+ * the date over it) as the sheet's top, out to its edges. The wheel and what fits now follow it in a row of their own
+ * ([Picks]).
  */
 @Composable
-private fun MomentHero(s: SearchSheetState, find: SearchSheetModel, lang: String, now: LocalDateTime, onWheel: () -> Unit) {
+private fun MomentHero(now: LocalDateTime) {
     val part = daypart(now.hour)
-    val picks = s.now.take(PICKS)
     val sky = remember(part) { part.sky.map { Color(it) } }
     val date = remember(now.toLocalDate()) { now.format(DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.getDefault())) }
     Column(
@@ -227,7 +233,6 @@ private fun MomentHero(s: SearchSheetState, find: SearchSheetModel, lang: String
             Caps(date, colour = Color.White.copy(alpha = 0.66f))
             Text(stringResource(part.title), style = indexTitle(22f).onCard(), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Picks(picks, find, lang, now.toLocalTime(), onWheel)
     }
 }
 
@@ -236,12 +241,11 @@ private val STARS = listOf(Triple(0.52f, 0.08f, 1.1f), Triple(0.63f, 0.17f, 0.7f
 /**
  * The one hero for now: what fits the moment most, as its kind's band at the sheet's top, out to its edges (the user,
  * 4 November, of the card it was: "either no card or a design more like a concept", then of the hero it became: "too
- * much space wasted"): the moment and why it fits, the kind's name, how many are open and how far the nearest is, then
- * the wheel for when none of the picks decides it and the moment's other picks as chips. Pressed, it dives into its
- * kind.
+ * much space wasted"): the moment and why it fits, the kind's name, how many are open and how far the nearest is.
+ * Pressed, it dives into its kind. The wheel and the moment's other picks follow it in a row of their own ([Picks]).
  */
 @Composable
-private fun LeadHero(lead: NowItem, s: SearchSheetState, find: SearchSheetModel, lang: String, now: LocalDateTime, onWheel: () -> Unit) {
+private fun LeadHero(lead: NowItem, find: SearchSheetModel, lang: String, now: LocalDateTime) {
     val node = lead.node
     val art = remember(node.id) { artOf(node) }
     val p = lead.pulse
@@ -251,7 +255,6 @@ private fun LeadHero(lead: NowItem, s: SearchSheetState, find: SearchSheetModel,
     val away = if (nearest != null && minutes != null) stringResource(R.string.find_away, nearest, minutes) else null
     // "for this time" says nothing the hour does not
     val reason = lead.reason.takeIf { it != FitReason.TIME }?.let { why(it) }
-    val others = s.now.drop(1).take(PICKS - 1)
     val interaction = remember { MutableInteractionSource() }
     Column(
         Modifier
@@ -269,7 +272,6 @@ private fun LeadHero(lead: NowItem, s: SearchSheetState, find: SearchSheetModel,
                 Text(said.joinToString(" · "), style = boardText(13f, 500, 17f).onCard().copy(color = Color.White.copy(alpha = 0.9f)), maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        Picks(others, find, lang, now.toLocalTime(), onWheel)
     }
 }
 
@@ -284,7 +286,14 @@ internal fun intentName(intent: Intent, lang: String, at: LocalTime): String {
     return if (intent.id == Intents.EAT && (meal == Meal.LUNCH || meal == Meal.DINNER)) stringResource(mealName(meal)) else intent.name(lang)
 }
 
-/** The wheel, then the moment's picks as chips, under a band's words, in a row that scrolls to the sheet's edges. */
+/** The ground of the picks' chips, which lie on the sheet's paper under the hero: the panel's own, What's here's cream. */
+@Composable
+private fun pickGround(): Color = indexColors().panel
+
+/**
+ * The wheel, for when none of the picks decides it, then the moment's picks as chips: a row of their own under the
+ * hero, on the sheet's paper, that scrolls to the sheet's edges.
+ */
 @Composable
 private fun Picks(picks: List<NowItem>, find: SearchSheetModel, lang: String, at: LocalTime, onWheel: () -> Unit) {
     Row(
@@ -298,7 +307,7 @@ private fun Picks(picks: List<NowItem>, find: SearchSheetModel, lang: String, at
 
 /**
  * The way to the wheel, for when none of the picks decides it: the wheel itself, small, in its own colours on a chip's
- * solid disc, first in the row, where a band's picture never lies (the owner, 9 November: "The spinning wheel button is
+ * solid disc, first in the row (the owner, 9 November: "The spinning wheel button is
  * almost not visible": a white outline and white words, last in the row, off the screen's edge and over the plate).
  */
 @Composable
@@ -310,7 +319,7 @@ private fun WheelKey(onClick: () -> Unit) {
             .size(38.dp)
             .pressable(interaction, depth = 0.05f)
             .clip(CircleShape)
-            .background(indexColors().card)
+            .background(pickGround())
             .clickable(interaction, null, role = Role.Button, onClick = onClick)
             .semantics { contentDescription = said },
         contentAlignment = Alignment.Center,
@@ -320,7 +329,7 @@ private fun WheelKey(onClick: () -> Unit) {
 }
 
 /**
- * One of the moment's picks as a chip on a band: its kind's disc, its name, and what it says now or, where nothing
+ * One of the moment's picks as a chip under the hero: its kind's disc, its name, and what it says now or, where nothing
  * around is known, why it fits the moment ("out of the rain").
  */
 @Composable
@@ -337,7 +346,7 @@ private fun PickWord(n: NowItem, lang: String, at: LocalTime, onClick: () -> Uni
             .height(38.dp)
             .pressable(interaction, depth = 0.05f)
             .clip(CircleShape)
-            .background(c.card)
+            .background(pickGround())
             .clickable(interaction, null, role = Role.Button, onClick = onClick)
             .padding(start = 5.dp, end = 13.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -447,7 +456,7 @@ private fun YoursChip(onClick: () -> Unit, content: @Composable RowScope.() -> U
     )
 }
 
-/** "Every kind", and folded under its key how the cards are shown (and how the minutes are counted). */
+/** "Every kind", and folded under its key how the kinds are shown, as cards or as a list (and how the minutes are counted). */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun KindsHead(s: SearchSheetState, find: SearchSheetModel, open: Boolean, onTune: () -> Unit) {
@@ -473,9 +482,36 @@ private fun KindsHead(s: SearchSheetState, find: SearchSheetModel, open: Boolean
                 IndexToggle(stringResource(R.string.find_smart), "ui-sparkles", p.smart, { find.setPref(SettingsKeys.SEARCH_SMART, it) })
                 IndexToggle(stringResource(R.string.find_nearby), "ui-compass", p.nearbyOnly, { find.setPref(SettingsKeys.SEARCH_NEARBY, it) })
                 IndexToggle(stringResource(R.string.find_fixed), "ui-lock", p.fixed, { find.setPref(SettingsKeys.SEARCH_FIXED, it) })
+                // the kinds as a list of rows, not as cards: cards unless chosen
+                IndexToggle(stringResource(R.string.find_view_rows), "ui.list", p.kindsList, find::showKindsList)
             }
         }
     }
+}
+
+/**
+ * A kind of the grid as a row of a panel, where the kinds are shown as a list ([SearchPrefs.kindsList]): its tile, its
+ * name, how many are near and surely open, the minutes to the nearest; lighter where none is near, as its card is.
+ */
+@Composable
+private fun KindLine(shelf: CategoryNode, pulse: CategoryPulse?, lang: String, seat: PanelSeat, first: Boolean, find: SearchSheetModel, onExplain: (Explained) -> Unit) {
+    val counts = when {
+        pulse == null -> null
+        pulse.count == 0 -> stringResource(R.string.find_none_near)
+        // those surely open, as its card counts them ([openTotal])
+        pulse.open > pulse.endless -> stringResource(R.string.find_counts, pulse.count.toString(), openTotal(pulse.open, pulse.unconfirmed))
+        else -> "${pulse.count} ${stringResource(R.string.find_word_near)}"
+    }
+    IndexLine(
+        title = shelf.name(lang),
+        line = counts?.let { AnnotatedString(it) },
+        onClick = { find.enter(shelf.id) },
+        modifier = if (first) Modifier.padding(top = 12.dp) else Modifier,
+        reach = if (pulse != null) ({ Reach(pulse.minutes, pulse.metres) }) else null,
+        lead = { KindTile(shelf.symbol, shelf.colour, tone = null, faded = pulse != null && pulse.count == 0) },
+        onLongClick = { onExplain(Explained(shelf)) },
+        seat = seat,
+    )
 }
 
 /** A row of the collection: one card, or two side by side. */
@@ -760,7 +796,7 @@ private fun asleepColour(node: CategoryNode): Color = lerp(Color(node.colour), C
  * The chains around by their signs, stacked by kind (the owner, 6 November: "Brands around stacks by kind?"): a kind's
  * chains on one stack ([BrandsAround.stacks], [ChainStack]), the kind's name under it; a kind with one chain is that
  * chain's sign, how many of its branches are near on a tab at its corner. A stack pressed is dealt out in its place, one
- * at a time, the kind's disc first, which stacks it again; a sign pressed shows its branches here, over the map; the
+ * at a time, the kind's tile first, which stacks it again; a sign pressed shows its branches here, over the map; the
  * last sign opens every brand around on its own board.
  */
 @Composable
@@ -790,7 +826,7 @@ private fun BrandsShelf(stacks: List<BrandStack>, lang: String, onBrand: (Brand)
 }
 
 /**
- * A stack dealt out on a tray of its own, brought into view with the shelf's margin on either side: the kind's disc
+ * A stack dealt out on a tray of its own, brought into view with the shelf's margin on either side: the kind's tile
  * first, which stacks it again, then the sign of each of its chains.
  */
 @OptIn(ExperimentalFoundationApi::class)

@@ -18,6 +18,7 @@
 #include <tuple>
 
 #if defined(__ANDROID__)
+#include <pthread.h>
 #include <sys/resource.h>
 #endif
 
@@ -403,6 +404,9 @@ void SunGlobals::update(const frame::FrameState& state, frame::Globals& globals)
 
 void SunGlobals::work(const std::stop_token& stop) {
 #if defined(__ANDROID__)
+    // Named (the sun's scenes' builder; its lanes' workers are atlas-sun, sun/Buckets.cpp): made on the render thread,
+    // it would show under that thread's name in a trace.
+    (void)::pthread_setname_np(::pthread_self(), "atlas-sun-scene");
     // Background priority (ENGINE.md gain 8): made on the render thread, this thread would keep its display priority.
     (void)setpriority(PRIO_PROCESS, 0, 10);
 #endif

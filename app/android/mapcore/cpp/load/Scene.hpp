@@ -414,8 +414,7 @@ struct Scene {
 /// Why a document cannot be loaded, and the element that showed it.
 struct LoadError {
     enum class Fault : std::uint8_t {
-        off_earth,    ///< a position that is not one (a latitude past ±90°, a longitude past ±180°, not a number)
-        not_a_number, ///< a value whose int(float(v)) Python cannot take (a coaster track's layer)
+        off_earth, ///< a position that is not one (a latitude past ±90°, a longitude past ±180°, not a number)
     };
     Fault fault = Fault::off_earth;
     std::int64_t element = 0; ///< its id

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -35,6 +36,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -106,9 +109,11 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 
 /**
- * A row of the Index: its key (a kind's disc, a logo), its name over a line, what follows (what it offers, an arrow),
- * and at its end how far, in the minutes the boards write ("7′", none for what is not a place); a hairline under it
- * from where its words start. In by [indent] where it stands under the row above it (a narrower kind under its broader).
+ * A row of the Index, drawn as the "NEAREST" rows of What's here are: its key (a kind's tile, a logo), its name in 800
+ * over a line, what follows (what it offers, an arrow), and at its end how far, in the minutes the boards write ("7′",
+ * none for what is not a place); a hairline under it. With a [seat] it is a row of a panel, which a lazy list draws
+ * row by row ([panelSeat]); without, it lies on what is under it (a panel already, the sheet's paper). In by [indent]
+ * where it stands under the row above it (a narrower kind under its broader).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -124,30 +129,36 @@ internal fun IndexLine(
     titleLines: Int = 1,
     hairline: Boolean = true,
     indent: Dp = 0.dp,
+    seat: PanelSeat? = null,
 ) {
     val c = indexColors()
+    val ground = if (seat != null) c.panel else LocalGround.current
     Row(
         modifier
             .fillMaxWidth()
+            .then(if (seat != null) Modifier.panelSeat(seat, c.panel) else Modifier)
             .combinedClickable(onLongClick = onLongClick, onClick = onClick)
             .drawBehind {
-                if (hairline) {
+                if (hairline && seat?.bottom != true) {
                     val y = size.height - 0.5.dp.toPx()
-                    drawLine(c.hair, Offset((ROW_TEXT_START + indent).toPx(), y), Offset(size.width - 18.dp.toPx(), y), 1.dp.toPx())
+                    drawLine(c.hair, Offset((PANEL_IN + indent).toPx(), y), Offset(size.width - PANEL_IN.toPx(), y), 1.dp.toPx())
                 }
             }
-            .padding(start = 16.dp + indent, end = 18.dp, top = 13.dp, bottom = 13.dp),
+            .heightIn(min = 64.dp)
+            .padding(start = PANEL_IN + indent, end = PANEL_IN, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        lead()
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = INDEX_NAME, color = c.ink, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
-            line?.let { Text(it, style = INDEX_META, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        CompositionLocalProvider(LocalGround provides ground) {
+            lead()
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = INDEX_NAME, color = c.ink, maxLines = titleLines, overflow = TextOverflow.Ellipsis)
+                line?.let { Text(it, style = INDEX_LINE, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            }
+            trailing?.invoke()
+            // right-aligned in a column of their own, so the primes stand under each other
+            if (reach != null) Box(Modifier.padding(start = 12.dp).widthIn(min = REACH_WIDTH), contentAlignment = Alignment.CenterEnd) { reach() }
         }
-        trailing?.invoke()
-        // right-aligned in a column of their own, so the primes stand under each other
-        if (reach != null) Box(Modifier.padding(start = 12.dp).widthIn(min = REACH_WIDTH), contentAlignment = Alignment.CenterEnd) { reach() }
     }
 }
 
@@ -215,7 +226,7 @@ private fun StopOptions(stop: AskStop, lang: String, hairline: Boolean, onPick: 
             .drawBehind {
                 if (hairline) {
                     val y = size.height - 0.5.dp.toPx()
-                    drawLine(c.hair, Offset(ROW_TEXT_START.toPx(), y), Offset(size.width - 18.dp.toPx(), y), 1.dp.toPx())
+                    drawLine(c.hair, Offset(PANEL_IN.toPx(), y), Offset(size.width - PANEL_IN.toPx(), y), 1.dp.toPx())
                 }
             }
             .horizontalScroll(rememberScrollState())
@@ -245,12 +256,15 @@ private fun GoPast(plan: AskPlan, lang: String, nav: Navigator) {
     )
 }
 
-/** How far, at a row's end: the minutes to it ("7′"), or past an hour and a half of them its kilometres ("12 km"). */
+/**
+ * How far, at a row's end: the minutes to it ("7′"), or past an hour and a half of them its kilometres ("12 km"); in
+ * figures of [size], a row's between the "NEAREST" row's small ones and the large ones the lists had.
+ */
 @Composable
-internal fun Reach(minutes: Int?, metres: Double?) {
+internal fun Reach(minutes: Int?, metres: Double?, size: Float = ROW_FIGURE) {
     val c = indexColors()
     when {
-        minutes != null && minutes < 100 -> MinutesFigure(minutes)
+        minutes != null && minutes < 100 -> MinutesFigure(minutes, size = size)
         metres != null -> {
             val km = metres / 1000
             val unit = stringResource(R.string.find_unit_km)
@@ -259,11 +273,14 @@ internal fun Reach(minutes: Int?, metres: Double?) {
                     append(if (km < 10) String.format(Locale.getDefault(), "%.1f", km) else km.roundToInt().toString())
                     withStyle(SpanStyle(color = c.faint, fontSize = 0.6.em)) { append(" $unit") }
                 },
-                style = indexFigure(if (km < 100) 20f else 17f, 800), color = c.ink, maxLines = 1,
+                style = indexFigure(if (km < 100) size else size * 0.85f, 800), color = c.ink, maxLines = 1,
             )
         }
     }
 }
+
+/** The size of the minutes at a row's end. */
+internal const val ROW_FIGURE = 17f
 
 /** How a place stands once there, where that is not how it stands now ([arrivalOf]), and the light it shows. */
 internal enum class Arrival(val tone: Tone) { CLOSED(Tone.CLOSED), CLOSES(Tone.SOON), OPEN(Tone.OPEN), OPENS(Tone.SOON) }
@@ -339,15 +356,16 @@ internal fun staleMark(h: ResultHit): String? =
     if (!h.hoursStale) null else h.hoursChecked?.let { "’" + "%02d".format(it.year % 100) } ?: "?"
 
 /**
- * A place: its kind's disc with the open light, its name, then open or not in colour ("≈" by its brand's hours, faded
- * with a year when not checked for long), on an errand the minutes to spare before it closes, what it was asked to be
- * near and how far, what its kind's purpose says of it in words ([ResultHit.tells]: its cuisine, that it is free) and
- * its kind where the view is not of that kind already; a closest match says first what it misses of what was asked
- * ("Opens in 20 min"). At its end what a symbol says alone (held, the symbol says what it means), a charger's power,
- * each wish of the search its tags do not say as a "?" that asks the searcher, and last the minutes to it ("7′").
+ * A place, as a row of a panel where it has a [seat] in one: its kind's tile with the open light, its name, then
+ * open or not in colour ("≈" by its brand's hours, faded with a year when not checked for long), on an errand the
+ * minutes to spare before it closes, what it was asked to be near and how far, what its kind's purpose says of it in
+ * words ([ResultHit.tells]: its cuisine, that it is free), its kind where the view is not of that kind already and how
+ * far it is ("Bar · 320 m", where its end says minutes and not that distance); a closest match says first what it misses of what was asked ("Opens in 20 min"). At its
+ * end what a symbol says alone (held, the symbol says what it means), a charger's power, each wish of the search its
+ * tags do not say as a "?" that asks the searcher, and last the minutes to it ("7′").
  */
 @Composable
-internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true) {
+internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true, seat: PanelSeat? = null) {
     val c = indexColors()
     val p = h.record.place
     val lang = w.lang
@@ -365,13 +383,16 @@ internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true) {
     val missed = h.misses.take(MISSES).mapNotNull { missWords(it) }
     val kept = w.kept[p.key]
     val plan = w.onPlan?.takeIf { w.plans(p) }
+    // how far, where the row's end says its minutes: past those it says the distance itself, once is enough
+    val distance = shortDistance(h.metres).takeIf { h.minutes < 100 }
     // where it misses the hour asked, that says more than open or not now
     val timed = h.misses.firstOrNull().let { it is Miss.Opens || it is Miss.Closed || it == Miss.HoursUnknown }
     IndexLine(
-        line.summary.name, rowStatus(words.takeUnless { timed }, tone, staleMark(h).takeUnless { timed }, spare, near, worded, listOfNotNull(kind), missed),
+        line.summary.name, rowStatus(words.takeUnless { timed }, tone, staleMark(h).takeUnless { timed }, spare, near, worded, listOfNotNull(kind, distance), missed),
         onClick = { w.onPlace(p) }, modifier = Modifier.testTag(PLACE_TAG),
         reach = { Reach(h.minutes, h.metres) },
-        lead = { remember(p) { signOf(p) }?.let { SignDisc(it, tone) } ?: KindDisc(line.summary.symbol, line.summary.colour, tone) },
+        lead = { remember(p) { signOf(p) }?.let { SignTile(it, tone) } ?: KindTile(line.summary.symbol, line.summary.colour, tone) },
+        seat = seat,
         trailing = if (kept == null && power == null && symbols.isEmpty() && unknown.isEmpty() && plan == null) null else ({
             Row(Modifier.padding(start = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 // kept in a list: its bookmark, in the list's colour
@@ -389,14 +410,16 @@ internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true) {
 
 /**
  * The way to a green's own plan, its paths, toilets, water and cafés (the board on two posts it is drawn on): a key of
- * its own at the row's end, the row itself still opening the place.
+ * its own at the row's end, the row itself still opening the place. On a row's panel by day it is a white key, as the
+ * place sheet's round keys are on its panels; the tray's colour would not show there.
  */
 @Composable
 internal fun PlanKey(onClick: () -> Unit) {
     val c = indexColors()
     val said = stringResource(R.string.walk_plan)
     Box(
-        Modifier.size(36.dp).clip(CircleShape).background(c.tray).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = said },
+        Modifier.size(36.dp).clip(CircleShape).background(if (LocalGround.current != null && !c.dark) c.card else c.tray)
+            .clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = said },
         contentAlignment = Alignment.Center,
     ) { Symbol("temaki-info_board", tint = c.ink, size = 18.dp) }
 }
@@ -569,9 +592,10 @@ private const val UNKNOWNS = 2
 private const val MISSES = 2
 
 /**
- * Places on one deck, one card on two more: a brand's branches by its logo, or a kind's places with no name of their
- * own by its symbol and its name ("Playground"); how many are near and open, the nearest's minutes. A tap spreads them
- * out, a kind's places each by the street it is on ([rememberStreets]), as none has a name to tell it by.
+ * Places on one deck, a panel of its own on the edges of two more: a brand's branches by its sign, or a kind's places
+ * with no name of their own by its tile and its name ("Playground"); how many are near and open, the nearest's
+ * minutes. A tap spreads them out as rows of the same panel, a kind's places each by the street it is on
+ * ([rememberStreets]), as none has a name to tell it by.
  */
 @Composable
 internal fun DeckRow(b: ResultItem.Deck, w: RowWays) {
@@ -591,46 +615,50 @@ internal fun DeckRow(b: ResultItem.Deck, w: RowWays) {
         is ResultItem.Unnamed -> b.kind.preset?.fullName(w.lang) ?: b.kind.name(w.lang)
     }
     val streets = rememberStreets((b as? ResultItem.Unnamed)?.hits?.takeIf { open }.orEmpty(), w.lang)
-    val shape = RoundedCornerShape(22.dp)
-    Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)) {
-        Box(Modifier.fillMaxWidth().padding(bottom = if (open) 0.dp else 8.dp)) {
-            if (!open) {
-                // the deck's lower cards, their edges under the top one
-                Box(Modifier.matchParentSize().padding(horizontal = 18.dp).offset(y = 8.dp).raised(shape, c, y = 1.dp, blur = 3.dp))
-                Box(Modifier.matchParentSize().padding(horizontal = 9.dp).offset(y = 4.dp).raised(shape, c, y = 1.dp, blur = 3.dp))
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .testTag(DECK_TAG)
-                    .raised(shape, c, y = 3.dp, blur = 12.dp)
-                    .clickable(role = Role.Button) { open = !open }
-                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                // a chain's deck is a row of the list: on its own sign, as its pins have it, else its logo on its family's
-                // colour; lighter where every branch is closed, as their pins are
-                val shut = b.hits.all { closedThere(it.open, it.minutes, w.now) }
-                remember(first.record.place) { signOf(first.record.place) }?.let { SignDisc(it, null, faded = shut) }
-                    ?: KindDisc(mark.first, mark.second, null, faded = shut)
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(name, style = INDEX_NAME, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        if (told) stringResource(R.string.find_counts, b.hits.size.toString(), anyOpen.toString())
-                        else stringResource(R.string.find_count_near, b.hits.size.toString()),
-                        style = INDEX_META, color = if (anyOpen > 0) c.open else c.soft, maxLines = 1,
-                    )
-                }
-                Reach(first.minutes, first.metres)
-                Symbol(if (open) "ui.chevron-up" else "ui.chevron-down", tint = c.faint, size = 16.dp)
-            }
+    val shape = RoundedCornerShape(PANEL_RADIUS)
+    Box(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = if (open) 8.dp else 16.dp)) {
+        if (!open) {
+            // the edges of the deck's lower panels under its own: the panel's colour, each a shade further towards the
+            // ink, by day deeper and at night lighter, so they show on either paper
+            Box(Modifier.matchParentSize().padding(horizontal = PANEL_OUT + 20.dp).offset(y = 8.dp).clip(shape).background(lerp(c.panel, c.ink, if (c.dark) 0.2f else 0.16f)))
+            Box(Modifier.matchParentSize().padding(horizontal = PANEL_OUT + 10.dp).offset(y = 4.dp).clip(shape).background(lerp(c.panel, c.ink, if (c.dark) 0.1f else 0.08f)))
         }
-        AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-            // a kind's places under its name: none says the kind again, each says where it is
-            val rows = if (b is ResultItem.Unnamed) w.within(b.kind.id, streets) else w
-            Column(Modifier.padding(top = 4.dp)) {
-                b.hits.forEachIndexed { i, h -> PlaceRow(h, rows, hairline = i < b.hits.lastIndex) }
+        Column(Modifier.fillMaxWidth().panelSeat(PanelSeat.ONLY, c.panel)) {
+            CompositionLocalProvider(LocalGround provides c.panel) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag(DECK_TAG)
+                        .clickable(role = Role.Button) { open = !open }
+                        .heightIn(min = 64.dp)
+                        .padding(start = PANEL_IN, end = 12.dp, top = 10.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    // a chain's deck wears its own sign, as its pins have it, else its logo on its family's colour; lighter
+                    // where every branch is closed, as their pins are
+                    val shut = b.hits.all { closedThere(it.open, it.minutes, w.now) }
+                    remember(first.record.place) { signOf(first.record.place) }?.let { SignTile(it, null, faded = shut) }
+                        ?: KindTile(mark.first, mark.second, null, faded = shut)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(name, style = INDEX_NAME, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            if (told) stringResource(R.string.find_counts, b.hits.size.toString(), anyOpen.toString())
+                            else stringResource(R.string.find_count_near, b.hits.size.toString()),
+                            style = INDEX_LINE, color = if (anyOpen > 0) c.open else c.soft, maxLines = 1,
+                        )
+                    }
+                    Reach(first.minutes, first.metres)
+                    Symbol(if (open) "ui.chevron-up" else "ui.chevron-down", tint = c.faint, size = 16.dp)
+                }
+                AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    // a kind's places under its name: none says the kind again, each says where it is
+                    val rows = if (b is ResultItem.Unnamed) w.within(b.kind.id, streets) else w
+                    Column {
+                        Box(Modifier.fillMaxWidth().padding(horizontal = PANEL_IN).height(1.dp).background(c.hair))
+                        b.hits.forEachIndexed { i, h -> PlaceRow(h, rows, hairline = i < b.hits.lastIndex) }
+                    }
+                }
             }
         }
     }

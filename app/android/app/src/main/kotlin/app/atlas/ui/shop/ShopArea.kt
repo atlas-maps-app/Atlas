@@ -39,8 +39,9 @@ internal data class AreaPlaces(
 
 /**
  * Finds the places a shop screen shows, in layers like the rest of Atlas: the downloaded region's place store first
- * (offline, every tag); where the phone has no region for the area, the map's packs on the phone (offline, every tag)
- * and then Overpass when online, where no pack holds the whole circle. One query per screen, with the union of
+ * (offline, every tag); where the phone has no region for the area, the map's packs and windows on the phone (offline,
+ * every tag), online the windows it keeps no data for from Atlas's packs, and then Overpass, where they do not hold the
+ * whole circle. One query per screen, with the union of
  * everything it shows; the screen sorts the answer into its shelves itself. Answers are kept for a few minutes per
  * area, so going from the pantry into a shelf and back does not ask again.
  */
@@ -83,11 +84,27 @@ internal class ShopFinder(
         } catch (e: Exception) {
             null
         }
-        val sketch = packed?.value.orEmpty()
+        var sketch = packed?.value.orEmpty()
         val op = overpass()
-        // packs around the whole circle answer fully, with every tag
-        val canAsk = op != null && online() && packed?.partial != false
+        // packs and windows around the whole circle answer fully, with every tag
+        var canAsk = op != null && online() && packed?.partial != false
         emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = canAsk))
+        if (canAsk) {
+            // the map's windows the phone keeps no data for, from Atlas's packs, before Overpass
+            val windows = try {
+                local()?.inWindowPacks(centre, radiusM, filter, limit)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            if (windows != null) {
+                sketch = windows.value
+                canAsk = windows.partial
+                emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = canAsk))
+                if (!canAsk) remember(cacheKey, AreaPlaces(sketch, PlaceOrigin.PACK))
+            }
+        }
         if (!canAsk) {
             if (packed?.partial == false) remember(cacheKey, AreaPlaces(sketch, PlaceOrigin.PACK))
             return@flow

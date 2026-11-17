@@ -77,13 +77,20 @@ class EatRepository internal constructor(private val services: Services) {
         val online = !services.config.offline && services.connectivity.online.value
         try {
             fromStore(centre, r)?.let { out.value = it; return }
-            val (sketch, whole) = fromPacks(centre, r, online)
+            var (sketch, whole) = fromPacks(centre, r, online)
             if (sketch != null) out.value = sketch
-            // packs around the whole circle answer fully, with every tag
+            // packs and windows around the whole circle answer fully, with every tag
             if (!online || whole) {
                 if (sketch == null) out.value = EatArea(centre, r, emptyList(), null, loading = false)
                 return
             }
+            // online, the map's windows the phone keeps no data for from Atlas's packs, before Overpass
+            val (windows, held) = fromWindowPacks(centre, r)
+            if (windows != null) {
+                sketch = windows
+                out.value = windows
+            }
+            if (held) return
             out.value = try {
                 fromOverpass(centre, r)
             } catch (e: CancellationException) {
@@ -116,8 +123,8 @@ class EatRepository internal constructor(private val services: Services) {
     }
 
     /**
-     * The places the map's packs on the phone hold around [centre] (every tag), [more] when Overpass will be asked after
-     * them; and whether the packs hold the whole circle. Null places when no pack has any.
+     * The places the map's packs and windows on the phone hold around [centre] (every tag), [more] when Overpass will be
+     * asked after them; and whether they hold the whole circle. Null places when none has any.
      */
     private fun fromPacks(centre: LatLon, r: Double, more: Boolean): Pair<EatArea?, Boolean> {
         val got = try {
@@ -127,6 +134,22 @@ class EatRepository internal constructor(private val services: Services) {
         } catch (e: Exception) {
             null
         } ?: return null to false
+        return packArea(centre, r, got, more)
+    }
+
+    /** [fromPacks] once the map's windows the phone keeps no data for came from Atlas's packs ([LocalData.inWindowPacks]). */
+    private suspend fun fromWindowPacks(centre: LatLon, r: Double): Pair<EatArea?, Boolean> {
+        val got = try {
+            services.localData.inWindowPacks(centre, r, EatKind.FILTER, limit = 5_000)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } ?: return null to false
+        return packArea(centre, r, got, more = true)
+    }
+
+    private fun packArea(centre: LatLon, r: Double, got: app.atlas.services.LocalAnswer<List<app.atlas.model.Place>>, more: Boolean): Pair<EatArea?, Boolean> {
         val whole = !got.partial
         val found = got.value.filter { Categories.isPlace(it.tags) }.mapNotNull { EatPlace.of(it, centre, lang) }.sortedBy { it.distanceM }
         if (found.isEmpty() && !whole) return null to false

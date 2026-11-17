@@ -91,9 +91,44 @@ internal class Cells(south: Double, west: Double, north: Double, east: Double) {
         } else box(s, w, n, e, each)
     }
 
+    /**
+     * Calls [each] with the cells of a way whose nodes are [ref] of [from] until [to] (an index into [nodes], -1 for a
+     * node the extract does not hold): each segment's between two nodes held, and the cell of a node held after one that
+     * is not, or first. A cell can come more than once. The windows' index files a way so ([WindowCut]), and a shard
+     * keeps a way so ([Extract.Keep]).
+     */
+    inline fun way(from: Long, to: Long, nodes: NodeTable, ref: (Long) -> Int, each: (Int) -> Unit) {
+        var prev = -1
+        var i = from
+        while (i < to) {
+            val node = ref(i)
+            if (node >= 0) {
+                val la = nodes.latE7(node)
+                val lo = nodes.lonE7(node)
+                if (prev >= 0) segment(nodes.latE7(prev), nodes.lonE7(prev), la, lo, each)
+                else of(la, lo).let { if (it >= 0) each(it) }
+            }
+            prev = node
+            i++
+        }
+    }
+
     companion object {
         const val CELL = 100_000L
         const val MARGIN = 2L
+
+        /** The grid over [windows]' boxes: a run's, whole or in shards, so each window looks at the same cells either way. */
+        fun over(windows: List<Window>): Cells {
+            if (windows.isEmpty()) return Cells(0.0, 0.0, 0.0, 0.0)
+            var s = Double.POSITIVE_INFINITY
+            var w = Double.POSITIVE_INFINITY
+            var n = Double.NEGATIVE_INFINITY
+            var e = Double.NEGATIVE_INFINITY
+            for (x in windows) {
+                s = minOf(s, x.south); w = minOf(w, x.west); n = maxOf(n, x.north); e = maxOf(e, x.east)
+            }
+            return Cells(s, w, n, e)
+        }
     }
 }
 
@@ -125,7 +160,8 @@ internal class Buckets(val start: IntArray, val items: IntArray) {
  * it or a member way that meets it), in Overpass's order (nodes, ways, relations, each by id), each as `out geom` prints
  * it with no box (a way's bounds, nodes and points; a relation's bounds and its members whole), in output_json.cc's
  * layout byte for byte, the answer's head saying the extract's date. A window is left out where the answer would hold
- * an element the extract does not hold whole.
+ * an element the extract does not hold whole. The grid of cells is over all of [windows], the run's: a shard of the
+ * run cuts its own windows of them from its own extract ([Extract.Keep]), and each gets the whole run's answer.
  */
 class WindowCut(private val e: Extract, windows: List<Window>, date: String, private val level: Int = Deflater.BEST_COMPRESSION) {
     private val head = AnswerJson.head(date)
@@ -135,14 +171,7 @@ class WindowCut(private val e: Extract, windows: List<Window>, date: String, pri
     private val memberNodeCells: Buckets
 
     init {
-        var s = Double.POSITIVE_INFINITY
-        var w = Double.POSITIVE_INFINITY
-        var n = Double.NEGATIVE_INFINITY
-        var ea = Double.NEGATIVE_INFINITY
-        for (x in windows) {
-            s = minOf(s, x.south); w = minOf(w, x.west); n = maxOf(n, x.north); ea = maxOf(ea, x.east)
-        }
-        cells = if (windows.isEmpty()) Cells(0.0, 0.0, 0.0, 0.0) else Cells(s, w, n, ea)
+        cells = Cells.over(windows)
         nodeCells = Buckets.of(cells.count, e.taggedCount) { t, add ->
             val node = e.taggedNode[t]
             val c = cells.of(e.nodes.latE7(node), e.nodes.lonE7(node))
@@ -151,19 +180,7 @@ class WindowCut(private val e: Extract, windows: List<Window>, date: String, pri
         val scratch = IntList()
         wayCells = Buckets.of(cells.count, e.wayCount) { way, add ->
             scratch.clear()
-            val from = e.wayStart[way]
-            val to = e.wayStart[way + 1]
-            var prev = -1
-            for (i in from until to) {
-                val node = e.wayRefs[i]
-                if (node >= 0) {
-                    val la = e.nodes.latE7(node)
-                    val lo = e.nodes.lonE7(node)
-                    if (prev >= 0) cells.segment(e.nodes.latE7(prev), e.nodes.lonE7(prev), la, lo) { scratch.add(it) }
-                    else cells.of(la, lo).let { if (it >= 0) scratch.add(it) }
-                }
-                prev = node
-            }
+            cells.way(e.wayStart[way], e.wayStart[way + 1], e.nodes, { e.wayRefs[it] }) { scratch.add(it) }
             scratch.sortUnique()
             for (k in 0 until scratch.size) add(scratch[k])
         }

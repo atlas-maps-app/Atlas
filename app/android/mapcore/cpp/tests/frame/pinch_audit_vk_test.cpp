@@ -61,13 +61,16 @@
 // streets and big roads as they lie, without their edges by their coverage (Ground::draw_least_width), the far
 // flicker's base; ATLAS_PINCH_LEAST_PX: the least width they are drawn at, device px (Ground::least_width_px; 2);
 // ATLAS_PINCH_THIN=0: its water narrower than 1.5 device px as it lies (Ground::draw_thin_water).
-// ATLAS_PINCH_THIN_WALLS=0: the levels' tiles' walls narrower than 2.5 device px on the samples as every other wall
-// (Buildings::draw_thin_walls), the far flicker's base.
-// ATLAS_PINCH_PAN: at each of its distances, a slow pan from the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the
-// target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each frame written (pan_<d>_<k>.ppm) unless
-// ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage T summed up; ATLAS_PINCH_PAN_REST=1
-// decides each of its frames as at rest (the ground's area test, the pack's hold). ATLAS_PINCH_GRAIN=0: the Look
-// settings' grain off (the paper's grain and the materials', MapFrame::set_screen).
+// ATLAS_PINCH_MARKS=0: a tile fading in drawn whole over the settled tiles' streets, without their marks
+// (Ground::draw_marks), the stacked streets' base. Each frame's line names its ground tiles by level, those kept under
+// that fade in themselves (a chain), and the settled tiles whose ground a settled ancestor's lies over (by the cells
+// the ground draws: all of a tile drawing itself), and of those the ones whose ancestor the cover draws for other
+// places. ATLAS_PINCH_THIN_WALLS=0: the levels' tiles' walls narrower than 2.5 device px on the samples as every other
+// wall (Buildings::draw_thin_walls), the far flicker's base. ATLAS_PINCH_PAN: at each of its distances, a slow pan from
+// the frame at rest (ATLAS_PINCH_PAN_STEP px a frame at the target, 0.5, over ATLAS_PINCH_PAN_FRAMES frames, 12), each
+// frame written (pan_<d>_<k>.ppm) unless ATLAS_PINCH_PAN_KEEP=0, its stage F, holes, tiles built and each pass's stage
+// T summed up; ATLAS_PINCH_PAN_REST=1 decides each of its frames as at rest (the ground's area test, the pack's hold).
+// ATLAS_PINCH_GRAIN=0: the Look settings' grain off (the paper's grain and the materials', MapFrame::set_screen).
 // ATLAS_PINCH_ARRIVE=<n>: ATLAS_PINCH_TILES' packs handed over n a frame before the pinch, nearest the target first,
 // as the app hands its windows and levels' tiles over as they come (each set_packs the whole list so far), each frame
 // at the pinch's start at rest with the world's threads then let finish; each frame's set_packs milliseconds and the
@@ -77,12 +80,20 @@
 // ATLAS_PINCH_LOOK=a22: the phone's default colours, the Map look's Alpha 22 (the red tiles as tiles_red, each guessed
 // flat roof one of three mid greys) with the Tone off, where the core's own default is today's palette with TONE; the
 // phone's default parts are ATLAS_PINCH_OFF's to name.
+// ATLAS_PINCH_RANKS=every: the frames' ranks over the rows of the resident tiles not drawn too, as before the ranks
+// knew the tiles drawn (FrameBuilder::rank_undrawn); =cycle: the ATLAS_PINCH_STILL and ATLAS_PINCH_FINGER frames two
+// with them, two without, over and over (the second of each two has the order of its kind from the first), so that the
+// two are measured side by side whatever else runs. Each frame's line ends with its ranks: the rows ranked of the
+// table's, those of tiles not drawn (left out, or ranked with them), the insertion pass's moves, and the item table's
+// room where it changed. ATLAS_PINCH_RESERVE=0: the item table without its room made at rest (World::reserve_items),
+// as before it.
 // Each rest waits for the sun as well (settle): its workers idle, nothing published since the frame before and no
 // tile's bits cross-fading (SunGlobals::fading), as buildings_vk_test's draw does, since those fades run on the sun's
 // own clock and a rest captured while one runs differs run to run.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Ranks.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "load/Window.hpp"
@@ -122,6 +133,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -365,6 +377,23 @@ struct Listed {
     for (std::size_t i = 0; i < p.pass_ms.size() && i < builder.passes().size(); ++i) {
         if (p.pass_ms[i] >= 0.1) out += std::format(", {} {:.1f}", builder.passes()[i]->name(), p.pass_ms[i]);
     }
+    return out;
+}
+
+/// The last frame's ranks and the item table's room: `ranks 5120 rows of 20480 (18112 live), 3072 of tiles not drawn
+/// left out, 12 moves; items' room 32768`, the room's growths since `growths` (the frame before's) after it, and the
+/// world's reserve at rest where this frame made one.
+[[nodiscard]] std::string ranks_line(const frame::FrameBuilder& builder, const scene::World* world, bool every,
+                                     std::uint64_t growths) {
+    const frame::Ranks& r = builder.ranks();
+    std::string out = std::format("; ranks {} rows", r.order().size());
+    const scene::ItemTable* items = world != nullptr ? world->items() : nullptr;
+    if (items == nullptr) return out;
+    out += std::format(" of {} ({} live), {} of tiles not drawn {}, {} moves{}; items' room {}", items->rows(),
+                       items->live(), r.undrawn(), every ? "ranked with them" : "left out", r.moves(),
+                       r.sorted_fully() ? ", sorted fully" : "", items->capacity());
+    if (items->growths() != growths) out += std::format(", grown {} time(s)", items->growths() - growths);
+    if (world->items_reserve_ms() > 0.0) out += std::format(", made at rest in {:.2f} ms", world->items_reserve_ms());
     return out;
 }
 
@@ -904,6 +933,9 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         // and its thin water as it lies (ATLAS_PINCH_THIN=0)
         const bool thin_water = environment("ATLAS_PINCH_THIN") != "0";
         if (!thin_water) MESSAGE("the water as it lies, however thin");
+        // a tile fading in drawn whole over the settled streets (ATLAS_PINCH_MARKS=0)
+        const bool marks = environment("ATLAS_PINCH_MARKS") != "0";
+        if (!marks) MESSAGE("the settled streets unmarked: a tile fading in drawn whole over them");
         // the most chunks of the walls' and near cells' lists drawn from shape records (ATLAS_PINCH_SHAPES), else as
         // the pass sizes them
         std::optional<std::uint32_t> most_shape_chunks;
@@ -915,6 +947,11 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             most_shape_chunks = n;
             MESSAGE(std::format("at most {} chunks of the walls' and near cells' lists drawn from shape records", n));
         }
+        // the ranks over the rows of the tiles not drawn too (ATLAS_PINCH_RANKS), and the item table's room made at
+        // rest or not (ATLAS_PINCH_RESERVE)
+        const bool ranks_cycle = environment("ATLAS_PINCH_RANKS") == "cycle";
+        bool rank_every = environment("ATLAS_PINCH_RANKS") == "every";
+        const bool reserve_items = environment("ATLAS_PINCH_RESERVE") != "0";
         // the target moved from the place by this many metres east and north (ATLAS_PINCH_PAN's frames)
         double moved_east = 0.0;
         double moved_north = 0.0;
@@ -922,6 +959,10 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
         // it; its line in the log
         const auto draw = [&](const std::string& tag, double d, bool rest, bool log, std::uint64_t off = 0U) {
             if (passes::Buildings* p = buildings(); p != nullptr) p->most_shape_chunks(most_shape_chunks);
+            map.rank_undrawn(rank_every);
+            if (map.world() != nullptr) map.world()->reserve_items(reserve_items);
+            const std::uint64_t growths =
+                map.world() != nullptr && map.world()->items() != nullptr ? map.world()->items()->growths() : 0U;
             // ATLAS_PINCH_THIN_WALLS=0: the levels' thin walls on the samples as every other wall, the far flicker's
             // base (Buildings::draw_thin_walls)
             if (passes::Buildings* p = buildings(); p != nullptr) {
@@ -939,6 +980,7 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (g != nullptr) g->draw_least_width(least_width);
             if (g != nullptr && least_px > 0.0F) g->least_width_px(least_px);
             if (g != nullptr) g->draw_thin_water(thin_water);
+            if (g != nullptr) g->draw_marks(marks);
             const std::uint64_t ripples = g != nullptr ? g->ripple_makes() : 0U;
             const auto at = std::chrono::steady_clock::now();
             const standin::Drawn s = session.draw(c, {});
@@ -954,26 +996,100 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                 const char* ripple = drawn_by == nullptr || !drawn_by->drew_ripple()              ? "off"
                                      : drawn_by->ripple_makes() != (drawn_by == g ? ripples : 0U) ? "made"
                                                                                                   : "kept";
-                // the tiles drawn at their fade, and those kept under them (ENGINE.md's fades)
+                // the tiles drawn at their fade, and those kept under them (ENGINE.md's fades); of those kept under,
+                // the ones fading in themselves (a chain); the ground's tiles by level; and the settled tiles whose
+                // ground a settled ancestor's ground lies over, by the cells the ground draws of each (Ground's
+                // decide: a tile drawing itself all of its cells, a stand-in ancestor or a tile kept under its cells
+                // alone; a pack's tiles), of them those whose ancestor is drawn for other places alone (the cells the
+                // cover gives it lie beside them)
                 std::size_t fading = 0;
                 std::size_t under = 0;
+                std::size_t chained = 0;
+                std::size_t stacked = 0;
+                std::size_t beside = 0;
+                std::map<int, std::size_t, std::greater<>> levels;
                 if (b != nullptr && b->state().cover != nullptr) {
-                    for (const scene::CoverTile& t : b->state().cover->with_under()) {
+                    const std::span<const scene::CoverTile> drawn_tiles = b->state().cover->with_under();
+                    const auto ground_cells = [](const scene::CoverTile& c) {
+                        return !c.under && c.drawn->key == c.key ? ~std::uint64_t{0} : c.cells;
+                    };
+                    // the cells of an ancestor of `n` cells a side `up` levels over the cells `mine` (bit r · nf + c)
+                    // of its descendant (x, y) of `nf` a side
+                    const auto over_cells = [](std::uint32_t n, std::uint32_t up, std::uint32_t x, std::uint32_t y,
+                                               std::uint32_t nf, std::uint64_t mine) {
+                        if (n == 0 || n > 8 || nf == 0 || nf > 8 || up >= 16) return std::uint64_t{0};
+                        const std::uint64_t side = std::uint64_t{1} << up;
+                        const std::uint64_t across = side * nf; // the descendant's cells across the ancestor
+                        const std::uint64_t ox = (x & (side - 1)) * nf;
+                        const std::uint64_t oy = (y & (side - 1)) * nf;
+                        std::uint64_t bits = 0;
+                        for (std::uint32_t r = 0; r < nf; ++r) {
+                            for (std::uint32_t c = 0; c < nf; ++c) {
+                                if (((mine >> ((r * nf) + c)) & 1U) == 0U) continue;
+                                const std::uint64_t c0 = (ox + c) * n / across;
+                                const std::uint64_t c1 = (((ox + c + 1) * n) - 1) / across;
+                                const std::uint64_t r0 = (oy + r) * n / across;
+                                const std::uint64_t r1 = (((oy + r + 1) * n) - 1) / across;
+                                for (std::uint64_t rr = r0; rr <= r1; ++rr) {
+                                    for (std::uint64_t cc = c0; cc <= c1; ++cc)
+                                        bits |= std::uint64_t{1} << ((rr * n) + cc);
+                                }
+                            }
+                        }
+                        return bits;
+                    };
+                    // (0: no settled ancestor's ground over t's; 1: one's, over cells the cover gives it there; 2: one
+                    // drawn whole for other places alone)
+                    const auto over_settled = [&](const scene::CoverTile& t) {
+                        if (t.drawn == nullptr) return 0;
+                        const std::uint64_t mine = ground_cells(t);
+                        int found = 0;
+                        for (const scene::CoverTile& a : drawn_tiles) {
+                            if (a.place.scale.w < 1.0F || a.drawn == nullptr || a.drawn->pack != t.drawn->pack) {
+                                continue;
+                            }
+                            const tiles::TileKey& fine = t.drawn->key;
+                            const tiles::TileKey& coarse = a.drawn->key;
+                            if (coarse.z >= fine.z) continue;
+                            const auto up = static_cast<std::uint32_t>(fine.z - coarse.z);
+                            if ((fine.x >> up) != coarse.x || (fine.y >> up) != coarse.y) continue;
+                            const std::uint64_t over =
+                                over_cells(a.drawn->cells_per_side, up, fine.x, fine.y, t.drawn->cells_per_side, mine);
+                            if ((a.cells & over) != 0U) return 1;
+                            if ((ground_cells(a) & over) != 0U) found = 2;
+                        }
+                        return found;
+                    };
+                    for (const scene::CoverTile& t : drawn_tiles) {
                         under += t.under ? 1 : 0;
                         fading += !t.under && t.place.scale.w < 1.0F ? 1 : 0;
+                        chained += t.under && t.place.scale.w < 1.0F ? 1 : 0;
+                        ++levels[t.key.z];
+                        const int over = t.place.scale.w >= 1.0F ? over_settled(t) : 0;
+                        stacked += over != 0 ? 1 : 0;
+                        beside += over == 2 ? 1 : 0;
                     }
                 }
-                MESSAGE(std::format("{} {:6.0f} m: named {} drew {}, complete {}, frame {:.0f} ms (stage F {:.1f}, "
-                                    "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments, {} tiles "
-                                    "fading over {} kept under; {}; {}; {}; gpu before the main pass {:.1f} ms, in it "
-                                    "{:.1f}, after it {:.1f}; frame {}, gpu of frame {}; ripple {}",
-                                    tag, d, held != nullptr ? held->id : "-", map.drawn_pack(), map.complete(), ms,
-                                    b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0,
-                                    s.record.draws, s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k, fading,
-                                    under, b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
-                                    b != nullptr ? stage_f_parts(*b) + ground_cpu(*b) : std::string(),
-                                    s.record.gpu_offscreen_ms, s.record.gpu_main_ms, s.record.gpu_after_ms,
-                                    s.record.frame, s.record.gpu_frame, ripple));
+                std::string by_level;
+                for (const auto& [z, n] : levels) {
+                    by_level += std::format("{}L{} {}", by_level.empty() ? "" : ", ", z, n);
+                }
+                MESSAGE(std::format(
+                    "{} {:6.0f} m: named {} drew {}, complete {}, frame {:.0f} ms (stage F {:.1f}, "
+                    "record {:.1f}), {} draws {}k triangles, gpu {:.0f} ms {}k fragments, {} tiles "
+                    "fading over {} kept under ({} chained; ground tiles {}; {} settled under a settled "
+                    "ancestor's ground, {} of them beside its places); {}; {}; {}; gpu before the main "
+                    "pass {:.1f} ms, in it "
+                    "{:.1f}, after it {:.1f}; frame {}, gpu of frame {}; ripple {}",
+                    tag, d, held != nullptr ? held->id : "-", map.drawn_pack(), map.complete(), ms,
+                    b != nullptr ? b->stage_f_ms() : 0.0, b != nullptr ? b->record_ms() : 0.0, s.record.draws,
+                    s.record.triangles_k, s.record.gpu_ms, s.record.fragments_k, fading, under, chained,
+                    by_level.empty() ? "none" : by_level, stacked, beside,
+                    b != nullptr ? decided(*b) : std::string("no frame"), map.tiles_line(),
+                    b != nullptr ? stage_f_parts(*b) + ground_cpu(*b) + ranks_line(*b, map.world(), rank_every, growths)
+                                 : std::string(),
+                    s.record.gpu_offscreen_ms, s.record.gpu_main_ms, s.record.gpu_after_ms, s.record.frame,
+                    s.record.gpu_frame, ripple));
                 if (!environment("ATLAS_PINCH_HASH").empty() && b != nullptr) {
                     MESSAGE(std::format("{} {:6.0f} m: {}", tag, d, reflections_hash(*b)));
                 }
@@ -1409,9 +1525,15 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
             if (finger > 0) {
                 parts.push_back({.name = std::format("{}under a finger at {:.0f} m", round, to)});
                 for (int i = 0; i < finger; ++i) {
-                    (void)draw(std::format("finger {:2d}", i), to, false, true);
+                    if (ranks_cycle) rank_every = (i / 2) % 2 == 0;
+                    (void)draw(std::format("finger {:2d}{}", i,
+                                           !ranks_cycle ? ""
+                                           : rank_every ? " every"
+                                                        : " drawn"),
+                               to, false, true);
                     track(parts.back());
                 }
+                if (ranks_cycle) rank_every = false;
                 said(std::format("under a finger at {:.0f} m", to));
             }
             parts.push_back({.name = std::format("{}held at {:.0f} m", round, to)});
@@ -1532,10 +1654,14 @@ TEST_CASE("pinch audit: the app's pinch at the phone's frame, each frame's CPU a
                     const std::size_t mode = shapes_cycle ? static_cast<std::size_t>(k / 2) % modes.size() : 2;
                     if (shapes_cycle) most_shape_chunks = mode == 1 ? std::optional<std::uint32_t>(0) : std::nullopt;
                     const std::uint64_t bare = mode == 0 ? style::camera_part::walls | style::camera_part::roofs : 0U;
-                    const std::string tag =
-                        shapes_cycle ? std::format("still {:3d} {}", k, modes.at(mode)) : std::format("still {:3d}", k);
+                    if (ranks_cycle) rank_every = (k / 2) % 2 == 0;
+                    const std::string tag = shapes_cycle ? std::format("still {:3d} {}", k, modes.at(mode))
+                                            : ranks_cycle
+                                                ? std::format("still {:3d} {}", k, rank_every ? "every" : "drawn")
+                                                : std::format("still {:3d}", k);
                     (void)draw(tag, d, true, true, bare);
                 }
+                if (ranks_cycle) rank_every = false;
                 if (shapes_cycle) most_shape_chunks = std::nullopt;
                 if (shapes_alone) map.set_passes(~std::uint64_t{0});
             }

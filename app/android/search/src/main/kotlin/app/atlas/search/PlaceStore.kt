@@ -705,6 +705,9 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         /** The store schema this version reads and writes; a pack's manifest names the schema it was built with. */
         const val SCHEMA: Int = StoreSchema.VERSION
 
+        /** Whether this Atlas opens a store of [schema]: its own alone, and a pack's places of another are of no use to it. */
+        fun reads(schema: Int): Boolean = schema == StoreSchema.VERSION
+
         private const val PAGE_SIZE = 4096
         private const val FUZZY_BELOW = 5
         private const val FUZZY_KIND_TOKENS = 8

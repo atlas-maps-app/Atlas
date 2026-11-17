@@ -517,9 +517,9 @@ class WorldRefsTest {
         val proposal = JsonObject(LinkedHashMap(refs).apply {
             this["versions"] = JsonObject(LinkedHashMap(versions).apply { this[version] = JsonObject(LinkedHashMap(entry).apply { this["platforms"] = JsonObject(platforms) }) })
         })
-        File(out, "world.json").writeText(Ratchet.format(proposal) + "\n")
+        File(out, "world.json").writeText(Likeness.format(proposal) + "\n")
         if (System.getProperty("atlas.engine.record") == "true") {
-            file.writeText(Ratchet.format(proposal) + "\n")
+            file.writeText(Likeness.format(proposal) + "\n")
             println("world refs: version $version's frames on $platform recorded in $file")
             return
         }

@@ -30,7 +30,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
@@ -40,6 +40,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +67,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -135,6 +138,7 @@ internal fun KindList(
     onPlace: (Place) -> Unit,
     onBack: () -> Unit,
     onExplain: (Explained) -> Unit,
+    rootArrow: Boolean = false,
 ) {
     val node = s.node ?: return
     val services = LocalServices.current
@@ -179,19 +183,21 @@ internal fun KindList(
         // the park's own page, you where the phone is (the park kept for it, so it opens at once)
         onPlan = if (s.intent?.id == Intents.WALK) { p -> services.remember(p); nav.go(Dest.Parkland.of(p)) } else null,
         plans = { p -> p.bbox != null && s.intent?.roomy?.matches(p.tags) != false },
+        onRoute = { p, name -> nav.go(Dest.Route(p.location.lat, p.location.lon, name, mode = routeMode(s.prefs.mode))) },
     )
     val list = rememberLazyListState()
     Column(Modifier.fillMaxSize()) {
         // a kind's hero and a brand's band stay the sheet's top while its places scroll under them; what words asked
         // scrolls with them
+        val up = onBack.takeIf { bandArrow(s, rootArrow) }
         when {
             chain != null -> {
                 val id = HomeRow.idOf(chain.brand)
-                BrandBand(chain.brand, results, wiki, s.prefs.cards, lang, onBack, find::showCards, starred = id in s.prefs.row, onStar = { find.star(id, it) })
+                BrandBand(chain.brand, results, wiki, s.prefs.cards, lang, up, find::showCards, starred = id in s.prefs.row, onStar = { find.star(id, it) })
             }
             s.asked == null -> {
                 val id = HomeRow.idOf(node)
-                KindHead(s, node, kin.takeIf { together }.orEmpty(), results, lang, now, onBack, find::showCards, starred = id in s.prefs.row, onStar = { find.star(id, it) })
+                KindHead(s, node, kin.takeIf { together }.orEmpty(), results, lang, now, up, find::showCards, starred = id in s.prefs.row, onStar = { find.star(id, it) })
             }
         }
         // a round walk asked for leaves the list's end for the top, under the band, in sight as the sheet comes down to
@@ -230,15 +236,17 @@ internal fun KindList(
             if (othersFirst) otherKinds(also, see, lang, together, joining, onHold = { onExplain(Explained(it)) }) { find.enter(it.id, door = true) }
             when {
                 results == null && s.error != null -> item(key = "error") {
-                    StateMessage("ui-alert-triangle", stringResource(R.string.search_failed), Modifier.padding(16.dp), text = s.error, tint = Color(0xFFC8322A))
+                    Panel { StateMessage("ui-alert-triangle", stringResource(R.string.search_failed), text = s.error, tint = Color(0xFFC8322A)) }
                 }
                 results == null -> item(key = "looking") { Looking() }
                 results.hits.isEmpty() -> item(key = "none") {
-                    StateMessage(
-                        if (s.selection.isEmpty) node.symbol else "ui-filter",
-                        stringResource(if (s.selection.isEmpty) R.string.category_none else R.string.find_none_left),
-                        Modifier.padding(16.dp), text = s.error, tint = indexColors().soft,
-                    )
+                    Panel {
+                        StateMessage(
+                            if (s.selection.isEmpty) node.symbol else "ui-filter",
+                            stringResource(if (s.selection.isEmpty) R.string.category_none else R.string.find_none_left),
+                            text = s.error, tint = indexColors().soft,
+                        )
+                    }
                 }
                 // as cards: the same places in the same order, one row of them to slide through under the map
                 s.prefs.cards -> item(key = "cards") {
@@ -302,6 +310,8 @@ internal class RowWays(
     val onPlan: ((Place) -> Unit)? = null,
     /** Which of its places have a plan to go to ([onPlan]): a green with an outline, not a monument's. */
     val plans: (Place) -> Boolean = { it.bbox != null },
+    /** The way to a place, named as its card names it, from the route pill on its card: null where there is none to take. */
+    val onRoute: ((Place, String) -> Unit)? = null,
 ) {
     /** [h]'s name as its row and its card say it: as [names] has it, on a brand's page which branch it is, else its own. */
     fun nameOf(h: ResultHit): String? = names[h.record.place.key] ?: chain?.let { branchName(h.record.place, it, lang) } ?: h.record.name(lang)
@@ -323,11 +333,18 @@ internal fun keptColours(lists: List<SavedList>): Map<String, Long> {
     return out
 }
 
-/** The rows of [items]: a place, or places on one deck (a brand's branches, a kind's places with no name of their own). */
+/**
+ * The rows of [items]: a place, or places on one deck (a brand's branches, a kind's places with no name of their own).
+ * The places that follow one another are the rows of one panel, as the "NEAREST" rows of What's here are; a deck is a
+ * panel of its own between them.
+ */
 private fun LazyListScope.rows(items: List<ResultItem>, w: RowWays, part: String) {
-    items(items, key = { part + ":" + it.first.record.place.key }) { item ->
+    itemsIndexed(items, key = { _, it -> part + ":" + it.first.record.place.key }) { i, item ->
         when (item) {
-            is ResultItem.One -> PlaceRow(item.hit, w, hairline = item !== items.lastOrNull())
+            is ResultItem.One -> PlaceRow(
+                item.hit, w,
+                seat = PanelSeat.of(top = items.getOrNull(i - 1) !is ResultItem.One, bottom = items.getOrNull(i + 1) !is ResultItem.One),
+            )
             is ResultItem.Deck -> DeckRow(item, w)
         }
     }
@@ -337,13 +354,15 @@ private fun LazyListScope.rows(items: List<ResultItem>, w: RowWays, part: String
 
 /**
  * The kind's band: its card grown into the sheet's top (the dive), its colour and art out to the sheet's edges, no
- * taller than the way back, its name and what it says now: how many are near ("21 of 68" once filters narrow them), how
+ * taller than its keys, its name and what it says now: how many are near ("21 of 68" once filters narrow them), how
  * many are open, the minutes to the nearest. The places start right under it (the user, 4 November, of the hero it
- * was: "too much space wasted, if a user taps the eat category he wants to see places right away"). No close: the way
- * back, the category row's key and the system's back all close it.
+ * was: "too much space wasted, if a user taps the eat category he wants to see places right away"). No close: a pull
+ * down, the category row's key and the phone's back all close it. The way back is on it only where it does what a
+ * pull down does not ([bandArrow]).
  */
 /**
- * A kind's hero: the way back, its name (with the kinds its view shows [with] it, each its symbol on its colour as on
+ * A kind's hero: the way back where it has one ([onBack]), else its name at the band's start in line with the chips
+ * under it; its name (with the kinds its view shows [with] it, each its symbol on its colour as on
  * its chip and its pins, named to a screen reader: three names, "Frozen Food + Supermarket + Convenience Store", did not
  * fit the band's line), its figures, the way its places are shown.
  */
@@ -355,7 +374,7 @@ private fun KindHead(
     results: CategoryResults?,
     lang: String,
     now: LocalDateTime,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onCards: (Boolean) -> Unit,
     starred: Boolean,
     onStar: (Boolean) -> Unit,
@@ -366,11 +385,11 @@ private fun KindHead(
             .fillMaxWidth()
             .dive(if (s.intent == null) diveKey(node) else null)
             .bandSurface(Color(node.colour), art, clear = BAND_CONTROLS)
-            .padding(start = 4.dp, end = 8.dp, top = 16.dp, bottom = 10.dp),
+            .padding(start = if (onBack != null) 4.dp else BAND_START, end = 8.dp, top = 16.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        BandBack(stringResource(R.string.find_up), onBack)
-        Column(Modifier.weight(1f).padding(start = 2.dp)) {
+        if (onBack != null) BandBack(stringResource(R.string.find_up), onBack)
+        Column(Modifier.weight(1f).padding(start = if (onBack != null) 2.dp else 0.dp)) {
             val title = s.intent?.let { intentName(it, lang, now.toLocalTime()) } ?: node.name(lang)
             if (s.intent != null || with.isEmpty()) {
                 Text(title, style = indexTitle(20f).onCard(), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -394,8 +413,8 @@ private fun KindHead(
                 circle = s.radius.takeIf { s.order == Order.LARGEST && it > 0.0 },
             )
         }
-        // the way back at one end, the way the places are shown at the other, the home's row's star beside it (a kind's,
-        // not what serves an intent)
+        // the way back at one end where there is one, the way the places are shown at the other, the home's row's star
+        // beside it (a kind's, not what serves an intent)
         if (s.intent == null) RowStar(starred, onStar)
         ViewSwitch(s.prefs.cards, Color.White.copy(alpha = 0.94f), Color(node.colour), onCards)
     }
@@ -484,6 +503,27 @@ private fun GoKey(minutes: Int, said: String, onClick: () -> Unit) {
         MinutesFigure(minutes, size = 21f, colour = c.onInk)
     }
 }
+
+/**
+ * Whether a band wears the way back (the owner, 12 November: "Remove the back arrow in the categories because you can
+ * slide down?", then "Make the arrow stay where it makes sense"): where back goes somewhere a pull down does not. That
+ * is a step up inside the sheet: to the broader kind or the one it was entered from, to the list of every kind it was
+ * opened on, out of a kind narrowed among asked places, to the chain's page or the typed words a chain was opened
+ * from. A view with nothing above it wears it only on a page of its own ([rootArrow]), where back leaves the page;
+ * over the home's map back closes the sheet, as the pull down does, and the band needs no arrow.
+ */
+internal fun bandArrow(s: SearchSheetState, rootArrow: Boolean): Boolean {
+    val node = s.node ?: return rootArrow
+    val chain = s.asked as? Asked.Chain
+    val above = s.within != null ||
+        chain != null && (chain.from != null || chain.typed) ||
+        s.every?.entered == node.id ||
+        s.asked == null && s.intent == null && (s.cameFrom[node.id] ?: node.parent?.id) != null
+    return above || rootArrow
+}
+
+/** Where a band's words start when it has no way back before them: in line with the chips under it. */
+internal val BAND_START = 16.dp
 
 /** The way back on a band's colour: its chevron in white (a brand's band: in its lettering's colour), with no key around it. */
 @Composable
@@ -783,7 +823,7 @@ private fun PartHead(part: Part, aim: Intent?) {
         Sure.MAYBE -> Triple("ui-help", R.string.find_sure_maybe, c.soft)
         Sure.NO -> Triple("ui-x", R.string.find_sure_no, c.faint)
     }
-    Row(Modifier.fillMaxWidth().padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 22.dp, top = 18.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         aim?.let { Symbol(it.symbol, tint = c.soft, size = 15.dp) }
         Symbol(mark, tint = tint, size = 15.dp)
         Text(stringResource(words), Modifier.weight(1f), style = boardText(14f, 650, 18f), color = c.ink, maxLines = 1)
@@ -792,8 +832,9 @@ private fun PartHead(part: Part, aim: Intent?) {
 }
 
 /**
- * Where the nearest is the point (a toilet, a cash machine, a pharmacy): it leads as a card of its own, its kind's
- * disc, its name and open or not, and at its end the way there one tap away, the minutes to it on the key ("➤ 3′").
+ * Where the nearest is the point (a toilet, a cash machine, a pharmacy): it leads in a panel of its own, as "AT THIS
+ * SPOT" leads What's here: under its kicker its kind's tile, its name and open or not, and at its end the way there
+ * one tap away, the minutes to it on the ink key ("➤ 3′").
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -805,30 +846,37 @@ private fun LeadCard(h: ResultHit, mode: TravelMode, lang: String, now: LocalDat
     val tone = arrival?.second ?: if (h.open == null) Tone.UNKNOWN else line.tone
     val words = (arrival?.first ?: openWords(line))?.let { if (!h.hoursConfirmed) "≈ $it" else it }
     val name = line.summary.name
-    val shape = RoundedCornerShape(24.dp)
     val interaction = remember { MutableInteractionSource() }
-    Row(
+    Column(
         Modifier
-            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp)
+            .padding(top = 2.dp, bottom = 10.dp)
             .fillMaxWidth()
             .pressable(interaction, depth = 0.02f)
-            .raised(shape, c, y = 4.dp, blur = 16.dp)
+            .panelSeat(PanelSeat.ONLY, c.panel)
             .combinedClickable(
                 interactionSource = interaction, indication = null,
                 onLongClick = { h.node?.let { onExplain(explained(it, h)) } },
                 onClick = { onPlace(p) },
             )
-            .padding(start = 14.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(start = PANEL_IN, end = 12.dp, top = 14.dp, bottom = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        remember(p) { signOf(p) }?.let { SignDisc(it, tone, size = 44.dp) } ?: KindDisc(line.summary.symbol, line.summary.colour, tone, size = 44.dp)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Caps(stringResource(R.string.find_nearest))
-            Text(name, style = INDEX_NAME, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(statusOf(words, tone, staleMark(h), listOfNotNull(h.misses.firstOrNull()?.let { missWords(it) }, h.node?.name(lang))), style = INDEX_META, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // the kicker's word, not a heading of its own inside the card, which is one button
+        val nearest = stringResource(R.string.find_nearest)
+        PanelKicker(nearest, Modifier.clearAndSetSemantics { text = AnnotatedString(nearest) })
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            CompositionLocalProvider(LocalGround provides c.panel) {
+                remember(p) { signOf(p) }?.let { SignTile(it, tone, size = 48.dp) } ?: KindTile(line.summary.symbol, line.summary.colour, tone, size = 48.dp)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(name, style = INDEX_NAME, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    statusOf(words, tone, staleMark(h), listOfNotNull(h.misses.firstOrNull()?.let { missWords(it) }, h.node?.name(lang), shortDistance(h.metres))),
+                    style = INDEX_LINE, color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            GoKey(h.minutes, stringResource(R.string.find_go)) { nav.go(Dest.Route(p.location.lat, p.location.lon, name, mode = routeMode(mode))) }
         }
-        GoKey(h.minutes, stringResource(R.string.find_go)) { nav.go(Dest.Route(p.location.lat, p.location.lon, name, mode = routeMode(mode))) }
     }
 }
 
@@ -1085,19 +1133,23 @@ internal const val ALSO_SOLD_TAG = "kind-also-sold"
 internal const val SEE_ALSO_TAG = "kind-see-also"
 internal const val TOGETHER_TAG = "kind-together"
 
-/** Waiting for the places: three quiet rows where they will be. */
+/** Waiting for the places: three quiet rows where they will be, in the panel they will be in. */
 @Composable
 internal fun Looking() {
     val c = indexColors()
-    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        for (w in listOf(0.62f, 0.48f, 0.55f)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Box(Modifier.size(width = 30.dp, height = 22.dp).clip(RoundedCornerShape(6.dp)).background(c.tray))
-                Box(Modifier.size(38.dp).clip(CircleShape).background(c.tray))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Box(Modifier.fillMaxWidth(w).height(11.dp).clip(CircleShape).background(c.tray))
-                    Box(Modifier.fillMaxWidth(w * 0.7f).height(9.dp).clip(CircleShape).background(c.tray))
+    val quiet = c.ink.copy(alpha = if (c.dark) 0.1f else 0.07f)
+    Panel {
+        Column(Modifier.fillMaxWidth().padding(horizontal = PANEL_IN)) {
+            listOf(0.62f, 0.48f, 0.55f).forEachIndexed { i, w ->
+                Row(Modifier.height(64.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(ROW_TILE).clip(RoundedCornerShape(12.dp)).background(quiet))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Box(Modifier.fillMaxWidth(w).height(11.dp).clip(CircleShape).background(quiet))
+                        Box(Modifier.fillMaxWidth(w * 0.7f).height(9.dp).clip(CircleShape).background(quiet))
+                    }
+                    Box(Modifier.size(width = 26.dp, height = 16.dp).clip(RoundedCornerShape(6.dp)).background(quiet))
                 }
+                if (i < 2) Box(Modifier.fillMaxWidth().height(1.dp).background(c.hair))
             }
         }
     }

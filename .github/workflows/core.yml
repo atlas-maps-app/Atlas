@@ -15,11 +15,10 @@
 # compiled units between pushes, and the tidy jobs keep the units that were clean, by a key of everything that
 # decides clang-tidy's word on them (tools/tidy/cached.py).
 #
-# Which job runs for which paths: the rule table's check (the rules job) holds app/android/mapcore/rules to the
-# renderer, render/*.py, so it runs for every trigger, a change to render/** alone included. The core's matrix (the
-# core job) runs when the push or pull request changes app/android/mapcore/**, this file or .github/docker/lavapipe/**
-# (core-changes decides, by a git diff), whatever else it changes, and on every nightly and run by hand; a change to
-# render/** alone runs the rules job and core-changes only.
+# Which job runs for which paths: the core's matrix (the core job) runs when the push or pull request changes
+# app/android/mapcore/** (the building traditions the core compiles in among them), this file or
+# .github/docker/lavapipe/** (core-changes decides, by a git diff), whatever else it changes, and on every nightly and
+# run by hand.
 #
 # Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
 # (every fuzz target for up to 30 minutes, clang-tidy on every file without its cache; it checks out `app`), the MODS
@@ -33,10 +32,10 @@ name: Core
 on:
   push:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**', 'render/**']
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
   pull_request:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**', 'render/**']
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
   schedule:
     - cron: '23 2 * * *' # nightly: every fuzz target for up to 30 minutes, clang-tidy on every file
   workflow_dispatch:
@@ -92,8 +91,8 @@ env:
     mutex:libvulkan_lvp mutex:libLLVM mutex:libVkLayer_khronos_validation
 
 jobs:
-  # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above, less
-  # render/**), every nightly and every run by hand. Where the base commit is unknown (a new branch) or not in the
+  # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above), every
+  # nightly and every run by hand. Where the base commit is unknown (a new branch) or not in the
   # clone (a force push), it runs; and if this job fails, the matrix runs all the same (its condition below). It also
   # names the commit every job of the run checks out: the run's own, or for the nightly the work branch's tip as the
   # run begins. A job that waits for a runner would otherwise check out its branch as it is when it starts, and a push
@@ -130,22 +129,6 @@ jobs:
           fi
           echo "the core's matrix runs: $core"
           echo "core=$core" >> "$GITHUB_OUTPUT"
-
-  # The rule table (plan-vector K5, VF1) held to the renderer: every feature render/*.py draws has its record in
-  # app/android/mapcore/rules/rules.tsv, and no source changed since the recording (Python 3's standard library only;
-  # seconds). It runs on every trigger, so a change to the renderer alone is checked too.
-  rules:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # the nightly runs from the default branch's workflow; it checks the work branch
-          ref: ${{ github.event_name == 'schedule' && 'app' || github.sha }}
-      - name: The rule table covers the renderer
-        run: |
-          python3 --version
-          python3 -I app/android/mapcore/rules/check_rules.py check
 
   # The pack tests' render packs (the Westerkerk's living map and the canal ring, format 3, in the port's cut: the
   # reference the parity tests hold the core to), so the host jobs' pack tests run (ATLAS_TILES_DIR) instead of

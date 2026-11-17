@@ -65,6 +65,7 @@ import app.atlas.search.TravelMode
 import app.atlas.search.WeatherNow
 import app.atlas.search.covers
 import app.atlas.search.within
+import app.atlas.services.LocalAnswer
 import app.atlas.services.PlaceOrigin
 import app.atlas.services.SettingsKeys
 import app.atlas.ui.go.SegmentFetch
@@ -81,6 +82,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
@@ -101,6 +103,8 @@ data class SearchPrefs(
     val recent: List<String> = emptyList(),
     /** The places found shown as large cards to slide through ([ResultCards]), not as rows. */
     val cards: Boolean = false,
+    /** The grid's kinds shown as a list of rows, not as cards ([SearchSheetModel.showKindsList]). */
+    val kindsList: Boolean = false,
     /**
      * The kinds, by node id, whose view shows the places of their kin too ([SearchSheetModel.kin]; the owner, 6 November:
      * "Fill the view with them and save that as a combined view if desired?"): the banks in the cash machines' view.
@@ -368,9 +372,9 @@ class SearchSheetModel(
         viewModelScope.launch {
             services.settings.data.map(::prefsOf).distinctUntilChanged().collect { p ->
                 val s = mutable.value
-                // rows or cards is how the same places are shown, and the home's row is the home's: nothing is looked
-                // for or ranked again
-                if (p != s.prefs && p.copy(cards = s.prefs.cards, row = s.prefs.row) == s.prefs) {
+                // rows or cards is how the same places are shown, cards or a list how the grid's same kinds are, and the
+                // home's row is the home's: nothing is looked for or ranked again
+                if (p != s.prefs && p.copy(cards = s.prefs.cards, kindsList = s.prefs.kindsList, row = s.prefs.row) == s.prefs) {
                     mutable.value = s.copy(prefs = p)
                     return@collect
                 }
@@ -952,6 +956,9 @@ class SearchSheetModel(
     /** Shows the places found as large cards to slide through, or as rows; kept for every search after. */
     fun showCards(on: Boolean) = setPref(SettingsKeys.SEARCH_CARDS, on)
 
+    /** Shows the grid's kinds as a list of rows, or as cards; kept for every search after. */
+    fun showKindsList(on: Boolean) = setPref(SettingsKeys.SEARCH_KINDS_LIST, on)
+
     /**
      * Shows [node]'s kin in its view too, with its own places, or no longer ([SearchPrefs.together]): kept for the kind,
      * so that its view opens so from then on (the owner, 6 November: "save that as a combined view if desired").
@@ -1004,33 +1011,49 @@ class SearchSheetModel(
             } catch (e: Exception) {
                 emptyList<PlaceRecord>() to null
             }
-            pool = found
-            mutable.value.node?.let { findAlso(it) }
             holiday = withContext(Dispatchers.IO) { runCatching { holidayAt(c) }.getOrDefault(false) }
-            mutable.value = mutable.value.let { it.copy(moment = moment(it.centre, it.prefs)) }
-            val s = mutable.value
-            val (pulses, served) = withContext(Dispatchers.Default) {
-                val book = HoursBook(found)
-                Browse.pulses(GRID, found, c, s.moment, book) to Intents.all.mapNotNull { i -> nodeOf(i)?.let { n -> i.id to Browse.pulse(i, n, found, c, s.moment, book) } }.toMap()
+            showPool(c, found, origin)
+            // online, where the phone holds part of the circle: the map's windows it keeps no data for, from Atlas's packs
+            if (origin != PlaceOrigin.STORE && !services.config.offline && services.connectivity.online.value) {
+                val more = try {
+                    services.localData.inWindowPacks(c, POOL_RADIUS_M, ANY_PLACE, POOL_LIMIT)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(c, more.value.map { PlaceRecord.of(it) }, PlaceOrigin.PACK)
             }
-            mutable.value = mutable.value.copy(pulses = pulses.associateBy { it.node.id }, served = served, gridOrigin = origin)
-            refreshNow()
-            // the families' kinds on the list, everything else on the map (a road, a canal) behind its row, as on the grid
-            val (all, chains) = withContext(Dispatchers.Default) {
-                EveryKind.around(found, c, s.moment, HoursBook(found)).let { it to EveryKind.chains(it, found) }
-            }
-            val (everything, kinds) = all.partition { it.node.category.family == CategoryTree.OSM }
-            mutable.value = mutable.value.copy(kinds = kinds, everything = everything, chains = chains)
-            // the list opened to add to the home's row takes the kinds around as they come
-            mutable.value.every?.takeIf { it.picking }?.let { e -> mutable.value = mutable.value.copy(every = e.copy(kinds = pickable(mutable.value), chains = chains)) }
-            // the chains around come from the same places, after the tiles, which matter first; the questions are
-            // counted again for these places when the grid asks
-            val brands = withContext(Dispatchers.Default) { BrandsAround.stacks(chainsAround(found, c)).take(BRANDS) }
-            mutable.value = mutable.value.copy(brands = brands, quests = null)
         }
     }
 
-    /** The places within [r] of [c] on the phone: a region's store covering it, else the map's packs. */
+    /** The grid's tiles, the Now shelf, the kinds around and the chains around, from [found], the places around [c]. */
+    private suspend fun showPool(c: LatLon, found: List<PlaceRecord>, origin: PlaceOrigin?) {
+        pool = found
+        mutable.value.node?.let { findAlso(it) }
+        mutable.value = mutable.value.let { it.copy(moment = moment(it.centre, it.prefs)) }
+        val s = mutable.value
+        val (pulses, served) = withContext(Dispatchers.Default) {
+            val book = HoursBook(found)
+            Browse.pulses(GRID, found, c, s.moment, book) to Intents.all.mapNotNull { i -> nodeOf(i)?.let { n -> i.id to Browse.pulse(i, n, found, c, s.moment, book) } }.toMap()
+        }
+        mutable.value = mutable.value.copy(pulses = pulses.associateBy { it.node.id }, served = served, gridOrigin = origin)
+        refreshNow()
+        // the families' kinds on the list, everything else on the map (a road, a canal) behind its row, as on the grid
+        val (all, chains) = withContext(Dispatchers.Default) {
+            EveryKind.around(found, c, s.moment, HoursBook(found)).let { it to EveryKind.chains(it, found) }
+        }
+        val (everything, kinds) = all.partition { it.node.category.family == CategoryTree.OSM }
+        mutable.value = mutable.value.copy(kinds = kinds, everything = everything, chains = chains)
+        // the list opened to add to the home's row takes the kinds around as they come
+        mutable.value.every?.takeIf { it.picking }?.let { e -> mutable.value = mutable.value.copy(every = e.copy(kinds = pickable(mutable.value), chains = chains)) }
+        // the chains around come from the same places, after the tiles, which matter first; the questions are
+        // counted again for these places when the grid asks
+        val brands = withContext(Dispatchers.Default) { BrandsAround.stacks(chainsAround(found, c)).take(BRANDS) }
+        mutable.value = mutable.value.copy(brands = brands, quests = null)
+    }
+
+    /** The places within [r] of [c] on the phone: a region's store covering it, else the map's packs and windows. */
     private fun aroundOnPhone(c: LatLon, r: Double): Pair<List<PlaceRecord>, PlaceOrigin?> {
         val stores = services.placeStores
         if (stores.size > 0 && stores.covers(c)) return stores.within(c, r) to PlaceOrigin.STORE
@@ -1078,24 +1101,39 @@ class SearchSheetModel(
         nodeJob = viewModelScope.launch {
             // an intent may read farther from the start than the mode would (a walk: as far as one walks)
             var radius = fixed ?: max(startRadius(mutable.value.prefs.mode), mutable.value.intent?.reach ?: 0.0)
-            var held: Int
+            var held = 0
             while (true) {
-                val answer = try {
-                    if (brand != null) services.localData.branches(brand, c, radius) else services.localData.places(c, radius, takes, LIMIT)
+                var widen = false
+                // the phone's places at once, then what the network adds (LocalData.placesAsFound): a circle is kept on
+                // the phone's answer, shown while the rest comes, and widened on it only where the network adds nothing
+                try {
+                    val answers = if (brand != null) services.localData.branchesAsFound(brand, c, radius) else services.localData.placesAsFound(c, radius, takes, LIMIT)
+                    answers.transformWhile<LocalAnswer<List<Place>>, Unit> { answer ->
+                        val records = withContext(Dispatchers.Default) { answer.value.map { PlaceRecord.of(it) } }
+                        places = records
+                        mutable.value = mutable.value.copy(radius = radius, origin = answer.origin, error = answer.error)
+                        val serving = mutable.value.intent
+                        held = if (brand != null) records.size else records.count { r -> serving?.takes(r) ?: filter?.matches(r.tags) ?: (Browse.holds(node, r) || with.any { Browse.holds(it, r) }) }
+                        val enough = held >= ENOUGH &&
+                            (aim == null || records.any { aim.filter.matches(it.tags) } || sites.any { it.swimmable && Geo.distance(c, it.location) <= radius })
+                        // part of the circle, with the network to complete it: one question for this circle, as before
+                        val more = answer.partial && answer.origin != PlaceOrigin.ONLINE && !services.config.offline && services.connectivity.online.value
+                        val kept = enough || fixed != null && held > 0 || radius >= MAX_RADIUS_M || answer.origin == PlaceOrigin.ONLINE || more
+                        if (!kept) {
+                            widen = true
+                        } else if (more) {
+                            hours = HoursBook(places)
+                            rerank()
+                        }
+                        kept
+                    }.collect {}
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     mutable.value = mutable.value.copy(loading = false, error = e.message ?: e.toString(), results = null)
                     return@launch
                 }
-                val records = withContext(Dispatchers.Default) { answer.value.map { PlaceRecord.of(it) } }
-                places = records
-                mutable.value = mutable.value.copy(radius = radius, origin = answer.origin, error = answer.error)
-                val serving = mutable.value.intent
-                held = if (brand != null) records.size else records.count { r -> serving?.takes(r) ?: filter?.matches(r.tags) ?: (Browse.holds(node, r) || with.any { Browse.holds(it, r) }) }
-                val enough = held >= ENOUGH &&
-                    (aim == null || records.any { aim.filter.matches(it.tags) } || sites.any { it.swimmable && Geo.distance(c, it.location) <= radius })
-                if (enough || fixed != null && held > 0 || radius >= MAX_RADIUS_M || answer.origin == PlaceOrigin.ONLINE) break
+                if (!widen) break
                 // the last widening stops at the widest circle, not two and a half times past it
                 radius = minOf(radius * WIDEN, MAX_RADIUS_M)
             }
@@ -1400,6 +1438,7 @@ class SearchSheetModel(
             mode = p[SettingsKeys.SEARCH_MODE]?.let { runCatching { TravelMode.valueOf(it) }.getOrNull() } ?: TravelMode.WALK,
             recent = recentOf(p[SettingsKeys.SEARCH_RECENT]),
             cards = p[SettingsKeys.SEARCH_CARDS] ?: false,
+            kindsList = p[SettingsKeys.SEARCH_KINDS_LIST] ?: false,
             together = p[SettingsKeys.SEARCH_TOGETHER].orEmpty(),
             row = HomeRow.ids(p[SettingsKeys.HOME_ROW]),
         )

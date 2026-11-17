@@ -261,6 +261,134 @@ class WorldFetchTest {
     }
 
     @Test
+    fun aNewVersionWaitsBesideAKeptWorldUntilItIsTaken() {
+        // ENGINE.md step 11: a phone that keeps a country's world never stands without one at a new version
+        val p = publish("world-20261102")
+        gh.assets[WorldKeepList.NAME] = keepList(p.index)
+        var held = true
+        fun holding() = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, hold = { held })
+        val fetch = holding()
+        assertTrue(fetch.start())
+        assertNull(fetch.next)
+        // a new version, whose release lists no keep yet: its index and globe come beside the phone's, which stay
+        val q = publish("world-20261201", seed = 9)
+        gh.assets.remove(WorldKeepList.NAME)
+        clock += WorldFetch.DAY_MS
+        assertTrue(fetch.start())
+        assertEquals("world-20261102", fetch.world!!.release.tag)
+        assertEquals("world-20261102", fetch.keep!!.release)
+        assertArrayEquals(p.index, File(world, WorldFetch.INDEX).readBytes())
+        assertArrayEquals(p.globe, File(world, WorldFetch.GLOBE).readBytes())
+        assertEquals("world-20261201", fetch.next!!.release.tag)
+        assertNull(fetch.nextKeep)
+        assertArrayEquals(q.index, File(world, WorldFetch.INDEX + ".next").readBytes())
+        assertArrayEquals(q.globe, File(world, WorldFetch.GLOBE + ".next").readBytes())
+        assertEquals(0, drops)
+        assertEquals(listOf("world-latest/world.json", "world-20261201/world.idx", "world-20261201/world-globe.atlas"), requested().takeLast(3))
+        assertEquals("world-20261201/world-keep.json", keepRequested().last())
+        // a pack's bytes come from the world asked: the phone's own, or the one that waits
+        val e = fetch.index!!.find(6, 33, 21)!!
+        fetch.range(e, 0, 10)
+        assertEquals("world-20261102/world-mid.000", everyRequest().last())
+        fetch.range(fetch.next!!.index.find(6, 33, 21)!!, 0, 10, fetch.next)
+        assertEquals("world-20261201/world-mid.000", everyRequest().last())
+        fetch.head(fetch.next!!.index.find(3, 4, 2)!!, fetch.next)
+        assertEquals("world-20261201/world-coarse.000", everyRequest().last())
+        // the same day nothing more is asked, nor by the app's next start, which finds both worlds
+        val asked = everyRequest().size
+        assertFalse(fetch.start())
+        val again = holding()
+        assertTrue(again.start())
+        assertEquals("world-20261102", again.world!!.release.tag)
+        assertEquals("world-20261102", again.keep!!.release)
+        assertEquals("world-20261201", again.next!!.release.tag)
+        assertEquals(asked, everyRequest().size)
+        // offline a day later: both go on
+        gh.down = true
+        clock += WorldFetch.DAY_MS
+        assertFalse(fetch.start())
+        assertEquals("world-20261102", fetch.world!!.release.tag)
+        assertEquals("world-20261201", fetch.next!!.release.tag)
+        gh.down = false
+        // world.yml's refs job adds the new version's list: it comes with the next look, and the start says so
+        gh.assets[WorldKeepList.NAME] = keepList(q.index, "world-20261201")
+        clock += WorldFetch.DAY_MS
+        assertTrue(fetch.start())
+        assertEquals("world-20261201", fetch.nextKeep!!.release)
+        assertEquals("world-20261102", fetch.keep!!.release)
+        assertEquals("world-20261102", fetch.world!!.release.tag)
+        // taken (the app held its keep whole): the new world's files in place, its list with them, nothing waiting
+        assertTrue(fetch.adopt())
+        assertEquals("world-20261201", fetch.world!!.release.tag)
+        assertEquals("world-20261201", fetch.keep!!.release)
+        assertNull(fetch.next)
+        assertNull(fetch.nextKeep)
+        assertArrayEquals(q.index, File(world, WorldFetch.INDEX).readBytes())
+        assertArrayEquals(q.globe, File(world, WorldFetch.GLOBE).readBytes())
+        assertEquals("world-20261201", WorldKeepList.read(File(world, WorldKeepList.NAME).readText()).release)
+        assertTrue(world.listFiles()!!.map { it.name }.toString(), world.listFiles()!!.none { it.name.endsWith(".next") || it.name.endsWith(".download") })
+        assertFalse(fetch.adopt())
+        // the keeper lets the old one's cache go: the fetch's own drop is for a world replaced without a keep
+        assertEquals(0, drops)
+        // whole for the next start of the app, and the next day's look
+        val taken = everyRequest().size
+        val later = holding()
+        assertTrue(later.start())
+        assertEquals("world-20261201", later.world!!.release.tag)
+        assertEquals("world-20261201", later.keep!!.release)
+        assertNull(later.next)
+        assertEquals(taken, everyRequest().size)
+        clock += WorldFetch.DAY_MS
+        assertFalse(fetch.start())
+        assertNull(fetch.next)
+        assertOnlyWhoIsAsking()
+    }
+
+    @Test
+    fun aWorldThatWaitsReplacesThePhonesOnceNoCountryIsKeptAndAFailedOneLeavesItWhole() {
+        val p = publish("world-20261102")
+        gh.assets[WorldKeepList.NAME] = keepList(p.index)
+        var held = true
+        val fetch = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, hold = { held })
+        assertTrue(fetch.start())
+        // a new version whose globe comes cut short: nothing waits, the phone's world and its keep go on
+        val q = publish("world-20261201", seed = 9)
+        gh.assets[WorldKeepList.NAME] = keepList(q.index, "world-20261201")
+        gh.assets[WorldFetch.GLOBE] = q.globe.copyOf(q.globe.size - 1)
+        clock += WorldFetch.DAY_MS
+        assertThrows(IOException::class.java) { fetch.start() }
+        assertNull(fetch.next)
+        assertEquals("world-20261102", fetch.world!!.release.tag)
+        assertEquals("world-20261102", fetch.keep!!.release)
+        assertArrayEquals(p.index, File(world, WorldFetch.INDEX).readBytes())
+        // and for the app's next start, offline
+        gh.down = true
+        val offline = WorldFetch(world, latest, now = { clock }, hold = { held })
+        assertThrows(IOException::class.java) { offline.start() }
+        assertEquals("world-20261102", offline.world!!.release.tag)
+        assertEquals("world-20261102", offline.keep!!.release)
+        gh.down = false
+        // whole again: it waits
+        gh.assets[WorldFetch.GLOBE] = q.globe
+        assertTrue(fetch.start())
+        assertEquals("world-20261201", fetch.next!!.release.tag)
+        assertEquals("world-20261201", fetch.nextKeep!!.release)
+        assertEquals(0, drops)
+        // the country is deleted before the new keep is whole: the next start replaces the phone's world, as any new
+        // version does where none is kept, without fetching the index and globe again
+        held = false
+        val asked = requested().size
+        assertTrue(fetch.start())
+        assertEquals("world-20261201", fetch.world!!.release.tag)
+        assertEquals("world-20261201", fetch.keep!!.release)
+        assertNull(fetch.next)
+        assertEquals(1, drops)
+        assertEquals(asked, requested().size)
+        assertArrayEquals(q.index, File(world, WorldFetch.INDEX).readBytes())
+        assertTrue(world.listFiles()!!.map { it.name }.toString(), world.listFiles()!!.none { it.name.endsWith(".next") || it.name.endsWith(".download") })
+    }
+
+    @Test
     fun aFileNotTheOneWorldJsonNamesIsNotPutInPlaceAndTheOldVersionGoesOn() {
         // the first start: an index that is not world.json's is refused, nothing left in place
         val p = publish("world-20261102")
@@ -273,21 +401,42 @@ class WorldFetchTest {
         gh.assets[WorldFetch.INDEX] = p.index
         assertTrue(fetch.start())
         assertEquals("world-20261102", fetch.world!!.release.tag)
-        // a new version whose globe comes cut short: the old index and globe stay, the old version goes on, nothing dropped
+        // a new version whose globe comes cut short (the connection dropped 1,500 bytes before its end): the old index
+        // and globe stay, the old version goes on, nothing dropped
         val q = publish("world-20261201", seed = 9)
-        gh.assets[WorldFetch.GLOBE] = q.globe.copyOf(q.globe.size - 1)
+        val came = q.globe.size - 1_500
+        gh.assets[WorldFetch.GLOBE] = q.globe.copyOf(came)
         clock += WorldFetch.DAY_MS
         assertThrows(IOException::class.java) { fetch.start() }
         assertArrayEquals(p.index, File(world, WorldFetch.INDEX).readBytes())
         assertArrayEquals(p.globe, File(world, WorldFetch.GLOBE).readBytes())
         assertEquals("world-20261102", fetch.world!!.release.tag)
         assertEquals(0, drops)
-        assertTrue(world.listFiles()!!.none { it.name.endsWith(".download") || it.name.endsWith(".new") })
-        // whole again: the new version comes at the next start
+        // what came of the new globe stays beside it, named for the globe it is of; no other file is left half written
+        val partial = File(world, WorldFetch.GLOBE + ".next.download")
+        assertEquals(came.toLong(), partial.length())
+        assertTrue(File(world, WorldFetch.GLOBE + ".next.download.id").readText().contains(hex(sha(q.globe))))
+        assertEquals(listOf(partial.name), world.listFiles()!!.map { it.name }.filter { it.endsWith(".download") || it.endsWith(".new") })
+        // whole again: the next start asks for the rest of the globe alone, and the new version comes
         gh.assets[WorldFetch.GLOBE] = q.globe
+        val before = gh.storageRequests.size
         assertTrue(fetch.start())
+        val globes = gh.storageRequests.drop(before).filter { it.url.encodedPath.endsWith("/" + WorldFetch.GLOBE) }
+        assertEquals(listOf("bytes=$came-"), globes.map { it.headers["Range"] })
+        assertArrayEquals(q.globe, File(world, WorldFetch.GLOBE).readBytes())
         assertEquals("world-20261201", fetch.world!!.release.tag)
         assertEquals(1, drops)
+        assertTrue(world.listFiles()!!.map { it.name }.toString(), world.listFiles()!!.none { it.name.contains(".download") || it.name.endsWith(".next") })
+        // a globe that is not the one world.json names is thrown away whole: nothing of it is taken up again
+        val r = publish("world-20261215", seed = 4)
+        gh.assets[WorldFetch.GLOBE] = r.globe.copyOf().also { it[7] = (it[7] + 1).toByte() }
+        clock += WorldFetch.DAY_MS
+        assertThrows(PackDownloader.ChecksumException::class.java) { fetch.start() }
+        assertFalse(File(world, WorldFetch.GLOBE + ".next.download").exists())
+        assertEquals("world-20261201", fetch.world!!.release.tag)
+        gh.assets[WorldFetch.GLOBE] = r.globe
+        assertTrue(fetch.start())
+        assertEquals("world-20261215", fetch.world!!.release.tag)
     }
 
     @Test

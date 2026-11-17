@@ -200,6 +200,8 @@ data class RegionDetail(
     val progress: RegionProgress? = null,
     val error: String? = null,
     val update: UpdateInfo? = null,
+    /** How much of its map's size is the world kept with its country's tiles (ENGINE.md step 11); 0 where none is. */
+    val world: Long = 0L,
 ) {
     val id: String get() = meta.id
     val name: String get() = meta.name
@@ -208,4 +210,7 @@ data class RegionDetail(
 
     /** Whether its map is its country's tiles ([MapKind.TILES]). */
     val hasTiles: Boolean get() = meta.layers[RegionLayer.MAP]?.kind == MapKind.TILES.id
+
+    /** Whether its places were left out: its pack's store is of a schema this Atlas cannot open ([RegionEngine.PLACES_LEFT_OUT]). */
+    val placesLeftOut: Boolean get() = meta.layers[RegionLayer.PLACES]?.kind == RegionEngine.PLACES_LEFT_OUT
 }

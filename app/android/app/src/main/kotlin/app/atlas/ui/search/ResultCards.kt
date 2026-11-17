@@ -70,7 +70,9 @@ import app.atlas.ui.eat.EatPlace
 import app.atlas.ui.eat.dishOf
 import app.atlas.ui.eat.drawPlate
 import app.atlas.ui.eat.houseMotif
+import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.BrandSigns
+import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.markOf
 import app.atlas.ui.kit.cssShadow
@@ -129,9 +131,11 @@ private fun inView(state: androidx.compose.foundation.lazy.LazyListState): Int {
 }
 
 /**
- * One place as a card: its picture ([CardPicture]) over its name and how far, how it stands now (open or not, "≈"
- * where its hours are guessed) and what its row says of it, and its symbols. A place in a cuisine's house wears it (the
- * HouseCards board): the house's tint, its motif for the picture, the name in its typeface and ink.
+ * One place as a card: its picture ([CardPicture]) over the head its page opens with (the place card's): its name in
+ * the page's serif and the way there on the page's blue route pill, the minutes on it ([RoutePill]); then how it stands
+ * now (open or not, "≈" where its hours are guessed) and what its row says of it, and its symbols. A place in a
+ * cuisine's house wears it (the HouseCards board): the house's tint, its motif for the picture, the name in its
+ * typeface and ink.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -153,7 +157,7 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
     val shape = RoundedCornerShape(24.dp)
     // a house's light tint by day; at night the card's own colour, the house's ink lightened to read on it
     val fill = house?.takeUnless { c.dark }?.let { Color(it.tint) } ?: c.card
-    val nameStyle = house?.nameStyle(24f)?.let { s -> if (c.dark) s.copy(color = lerp(Color(house.ink), Color.White, 0.6f)) else s } ?: indexTitle(21f).copy(color = c.ink)
+    val nameStyle = house?.nameStyle(24f)?.let { s -> if (c.dark) s.copy(color = lerp(Color(house.ink), Color.White, 0.6f)) else s } ?: Atlas.type.title.copy(fontSize = 26.sp, lineHeight = 30.sp, color = c.ink)
     Column(
         modifier
             .cssShadow(shape, y = 4.dp, blur = 16.dp, colour = c.shadow)
@@ -170,7 +174,8 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
                     line.summary.name, Modifier.weight(1f), style = nameStyle, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis,
                     autoSize = TextAutoSize.StepBased(minFontSize = 15.sp, maxFontSize = nameStyle.fontSize),
                 )
-                Reach(h.minutes, h.metres)
+                val route = w.onRoute
+                if (route != null) RoutePill(h.minutes, h.metres) { route(p, line.summary.name) } else Reach(h.minutes, h.metres)
             }
             Text(
                 statusOf(words, tone, staleMark(h), listOfNotNull(kind) + worded),
@@ -191,6 +196,29 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
                 plan?.let { PlanKey { it(p) } }
             }
         }
+    }
+}
+
+/**
+ * The way to a card's place one tap away, as the page it opens has it: the place card's blue route pill, small, the
+ * minutes to it on it (its distance where it is too far for minutes to say much).
+ */
+@Composable
+private fun RoutePill(minutes: Int, metres: Double, onClick: () -> Unit) {
+    val said = stringResource(R.string.find_go)
+    Row(
+        Modifier
+            .height(40.dp)
+            .clip(CircleShape)
+            .background(Atlas.colors.go)
+            .clickable(role = Role.Button, onClickLabel = said, onClick = onClick)
+            .padding(start = 11.dp, end = 13.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Symbol("ui-corner-up-right", tint = Color.White, size = 16.dp)
+        if (minutes < 100) MinutesFigure(minutes, size = 16f, colour = Color.White)
+        else Text(shortDistance(metres), style = indexFigure(14f, 800), color = Color.White, maxLines = 1)
     }
 }
 

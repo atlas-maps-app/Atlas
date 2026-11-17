@@ -33,6 +33,41 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NOTES: ${{ runner.temp }}/alpha-notes.txt
         run: bash .github/scripts/nightly-alpha.sh
+      # The guard (12 November 2026): an alpha never ships unable to read the places that are published. Alpha 32
+      # (93c62f94) read store schema 4 alone while packs-latest still listed packs-20261104's places, of schema 3, so a
+      # map downloaded in it said its places were unreadable (the user: "When I download the map in the latest alpha it
+      # says places are unreadable"). Every packs release so far (packs-20261029 to packs-20261104, 7.27 GB each: places
+      # 387 MB, windows 5.5 GB, tiles 1.37 GB) holds the Netherlands alone; regions.json's 7 others were never published.
+      # packs-20261117 brought the places at schema 4. The commit reads its StoreSchema's VERSION alone: Atlas keeps no
+      # reader for an older store while it is alpha, so a change of the schema needs the packs published again (packs.yml)
+      # before an alpha ships with it.
+      - name: It reads the published places
+        if: steps.pick.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.pick.outputs.sha }}
+        run: |
+          gh release download packs-latest --repo "$GITHUB_REPOSITORY" --pattern packs.json --dir "$RUNNER_TEMP/published"
+          git show "$SHA:app/android/search/src/main/kotlin/app/atlas/search/StoreSchema.kt" > "$RUNNER_TEMP/StoreSchema.kt"
+          python3 - "$RUNNER_TEMP/published/packs.json" "$RUNNER_TEMP/StoreSchema.kt" "${SHA:0:7}" <<'PY'
+          import json, re, sys
+          packs, kt, sha = json.load(open(sys.argv[1])), open(sys.argv[2]).read(), sys.argv[3]
+          version = int(re.search(r"const val VERSION\s*=\s*(\d+)", kt).group(1))
+          def number(s):
+              try: return int(float(s)) if float(s).is_integer() else None
+              except (TypeError, ValueError): return None
+          bad = []
+          for p in packs.get("packs", []):
+              for f in p.get("files", []):
+                  if f.get("kind") != "places": continue
+                  if f.get("schema") is None: print(f"::warning::{p['id']} ({p.get('release')}): its places name no schema"); continue
+                  if number(f["schema"]) != version: bad.append(f"{p['id']} ({p.get('release')}): schema {f['schema']}")
+          if bad:
+              print(f"::error::{sha} reads place stores of schema {version}, but packs-latest publishes places it cannot read: "
+                    + "; ".join(bad) + ". Publish the packs again with this commit's packer (packs.yml).")
+              sys.exit(1)
+          print(f"{sha} reads schema {version}: every published places file is readable")
+          PY
       - name: Tag it and release it
         if: steps.pick.outputs.tag != ''
         env:

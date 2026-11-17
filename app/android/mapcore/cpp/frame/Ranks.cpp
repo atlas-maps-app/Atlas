@@ -38,6 +38,7 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     drawn_.assign(rows, 0);
     listed_.resize(rows, 0);
     near_ = 0;
+    undrawn_ = 0;
 
     const view::Vec3& c = camera.eye();
     const view::Vec3& f = camera.forward();
@@ -73,6 +74,7 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     const auto kind = items.kind();
     const auto place = items.place();
     const auto places = items.places();
+    const auto tile = items.tile();
     // A row's points are its tile's, which its place maps into the frame drawn (x0 + sx·x, z0 + sz·z): the eye and the
     // camera's axes are taken into the place's frame instead (the eye's x as (c.x − x0) / sx and each axis's x times
     // sx, z alike), once for each run of rows of one place, as a tile's rows are added together. So a row costs what it
@@ -86,12 +88,28 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
     view::Vec3 f_in;
     view::Vec3 r_in;
     view::Vec3 u_in;
+    // Whether a row's tile is drawn, found once for each run of rows of one tile (a tile's rows are added together).
+    bool tile_known = false;
+    std::uint32_t tile_run = 0;
+    bool tile_drawn = true;
     for (std::size_t i = 0; i < rows; ++i) {
         if (alive[i] == 0 || (flags[i] & scene::item_flag::masked) != 0) continue;
         // an item the other kind of frame draws (a bridge's railing of the app's map's set, or of the renders')
         if ((flags[i] & (options.grounded ? scene::item_flag::renders : scene::item_flag::app)) != 0) continue;
         // the building a house stands in the place of this frame
         if (options.replaced != 0 && building_of[i] == options.replaced) continue;
+        // a row of a tile the frame does not draw, which no pass reads: no rank, and none of the work below
+        if (options.by_tile) {
+            if (!tile_known || tile[i] != tile_run) {
+                tile_known = true;
+                tile_run = tile[i];
+                tile_drawn = std::ranges::binary_search(options.tiles, tile_run);
+            }
+            if (!tile_drawn && !options.rank_undrawn) {
+                ++undrawn_;
+                continue;
+            }
+        }
         if (place[i] != run) {
             run = place[i];
             run_place = places[run];
@@ -146,21 +164,17 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
             drawn_[i] = 2;
             ++near_;
         }
+        if (options.by_tile && !tile_drawn) ++undrawn_; // ranked all the same (rank_undrawn)
     }
 
-    // Last frame's order, less what is not drawn now, then what is newly drawn; then a stable insertion pass.
+    // Last frame's order, less what is not drawn now, fixed by a stable insertion pass; then what is newly drawn,
+    // sorted among itself and merged in.
     next_.clear();
     for (const std::uint32_t row : order_) {
         if (row < rows && drawn_[row] != 0) {
             next_.push_back(row);
         } else if (row < rows) {
             listed_[row] = 0;
-        }
-    }
-    for (std::uint32_t row = 0; row < rows; ++row) {
-        if (drawn_[row] != 0 && listed_[row] == 0) {
-            next_.push_back(row);
-            listed_[row] = 1;
         }
     }
     const Before before{.depth = depth_.data(), .order = items.order().data()};
@@ -180,6 +194,27 @@ void Ranks::update(const scene::ItemTable& items, const view::Camera& camera, co
             std::ranges::sort(next_, before); // the key is total: the stable sort's order
             sorted_fully_ = true;
             break;
+        }
+    }
+    // The rows new to the order (a tile arrived or first drawn, the frame's edge moved over them): thousands at once
+    // with a tile, each of which the insertion pass would move past half the order, so they are sorted among themselves
+    // (rows of one key in their rows' order, as the insertion pass left them) and merged in, after the rows of their
+    // key that were there, as it put them.
+    const std::size_t kept = next_.size();
+    for (std::uint32_t row = 0; row < rows; ++row) {
+        if (drawn_[row] != 0 && listed_[row] == 0) {
+            next_.push_back(row);
+            listed_[row] = 1;
+        }
+    }
+    if (next_.size() > kept) {
+        const std::span<std::uint32_t> fresh = std::span(next_).subspan(kept);
+        std::ranges::sort(
+            fresh, [&before](std::uint32_t a, std::uint32_t b) { return before(a, b) || (!before(b, a) && a < b); });
+        if (kept > 0) {
+            merged_.resize(next_.size());
+            std::ranges::merge(std::span(next_).first(kept), fresh, merged_.begin(), before);
+            next_.swap(merged_);
         }
     }
     order_.swap(next_);

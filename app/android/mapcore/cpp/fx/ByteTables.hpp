@@ -5,9 +5,9 @@
 // Two tables convert a premultiplied pixel's colour from one colour space to the other by its exact unpremultiplied
 // value, as Core Graphics does: per alpha a and premultiplied channel c, the rounded byte of the transfer function at
 // min(1, c / a), indexed a · 256 + c. The port computes them with Java's pow, which no C++ libm reproduces bit for bit,
-// so they are not computed here: mapview's ByteTablesExportTest writes them from SvgFilterRaster's own functions into
-// fx/tables/, and fails when the files there differ. The GPU reads the same bytes (set 1's byte_tables,
-// fx/FieldCache.hpp).
+// so they are not computed here: mapview's ByteTablesExportTest wrote them from SvgFilterRaster's own functions into
+// fx/tables/, plain sources since that test went with the CPU raster (cut 1 of the parity checks). The GPU reads the
+// same bytes (set 1's byte_tables, fx/FieldCache.hpp).
 #pragma once
 
 #include "fx/Noise.hpp"

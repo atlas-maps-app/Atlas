@@ -495,6 +495,14 @@ constexpr std::array<std::string_view, 5> says_kind = {"home", "office", "hotel"
 /// `x or 0` of an optional float: 0 where None or zero.
 [[nodiscard]] double or0(std::optional<double> v) noexcept { return v.has_value() && *v != 0.0 ? *v : 0.0; }
 
+/// `max(1, int(round(floors)))` as the port's Int, its low 32 bits: the levels of a height. 1 where round() cannot
+/// take it: a tag's height or roof levels past any Long's floors, infinite or NaN (CI's fuzz_load, 14 and 16 Nov 2026:
+/// a `height` of 7e26 m ended the process here), as guess_tags's levels_from_height takes them.
+[[nodiscard]] std::int32_t levels_of(double floors) noexcept {
+    const auto rounded = pymath::checked::round(floors);
+    return rounded ? static_cast<std::int32_t>(std::max<std::int64_t>(1, *rounded)) : 1;
+}
+
 /// One cell of a grid of `cell`-metre squares, as `(int(x // cell), int(z // cell))`.
 [[nodiscard]] std::uint64_t cell_key(std::int64_t i, std::int64_t j) noexcept {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(i)) << 32U) | static_cast<std::uint32_t>(j);
@@ -619,7 +627,7 @@ bool paris_roof(Building& b, std::string_view kind, std::string_view wall, Guess
     g.add(Guess::roof_height);
     if (b.src == HeightSource::height) {
         if (!t.truthy("building:levels")) {
-            b.levels = static_cast<std::int32_t>(std::max<std::int64_t>(1, pymath::round((b.h - *b.roof_h) / 3.1)));
+            b.levels = levels_of((b.h - *b.roof_h) / 3.1);
         }
     } else {
         b.h = (b.levels * 3.0) + *b.roof_h;
@@ -776,7 +784,7 @@ bool trad_look(Building& b, const Tradition& p, std::string_view kind, const std
         const double rh = or0(b.roof_h);
         if (b.src == HeightSource::height) {
             if (!t.truthy("building:levels")) {
-                b.levels = static_cast<std::int32_t>(std::max<std::int64_t>(1, pymath::round((b.h - rh) / p.floor_h)));
+                b.levels = levels_of((b.h - rh) / p.floor_h);
             }
         } else if (g.has(Guess::height) || b.src == HeightSource::levels) {
             b.h = (b.levels * p.floor_h) + rh;

@@ -243,26 +243,34 @@ class StoreBehaviourTest {
 
     @Test
     fun aStoreOfAnotherSchemaIsRefused() {
-        val pack = File(tmp.root, "old.places.db")
-        val region = File(tmp.root, "old-region.db")
-        for ((f, packer) in listOf(pack to true, region to false)) {
-            PlaceStore.open(f).use { s ->
-                s.importPlaces(listOf(place(1, 52.37, 4.88, "amenity" to "cafe")))
-                s.locked {
-                    s.exec("UPDATE meta SET value = '1' WHERE key = 'schema'")
-                    if (packer) s.exec("INSERT INTO meta(key, value) VALUES ('packer', 'atlas-packer/1')")
+        // 3, of the packs published until 17 November 2026 and of the Atlas before alpha 32, and 5, of an Atlas after this
+        for (schema in listOf(3, 5)) {
+            assertFalse(PlaceStore.reads(schema))
+            val pack = File(tmp.root, "old-$schema.places.db")
+            val region = File(tmp.root, "old-region-$schema.db")
+            for ((f, packer) in listOf(pack to true, region to false)) {
+                PlaceStore.open(f).use { s ->
+                    s.importPlaces(listOf(place(1, 52.37, 4.88, "amenity" to "cafe")))
+                    s.locked {
+                        s.exec("UPDATE meta SET value = '$schema' WHERE key = 'schema'")
+                        if (packer) s.exec("INSERT INTO meta(key, value) VALUES ('packer', 'atlas-packer/1')")
+                    }
                 }
             }
-        }
-        // a pack (downloaded) and a store the phone wrote, each of another version of Atlas
-        for ((f, says) in listOf(pack to "download the region again", region to "install Atlas afresh")) {
-            try {
-                PlaceStore.open(f).close()
-                fail("a store of another schema must be refused")
-            } catch (e: StoreVersionException) {
-                assertTrue(e.message!!, e.message!!.contains(says))
+            // a pack (downloaded) and a store the phone wrote, each of another version of Atlas
+            for ((f, says) in listOf(pack to "download the region again", region to "install Atlas afresh")) {
+                try {
+                    PlaceStore.open(f).close()
+                    fail("a store of schema $schema must be refused")
+                } catch (e: StoreVersionException) {
+                    assertTrue(e.message!!, e.message!!.contains(says))
+                    assertTrue(e.message!!, e.message!!.contains("schema $schema"))
+                }
+                // and left as it was: still of its schema, refused again
+                assertTrue(runCatching { PlaceStore.open(f).close() }.exceptionOrNull() is StoreVersionException)
             }
         }
+        assertTrue(PlaceStore.reads(PlaceStore.SCHEMA))
     }
 
     @Test

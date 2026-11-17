@@ -14,7 +14,13 @@ import app.atlas.search.PlaceRecord
 import app.atlas.search.covers
 import app.atlas.services.PlaceOrigin
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.last
+import kotlinx.coroutines.flow.map
 
 /** One chain around: the brand and its branches, nearest first. */
 data class BrandBranches(val brand: Brand, val branches: List<Place>)
@@ -43,17 +49,25 @@ object BrandsAround {
     fun isTrade(tags: Map<String, String>): Boolean =
         "shop" in tags || tags["amenity"] in TRADES || tags["tourism"] in setOf("hotel", "hostel", "motel")
 
-    suspend fun near(services: Services, at: LatLon, radiusM: Double): BrandsNearby = withContext(Dispatchers.Default) {
+    /** The chains and independents within [radiusM] of [at]: [nearAsFound]'s last answer, the whole. */
+    suspend fun near(services: Services, at: LatLon, radiusM: Double): BrandsNearby = nearAsFound(services, at, radiusM).last()
+
+    /**
+     * The chains and independents within [radiusM] of [at] as they are found: a region's store where it covers [at];
+     * else the map's packs and windows on the phone at once, then online what completes them ([LocalData.placesAsFound]).
+     */
+    fun nearAsFound(services: Services, at: LatLon, radiusM: Double): Flow<BrandsNearby> = flow {
         val store = services.placeStores
-        val (places, origin) = when {
-            store.covers(at) -> store.inBox(BBox.around(at, radiusM)).map { it.place } to PlaceOrigin.STORE
-            else -> {
-                val got = runCatching { services.localData.places(at, radiusM, TagFilter.Has("name"), 5_000) }.getOrNull()
-                got?.value.orEmpty() to got?.origin
-            }
+        if (store.covers(at)) {
+            emit(split(store.inBox(BBox.around(at, radiusM)).map { it.place }, at, radiusM, PlaceOrigin.STORE))
+            return@flow
         }
-        split(places, at, radiusM, origin)
-    }
+        emitAll(
+            services.localData.placesAsFound(at, radiusM, TagFilter.Has("name"), 5_000)
+                .map { split(it.value, at, radiusM, it.origin) }
+                .catch { emit(split(emptyList(), at, radiusM, null)) },
+        )
+    }.flowOn(Dispatchers.Default)
 
     /**
      * [chains] stacked by kind (the owner, 6 November: "Brands around stacks by kind?"): each chain on the kind most of

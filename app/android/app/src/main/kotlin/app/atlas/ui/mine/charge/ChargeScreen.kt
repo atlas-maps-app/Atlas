@@ -69,6 +69,7 @@ import app.atlas.providers.Sockets
 import app.atlas.ui.kit.Atlas
 import app.atlas.places.Brands
 import app.atlas.services.Units
+import app.atlas.services.soonest
 import app.atlas.ui.go.GoFormat
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.search.BrandLogo
@@ -392,7 +393,7 @@ private fun CardSheet(c: Charger, car: Car, here: LatLon, onClose: () -> Unit, o
                 val cafe = app.atlas.places.CategoryTree.preset("amenity/cafe")!!.filter
                 val toilet = app.atlas.places.CategoryTree.category("toilets")!!.filter
                 for ((filter, symbol) in listOf(cafe to "place.cafe", toilet to "need.toilet.2")) {
-                    val found = runCatching { services.localData.places(c.place.location, 250.0, filter, 1) }.getOrNull()
+                    val found = runCatching { services.localData.placesAsFound(c.place.location, 250.0, filter, 1).soonest() }.getOrNull()
                     if (found?.value?.isNotEmpty() == true) add(symbol)
                 }
             }

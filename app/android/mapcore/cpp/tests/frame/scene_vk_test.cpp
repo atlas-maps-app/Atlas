@@ -988,6 +988,24 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     for (const scene::CoverTile& t : w.cover()->tiles()) CHECK(t.fade == 1.0F);
     CHECK(w.cover()->missing() == 0);
     CHECK_FALSE(w.animating()); // the fades are over: the frame loop may rest
+    // These frames are at rest, so the item table has room for one and a half times the rows the view's plan holds
+    // at the least (World::reserve_items makes room for twice them when it has less: a tile's rows arriving in a pinch
+    // from here grow no column), and frames at rest with the room there make none. This view's few rows may have room
+    // enough from the adds' own doublings, and then no reserve is made at all.
+    CHECK(2 * w.items()->capacity() >= 3 * w.items()->live());
+    {
+        const std::uint64_t made = w.items_reserves();
+        const std::uint64_t growths = w.items()->growths();
+        for (std::uint64_t n = 0; n < 3; ++n) {
+            ATLAS_REQUIRE((*builder)->derive(61, n % 2, nullptr));
+            w.update((*builder)->state());
+            CHECK(w.items_reserve_ms() == 0.0);
+        }
+        CHECK(w.items_reserves() == made);
+        CHECK(w.items()->growths() == growths);
+        MESSAGE("the item table: " << w.items()->live() << " rows live, room for " << w.items()->capacity()
+                                   << ", made in " << made << " reserve(s) at rest, " << growths << " growths in all");
+    }
     const auto sun = w.residency().sun_tiles("amsterdam");
     CHECK(sun.size() >= w.residency().resident().size() / 2);
     MESSAGE(w.tiles_line() << "; " << w.cover()->tiles().size() << " drawn, " << w.items()->live()

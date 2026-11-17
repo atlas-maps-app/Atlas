@@ -85,6 +85,7 @@ import app.atlas.places.NodeKind
 import app.atlas.search.Query
 import app.atlas.search.SearchItem
 import app.atlas.ui.home.HomeRow
+import app.atlas.ui.kit.BrandSigns
 import app.atlas.ui.kit.SHEET_GRABBER_ROOM
 import app.atlas.ui.kit.Sheet
 import app.atlas.ui.kit.SheetState
@@ -123,6 +124,12 @@ internal fun SearchSheet(
     onBack: () -> Unit,
     /** Pulled all the way down: the search is closed, from whichever of its views. */
     onPulledAway: () -> Unit,
+    /**
+     * Whether a view with nothing above it in the sheet (a kind opened by itself, a chain's page) wears the way back on
+     * its band: on a page of its own, where back leaves the page, it does; over the home's map, where back only closes
+     * the sheet as a pull down does, it does not ([bandArrow]).
+     */
+    rootArrow: Boolean = false,
     /** The kind the typed words look among, by name, when they are narrowed to one. */
     narrowedTo: String? = null,
     /** The field took the keyboard: the host pulls the sheet up. */
@@ -158,10 +165,18 @@ internal fun SearchSheet(
     val room = if (barShown) BAR_ROOM else 28.dp
     val focusManager = LocalFocusManager.current
     // a hero wears its colour up to the sheet's top edge, the grabber light on it: a kind's always, the grid's till it
-    // is scrolled past
+    // is scrolled past; a chain's band too, the grabber in its sign's lettering, which reads on a light sign as well
     val gridTop by remember { derivedStateOf { gridList.firstVisibleItemIndex == 0 } }
     val heroUnder = inKind(state, field) || everyBanded(state, field) || onGrid(state, field) && gridTop
-    val grabber by animateColorAsState(if (heroUnder) HERO_GRABBER else c.sheet.grabber, tween(320), label = "grabber")
+    val chain = (state.asked as? Asked.Chain)?.takeIf { onChain(state, field) }
+    val grabber by animateColorAsState(
+        when {
+            chain != null -> BrandSigns.ink(chain.brand).copy(alpha = 0.5f)
+            heroUnder -> HERO_GRABBER
+            else -> c.sheet.grabber
+        },
+        tween(320), label = "grabber",
+    )
     Box(Modifier.fillMaxSize()) {
         Sheet(sheet, peekHeight = peekHeight, halfFraction = halfFraction, fullTopGap = fullTopGap, look = c.sheet, grabberOver = true, grabber = grabber) {
             SharedTransitionLayout(Modifier.fillMaxWidth().weight(1f)) {
@@ -177,8 +192,8 @@ internal fun SearchSheet(
                     val view = this
                     CompositionLocalProvider(LocalDive provides remember(shared, view) { Dive(shared, view) }) {
                         // every view keeps the grabber's room but those a hero heads, which reaches up under it
-                        Box(Modifier.fillMaxSize().padding(top = if (inKind(p.s, p.field) || everyBanded(p.s, p.field) || onGrid(p.s, p.field)) 0.dp else SHEET_GRABBER_ROOM)) {
-                            PaneView(p, text, typed, find, nav, lang, now, recents, lists, tuneOpen, gridList, room, onField, onPlace, onBack,
+                        Box(Modifier.fillMaxSize().padding(top = if (inKind(p.s, p.field) || onChain(p.s, p.field) || everyBanded(p.s, p.field) || onGrid(p.s, p.field)) 0.dp else SHEET_GRABBER_ROOM)) {
+                            PaneView(p, text, typed, find, nav, lang, now, recents, lists, tuneOpen, gridList, room, onField, onPlace, onBack, rootArrow,
                                 onTune = { tuneOpen = !tuneOpen },
                                 onClear = { services.scope.launch(Dispatchers.IO) { runCatching { services.saved.clearRecents() } } },
                             ) { explained = it }
@@ -226,6 +241,7 @@ private fun PaneView(
     onField: (String) -> Unit,
     onPlace: (Place) -> Unit,
     onBack: () -> Unit,
+    rootArrow: Boolean,
     onTune: () -> Unit,
     onClear: () -> Unit,
     onExplain: (Explained) -> Unit,
@@ -253,7 +269,7 @@ private fun PaneView(
             val unfolded = remember { mutableStateListOf<String>() }
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = room)) { filtersPane(s, find, lang, now, unfolded) }
         }
-        else -> KindList(s, find, nav, lang, now, room, remember(lists) { keptColours(lists) }, onPlace, onBack, onExplain)
+        else -> KindList(s, find, nav, lang, now, room, remember(lists) { keptColours(lists) }, onPlace, onBack, onExplain, rootArrow)
     }
 }
 
@@ -290,6 +306,9 @@ private fun everyBanded(s: SearchSheetState, field: String): Boolean = onEvery(s
 
 /** A kind's own view, its hero the sheet's top ([PaneView]'s order). */
 private fun inKind(s: SearchSheetState, field: String): Boolean = field.isBlank() && s.asked == null && s.node != null && !s.filtersOpen
+
+/** A chain's page, its band the sheet's top as a kind's hero is ([PaneView]'s order). */
+private fun onChain(s: SearchSheetState, field: String): Boolean = field.isBlank() && s.asked is Asked.Chain && s.node != null && !s.filtersOpen
 
 private fun paneOf(s: SearchSheetState, field: String): Pane {
     val node = s.node
@@ -435,8 +454,8 @@ private const val FILTERS_DEPTH = 50
 /** Room under the lists for the bar resting over them. */
 private val BAR_ROOM = 104.dp
 
-/** Where a row's words start: past its disc. */
-internal val ROW_TEXT_START = 68.dp
+/** Where an outing's row's words start, past its key (16 in, the key's 38, 12 between): the chips under it start there too. */
+internal val ROW_TEXT_START = 66.dp
 
 /** The keys' colours of a way on from typed words: a question or plan, a query, goods, a point. */
 internal const val ASK = 0xFF7B4DFF.toInt()

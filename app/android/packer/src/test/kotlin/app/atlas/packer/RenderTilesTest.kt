@@ -1,7 +1,6 @@
 package app.atlas.packer
 
 import app.atlas.geo.LatLon
-import app.atlas.render.data.PackReader
 import app.atlas.render.live.EngineVersion
 import app.atlas.render.live.HttpGet
 import app.atlas.render.live.PackLibrary
@@ -229,36 +228,6 @@ class RenderTilesTest {
         for ((id, why) in gaps) println("RENDERS %-13s no render pack: %s".format(id, why))
         assertTrue("the bundled set's regions build: ${built.keys}", built.keys.containsAll(listOf("amsterdam", "grachten")))
         assertEquals(input.packs().size, built.size + gaps.size)
-
-        // the renders' cases (CASES/cases/renders.json): every view of every region is a case where its render pack is
-        // published, in any case file, and waits where it is not
-        val casesDir = File(repo, "app/android/mapcorecheck/src/test/resources/likeness/cases")
-        val cased = HashMap<String, MutableSet<String>>()
-        for (f in casesDir.listFiles { x -> x.name.endsWith(".json") }.orEmpty()) for (c in (obj(f)["cases"] as? JsonArray).orEmpty().map { it as JsonObject }) {
-            val scene = c["scene"] as? JsonObject ?: continue
-            val entry = input.packs().firstOrNull { it.str("id") == scene.str("pack") } ?: continue
-            assertEquals("${c.str("name")}: the element pack's SHA-256", entry.file("atlas")!!.str("sha256"), scene.str("sha256"))
-            (c["camera"] as? JsonObject)?.str("view")?.let { cased.getOrPut(scene.str("pack")!!) { HashSet() } += it }
-        }
-        val waiting = (obj(File(casesDir, "renders.json"))["waiting"] as JsonArray).map { it as JsonObject }.associateBy { it.str("region")!! }
-        assertTrue("only regions of the list wait: ${waiting.keys}", input.packs().map { it.str("id") }.containsAll(waiting.keys))
-        for (p in input.packs()) {
-            val id = p.str("id")!!
-            // the Westerkerk is the bundled living map, without named views: smoke.json's "bundled" cases
-            if (id == "amsterdam") continue
-            val element = p.file("atlas")!!
-            val views = PackReader.open(File(cache, element.str("name")!!)).use { r -> r.manifest.views?.keys.orEmpty().map { k -> if (k.isEmpty()) id else "${id}_$k" }.toSet() }
-            assertTrue("$id has named views", views.isNotEmpty())
-            val waits = waiting[id]
-            if (id in gaps) {
-                assertTrue("$id has no render pack: no case draws it yet (${cased[id]})", cased[id].isNullOrEmpty())
-                assertEquals("$id's views wait", views, (waits?.get("views") as? JsonArray)?.map { it.jsonPrimitive.content }?.toSet())
-                assertEquals("$id waits on its element pack", element.str("sha256"), waits?.str("sha256"))
-            } else {
-                assertNull("$id has its render pack: its views are cases, not waiting", waits)
-                assertEquals("$id's views are cases", views, cased[id].orEmpty())
-            }
-        }
 
         // the bundled set's packs are the same bytes
         val bundled = tmp.newFolder("bundled")

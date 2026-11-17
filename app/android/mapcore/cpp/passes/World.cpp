@@ -34,6 +34,15 @@ constexpr std::size_t palette_bytes = 2 * std::size_t{wp::size} * sizeof(std::ui
 constexpr std::size_t look_stride = 1024;
 static_assert(sizeof(shaders::WorldLookBlock) <= look_stride);
 
+/// world.slang's WORLD_PARTS: push.at.x's bit for a tile in parts, the rest of it the entry its parts' table begins at.
+/// A tile's first word stays under it: the world's heap is far less than 8 GiB.
+constexpr std::uint32_t in_parts = 0x80000000U;
+
+/// A frame slot's parts' tables' entries to begin with: a frame's tiles in parts and one more each, room for 60 of
+/// sixteen parts; they grow (World::room_for_parts) for a frame that wants more.
+constexpr std::size_t parts_first = 1024;
+static_assert(sizeof(std::array<std::uint32_t, 4>) == 16);
+
 /// A theme colour as the palette's word, opaque.
 [[nodiscard]] constexpr std::uint32_t word_of(const style::Rgb8& c) noexcept {
     return geometry::Rgba{.r = c.r, .g = c.g, .b = c.b, .a = 255}.packed();
@@ -160,10 +169,27 @@ std::vector<std::uint32_t> World::day_palette_of(const style::ThemeBlock& theme,
                         between(l.day_road, theme.road), false, style);
 }
 
+bool World::room_for_parts(Slot& s, std::size_t entries) {
+    if (entries <= s.parts_room) return true;
+    if (device_ == nullptr) return false;
+    // the slot's last frame has finished with its tables (the frame slots' fences), so they are let go of here
+    const std::size_t room = std::max(entries, 2 * s.parts_room);
+    auto made = device_->memory().buffer(room * sizeof(std::array<std::uint32_t, 4>),
+                                         vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::upload);
+    if (!made) return false;
+    s.parts = std::move(*made);
+    s.parts_room = room;
+    gpu::SetWriter(*s.set)
+        .buffer(wl::world_parts.binding, vk::DescriptorType::eStorageBuffer, s.parts.handle(), 0, s.parts.size())
+        .apply(device_->handle());
+    return true;
+}
+
 void World::update(const frame::FrameState& state) {
     Slot& s = slots_.at(state.slot & 1U);
     s.drawing = false;
     draws_.clear();
+    parts_.clear();
     const scene::WorldFrame* world = state.world;
     space_ = false;
     glass_ = false;
@@ -241,16 +267,39 @@ void World::update(const frame::FrameState& state) {
         out.level = t.key.z;
         out.light_cells = static_cast<std::uint32_t>(d.light_cells & 0xFFFFU);
         out.tile = drawn++;
-        // a draw for each of its parts, each laid out as a tile (scene::WorldPart)
+        const auto cells = static_cast<std::uint32_t>(d.cells & 0xFFFFU);
+        // a tile in parts as one piece: its parts' table, an entry a part (its first word, its first triangle, segment
+        // and light), then the tile's triangles, segments and lights
+        if (t.parts.size() > 1 && room_for_parts(s, parts_.size() + t.parts.size() + 1)) {
+            const auto table = static_cast<std::uint32_t>(parts_.size());
+            std::array<std::uint32_t, 3> first{};
+            out.coast = 0;
+            for (const scene::WorldPart& p : t.parts) {
+                parts_.push_back({p.range.offset / 4U, first[0], first[1], first[2]});
+                first = {first[0] + p.triangles, first[1] + p.segments, first[2] + p.lights};
+                out.coast += p.coast;
+            }
+            parts_.push_back({0U, first[0], first[1], first[2]});
+            out.at = {in_parts | table, cells, 3U * first[0], static_cast<std::uint32_t>(t.parts.size())};
+            out.triangles = first[0];
+            out.segments = first[1];
+            out.lights = first[2];
+            draws_.push_back(out);
+            continue;
+        }
+        // a tile whole; or, where the slot's tables find no room, a draw for each of its parts, each laid out as a tile
         for (const scene::WorldPart& p : t.parts) {
-            out.at = {p.range.offset / 4U, static_cast<std::uint32_t>(d.cells & 0xFFFFU), 3U * p.triangles,
-                      4U * p.triangles};
+            out.at = {p.range.offset / 4U, cells, 3U * p.triangles, 4U * p.triangles};
             out.triangles = p.triangles;
             out.segments = p.segments;
             out.coast = p.coast;
             out.lights = p.lights;
             draws_.push_back(out);
         }
+    }
+    if (!parts_.empty()) {
+        std::memcpy(s.parts.bytes().data(), parts_.data(), parts_.size() * sizeof(parts_.front()));
+        s.parts.flush();
     }
     // the fading tiles' depths: their levels' ranks, coarse to fine
     std::array<bool, 32> fading{};
@@ -284,7 +333,10 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
                      .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
         gpu::Binding{.slot = wl::look.binding,
                      .type = vk::DescriptorType::eUniformBuffer,
-                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment}};
+                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{.slot = wl::world_parts.binding,
+                     .type = vk::DescriptorType::eStorageBuffer,
+                     .stages = vk::ShaderStageFlagBits::eVertex}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     set_layout_ = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -293,6 +345,11 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
     for (Slot& s : slots_) {
         ATLAS_GPU_LET(made, gpu::allocate_set(d, pool_, set_layout_));
         s.set = std::move(made);
+        ATLAS_GPU_LET(tables,
+                      context.device.memory().buffer(parts_first * sizeof(std::array<std::uint32_t, 4>),
+                                                     vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::upload));
+        s.parts = std::move(tables);
+        s.parts_room = parts_first;
     }
     ATLAS_GPU_LET(palette, context.device.memory().buffer(2 * palette_bytes, vk::BufferUsageFlagBits::eStorageBuffer,
                                                           gpu::MemoryUse::upload));
@@ -309,6 +366,8 @@ gpu::Result<void> World::prepare(const frame::PassContext& context) {
             // the words' binding until a world draws: the palette's buffer, never read
             .buffer(wl::world_words.binding, vk::DescriptorType::eStorageBuffer, palette_buffer_.handle(), 0,
                     palette_bytes)
+            .buffer(wl::world_parts.binding, vk::DescriptorType::eStorageBuffer, slots_.at(s).parts.handle(), 0,
+                    slots_.at(s).parts.size())
             .apply(d);
         slots_.at(s).bound = palette_buffer_.handle();
         slots_.at(s).bound_bytes = palette_bytes;
@@ -393,6 +452,8 @@ void World::release() noexcept {
         s.set.clear();
         s.bound = vk::Buffer{};
         s.bound_bytes = 0;
+        s.parts = gpu::Buffer{};
+        s.parts_room = 0;
         s.drawing = false;
     }
     pool_.clear();
@@ -468,9 +529,11 @@ void World::record_over(const frame::Recording& recording) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *lights_);
         for (const Draw& d : draws_) {
             if (d.lights == 0 || d.light_cells == 0) continue;
+            // where its lights begin; a tile in parts finds each light's part
+            const std::uint32_t lights_at = (d.at[0] & in_parts) != 0U ? d.at[3] : d.at[3] + (3U * d.segments);
             const wl::PushConstants pc{.origin = {d.origin[0], d.origin[1], d.origin[2], depth},
                                        .scale = d.scale,
-                                       .at = {d.at[0], d.light_cells, d.at[2], d.at[3] + (3U * d.segments)},
+                                       .at = {d.at[0], d.light_cells, d.at[2], lights_at},
                                        .globe = d.globe,
                                        .sphere = d.sphere,
                                        .target = d.target};
@@ -519,7 +582,7 @@ void World::record_tiles(const frame::Recording& recording) {
     const bool coasts = looked && look_.block.weights.y > 0.0F;
     float at = -1.0F;
     for (std::size_t first = 0; first < draws_.size();) {
-        // a tile's draws: one, or one for each of its parts
+        // a tile's draws: one, or where its frame slot's parts' tables found no room, one for each of its parts
         std::size_t end = first + 1;
         while (end < draws_.size() && draws_[end].tile == draws_[first].tile) ++end;
         const bool fading = draws_[first].fade < 1.0F;
@@ -537,8 +600,8 @@ void World::record_tiles(const frame::Recording& recording) {
                                        .target = d.target};
             cmd.pushConstants<wl::PushConstants>(*layout_, frame::push_stages, 0, pc);
         };
-        // its fills, part by part; a fading tile's last part first, as within each its triangles are drawn top first
-        // (world.slang's fill_vs), so they are across its parts too
+        // its fills (part by part where it has a draw for each: a fading tile's last part first, as within each its
+        // triangles are drawn top first, world.slang's fill_vs, so they are across its parts too)
         for (std::size_t i = 0; i < end - first; ++i) {
             const Draw& d = draws_[fading ? end - 1 - i : first + i];
             if (d.triangles == 0) continue;
@@ -547,8 +610,8 @@ void World::record_tiles(const frame::Recording& recording) {
             cmd.draw(3 * d.triangles, 1, 0, 0);
             triangles += d.triangles;
         }
-        // then its lines over them, part by part, its coast's (the last of them) only where the ramps give the coast
-        // a weight
+        // then its lines over them (part by part where it has a draw for each), its coast's (the last of them) only
+        // where the ramps give the coast a weight
         for (std::size_t i = first; i < end; ++i) {
             const Draw& d = draws_[i];
             const std::uint32_t segments = coasts ? d.segments : d.segments - std::min(d.coast, d.segments);

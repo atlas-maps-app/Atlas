@@ -29,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -330,7 +331,12 @@ private fun layerName(key: String): String = stringResource(
  */
 @Composable
 private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, bad: UnreadableStore?, onDelete: () -> Unit, onAgain: () -> Unit) {
-    var open by rememberSaveable(d.id, bad != null) { mutableStateOf(bad != null) }
+    var open by rememberSaveable(d.id, bad != null, d.placesLeftOut) { mutableStateOf(bad != null || d.placesLeftOut) }
+    // the places again only where that brings a store this Atlas reads: a pack's of a schema it cannot open would come
+    // back as unreadable as they went
+    val again by produceState(false, d.id, bad) {
+        value = bad != null && withContext(Dispatchers.IO) { runCatching { manager.engine.placesAgainReadable(d.id) }.getOrDefault(false) }
+    }
     Column(
         Modifier
             .fillMaxWidth()
@@ -348,7 +354,11 @@ private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, bad: Unread
                     .padding(start = 16.dp, top = 13.75.dp, end = 14.dp, bottom = 9.dp),
             ) {
                 BText(d.name, bt(24f, 400, 24f, SERIF), INK, lines = 2)
-                if (d.bytes > 0) BText(RegionEngine.size(d.bytes), bt(13f, 400, 17f, tnum = true), BODY, Modifier.padding(top = 8.25.dp))
+                // its size, and how much of it is the world kept with a country's tiles (ENGINE.md step 11)
+                if (d.bytes > 0) BText(
+                    if (d.world > 0) stringResource(R.string.mine_offline_size_world, RegionEngine.size(d.bytes), RegionEngine.size(d.world)) else RegionEngine.size(d.bytes),
+                    bt(13f, 400, 17f, tnum = true), BODY, Modifier.padding(top = 8.25.dp), lines = 2,
+                )
                 val icons = OfflineModel.icons(d)
                 if (icons.isNotEmpty()) Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     for (s in icons) MSy(s, 16f, INK)
@@ -363,13 +373,15 @@ private fun RegionCard(d: RegionDetail, manager: AtlasRegionManager, bad: Unread
                     stringResource(if (bad.otherVersion) R.string.mine_offline_unreadable_version else R.string.mine_offline_unreadable_damaged),
                     bt(13f, 400, 17f), BODY, lines = 3,
                 )
+                else if (d.placesLeftOut) BText(stringResource(R.string.mine_offline_places_left_out), bt(13f, 400, 17f), BODY, lines = 4)
+                if (d.world > 0) BText(stringResource(R.string.mine_offline_world_text, RegionEngine.size(d.world)), bt(13f, 400, 17f, tnum = true), BODY, lines = 3)
                 // the longer names ("Opnieuw downloaden", "Verwijderen") go under each other on a narrow phone
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val running = d.progress != null
                     if (running) ActionPill(stringResource(R.string.mine_offline_actions_cancel), "ui.close") { manager.cancel(d.id) }
                     else {
                         // the places come again with whatever else the region lacks
-                        if (bad != null) ActionPill(stringResource(R.string.mine_offline_actions_again), "ui.download", onClick = onAgain)
+                        if (bad != null) { if (again) ActionPill(stringResource(R.string.mine_offline_actions_again), "ui.download", onClick = onAgain) }
                         else if (!d.complete || d.error != null) ActionPill(stringResource(R.string.mine_offline_actions_retry), "ui.refresh") { manager.update(d.id) }
                         else if (d.update != null) ActionPill(stringResource(R.string.mine_offline_actions_update), "ui.refresh") { manager.update(d.id) }
                     }

@@ -167,6 +167,8 @@ internal fun SearchOverMap(nav: Navigator, query: String = "", kind: String? = n
             // the way back on the sheet's bands is the system's back: out of the words, up the kinds, off the page
             onBack = { if (inside) stepOut() else nav.back() },
             onPulledAway = { if (!nav.back()) sheet.snapTo(SheetStop.PEEK) },
+            // a page of its own: the way back leaves it, so its band keeps the arrow
+            rootArrow = true,
             narrowedTo = kind?.let { app.atlas.places.Categories.byId(it)?.name(lang) },
             onTyping = { scope.launch { sheet.animateTo(SheetStop.FULL) } },
             focus = focus,

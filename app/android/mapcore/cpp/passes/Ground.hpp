@@ -99,6 +99,11 @@ inline constexpr std::uint32_t water_w0 = 0x40;
 /// to the water's end: the lines take it in their phase at order 999, after it), both cleared with the clip.
 inline constexpr std::uint32_t water_thin = shadows;
 inline constexpr std::uint32_t water_band = 0x20;
+/// The app's map's settled streets' marks (Ground::record_streets, in a frame where a tile fades in): every pixel a
+/// settled tile's street, bridge or big road inks, which the fading tiles' fills keep off (record_fading_fills), so
+/// that a street both tiles hold is drawn once; the canopy's bit, which nothing else holds through the opaque phase,
+/// cleared after the fading fills (marks_end) before the canopy's union takes it.
+inline constexpr std::uint32_t marks = canopy;
 } // namespace ground_stencil
 
 /// How many vertices the record of a quay wall's or a reflection's face draws (ground.slang's FACE_VERTICES: its
@@ -678,6 +683,10 @@ struct GroundFrame {
     /// bridge's lines at its street's edges (each run its mirror's words on, from LINE_DASH_SHIFT), where the renders'
     /// frames leave out a line's segment with an end behind the near plane and lay those pavements half as wide.
     bool grounded = false;
+    /// In the app's map, a tile fades in (Ground::record_fading_fills draws one): the settled tiles' streets, bridges
+    /// and big roads mark the pixels they ink in the stencil (ground_stencil::marks), and the fading tiles' fills keep
+    /// off them, so that a street both hold is the settled one's through the fade (Ground::draw_marks).
+    bool marks = false;
     double radius = 0;
     double target_x = 0;
     double target_z = 0;
@@ -1143,8 +1152,25 @@ public:
     /// The tests' and the measure's: the least width a street or a big road is drawn at, device px (2 by default).
     void least_width_px(float px) noexcept { least_px_ = px; }
     /// The tests' switch: every tile drawn as one fading in at `fade` (0 to 1), over what lies under it, whatever the
-    /// cover says (which fades a tile in only over one the frame before drew: Cover::lay_upright).
-    void fade_every(std::optional<float> fade) noexcept { fade_every_ = fade; }
+    /// cover says (which fades a tile in only over one the frame before drew: Cover::lay_upright); with `over_itself`,
+    /// over its own copy kept under it, settled, as a level's tile fades in over the tile of the level before that
+    /// holds the same streets.
+    void fade_every(std::optional<float> fade, bool over_itself = false) noexcept {
+        fade_every_ = fade;
+        fade_over_itself_ = over_itself;
+    }
+    /// The tests' switch beside fade_every's `over_itself`: the kinds of fill (bit k: geometry::FillKind k) the copy
+    /// kept under leaves out, and those the copy fading in over it leaves out, so that a street lies in one of them
+    /// alone (beside leave_out_fills', which every tile leaves out).
+    void leave_out_of_copies(std::uint32_t under, std::uint32_t fading) noexcept {
+        left_out_under_ = under;
+        left_out_fading_ = fading;
+    }
+    /// The tests' and the measure's switch: in a frame where a tile fades in, the settled tiles' streets, bridges and
+    /// big roads mark the pixels they ink in the stencil, and the fading tiles' fills keep off them (on by default;
+    /// off: the fading tiles drawn over them whole, as before 13 November: the stacking's base,
+    /// tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_MARKS).
+    void draw_marks(bool draw) noexcept { marks_ = draw; }
     /// The tests' switch: the app's map's water narrower on the screen than 1.5 device px drawn as a band 1.5 px wide
     /// along its middle at its share of them (passes/Water.cpp's thin water), else as it lies (on by default; the far
     /// flicker's measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN).
@@ -1515,6 +1541,10 @@ private:
     bool least_width_ = true;
     float least_px_ = 2.0F;
     std::optional<float> fade_every_;
+    bool fade_over_itself_ = false;
+    std::uint32_t left_out_under_ = 0;
+    std::uint32_t left_out_fading_ = 0;
+    bool marks_ = true;
     bool thin_water_ = true;
     bool no_quays_ = false;
     bool no_courses_ = false;
@@ -1607,8 +1637,14 @@ struct Ground::Pipelines {
     vk::raii::Pipeline fill_bridges{nullptr};
     vk::raii::Pipeline fill_streets_depth{nullptr};
     vk::raii::Pipeline fill_bridges_depth{nullptr};
+    /// The colour draws of the two above, each also marking the pixels it inks (ground_stencil::marks), in a frame
+    /// where a tile fades in; and the marks cleared over the frame after the fading tiles' fills.
+    vk::raii::Pipeline fill_streets_marking{nullptr};
+    vk::raii::Pipeline fill_bridges_marking{nullptr};
+    vk::raii::Pipeline marks_end{nullptr};
+    /// A tile's fills while it fades in, and its streets off a bridge, kept off the settled streets' marks.
     vk::raii::Pipeline fill_fading{nullptr};
-    vk::raii::Pipeline fill_fading_streets{nullptr}; ///< those of a tile fading in, likewise
+    vk::raii::Pipeline fill_fading_streets{nullptr};
     vk::raii::Pipeline plate{nullptr};
     vk::raii::Pipeline tile_plate{nullptr};
     vk::raii::Pipeline canopy_union{nullptr};

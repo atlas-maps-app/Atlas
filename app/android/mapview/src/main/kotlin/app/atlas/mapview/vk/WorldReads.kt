@@ -119,8 +119,8 @@ class WorldReads(
         const val HEAD_AGAIN_MS = 60_000L
 
         /** Chunks closer than this in a pack are fetched in one range with what lies between (kept too), up to [MAX_RANGE] bytes. */
-        const val MERGE_GAP = 32L shl 10
-        const val MAX_RANGE = 4L shl 20
+        const val MERGE_GAP = WorldFetch.MERGE_GAP
+        const val MAX_RANGE = WorldFetch.MAX_RANGE
 
         internal fun refusedKey(identity: ByteArray, tile: MapCore.Window): String = "${identity.contentHashCode()}/${tile.packed}"
 

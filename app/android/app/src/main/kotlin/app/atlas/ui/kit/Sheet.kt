@@ -79,6 +79,12 @@ class SheetState(initial: SheetStop = SheetStop.PEEK, val stops: Set<SheetStop> 
     /** Pixels of the screen the sheet covers now, 0 when hidden or before layout. */
     val visibleHeightPx: Float get() = if (offset.isNaN()) 0f else (containerHeight - offset).coerceAtLeast(0f)
 
+    /**
+     * Pixels of the screen the sheet covers where it rests, at its [stop] (0 before layout): what a drag or a glide
+     * leaves, which changes only once it ends.
+     */
+    val restingHeightPx: Float get() = anchors[stop]?.let { (containerHeight - it).coerceAtLeast(0f) } ?: 0f
+
     val isHidden: Boolean get() = stop == SheetStop.HIDDEN
 
     /** Glides to [target], if it is one of [stops] (or HIDDEN, always allowed). */
@@ -221,14 +227,14 @@ fun Sheet(
             )
         }
         SideEffect { state.updateAnchors(anchors, h) }
-        val y = if (state.offset.isNaN()) anchors.getValue(state.stop) else state.offset
         val connection = remember(state) { SheetScrollConnection(state) }
         val dragState = rememberDraggableState { delta -> state.dragBy(delta) }
         val expand = stringResource(R.string.kit_sheet_expand)
         val collapse = stringResource(R.string.kit_sheet_collapse)
         Column(
             Modifier
-                .offset { IntOffset(0, y.roundToInt()) }
+                // Read in the layout phase only: a drag or a glide moves the sheet without recomposing it.
+                .offset { IntOffset(0, (if (state.offset.isNaN()) anchors.getValue(state.stop) else state.offset).roundToInt()) }
                 .fillMaxWidth()
                 .height(with(density) { (h - fullTop).toDp() })
                 .then(look?.surface ?: SheetLook.Default.surface)

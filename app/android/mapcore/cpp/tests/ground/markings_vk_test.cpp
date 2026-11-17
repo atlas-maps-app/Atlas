@@ -106,8 +106,9 @@ double east_metre() { return 1.0 / (111320.0 * pymath::cos(pymath::radians(canal
 
 /// A theme park's window with a taxiway, a primary road of two lanes and a coaster's track along the latitudes, the
 /// lines 815 m apart and the track 408 m from each, the runway, the sett street and its bridge, and the canal with its
-/// street and bridge; its pack written to the tests' scratch folder.
-[[nodiscard]] std::string markings_window() {
+/// street and bridge; its pack written to the tests' scratch folder. With `meadow`, a meadow under the sett street and
+/// its bridge along their whole length, 60 m to each side, its pack beside the plain one's.
+[[nodiscard]] std::string markings_window(bool meadow = false) {
     std::string taxiway;
     std::string road;
     std::string track;
@@ -123,7 +124,7 @@ double east_metre() { return 1.0 / (111320.0 * pymath::cos(pymath::radians(canal
         if (i <= 2) street += std::format(R"({}{{"lat": {}, "lon": {}}})", street.empty() ? "" : ", ", lat, street_lon);
         if (i >= 2) bridge += std::format(R"({}{{"lat": {}, "lon": {}}})", bridge.empty() ? "" : ", ", lat, street_lon);
     }
-    const std::string data =
+    std::string data =
         R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-11-02T08:00:00Z"}, "elements": [)"
         R"({"type": "way", "id": 31, "tags": {"aeroway": "taxiway"}, "geometry": [)" +
         taxiway + R"(]}, {"type": "way", "id": 40, "tags": {"highway": "primary", "lanes": "2"}, "geometry": [)" +
@@ -145,7 +146,21 @@ double east_metre() { return 1.0 / (111320.0 * pymath::cos(pymath::radians(canal
                     R"({{"lat": 52.3740, "lon": {1:.7f}}}, {{"lat": 52.3740, "lon": {0:.7f}}}, )"
                     R"({{"lat": 52.3700, "lon": {0:.7f}}})",
                     canal_street_lon + (2.0 * east_metre()), canal_street_lon + (22.0 * east_metre())) +
-        R"(]}]})";
+        R"(]})";
+    // a ring from (south, west) to (north, east), closed
+    const auto ring = [](double south, double north, double west, double east) {
+        return std::format(R"({{"lat": {0:.7f}, "lon": {2:.7f}}}, {{"lat": {0:.7f}, "lon": {3:.7f}}}, )"
+                           R"({{"lat": {1:.7f}, "lon": {3:.7f}}}, {{"lat": {1:.7f}, "lon": {2:.7f}}}, )"
+                           R"({{"lat": {0:.7f}, "lon": {2:.7f}}})",
+                           south, north, west, east);
+    };
+    if (meadow) {
+        data += R"(, {"type": "way", "id": 70, "tags": {"landuse": "meadow"}, "geometry": [)" +
+                ring(lats.front() - 0.001, lats.back() + 0.001, street_lon - (60.0 * east_metre()),
+                     street_lon + (60.0 * east_metre())) +
+                R"(]})";
+    }
+    data += "]}";
     // the park's rides: none with a profile
     static const load::RideProfiles rides{};
     load::WindowPlace place = load::place_of(window_tile);
@@ -154,7 +169,7 @@ double east_metre() { return 1.0 / (111320.0 * pymath::cos(pymath::radians(canal
     ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
     const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "markings-vk";
     std::filesystem::create_directories(folder);
-    const std::filesystem::path file = folder / "window.atlas";
+    const std::filesystem::path file = folder / (meadow ? "window-meadow.atlas" : "window.atlas");
     std::ofstream out(file, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
               static_cast<std::streamsize>(built->pack.size()));
@@ -220,12 +235,15 @@ style::ThemeBlock dry() {
 /// in engine mode) at `theme`, until its tile is built and faded in; without the fills of the kinds `fills_off` (bit k:
 /// geometry::FillKind k), its thin streets at their own width unless `least` (Ground::draw_least_width). With `fade`,
 /// the ground draws every tile as one fading in at that fade (Ground::fade_every: the cover fades a tile in only
-/// over one the frame before drew, and the window's has none under it).
+/// over one the frame before drew, and the window's has none under it), over its own copy kept under it where
+/// `over_itself`, the copy under without the fills of the kinds `under_off` and the one fading in without those of
+/// `fading_off` (Ground::leave_out_of_copies); the settled streets unmarked unless `marks` (Ground::draw_marks).
 std::optional<WindowDraw> draw_window(const test::Session& session, const std::string& path,
                                       const style::CameraState& camera, const Collect& collect,
                                       const style::ThemeBlock& theme = test::sunny(), bool things = false,
                                       std::uint32_t fills_off = 0, bool least = true,
-                                      std::optional<float> fade = std::nullopt) {
+                                      std::optional<float> fade = std::nullopt, bool over_itself = false,
+                                      std::uint32_t under_off = 0, std::uint32_t fading_off = 0, bool marks = true) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -237,7 +255,9 @@ std::optional<WindowDraw> draw_window(const test::Session& session, const std::s
     if (g == nullptr) return std::nullopt;
     g->leave_out_fills(fills_off);
     g->draw_least_width(least);
-    g->fade_every(fade);
+    g->fade_every(fade, over_itself);
+    g->leave_out_of_copies(under_off, fading_off);
+    g->draw_marks(marks);
     auto builder =
         frame::FrameBuilder::create(device, *cache, std::move(passes), {.steps = 0, .grain = false, .grounded = true});
     if (!builder) return std::nullopt;
@@ -312,6 +332,7 @@ void add_piece(const view::Camera& cam, view::Vec3 ka, view::Vec3 kb, double met
 Collect line_pieces(std::vector<geo::StrokeKind> kinds) {
     return [kinds = std::move(kinds)](const passes::GroundFrame& decided, double density, WindowDraw& d) {
         for (const passes::DrawnTile& t : decided.tiles) {
+            if (t.under) continue; // (a tile's copy kept under it: its lines once)
             const view::Camera& cam = *t.cam;
             const geo::GroundTile& ground = *t.ground;
             for (std::uint32_t i = 0; i < ground.strokes.size(); ++i) {
@@ -600,7 +621,8 @@ struct StreetInk {
     std::size_t thin = 0;
     std::size_t one_pixel = 0;
     double most = 0;
-    double tops = 0; ///< the thin columns' most-covered pixels over their width's share of `least`, summed
+    double tops = 0;   ///< the thin columns' most-covered pixels over their width's share of `least`, summed
+    double shares = 0; ///< the columns' ink over the length they cross, summed
 };
 
 StreetInk street_ink(const gpu::Pixels& with, const gpu::Pixels& without, const std::vector<Piece>& pieces,
@@ -641,6 +663,7 @@ StreetInk street_ink(const gpu::Pixels& with, const gpu::Pixels& without, const 
             }
             ++ink.columns;
             const double length = width * cross;
+            ink.shares += sum / length;
             const double miss = std::abs(sum - length);
             ink.worst = std::max(ink.worst, miss / length);
             if (miss > (0.15 * length) + 0.15) ++ink.off;
@@ -1410,7 +1433,8 @@ TEST_CASE("ground: in the app's map a street is as wide as its way on the land a
 
 TEST_CASE("ground: in the app's map a street narrower on the screen than 8 device px is drawn with its edges by their "
           "coverage, and one under 2 px 2 px wide at the share of them it covers: as much ink across it as it is wide; "
-          "where every street is wider the frame is as without") {
+          "where every street is wider the frame is as without; a tile fading in over a tile that holds the same "
+          "street draws it once") {
     auto session = test::open_session();
     if (!session) return;
     const std::string path = markings_window();
@@ -1426,10 +1450,15 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
                    part::rings | part::glints | part::water_streaks;
     constexpr double least = 2.0; // Ground's least width, device px
     constexpr double soft = 8.0;  // ground.slang's SOFT_PX
-    // the streets' pieces: of each street under the least width at both ends, with its paint; and every piece of a
-    // street or a big road beyond the near plane (one passing under the camera has them too), those under SOFT_PX and
-    // the rest
-    std::vector<std::pair<geo::Rgba, std::vector<Piece>>> thin;
+    // the streets' pieces: of each street under the least width at both ends, with its paint and whether it lies on a
+    // bridge; and every piece of a street or a big road beyond the near plane (one passing under the camera has them
+    // too), those under SOFT_PX and the rest
+    struct Thin {
+        geo::Rgba paint;
+        std::vector<Piece> pieces;
+        bool bridge = false;
+    };
+    std::vector<Thin> thin;
     std::vector<Piece> edged;
     std::vector<Piece> wide;
     const auto streets = [&](const passes::GroundFrame& decided, double density, WindowDraw&) {
@@ -1437,6 +1466,7 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
         edged.clear();
         wide.clear();
         for (const passes::DrawnTile& t : decided.tiles) {
+            if (t.under) continue; // (a tile's copy kept under it: its streets once)
             for (const geo::Fill& f : t.ground->fills) {
                 // (a big road's asphalt is drawn by its coverage as a street is: its pieces among the edged ones)
                 if (f.kind != geo::FillKind::road && f.kind != geo::FillKind::big) continue;
@@ -1448,7 +1478,9 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
                 for (const Piece& p : street_pieces(*t.cam, *t.ground, f, density)) {
                     if (2 * std::max(p.ha, p.hb) < least) narrow.push_back(p);
                 }
-                if (!narrow.empty()) thin.emplace_back(f.paint.day, std::move(narrow));
+                if (!narrow.empty()) {
+                    thin.push_back({.paint = f.paint.day, .pieces = std::move(narrow), .bridge = f.y > 0.3});
+                }
             }
         }
     };
@@ -1460,11 +1492,14 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
         *session, path, camera, [](const passes::GroundFrame&, double, WindowDraw&) {}, test::sunny(), false,
         1U << static_cast<std::uint32_t>(geo::FillKind::road));
     ATLAS_REQUIRE(without.has_value(), "the window was not drawn without its streets");
-    // the thin streets' ink by their coverage and as they lie
-    const auto ink = [&](const gpu::Pixels& px) {
+    // the thin streets' ink by their coverage and as they lie, against the frame without them (`base`): all of them,
+    // those off a bridge (`part` 1) or those on one (2)
+    const auto ink = [&](const gpu::Pixels& px, const gpu::Pixels* base = nullptr, int part = 0) {
         StreetInk sum;
-        for (const auto& [paint, pieces] : thin) {
-            const StreetInk s = street_ink(px, without->pixels, pieces, paint, least);
+        for (const Thin& street : thin) {
+            if (part != 0 && street.bridge != (part == 2)) continue;
+            const StreetInk s =
+                street_ink(px, base != nullptr ? *base : without->pixels, street.pieces, street.paint, least);
             sum.columns += s.columns;
             sum.off += s.off;
             sum.worst = std::max(sum.worst, s.worst);
@@ -1472,8 +1507,13 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
             sum.one_pixel += s.one_pixel;
             sum.most = std::max(sum.most, s.most);
             sum.tops += s.tops;
+            sum.shares += s.shares;
         }
         return sum;
+    };
+    // a column's ink over the length it crosses, on the average
+    const auto share_of = [](const StreetInk& s) {
+        return s.columns > 0 ? s.shares / static_cast<double>(s.columns) : 0.0;
     };
     const StreetInk covered = ink(with->pixels);
     const StreetInk at_own = ink(own->pixels);
@@ -1549,8 +1589,8 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
             std::lround(std::clamp(static_cast<double>(fading_without->pixels.rgba[i]) + change, 0.0, 255.0)));
     }
     StreetInk fading;
-    for (const auto& [paint, pieces] : thin) {
-        const StreetInk s = street_ink(whole, fading_without->pixels, pieces, paint, least);
+    for (const Thin& street : thin) {
+        const StreetInk s = street_ink(whole, fading_without->pixels, street.pieces, street.paint, least);
         fading.columns += s.columns;
         fading.off += s.off;
         fading.worst = std::max(fading.worst, s.worst);
@@ -1571,6 +1611,128 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
     CHECK(fading_top < 1.1);
     CHECK(settled_top > 0.9);
     CHECK(settled_top < 1.1);
+    // a tile fading in over a tile kept under it that holds the same streets (here its own copy: a level's tile over
+    // the level before's): the settled tile's streets, bridges and big roads mark the pixels they ink and the fading
+    // tile's fills keep off them (Ground::draw_marks), so a street both hold keeps its ink through the fade, where the
+    // two bands stacked (its ink was 1.12, 1.22, 1.32 and 1.42 of its length at these four fades where 1.02 settled,
+    // then fell back in a frame when the tile under went: unmarked, below)
+    const double settled_share = share_of(covered);
+    constexpr std::array<float, 4> steps{0.25F, 0.5F, 0.75F, 0.97F};
+    for (const float step : steps) {
+        const auto over = draw_window(*session, path, camera, streets, test::sunny(), false, 0U, true, step, true);
+        ATLAS_REQUIRE(over.has_value(), "the window was not drawn fading in over its own copy");
+        const StreetInk stacked = ink(over->pixels);
+        const double share = share_of(stacked);
+        const double top = stacked.thin > 0 ? stacked.tops / static_cast<double>(stacked.thin) : 0.0;
+        MESSAGE(std::format("fading in over its own copy at {:.2f}: of {} columns under 2 px, {} off by over 15 % and "
+                            "0.15 px (the worst by {:.1f} %); a column's ink {:.3f} of the length it crosses on the "
+                            "average ({:.3f} settled), its most-covered pixel {:.2f} of its width's share of 2 px",
+                            static_cast<double>(step), stacked.columns, stacked.off, 100 * stacked.worst, share,
+                            settled_share, top));
+        CHECK(stacked.thin == covered.thin);
+        CHECK(stacked.off * 50 <= stacked.columns);
+        CHECK(share > 0.95);
+        CHECK(share < 1.05);
+    }
+    {
+        const auto unmarked = draw_window(*session, path, camera, streets, test::sunny(), false, 0U, true, steps.back(),
+                                          true, 0U, 0U, false);
+        ATLAS_REQUIRE(unmarked.has_value(), "the window was not drawn fading in over its own copy, unmarked");
+        const double share = share_of(ink(unmarked->pixels));
+        MESSAGE(std::format("unmarked at {:.2f}: a column's ink {:.3f} of the length it crosses",
+                            static_cast<double>(steps.back()), share));
+        CHECK(share > 1.3);
+    }
+    // over a land fill both tiles hold, on the land and on a bridge (the meadow's window): the fading tile's land is
+    // kept off the marks as its streets are, so it does not cover the settled band's outer parts at f while its own
+    // band is kept off: no swell and no dip. A street only the fading tile holds comes in at f c and ends at c (the
+    // settled street); one only the tile under holds stays whole until that tile goes (then goes in one frame, as
+    // before). And sized, not held (ENGINE.md's note on the stacking): a taxiway's line, drawn after the marks are
+    // cleared, the two tiles' lines over each other
+    const std::string meadow = markings_window(true);
+    ATLAS_REQUIRE(!meadow.empty());
+    const std::uint32_t roads = 1U << static_cast<std::uint32_t>(geo::FillKind::road);
+    const auto nothing = [](const passes::GroundFrame&, double, WindowDraw&) {};
+    const auto m_with = draw_window(*session, meadow, camera, streets);
+    ATLAS_REQUIRE(m_with.has_value(), "the meadow's window was not drawn");
+    const auto m_without = draw_window(*session, meadow, camera, nothing, test::sunny(), false, roads);
+    ATLAS_REQUIRE(m_without.has_value(), "the meadow's window was not drawn without its streets");
+    // (the pieces of the frame drawn last with them: each copy's are its tile's, whatever fills it leaves out)
+    const StreetInk m_land = ink(m_with->pixels, &m_without->pixels, 1);
+    const StreetInk m_deck = ink(m_with->pixels, &m_without->pixels, 2);
+    MESSAGE(std::format("over the meadow, settled: of {} columns under 2 px off a bridge a column's ink {:.3f} of the "
+                        "length it crosses, of {} on the bridge {:.3f}",
+                        m_land.columns, share_of(m_land), m_deck.columns, share_of(m_deck)));
+    CHECK(m_land.columns > 100);
+    CHECK(m_deck.columns > 100);
+    // the taxiway's line from the same view, settled (against the frame without the lines)
+    style::CameraState lined = camera;
+    lined.parts &= ~part::ground_lines;
+    const auto line_settled = draw_window(*session, meadow, lined, line_pieces({geo::StrokeKind::taxi}));
+    ATLAS_REQUIRE(line_settled.has_value(), "the meadow's window was not drawn with its lines");
+    const StreetInk line_ink =
+        street_ink(line_settled->pixels, m_with->pixels, line_settled->pieces, line_settled->paint, least);
+    const double line_share = share_of(line_ink);
+    MESSAGE(std::format("the taxiway's line from there, settled: {} lines drawn, of {} columns under 4 px a column's "
+                        "ink {:.3f} of the length it crosses",
+                        line_settled->lines, line_ink.columns, line_share));
+    struct Copies {
+        const char* name;
+        std::uint32_t under_off;
+        std::uint32_t fading_off;
+    };
+    // the pixels two frames differ at, and the most a channel differs by
+    const auto drift = [](const gpu::Pixels& a, const gpu::Pixels& b) {
+        std::size_t n = 0;
+        int most = 0;
+        for (std::size_t i = 0; i + 3 < std::min(a.rgba.size(), b.rgba.size()); i += 4) {
+            int d = 0;
+            for (std::size_t k = 0; k < 3; ++k) d = std::max(d, std::abs(int(a.rgba[i + k]) - int(b.rgba[i + k])));
+            n += d > 0 ? 1 : 0;
+            most = std::max(most, d);
+        }
+        return std::pair{n, most};
+    };
+    const std::array<Copies, 3> copies{Copies{.name = "both tiles", .under_off = 0U, .fading_off = 0U},
+                                       Copies{.name = "the fading tile alone", .under_off = roads, .fading_off = 0U},
+                                       Copies{.name = "the tile under alone", .under_off = 0U, .fading_off = roads}};
+    for (const float step : steps) {
+        // each against the frame without the streets at the same fade: a fading tile's land over the same land is
+        // not the bytes of the land at rest (lavapipe's blend rounds it a level off at some fades), which over the
+        // 25 px a column measures would read as the street's ink
+        const auto base = draw_window(*session, meadow, camera, nothing, test::sunny(), false, roads, true, step, true);
+        ATLAS_REQUIRE(base.has_value(), "the meadow's window was not drawn fading in without its streets");
+        const auto [drifted, most] = drift(base->pixels, m_without->pixels);
+        MESSAGE(std::format("the meadow's window without its streets at {:.2f}: {} pixels off its settled frame, by "
+                            "{} at most",
+                            static_cast<double>(step), drifted, most));
+        for (const Copies& c : copies) {
+            const auto over = draw_window(*session, meadow, camera, streets, test::sunny(), false, 0U, true, step, true,
+                                          c.under_off, c.fading_off);
+            ATLAS_REQUIRE(over.has_value(), "the meadow's window was not drawn fading in over its own copy");
+            const double land = share_of(ink(over->pixels, &base->pixels, 1));
+            const double deck = share_of(ink(over->pixels, &base->pixels, 2));
+            // what the street should hold: the settled ink, or f of it where the fading tile alone holds it
+            const double f = c.under_off != 0U ? static_cast<double>(step) : 1.0;
+            std::string sized;
+            if (c.under_off == 0U && c.fading_off == 0U) {
+                // the line's against the frame without it at the same fade
+                const auto line = draw_window(*session, meadow, lined, line_pieces({geo::StrokeKind::taxi}),
+                                              test::sunny(), false, 0U, true, step, true);
+                ATLAS_REQUIRE(line.has_value(), "the meadow's window was not drawn fading in with its lines");
+                const double line_now =
+                    share_of(street_ink(line->pixels, over->pixels, line->pieces, line->paint, least));
+                sized = std::format("; the taxiway's line {:.3f} of its settled ink",
+                                    line_share > 0 ? line_now / line_share : 0.0);
+            }
+            MESSAGE(std::format("over the meadow, a street {} holds, at {:.2f}: a column's ink {:.3f} of the length "
+                                "it crosses off a bridge ({:.3f} settled), {:.3f} on the bridge ({:.3f}){}",
+                                c.name, static_cast<double>(step), land, share_of(m_land), deck, share_of(m_deck),
+                                sized));
+            CHECK(std::abs(land - (f * share_of(m_land))) < 0.05);
+            CHECK(std::abs(deck - (f * share_of(m_deck))) < 0.05);
+        }
+    }
     // straight down from 300 m every street is wider than 8 px: the same pixels with the coverage and without
     style::CameraState down = test::moving(test::s1_camera(lats[2], street_lon, 90.0, 0.0, 300.0));
     down.flags &= ~style::camera_flag::engine_mode;
@@ -1586,6 +1748,40 @@ TEST_CASE("ground: in the app's map a street narrower on the screen than 8 devic
     CHECK(near_edged == 0);
     CHECK(near_wide > 0);
     CHECK_MESSAGE(near_with->pixels.rgba == near_own->pixels.rgba, "a street wider than 8 px changed");
+    // ATLAS_MARKINGS_WINDOW: a window's pack (the real tiles', as the Westerkerk's 14-8414-5384.atlas), its thin
+    // streets' ink from the same height and pitch looking east over the Westerkerk, settled, fading in over its own
+    // copy at the four fades and unmarked near the end: logged, not held
+    const char* real = std::getenv("ATLAS_MARKINGS_WINDOW"); // NOLINT(concurrency-mt-unsafe): read before threads start
+    if (real != nullptr && *real != '\0') {
+        style::CameraState over_real = test::moving(test::s1_camera(52.3746, 4.8840, 90.0, 75.0, 4000.0));
+        over_real.flags &= ~style::camera_flag::engine_mode;
+        over_real.parts = camera.parts;
+        const auto r_with = draw_window(*session, real, over_real, streets);
+        ATLAS_REQUIRE(r_with.has_value(), "the window was not drawn");
+        const auto r_without = draw_window(*session, real, over_real, nothing, test::sunny(), false, roads);
+        ATLAS_REQUIRE(r_without.has_value(), "the window was not drawn without its streets");
+        const StreetInk r_settled = ink(r_with->pixels, &r_without->pixels);
+        std::string said = std::format("{}: of {} columns under 2 px a column's ink {:.3f} of the length it crosses "
+                                       "settled",
+                                       real, r_settled.columns, share_of(r_settled));
+        for (const float step : steps) {
+            const auto base =
+                draw_window(*session, real, over_real, nothing, test::sunny(), false, roads, true, step, true);
+            ATLAS_REQUIRE(base.has_value(), "the window was not drawn fading in without its streets");
+            const auto over =
+                draw_window(*session, real, over_real, streets, test::sunny(), false, 0U, true, step, true);
+            ATLAS_REQUIRE(over.has_value(), "the window was not drawn fading in over its own copy");
+            const StreetInk s = ink(over->pixels, &base->pixels);
+            said += std::format(", {:.3f} at {:.2f}", share_of(s), static_cast<double>(step));
+            if (step == steps.back()) {
+                const auto unmarked = draw_window(*session, real, over_real, streets, test::sunny(), false, 0U, true,
+                                                  step, true, 0U, 0U, false);
+                ATLAS_REQUIRE(unmarked.has_value(), "the window was not drawn fading in over its own copy, unmarked");
+                said += std::format(", unmarked {:.3f}", share_of(ink(unmarked->pixels, &base->pixels)));
+            }
+        }
+        MESSAGE(said);
+    }
 }
 
 #endif

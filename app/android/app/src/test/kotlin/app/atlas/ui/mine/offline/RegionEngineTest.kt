@@ -177,6 +177,10 @@ class RegionEngineTest {
         // its size in the country list and in the estimate: its tiles, their index and its world
         assertEquals(250_000L + 2_000L + 640_000L + 90_000L, e.countryBytes(p))
         assertEquals(892_000L, runBlocking { e.estimate(pack, setOf(RegionLayer.MAP)) }.bytes[RegionLayer.MAP])
+        // and how much of the map is the world, for the screens to say what keeping the country costs
+        assertEquals(640_000L, runBlocking { e.estimate(pack, setOf(RegionLayer.MAP)) }.world)
+        assertEquals(640_000L, runBlocking { e.estimateAll(listOf(pack), setOf(RegionLayer.MAP)) }.world)
+        assertFalse(e.keepsWorld())
         val id = RegionEngine.idFor("Netherlands")
         e.begin(id, "Netherlands", pack, setOf(RegionLayer.MAP))
         // the world's fetch fails: the map layer is not recorded, though its tiles are on the phone
@@ -193,15 +197,29 @@ class RegionEngineTest {
         assertEquals(MapKind.TILES.id, m.layers.getValue(RegionLayer.MAP).kind)
         assertEquals(892_000L, m.layers.getValue(RegionLayer.MAP).bytes)
         assertEquals(892_000L, e.details.value.single().bytes)
+        assertEquals(640_000L, e.details.value.single().world)
+        // a country is kept by its tiles: a new version of the world waits for its keep (WorldFetch's hold)
+        assertTrue(e.keepsWorld())
         // the app's start, and a new version of the world: the kept countries' world again, fetched or only pinned
         e.keepWorld(fetch = false)
         assertEquals(setOf("netherlands") to false, world.calls.last())
         // a country the world lists nothing for keeps none, and costs nothing more
         val bare = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(FakeWorld(emptyMap())))
         assertEquals(252_000L, runBlocking { bare.estimate(pack, setOf(RegionLayer.MAP)) }.bytes[RegionLayer.MAP])
+        assertEquals(0L, runBlocking { bare.estimate(pack, setOf(RegionLayer.MAP)) }.world)
+        // a new version of the world lists another size for it: the region's size follows the world on the phone;
+        // with no list on the phone, its share is what its download recorded
+        val grown = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(FakeWorld(mapOf("netherlands" to 650_000L))))
+        grown.refresh()
+        assertEquals(650_000L, grown.details.value.single().world)
+        assertEquals(902_000L, grown.details.value.single().bytes)
+        bare.refresh()
+        assertEquals(640_000L, bare.details.value.single().world)
+        assertEquals(892_000L, bare.details.value.single().bytes)
         // deleted: its world is no longer kept (the keep of no country, nothing fetched)
         e.delete(id)
         assertEquals(emptySet<String>() to false, world.calls.last())
+        assertFalse(e.keepsWorld())
     }
 
     private fun hitsOf(vararg names: String): Int = requested.count { path -> names.any { path.endsWith(it) } }
@@ -256,6 +274,111 @@ class RegionEngineTest {
         assertNull(d.progress)
         assertEquals(380_000L, d.bytes)
         assertTrue("the map, search and routing were told after each layer: $changed", changed >= 3)
+    }
+
+    /** [thePack] with its places of store [schema] as the list names it ("5", or "\"3\"" written as text), over [box]. */
+    private fun packOfSchema(schema: String?, seed: Int = 1, box: BBox = pack, id: String = "test"): Pack {
+        val places = data(80_000, seed + 1)
+        served["/$id.places"] = places
+        val placesFile = PackFile(
+            PackFile.PLACES, "$id.places", places.size.toLong(), sha(places), listOf(PackPart(server.url("/$id.places").toString(), places.size.toLong(), sha(places))),
+            schema = schema,
+        )
+        // the map the same whatever the places: only they change between two publications here
+        return Pack(id, "Testland", "NL", box, null, "packs-test", listOf(file("atlas", "$id.atlas", data(300_000, 1)), placesFile))
+    }
+
+    /**
+     * A pack's places of a store schema this Atlas cannot open are never downloaded (the user, 12 November: "When I
+     * download the map in the latest alpha it says places are unreadable"): a region too big to import goes without them,
+     * its card says why, and a pack published again with places it reads brings them as an update.
+     */
+    @Test
+    fun aPacksPlacesOfASchemaThisAtlasCannotOpenAreNotDownloadedAndComeWhenThePackIsPublishedAgain() {
+        var current = packOfSchema("5")
+        val e = engine(deps({ listOf(current) }))
+        assertNull(e.readablePlaces(current))
+        assertEquals(300_000L, e.countryBytes(current))
+        val estimate = runBlocking { e.estimate(inside, setOf(RegionLayer.MAP, RegionLayer.PLACES)) }
+        assertEquals(0L, estimate.bytes[RegionLayer.PLACES])
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        assertEquals(0, hitsOf("test.places"))
+        assertFalse(files.places(id).exists())
+        val d = e.details.value.single()
+        assertTrue(d.placesLeftOut)
+        assertTrue("the map is there: the region is whole as it can be", d.complete)
+        assertNull(d.error)
+        assertFalse("search is not among what it holds", "ui.search" in OfflineModel.icons(d))
+        assertFalse(runBlocking { e.placesAgainReadable(id) })
+        // the same pack again: nothing to update
+        assertTrue(runBlocking { e.checkUpdates() }.isEmpty())
+        // published again with places this Atlas reads: an update, which takes them
+        current = packOfSchema("4", seed = 7)
+        assertTrue(runBlocking { e.placesAgainReadable(id) })
+        val found = runBlocking { e.checkUpdates() }
+        assertEquals(setOf(RegionLayer.PLACES), found.getValue(id).layers)
+        runBlocking { e.resume(id, update = true) }
+        assertEquals(1, hitsOf("test.places"))
+        assertEquals(80_000L, files.places(id).length())
+        assertFalse(e.details.value.single().placesLeftOut)
+        assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
+    }
+
+    /** A pack's places of this Atlas's own schema are taken, however the list writes the number, and those of a list that names none. */
+    @Test
+    fun aPacksPlacesOfThisAtlassSchemaAreTaken() {
+        for ((i, schema) in listOf("4", "\"4\"", "4.0", null).withIndex()) {
+            val p = packOfSchema(schema, id = "p$i")
+            val e = engine(deps({ listOf(p) }))
+            assertNotNull("schema $schema", e.readablePlaces(p))
+            assertEquals(380_000L, e.countryBytes(p))
+            val id = RegionEngine.idFor("Around Amsterdam $i")
+            e.begin(id, "Around Amsterdam $i", inside, setOf(RegionLayer.PLACES))
+            runBlocking { e.resume(id) }
+            assertEquals("schema $schema", 80_000L, files.places(id).length())
+            assertEquals(1, hitsOf("p$i.places"))
+        }
+        // not those of the schema before it (packs-20261104's), nor one the list names in a way that is no number
+        for (schema in listOf("3", "x")) assertNull(schema, engine(deps({ emptyList() })).readablePlaces(packOfSchema(schema, id = "q$schema")))
+    }
+
+    /** Where the phone can build the area (a town), the places of a pack it cannot read are imported, as where there is no pack. */
+    @Test
+    fun aTownWhosePacksPlacesCannotBeOpenedImportsThem() {
+        val around = BBox(4.84, 52.32, 4.96, 52.41)
+        val p = packOfSchema("5", box = around)
+        var imported = 0
+        val e = engine(deps({ listOf(p) }, import = { _, _, f, _ -> imported++; f.writeText("imported") }))
+        assertNotNull(e.choosePack(town, listOf(p)))
+        val id = RegionEngine.idFor("The town")
+        e.begin(id, "The town", town, setOf(RegionLayer.PLACES))
+        assertTrue(runBlocking { e.placesAgainReadable(id) })
+        runBlocking { e.resume(id) }
+        assertEquals(1, imported)
+        assertEquals(0, hitsOf("test.places"))
+        assertEquals("overpass", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
+        assertFalse(e.details.value.single().placesLeftOut)
+    }
+
+    /** A region whose places were taken before keeps them where its pack is published again with places it cannot read. */
+    @Test
+    fun placesTakenBeforeStayWhereThePackIsPublishedAgainUnreadable() {
+        var current = packOfSchema("4")
+        val e = engine(deps({ listOf(current) }))
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        val before = files.places(id).readBytes()
+        current = packOfSchema("5", seed = 3)
+        assertEquals(setOf(RegionLayer.PLACES), runBlocking { e.checkUpdates() }.getValue(id).layers)
+        runBlocking { e.resume(id, update = true) }
+        assertTrue(before.contentEquals(files.places(id).readBytes()))
+        assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
+        assertFalse(e.details.value.single().placesLeftOut)
+        // and it is not offered the same unreadable places again
+        assertTrue(runBlocking { e.checkUpdates() }.isEmpty())
     }
 
     @Test

@@ -22,6 +22,7 @@
 #include <utility>
 
 #if defined(__ANDROID__)
+#include <pthread.h>
 #include <sys/resource.h>
 #endif
 
@@ -269,7 +270,16 @@ void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs
         std::vector<std::jthread> helpers;
         const std::size_t extra = std::min<std::size_t>(threads > 1 ? threads - 1 : 0, pieces.size());
         helpers.reserve(extra);
-        for (std::size_t k = 0; k < extra; ++k) helpers.emplace_back(work);
+        for (std::size_t k = 0; k < extra; ++k) {
+            helpers.emplace_back([&work] {
+#if defined(__ANDROID__)
+                // named apart from the thread that made it (atlas-sun: Linux gives a new thread its maker's name), so
+                // that a trace tells a bucket's helpers from its lane's worker; its priority is its maker's
+                (void)::pthread_setname_np(::pthread_self(), "atlas-sun-help");
+#endif
+                work();
+            });
+        }
         work();
     } // the helpers join here
 }
@@ -627,6 +637,9 @@ std::uint64_t Worker::cached() const {
 
 void Worker::loop(const std::stop_token& stop) {
 #if defined(__ANDROID__)
+    // Named, as the tiles' workers and the render thread are (atlas-tiles, atlas-render): made on the render thread,
+    // it would show under that thread's name in a trace.
+    (void)::pthread_setname_np(::pthread_self(), "atlas-sun");
     // Background priority (ENGINE.md gain 8), its helpers' too: made on the render thread, this thread would keep its
     // display priority, and the helpers would take it from this one.
     (void)setpriority(PRIO_PROCESS, 0, 10);

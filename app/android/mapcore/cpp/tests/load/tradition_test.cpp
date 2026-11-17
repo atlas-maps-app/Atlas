@@ -1,7 +1,5 @@
-// A building tradition, typed (load/Tradition.hpp): render/traditions' five files read as generic.py reads them (the
+// A building tradition, typed (load/Tradition.hpp): mapcore/traditions' five files read as generic.py reads them (the
 // ages of an entry in the file's order, the details handed on whole), and what a file cannot hold refused by its path.
-// :mapcorecheck's AmsterdamParityTest and RegionsParityTest hold the looks each tradition gives to the port's, record
-// for record, over the regions' data.
 #include "load/Tradition.hpp"
 #include "tests/base/require.hpp"
 
@@ -23,11 +21,10 @@ std::expected<std::shared_ptr<const load::Tradition>, load::TraditionError> read
     return load::read_tradition(std::as_bytes(std::span(s.data(), s.size())));
 }
 
-/// render/traditions/<id>.json read, or null (the test case failed) where it cannot be.
+/// mapcore/traditions/<id>.json read, or null (the test case failed) where it cannot be.
 std::shared_ptr<const load::Tradition> file(std::string_view id) {
-    std::ifstream in(std::string(ATLAS_TESTS_DIR) + "/../../../../../render/traditions/" + std::string(id) + ".json",
-                     std::ios::binary);
-    ATLAS_REQUIRE_OR_RETURN(nullptr, in.good(), "render/traditions is not in the repository");
+    std::ifstream in(std::string(ATLAS_TESTS_DIR) + "/../../traditions/" + std::string(id) + ".json", std::ios::binary);
+    ATLAS_REQUIRE_OR_RETURN(nullptr, in.good(), "mapcore/traditions is not in the repository");
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     auto t = read(text);
     if (!t) {
@@ -49,7 +46,7 @@ constexpr std::string_view minimal = R"({"name": "n", "says": "s", "floor_h": 3.
 
 } // namespace
 
-TEST_CASE("tradition: render/traditions' five files read as generic.py reads them") {
+TEST_CASE("tradition: mapcore/traditions' five files read as generic.py reads them") {
     const auto paris = file("fr_paris");
     const auto tuscan = file("it_tuscan");
     const auto bergen = file("no_timber");

@@ -80,7 +80,7 @@ fun TwowheelScreen(args: Dest.Twowheel, nav: Navigator) {
     val services = LocalServices.current
     val here = rememberHere()
     var mode by rememberSaveable { mutableStateOf(args.mode?.let { n -> runCatching { Mode.valueOf(n) }.getOrNull() }?.takeIf { it in TWO_WHEELS } ?: Mode.BIKE) }
-    val places by produceState<List<app.atlas.model.Place>?>(null, here) { value = services.go.placesAround(here, RADIUS_M) }
+    val places by produceState<List<app.atlas.model.Place>?>(null, here) { services.go.placesAround(here, RADIUS_M).collect { value = it } }
     val ui = places?.let { Twowheel.around(it, here, mode) }
     val units by services.go.unitsFlow.collectAsStateWithLifecycle()
     // The street each of the nearest spots is on, from the map's data (most stands have no name of their own).

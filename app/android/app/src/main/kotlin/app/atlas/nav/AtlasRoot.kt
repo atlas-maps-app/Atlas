@@ -34,11 +34,11 @@ import app.atlas.Services
 import app.atlas.mapview.LocalMapStage
 import app.atlas.mapview.MapStage
 import app.atlas.mapview.MapStageHost
-import app.atlas.mapview.vk.ChromeFade
 import app.atlas.mapview.vk.LocalChromeShapes
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.AtlasTheme
 import app.atlas.ui.kit.BoardScale
+import app.atlas.ui.kit.GlassFade
 import app.atlas.ui.kit.LocalBackdrop
 import app.atlas.ui.kit.LocalFrostedGlass
 import app.atlas.ui.kit.rememberBackdrop
@@ -73,12 +73,14 @@ fun ProvideServices(services: Services, dark: Boolean = false, content: @Composa
 /**
  * The whole app: the screens of the back stack ([navigator]) with Navigation 3, and the bottom bar over the tab homes.
  * Every entry keeps its own saved state and view models while it is on the stack. Under every screen lies the app's one
- * map ([MapStage]): screens ask for it with `StageMap`, and it stays as they come and go.
+ * map ([MapStage]): screens ask for it with `StageMap`, and it stays as they come and go. A backdrop and a stage
+ * provided above the root ([LocalBackdrop], [LocalMapStage]) are the ones it uses: a test reads the chrome's shapes and
+ * what the map is given through them.
  */
 @Composable
 fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean = false) = BoardScale {
     // the frosted glass of the bars and pills blurs what a screen puts behind it (the Map home's map)
-    val backdrop = rememberBackdrop()
+    val backdrop = LocalBackdrop.current ?: rememberBackdrop()
     CompositionLocalProvider(LocalBackdrop provides backdrop, LocalChromeShapes provides backdrop.shapes) {
         Root(services, navigator, dark)
     }
@@ -88,9 +90,11 @@ fun AtlasRoot(services: Services, navigator: BackStackNavigator, dark: Boolean =
 private fun Root(services: Services, navigator: BackStackNavigator, dark: Boolean) {
     ProvideServices(services, dark) {
         val chrome = remember { Chrome() }
-        val stage = remember { MapStage() }
+        val stage = LocalMapStage.current ?: remember { MapStage() }
         // the bar's 64 px and the margin under it: what a tab home ends above
         val barTop = 64.dp + bottomBarMargin()
+        // the Look settings' frosted glass: the bar's, and whether the screens' fades tell the map's core their alpha
+        val glass by services.frostedGlass.collectAsState(initial = false)
         Box(Modifier.fillMaxSize().background(Atlas.colors.paper)) {
             MapStageHost(stage, cover = Atlas.colors.paper)
             val showBar = navigator.current.isTabRoot && !chrome.barHidden
@@ -115,17 +119,17 @@ private fun Root(services: Services, navigator: BackStackNavigator, dark: Boolea
                     predictivePopTransitionSpec = {
                         fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(240)) { it / 3 } + fadeOut(tween(200)))
                     },
-                    // ChromeFade: an entry's frosted chrome tells the map's core the alpha its fade draws it at
+                    // GlassFade: with the glass on, an entry's frosted chrome tells the map's core the alpha its fade
+                    // draws it at; with it off the fade wakes no frame of the map
                     entryProvider = { dest ->
                         NavEntry(dest, contentKey = dest.route) { d ->
-                            ChromeFade(LocalNavAnimatedContentScope.current) { d.Content(navigator) }
+                            GlassFade(LocalNavAnimatedContentScope.current, glass) { d.Content(navigator) }
                         }
                     },
                 )
             }
             if (showBar) {
                 // solid unless the Look settings' frosted glass is on (the map's core then blurs nothing under the bar)
-                val glass by services.frostedGlass.collectAsState(initial = false)
                 CompositionLocalProvider(LocalFrostedGlass provides glass) {
                     BottomBar(
                         selected = navigator.current.tab,
