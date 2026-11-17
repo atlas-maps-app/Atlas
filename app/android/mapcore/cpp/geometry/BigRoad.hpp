@@ -1,6 +1,6 @@
 // A big road's lanes and width as the ground draws them (geometry/Ground.cpp's draw_over, stage T), and as stage P
 // widens the road's box by (load/Cut.cpp's big_pad): one rule for both, so that the box a road is filed by is never
-// narrower than its asphalt.
+// narrower than its asphalt. Its code (geometry/BigRoad.cpp) is stage P's, which the packer's tool links alone.
 #pragma once
 
 #include <cstdint>
@@ -15,6 +15,11 @@ namespace atlas::geometry {
 /// offset whose bends part by twice the offset).
 inline constexpr std::int64_t most_lanes = 64;
 inline constexpr double widest_road = 250.0;
+
+/// real.py's num(v, default): the number a tag's value starts with (optional ASCII spaces, an optional minus, ASCII
+/// digits, an optional fraction), else the default (the decimal as Python's float() reads it): the ground's reading of
+/// a tag's width, lanes or a runway's width.
+[[nodiscard]] double tag_number(std::optional<std::string_view> v, double fallback) noexcept;
 
 /// A big road's lanes and width (metres) as drawn.
 struct BigRoadSize {

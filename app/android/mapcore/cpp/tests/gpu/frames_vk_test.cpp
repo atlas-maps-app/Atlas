@@ -12,6 +12,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <tuple>
 
 using namespace atlas;
 
@@ -60,7 +61,7 @@ TEST_CASE("frames: a slot the GPU does not finish fails its next frame within th
         Release(Release&&) = delete;
         Release& operator=(Release&&) = delete;
         ~Release() {
-            (void)event_.set();
+            std::ignore = event_.set(); // a lost device has nothing left to wait on it
             renderer_.drain();
         }
 

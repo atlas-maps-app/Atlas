@@ -3,6 +3,7 @@
 // pavements and lines, a stand's lead-in line and a national park's dashed edge, each in the over group's order; and
 // the line stage's dashes along the screen (shaders/ground/lines.slangh's in_dash) as Skia dashes a contour.
 #include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "geometry/Ground.hpp"
 #include "load/Window.hpp"
 #include "tests/base/require.hpp"
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -242,7 +242,7 @@ TEST_CASE("ground: a big road's lanes and width that no road has, or that cannot
         if (s.kind == geo::StrokeKind::edges) {
             const geo::P2 c = g.points[s.line];
             const geo::P2 e = g.points[g.polylines[s.first].first];
-            r.edge = std::hypot(e.x - c.x, e.z - c.z);
+            r.edge = atlas::pymath::hypot(e.x - c.x, e.z - c.z);
             continue;
         }
         r.dashes = s.count;

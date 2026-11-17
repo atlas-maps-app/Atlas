@@ -47,6 +47,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -76,7 +77,7 @@ std::optional<tl::Pack> pack_of(const std::vector<tl::TileFill>& cut, const atla
     if (!bytes) return std::nullopt;
     auto pack = tl::Pack::open(std::make_unique<tl::MemorySource>(std::move(*bytes)));
     if (!pack) {
-        std::fprintf(stderr, "fuzz_stage_t: %s\n", tl::describe(pack.error()).c_str());
+        (void)std::fprintf(stderr, "fuzz_stage_t: %s\n", tl::describe(pack.error()).c_str());
         ATLAS_UNREACHABLE("a pack the writer wrote does not open");
     }
     return std::move(*pack);
@@ -149,12 +150,12 @@ void build_pack(const tl::Pack& pack, std::size_t size, bool window) {
         atlas::Arena arena(std::size_t{1} << 16U, atlas::Growth::grows, "fuzz_stage_t");
         const auto tile = pack.decode(chunk, zstd, decoder, arena, raw, scratch);
         if (!tile) {
-            std::fprintf(stderr, "fuzz_stage_t: %s\n", tl::describe(tile.error()).c_str());
+            (void)std::fprintf(stderr, "fuzz_stage_t: %s\n", tl::describe(tile.error()).c_str());
             ATLAS_UNREACHABLE("a tile the writer wrote does not decode");
         }
         build_tile(*tile, head, style, level, sun);
     }
-    (void)atlas::text::pack_canals(pack, window);
+    std::ignore = atlas::text::pack_canals(pack, window);
 }
 
 // the element pack's SHA-256 a head names: any will do
