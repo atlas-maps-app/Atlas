@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicTextField
@@ -35,9 +37,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.atlas.R
@@ -121,9 +126,60 @@ internal fun PaletteSheet(name: String, code: String, onClose: () -> Unit, onRen
     }
 }
 
+/**
+ * Add from a code (the share sheet's sibling): over the page's scrim a sheet 12 px from the edges, its title (22, 900)
+ * and close button, the line saying where a code comes from, a field to type or paste it in (Geist Mono, on the page's
+ * grey), what is wrong with it where something is ([said], in red), and Paste and Add. It rises over the keyboard.
+ */
+@Composable
+internal fun AddSheet(
+    typed: String,
+    said: String?,
+    onType: (String) -> Unit,
+    onPaste: () -> Unit,
+    onAdd: () -> Unit,
+    onClose: () -> Unit,
+) {
+    BackHandler { onClose() }
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Color(0x730E121A)).clickable(remember { MutableInteractionSource() }, null) { onClose() })
+        Column(
+            Modifier.align(Alignment.BottomCenter).imePadding().padding(start = 12.dp, end = 12.dp, bottom = foot(12f)).fillMaxWidth()
+                .bbox(WHITE, cr(30f)).clickable(remember { MutableInteractionSource() }, null) {}
+                .padding(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 16.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BText(stringResource(R.string.mine_look_add), bt(22f, 900, 28f), INK, Modifier.weight(1f))
+                RoundIcon(LookIcons.CROSS, stringResource(R.string.kit_close)) { onClose() }
+            }
+            BText(stringResource(R.string.mine_look_add_sub), bt(13f, 600, 17f), SOFT, Modifier.padding(top = 2.dp), lines = 3)
+            val fieldCd = stringResource(R.string.mine_look_code_cd)
+            Box(Modifier.padding(top = 14.dp).fillMaxWidth().heightIn(min = 48.dp).bbox(PAGE, cr(14f)).padding(horizontal = 12.dp, vertical = 12.dp)) {
+                BasicTextField(
+                    typed, onType,
+                    Modifier.fillMaxWidth().semantics { contentDescription = fieldCd },
+                    textStyle = bt(15f, 700, 20f, MONO, spacing = 0.6f).copy(color = Color(INK)),
+                    maxLines = 4,
+                    cursorBrush = SolidColor(Color(INK)),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters, autoCorrectEnabled = false, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { onAdd() }),
+                )
+                if (typed.isEmpty()) BText("AT1-…", bt(15f, 700, 20f, MONO, spacing = 0.6f), FAINT)
+            }
+            if (said != null) {
+                BText(said, bt(13f, 700, 17f), 0xFFC8322A, Modifier.padding(top = 8.dp).semantics { liveRegion = LiveRegionMode.Polite }, lines = 3)
+            }
+            Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SheetButton(stringResource(R.string.mine_look_paste), HAIR, INK, Modifier.weight(1f), onPaste)
+                SheetButton(stringResource(R.string.mine_look_add_button), BLUE, WHITE, Modifier.weight(1f), onAdd)
+            }
+        }
+    }
+}
+
 /** The sheet's round button (40 px of the pale grey) with a board icon (18 px). */
 @Composable
-private fun RoundIcon(paths: List<String>, description: String, onClick: () -> Unit) {
+internal fun RoundIcon(paths: List<String>, description: String, onClick: () -> Unit) {
     Box(
         Modifier.size(40.dp).bbox(HAIR, cr(20f)).clickable(role = Role.Button, onClick = onClick).semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
@@ -132,7 +188,7 @@ private fun RoundIcon(paths: List<String>, description: String, onClick: () -> U
 
 /** One of the sheet's two buttons: 48 high, radius 24, 14 px 800. */
 @Composable
-private fun SheetButton(text: String, bg: app.atlas.ui.kit.Argb, fg: app.atlas.ui.kit.Argb, modifier: Modifier, onClick: () -> Unit) {
+internal fun SheetButton(text: String, bg: app.atlas.ui.kit.Argb, fg: app.atlas.ui.kit.Argb, modifier: Modifier, onClick: () -> Unit) {
     Box(modifier.height(48.dp).bbox(bg, cr(24f)).clickable(role = Role.Button, onClick = onClick), contentAlignment = Alignment.Center) {
         BText(text, bt(14f, 800, 18f), fg)
     }
