@@ -5,7 +5,7 @@ One file holds one country's public transport timetable for the days its feed co
 ## What it is for, and what follows from that
 
 - **A search reads it as it lies.** On a phone the file is mapped into memory and never decoded: every number is a little-endian `u32` at a place that can be computed, so a search touches only the pages it needs and the system can drop them again. The layout is chosen for the search, not for size.
-- **It travels compressed as a whole.** How (gzip, zstd, xz) is the publishing step's choice, not the format's.
+- **It travels compressed as a whole.** How (gzip, zstd, xz) is the publishing step's choice, not the format's. The measured sizes are in the last section.
 - **It holds the timetable's facts once,** and one index a round can't start without (the routes at each stop). Whatever else a reader needs, it derives.
 - **Nothing a person could be shown is dropped quietly.** The packer prints every table of a feed it does not read. What is left out by decision is named under "Left out".
 - **It is the same bytes for the same feed and options.** Every order is a sort with a full key, nothing in it is a build date, and walks are computed in integers.
@@ -124,3 +124,27 @@ Read on 17 November 2026, in the feed (`licenses.txt`) and at `gtfs.ovapi.nl/REA
 - Fetching: a User-Agent that says who is asking; `If-Modified-Since` or `If-None-Match` for anyone polling more than once a minute; gzip accepted. The feed changes at most daily. A weekly fetch is far inside that.
 
 Each further country's feed needs its licence read the same way before a file of it is published.
+
+## Sizes
+
+OVapi's feed of 16 November 2026 (version 9696): 28 days from 15 November, 65,221 stops, 2,507 lines, 15,501 patterns, 17,099 routes, 38,263 profiles, 591,858 trips standing for 11,217,792 stop times, 263,264 walks, 66,716 transfer rules. The feed itself is 162.8 MB zipped. Packing it takes two minutes on the Mac this was measured on, which has no zstd.
+
+| What | Sections | At rest | gzip -9 | xz -9 |
+|---|---|---|---|---|
+| Strings: names, ids, headsigns | `STRS` | 13.84 MB | 3.22 MB | 1.47 MB |
+| The trips' strings, as references: `trip_id`, live id, number, kind | `TRIX` | 11.84 MB | 2.91 MB | 1.42 MB |
+| Trips: first departure, profile, service, flags | `TRIP` | 9.47 MB | 1.80 MB | 0.69 MB |
+| Times along the patterns | `PROF`, `PTIM` | 7.90 MB | 0.89 MB | 0.54 MB |
+| Stops | `STOP` | 3.13 MB | 0.97 MB | 0.65 MB |
+| Walks | `XFRI`, `XFER` | 2.37 MB | 0.75 MB | 0.42 MB |
+| The routes at each stop | `SRTI`, `SRTE` | 2.46 MB | 0.74 MB | 0.26 MB |
+| Transfer rules | `TRUL` | 2.13 MB | 0.26 MB | 0.13 MB |
+| Fare units and distances along the patterns | `PFAR`, `PDST` | 1.87 MB | 0.57 MB | 0.42 MB |
+| Patterns, their stops and stop headsigns, routes | `PATN`, `PSTP`, `PHSG`, `ROUT` | 2.38 MB | 0.36 MB | 0.22 MB |
+| Lines, operators, services, `META` | | 0.12 MB | 0.03 MB | 0.02 MB |
+| **The file** | | **57.5 MB** | **12.5 MB** | **6.2 MB** |
+
+- That is 0.55 bytes a stop time as xz, and 1.1 as gzip. Beside the country's 1,372 MB of map tiles the file is 4.2 % at rest and under 1 % as it travels.
+- Nearly half of what travels is ids: the strings and the trips' references to them. They are what ties a trip to live data and to "a specific train".
+- The Architect's trial packed the same feed to 2.0 MB as xz. It kept less (no GTFS trip ids, no fare units, distances or stop headsigns, no walks, rules or route index), and wrote every column as differences in a variable-length code, which a search can't read in place.
+- **Measured and not built:** a filter before the compressor that keeps the format (each `u32` column as differences, its four bytes apart) brings xz to 5.0 MB and gzip to 7.9 MB. It would be a second coding to undo on the phone.
