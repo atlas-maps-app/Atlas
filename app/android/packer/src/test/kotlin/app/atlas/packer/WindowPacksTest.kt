@@ -470,8 +470,9 @@ class WindowPacksTest {
 
         val all = WindowPacks.tileRange(polygon).let { (x0, y0, x1, y1) -> tileBoxes(x0, y0, x1, y1) }
         val inside = all.filter { w -> polygon.holdsBox(w.south - 0.01, w.west - 0.015, w.north + 0.01, w.east + 0.015) }
-        assertTrue("${one.listed} windows", one.listed in inside.size..all.size && one.listed > 10)
-        assertEquals(all.size - one.listed, one.leftOut[LeftOut.BEYOND])
+        assertTrue("${one.listed} windows", one.listed + one.leftOut.getValue(LeftOut.OPEN) in inside.size..all.size && one.listed > 10)
+        // beyond the polygon, or in the empty north-east's frame cells east of 4.92° (the open sea's rule)
+        assertEquals(all.size - one.listed, one.leftOut.getValue(LeftOut.BEYOND) + one.leftOut.getValue(LeftOut.OPEN))
         assertTrue(one.empty in 1 until one.listed)
 
         val index = WindowsIndex.read(one.index.readBytes())
@@ -493,6 +494,76 @@ class WindowPacksTest {
             assertTrue(index.find(entry.x, entry.y) != null)
         }
         assertEquals(data.size.toLong(), at)
+    }
+
+    @Test
+    fun theOpenSeasFrameCellsAreNotListedButACoastsEmptyWindowsAre() {
+        // a polygon over three L10 columns of frame cells by three rows: a bench in one cell, a track lacking its middle
+        // node in the cell east of it, nothing else
+        val e = listOf(
+            node(1, 522800000, 47500000, tagged),
+            node(2, 522800000, 50800000), node(3, 522800000, 51200000),
+        )
+        val pbf = TestPbf(e, listOf(TWay(10, listOf(2, 99, 3), mapOf("highway" to "track")))).write(tmp.newFile("sea.osm.pbf"))
+        val poly = File(tmp.root, "sea.poly").apply {
+            writeText("sea\n1\n   4.40E+00   5.220E+01\n   5.40E+00   5.220E+01\n   5.40E+00   5.260E+01\n   4.40E+00   5.260E+01\n   4.40E+00   5.220E+01\nEND\nEND\n")
+        }
+        val polygon = ClipPolygon.read(poly)
+        val whole = WindowPacks.build(pbf, tmp.newFolder("whole"), polygon, "sea", threads = 2, boxes = ::tileBoxes)
+        fun cell(lat: Double, lon: Double): Pair<Int, Int> {
+            val n = 1 shl 14
+            val la = Math.toRadians(lat)
+            return (Math.floor((lon + 180) / 360 * n).toInt() shr 4) to (Math.floor((1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2 * n).toInt() shr 4)
+        }
+        val bench = cell(52.28, 4.75)
+        val track = cell(52.28, 5.10)
+        assertEquals(bench.second, track.second)
+        assertEquals(bench.first + 1, track.first)
+        val index = WindowsIndex.read(whole.index.readBytes())
+        val listed = (0 until index.size).map { index[it] }
+        // only the two cells that hold something are listed, each with its empty windows: the one by the track's for
+        // the windows the track leaves out
+        assertEquals(setOf(bench, track), listed.map { (it.x shr 4) to (it.y shr 4) }.toSet())
+        assertTrue(whole.leftOut.toString(), whole.leftOut.getValue(LeftOut.WAY) > 0)
+        val data = whole.data.readBytes()
+        fun empty(entry: WindowsIndex.Entry): Boolean {
+            val member = data.copyOfRange(entry.offset.toInt(), (entry.offset + entry.length).toInt())
+            assertArrayEquals(MessageDigest.getInstance("SHA-256").digest(member), entry.sha256)
+            val json = String(GZIPInputStream(member.inputStream()).readBytes(), Charsets.UTF_8)
+            return Json.parseToJsonElement(json).jsonObject["elements"]!!.jsonArray.isEmpty()
+        }
+        val held = listed.filter { !empty(it) }
+        assertEquals(setOf(bench), held.map { (it.x shr 4) to (it.y shr 4) }.toSet())
+        assertTrue(listed.count { (it.x shr 4) to (it.y shr 4) == track && empty(it) } > 100)
+        assertEquals(listed.size - held.size, whole.empty)
+        // the other cells' windows inside the polygon (with its kilometre around each): the open sea, counted, their bytes
+        // gone from the data
+        val all = WindowPacks.tileRange(polygon).let { (x0, y0, x1, y1) -> tileBoxes(x0, y0, x1, y1) }
+        val dlat = 1000 / 110_540.0
+        val inside = all.filter { w ->
+            val dlon = 1000 / (111_320 * Math.cos(Math.toRadians(minOf(89.0, maxOf(Math.abs(w.south), Math.abs(w.north)) + dlat))))
+            polygon.holdsBox(w.south - dlat, w.west - dlon, w.north + dlat, w.east + dlon)
+        }
+        val cells = inside.map { (it.x shr 4) to (it.y shr 4) }.toSet()
+        assertEquals(12, cells.size)
+        assertEquals(cells.size - 2, whole.openCells)
+        assertEquals(inside.count { (it.x shr 4) to (it.y shr 4) !in setOf(bench, track) }, whole.leftOut.getValue(LeftOut.OPEN))
+        assertEquals(all.size, whole.listed + whole.leftOut.values.sum())
+        var at = 0L
+        for (entry in listed) {
+            assertEquals(at, entry.offset)
+            at += entry.length
+        }
+        assertEquals(data.size.toLong(), at)
+        assertEquals(index.dataBytes, at)
+
+        // in shards of the columns, each its own cells' open sea, joined: the whole run's files
+        val dirs = (1..3).map { tmp.newFolder("shard$it") }
+        val shards = dirs.mapIndexed { i, dir -> WindowPacks.build(pbf, dir, polygon, "sea", threads = 2, boxes = ::tileBoxes, shard = i + 1, shards = 3) }
+        assertEquals(whole.leftOut.getValue(LeftOut.OPEN), shards.sumOf { it.leftOut.getValue(LeftOut.OPEN) })
+        val joined = WindowsJoin.join(tmp.newFolder("joined"), dirs, "sea")
+        assertArrayEquals(whole.data.readBytes(), joined.data.readBytes())
+        assertArrayEquals(whole.index.readBytes(), joined.index.readBytes())
     }
 
     @Test

@@ -15,6 +15,9 @@ enum class LeftOut(val why: String) {
     RELATION("a relation in it has members the extract does not hold"),
     TWICE("an element in it has a key twice"),
     TOO_BIG("its answer is over 1 GiB"),
+
+    /** Not by its answer: every window of its frame cell has nothing in it ([app.atlas.packer.WindowPacks]). */
+    OPEN("its frame cell's windows hold nothing (the open sea), which the world's tiles draw"),
 }
 
 /**
