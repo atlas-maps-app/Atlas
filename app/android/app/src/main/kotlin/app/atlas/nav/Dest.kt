@@ -16,6 +16,7 @@ import app.atlas.ui.local.LocalScreen
 import app.atlas.ui.local.NamedAfterScreen
 import app.atlas.ui.local.SoonScreen
 import app.atlas.ui.mine.AboutScreen
+import app.atlas.ui.mine.LicenceScreen
 import app.atlas.ui.mine.DataSourcesScreen
 import app.atlas.ui.mine.ColourMapScreen
 import app.atlas.ui.mine.LayersScreen
@@ -516,6 +517,15 @@ sealed interface Dest {
         override fun Content(nav: Navigator) = AboutScreen(this, nav)
     }
 
+    /** One line of About & licences opened: [what]'s notice, then the text of each licence [licence] names. */
+    data class Licence(val what: String, val licence: String) : Dest {
+        override val route get() = Routes.build("licence", "what" to what, "licence" to licence)
+        override val tab get() = Tab.MINE
+
+        @Composable
+        override fun Content(nav: Navigator) = LicenceScreen(this, nav)
+    }
+
     /** Welcome: the first steps, from [step]. */
     data class Onboarding(val step: Int = 0) : Dest {
         override val route get() = Routes.build("onboarding", "step" to step.takeIf { it > 0 })
@@ -773,6 +783,7 @@ sealed interface Dest {
             "datasources" to { a -> DataSources(a.str("provider")) },
             "privacy" to { _ -> Privacy },
             "about" to { _ -> About },
+            "licence" to { a -> a.str("what")?.let { w -> a.str("licence")?.let { Licence(w, it) } } },
             "onboarding" to { a -> Onboarding(a.int("step") ?: 0) },
             "layers" to { _ -> Layers },
             "maplook" to { a -> MapLook(a.str("code")) },
