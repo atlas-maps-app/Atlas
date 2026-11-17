@@ -120,7 +120,6 @@
     <string name="mine_settings_24h">24 h</string>
     <string name="mine_settings_12h">12 h</string>
     <string name="mine_settings_look">Kartenstil</string>
-    <string name="mine_settings_look_auto">Auto Tag / Nacht</string>
     <string name="mine_settings_names">Namen auf der Karte</string>
     <string name="mine_settings_names_local">lokale Namen</string>
     <string name="mine_settings_text_size">Schriftgröße</string>
@@ -372,7 +371,6 @@
     <string name="mine_layers_grain">Körnung</string>
     <string name="mine_layers_glass">Milchglas</string>
     <string name="mine_layers_tone">Tonwerte</string>
-    <string name="mine_layers_tone_today">%1$d %% · heute</string>
     <string name="mine_layers_tone_value">%1$d %%</string>
     <string name="mine_layers_tone_off">Aus</string>
     <string name="mine_layers_tone_cd">Tonwerte %1$d %%</string>

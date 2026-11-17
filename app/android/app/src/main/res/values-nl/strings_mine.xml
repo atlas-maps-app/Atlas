@@ -120,7 +120,6 @@
     <string name="mine_settings_24h">24 u</string>
     <string name="mine_settings_12h">12 u</string>
     <string name="mine_settings_look">Kaartstijl</string>
-    <string name="mine_settings_look_auto">auto dag / nacht</string>
     <string name="mine_settings_names">Namen op de kaart</string>
     <string name="mine_settings_names_local">lokale namen</string>
     <string name="mine_settings_text_size">Tekstgrootte</string>
@@ -372,7 +371,6 @@
     <string name="mine_layers_grain">Korrel</string>
     <string name="mine_layers_glass">Matglas</string>
     <string name="mine_layers_tone">Toon</string>
-    <string name="mine_layers_tone_today">%1$d %% · vandaag</string>
     <string name="mine_layers_tone_value">%1$d %%</string>
     <string name="mine_layers_tone_off">Uit</string>
     <string name="mine_layers_tone_cd">Toon %1$d %%</string>
