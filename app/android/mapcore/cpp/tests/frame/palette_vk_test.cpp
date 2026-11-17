@@ -696,35 +696,47 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
     map.set_theme(sunny());
     map.set_screen(false, false, false);
-    // the home view over the canals (the ground's reflections test's): their houses and trees mirrored in them
+    // the walls over the home view's canals (the ground's reflections test's view), the trees over a canal from 120 m
+    // (the reflected trees' leaf filter test's, tests/ground/ripple_vk_test.cpp): each mirrored in the water
     const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
-    const style::CameraState on = camera_at(52.3746 + (30.0 / 110540.0), 4.8840 - (10.0 / kx), 52.0, 52.0, 430.0, 1);
-    style::CameraState off = on;
-    off.parts = style::camera_part::reflections;
-    ATLAS_REQUIRE(draw_still(session, map, on));
-    const style::PaletteBlock today{};
-    const gpu::Pixels today_on = settled(session, map, *kept, on, sunny());
-    const gpu::Pixels today_off = settled(session, map, *kept, off, sunny());
-    // where the reflections draw
-    const std::vector<bool> mirrored = changed(today_on, today_off);
-    REQUIRE(count(mirrored) > 100);
     style::PaletteBlock walls{};
     for (std::uint32_t code = 48; code <= 63; ++code) walls.colours.at(code) = 0x01FF00FFU;
     style::PaletteBlock leaves = only(style::palette_slot::leaves, 0xFF00FFU);
     leaves.colours.at(style::palette_slot::evergreen) = 0x01FF00FFU;
-    for (const auto& [name, palette] :
-         {std::pair{std::string_view("walls"), walls}, std::pair{std::string_view("leaves"), leaves}}) {
-        map.set_palette(palette);
-        const std::vector<bool> with = changed(today_on, settled(session, map, *kept, on, sunny()));
+    struct Mirror {
+        std::string_view name;
+        style::CameraState on;
+        style::PaletteBlock palette;
+    };
+    const std::array<Mirror, 2> mirrors{{
+        {.name = "walls",
+         .on = camera_at(52.3746 + (30.0 / 110540.0), 4.8840 - (10.0 / kx), 52.0, 52.0, 430.0, 1),
+         .palette = walls},
+        {.name = "leaves", .on = camera_at(52.3747, 4.8852, 52.0, 60.0, 120.0, 1), .palette = leaves},
+    }};
+    const style::PaletteBlock today{};
+    for (const Mirror& m : mirrors) {
+        style::CameraState off = m.on;
+        off.parts = style::camera_part::reflections;
+        map.set_palette(today);
+        ATLAS_REQUIRE(draw_still(session, map, m.on), std::string(m.name) + " never complete");
+        const gpu::Pixels today_on = settled(session, map, *kept, m.on, sunny());
+        const gpu::Pixels today_off = settled(session, map, *kept, off, sunny());
+        // where the reflections draw
+        const std::vector<bool> mirrored = changed(today_on, today_off);
+        CHECK_MESSAGE(count(mirrored) > 100, m.name);
+        map.set_palette(m.palette);
+        const std::vector<bool> with = changed(today_on, settled(session, map, *kept, m.on, sunny()));
         const std::vector<bool> without = changed(today_off, settled(session, map, *kept, off, sunny()));
         // the pixels the palette moved with the reflections drawn and not without them, where they draw
         std::size_t theirs = 0;
         for (std::size_t i = 0; i < with.size(); ++i) theirs += with[i] && !without[i] && mirrored[i] ? 1U : 0U;
-        MESSAGE(name << ": " << theirs << " of the reflections' " << count(mirrored) << " pixels moved");
-        CHECK_MESSAGE(theirs > 20, name);
+        MESSAGE(m.name << ": " << theirs << " of the reflections' " << count(mirrored) << " pixels moved");
+        CHECK_MESSAGE(theirs > 20, m.name);
+        // and today's palette mirrors them as before (but for work that lands late, as measure allows)
+        map.set_palette(today);
+        CHECK_MESSAGE(count(changed(today_on, settled(session, map, *kept, m.on, sunny()))) <= 8, m.name);
     }
-    map.set_palette(today);
-    CHECK(count(changed(today_on, settled(session, map, *kept, on, sunny()))) == 0);
 }
 
 #endif
