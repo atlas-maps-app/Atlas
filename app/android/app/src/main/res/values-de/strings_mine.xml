@@ -222,7 +222,9 @@
     <string name="mine_about_s_places">Symbole, Vorlagen und Marken</string>
     <string name="mine_about_s_code">Schriften, übernommener Code und Daten</string>
     <string name="mine_about_s_libs">Bibliotheken</string>
-    <string name="mine_about_mit">Atlas selbst steht unter der MIT-Lizenz. Die vollen Lizenztexte liegen im Quellcode in der LICENSES.md jedes Moduls.</string>
+    <string name="mine_about_mit">Atlas selbst steht unter der MIT-Lizenz.</string>
+    <string name="mine_about_licence">Lizenz</string>
+    <string name="mine_about_read">Lizenz lesen</string>
     <string name="mine_phone_title">Neues Telefon</string>
     <string name="mine_phone_text">Nimm Einstellungen, gespeicherte Orte und Listen als eine einfache Datei auf ein anderes Telefon mit: auf ein Laufwerk legen, an dich selbst senden, dort öffnen. Nichts geht über Atlas.</string>
     <string name="mine_phone_in_file">In der Datei</string>
