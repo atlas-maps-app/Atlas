@@ -5,8 +5,9 @@
 //!   4. Clipping: of two footprints that still overlap, in plan and in height, the one whose heights lie within the
 //!      other's gives way where they overlap; where neither holds the other, the one that loses less volume.
 //!   5. What is left over: an outline takes back the ground of its own that nothing draws once every cut is made.
-//! A cut's pieces lose their hairs (Params::hair_m); a piece too small, or with no body wider than Params::thin_m,
-//! goes. Then what is left of each is one ring (crate::bridge), and the counts of what still cannot be there.
+//! A cut is opened by a hair (Params::hair_m): its pieces lose their hairs, and a neck of that width between two
+//! bodies is cut through; a piece too small, or with no body wider than Params::thin_m, goes. Then what is left of
+//! each is one ring (crate::bridge), and the counts of what still cannot be there.
 
 use crate::arrange::{area2_of, boolean, rings_of, Op, Poly};
 use crate::bridge::bridge;
@@ -305,13 +306,191 @@ impl Run {
     fn less(&mut self, k: usize, by: &[usize]) -> Option<Vec<Poly>> {
         let b: Vec<Vec<P>> = by.iter().flat_map(|&j| self.shape(j)).collect();
         let a = self.shape(k);
-        match self.arrange(&a, &b, Op::Diff) {
-            Some(r) => Some(self.tidy(r, true, &[])),
+        match self.cut(&a, &b) {
+            Some((r, plain)) => {
+                self.counts.dropped_m2 += self.m2(plain - area2_of(&r)); // what went as hairs
+                Some(self.tidy(r, true, &[]))
+            }
             None => {
                 self.failed[k] = true;
                 None
             }
         }
+    }
+
+    /// `a` less `b`, and twice the area of that as plainly cut. Where the plain cut leaves a hair (two of its edges
+    /// closer than Params::hair_m: a strip along an edge of `a` that `b` was mapped a centimetre short of, a neck of
+    /// that width between two bodies), the cut is opened there: less a hair's box swept along the edges of `b` that
+    /// run by it, then grown back by the same box within what the plain cut left. The hair goes, the neck is cut,
+    /// and a body keeps its ground but for a corner of that size between two such edges. None where the plain cut
+    /// does not settle; where only the opening does not, the plain cut stands.
+    fn cut(&mut self, a: &[Vec<P>], b: &[Vec<P>]) -> Option<(Vec<Poly>, i128)> {
+        let plain = self.arrange(a, b, Op::Diff)?;
+        let whole = area2_of(&plain);
+        // a piece too small to stay is not opened: it goes as it is
+        let (large, mut small): (Vec<Poly>, Vec<Poly>) =
+            plain.into_iter().partition(|x| self.m2(x.area2()) >= self.p.small_m2);
+        let hairs = self.hairs(&large);
+        let reach = 2.0 * self.p.hair_m;
+        let mut boxes: Vec<Vec<P>> = Vec::new();
+        if !hairs.is_empty() {
+            for r in b {
+                for i in 0..r.len() {
+                    let (p, q) = (r[i], r[(i + 1) % r.len()]);
+                    if hairs.iter().any(|&v| self.apart2(v, p, q).0 < reach * reach) {
+                        boxes.push(self.swept(p, q));
+                    }
+                }
+            }
+        }
+        if boxes.is_empty() {
+            // no hair, or one of its own, as mapped
+            small.extend(large);
+            return Some((small, whole));
+        }
+        let spent = self.spent;
+        let rings = rings_of(&large);
+        let opened = self.arrange(&rings, &boxes, Op::Diff).and_then(|core| {
+            if core.is_empty() {
+                return Some(core);
+            }
+            // grown back where it was cut: along the edges that end in a box
+            let bounds: Vec<Box2> = boxes.iter().map(|h| Box2::of(core::slice::from_ref(h))).collect();
+            let cut_at = |v: P| bounds.iter().any(|x| x.x0 <= v.x && v.x <= x.x1 && x.y0 <= v.y && v.y <= x.y1);
+            let mut around = rings_of(&core);
+            for k in 0..around.len() {
+                for i in 0..around[k].len() {
+                    let (p, q) = (around[k][i], around[k][(i + 1) % around[k].len()]);
+                    if cut_at(p) || cut_at(q) {
+                        around.push(self.swept(p, q));
+                    }
+                }
+            }
+            self.arrange(&rings, &around, Op::Inter)
+        });
+        self.spent = spent; // the opening is not the work's bound: without it the plain cut stands
+        small.extend(opened.unwrap_or(large));
+        Some((small, whole))
+    }
+
+    /// How far a point lies from a segment, squared, in metres, and where along the segment (0 to 1) it is nearest.
+    fn apart2(&self, v: P, a: P, b: P) -> (f64, f64) {
+        let (ex, ey) = ((b.x - a.x) as f64 * self.p.ux, (b.y - a.y) as f64 * self.p.uy);
+        let (px, py) = ((v.x - a.x) as f64 * self.p.ux, (v.y - a.y) as f64 * self.p.uy);
+        let len2 = ex * ex + ey * ey;
+        let t = if len2 > 0.0 { ((px * ex + py * ey) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        let (dx, dy) = (px - t * ex, py - t * ey);
+        (dx * dx + dy * dy, t)
+    }
+
+    /// The corners of a cut's pieces where the piece is a hair: within Params::hair_m of an edge of the same piece
+    /// with the piece's ground between the two, and Params::thin_m or more from it along the ring (a wall mapped in
+    /// steps shorter than a hair is none; nor is a slit, where the ground lies outside).
+    fn hairs(&self, polys: &[Poly]) -> Vec<P> {
+        let limit2 = self.p.hair_m * self.p.hair_m;
+        let (ux, uy) = (self.p.ux, self.p.uy);
+        let (hx, hy) = self.hair();
+        let mut out = Vec::new();
+        for poly in polys {
+            let rings: Vec<&Vec<P>> = core::iter::once(&poly.outer).chain(poly.holes.iter()).collect();
+            // each ring's length up to each of its corners, and around
+            let along: Vec<Vec<f64>> = rings
+                .iter()
+                .map(|r| {
+                    let mut sum = 0.0;
+                    let mut at = Vec::with_capacity(r.len() + 1);
+                    for i in 0..r.len() {
+                        at.push(sum);
+                        let (p, q) = (r[i], r[(i + 1) % r.len()]);
+                        let (dx, dy) = ((q.x - p.x) as f64 * ux, (q.y - p.y) as f64 * uy);
+                        sum += sqrt(dx * dx + dy * dy);
+                    }
+                    at.push(sum);
+                    at
+                })
+                .collect();
+            let inside = |x: f64, y: f64| {
+                let mut odd = false;
+                for r in &rings {
+                    for j in 0..r.len() {
+                        let (a, b) = (r[j], r[(j + 1) % r.len()]);
+                        let (ay, by) = (a.y as f64, b.y as f64);
+                        if (ay > y) != (by > y) && x < a.x as f64 + (y - ay) * (b.x - a.x) as f64 / (by - ay) {
+                            odd = !odd;
+                        }
+                    }
+                }
+                odd
+            };
+            for (ri, r) in rings.iter().enumerate() {
+                for i in 0..r.len() {
+                    let v = r[i];
+                    let hair = rings.iter().enumerate().any(|(si, s)| {
+                        (0..s.len()).any(|j| {
+                            let (a, b) = (s[j], s[(j + 1) % s.len()]);
+                            if v.x < a.x.min(b.x) - hx || v.x > a.x.max(b.x) + hx || v.y < a.y.min(b.y) - hy || v.y > a.y.max(b.y) + hy {
+                                return false;
+                            }
+                            if a == v || b == v {
+                                return false;
+                            }
+                            let (d2, t) = self.apart2(v, a, b);
+                            if d2 >= limit2 || d2 <= 0.0 {
+                                return false;
+                            }
+                            if si == ri {
+                                let n = s.len();
+                                let to = along[si][j] + t * (along[si][j + 1] - along[si][j]);
+                                let way = (to - along[si][i]).abs();
+                                if way.min(along[si][n] - way) < self.p.thin_m {
+                                    return false;
+                                }
+                            }
+                            let (fx, fy) = (a.x as f64 + t * (b.x - a.x) as f64, a.y as f64 + t * (b.y - a.y) as f64);
+                            inside(0.5 * (v.x as f64 + fx), 0.5 * (v.y as f64 + fy))
+                        })
+                    });
+                    if hair {
+                        out.push(v);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// A hair in grid units, each way, rounded up (within bounds whatever the units are said to be).
+    fn hair(&self) -> (i64, i64) {
+        let units = |u: f64| ((self.p.hair_m / u) as i64).clamp(0, 1 << 20) + 1;
+        (units(self.p.ux), units(self.p.uy))
+    }
+
+    /// The box of a hair either way, swept along an edge from end to end: counterclockwise, for an operation's
+    /// second operand.
+    fn swept(&self, p: P, q: P) -> Vec<P> {
+        let (hx, hy) = self.hair();
+        let mut pts: Vec<P> = Vec::with_capacity(8);
+        for c in [p, q] {
+            for (sx, sy) in [(-1, -1), (1, -1), (1, 1), (-1, 1)] {
+                pts.push(P::new(c.x + sx * hx, c.y + sy * hy));
+            }
+        }
+        pts.sort_unstable();
+        pts.dedup();
+        // the hull of the two boxes, by the monotone chain: its lower side, then its upper
+        let mut hull: Vec<P> = Vec::with_capacity(8);
+        for pass in 0..2 {
+            let start = hull.len();
+            for k in 0..pts.len() {
+                let pt = if pass == 0 { pts[k] } else { pts[pts.len() - 1 - k] };
+                while hull.len() >= start + 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], pt) <= 0 {
+                    hull.pop();
+                }
+                hull.push(pt);
+            }
+            hull.pop();
+        }
+        hull
     }
 
     /// A ring's vertices that lie on a straight line between their neighbours dropped, but the mapped ones.
@@ -401,8 +580,9 @@ impl Run {
 
     /// A ring with its corners folded away whose triangle with their two neighbours is flatter than `limit` (the
     /// triangle's least height, m), again and again until none is. With `tips`, only where the ring turns back on
-    /// itself there or steps by less than `limit`: a hair's tip, sharp or blunt, goes and the hair with it, and a
-    /// corner on a wall that runs on stays where it was mapped. Without, every such corner: the ring's body, to
+    /// itself there or steps by less than `limit`, and only where that takes ground from the piece (its ground lies
+    /// to the left of its rings): a hair's tip, sharp or blunt, goes and the hair with it, a corner on a wall that
+    /// runs on stays where it was mapped, and a notch is not filled. Without, every such corner: the ring's body, to
     /// measure it. A corner stays where the edge in its place would cross the ring, a ring of `others` (its result's
     /// other rings) or one of `beside`: what did not cross does not come to.
     fn fold(&self, ring: Vec<P>, limit: f64, tips: bool, others: &[Vec<Vec<P>>], beside: &[Vec<P>]) -> Vec<P> {
@@ -426,9 +606,18 @@ impl Run {
                     return true;
                 }
                 // the triangle's least height: twice its area over its longest side
-                let twice = (cross(u, v, w) as f64).abs() * ux * uy;
-                if twice / longest >= limit || (tips && c >= longest && a.min(b) >= limit) {
+                let turn = cross(u, v, w);
+                let twice = (turn as f64).abs() * ux * uy;
+                if twice / longest >= limit {
                     return false;
+                }
+                if tips {
+                    // a notch is not filled; a corner on a wall that runs on stays, but a step of less than a hair,
+                    // and of the two ends of such a step on a straight wall the mapped one
+                    let mapped = turn == 0 && self.keep.binary_search(&v).is_ok();
+                    if turn < 0 || (c >= longest && (a.min(b) >= limit || mapped)) {
+                        return false;
+                    }
                 }
                 let crosses = |q: &[P]| (0..q.len()).any(|k| proper_cross(u, w, q[k], q[(k + 1) % q.len()]));
                 !crosses(&r) && !others.iter().flatten().any(|q| crosses(q)) && !beside.iter().any(|q| crosses(q))
@@ -706,7 +895,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         };
         let by: Vec<Vec<P>> =
             (0..n).filter(|&k| drawn[k] && boxes[k].meets(&boxes[o])).flat_map(|k| run.shape(k)).collect();
-        let Some(rest) = run.arrange(&full, &by, Op::Diff) else { continue };
+        let Some((rest, _)) = run.cut(&full, &by) else { continue };
         let dropped = run.counts.dropped_m2;
         let rest = run.tidy(rest, true, &[]);
         if rest.is_empty() {
@@ -804,10 +993,10 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
             .filter(|&k| drawn[k] && boxes[k].meets(&boxes[o]))
             .flat_map(|k| run.shape(k))
             .collect();
-        match run.arrange(&full, &by, Op::Diff) {
-            Some(r) => {
+        match run.cut(&full, &by) {
+            Some((r, plain)) => {
                 // slivers (an outline mapped a little wider than its parts) and crumbs count apart
-                run.counts.sliver_m2 += run.m2(area2_of(&r));
+                run.counts.sliver_m2 += run.m2(plain);
                 let dropped = run.counts.dropped_m2;
                 let kept = run.tidy(r, true, &[]);
                 let a = run.m2(area2_of(&kept));
@@ -923,9 +1112,39 @@ mod tests {
         // and without its hairs: the block's four corners, each one mapped
         assert_eq!(ring.len(), 4);
         for q in [P::new(2800, 0), P::new(2800, 1000), P::new(2600, 999), P::new(2600, 1)] {
-            assert!(ring.contains(&q));
+            assert!(ring.contains(&q), "{ring:?}");
         }
         assert_eq!(c.counts.uncovered_outlines, 0);
+    }
+
+    #[test]
+    fn a_neck_a_cut_leaves_between_two_bodies_is_cut_through() {
+        // a 40 x 30 m hall; a tower 20 m wide stands in its middle, from its north wall to a centimetre short of its
+        // south wall: the hall keeps its west and its east 10 m, and between them a neck of a centimetre, 20 m long
+        let hall = fp(vec![sq(0, 0, 4000, 3000)], 0.0, 10.0, false);
+        let tower = fp(vec![sq(1000, 1, 3000, 3000)], 0.0, 20.0, false);
+        let c = clean(&[hall, tower], params());
+        assert!(c.drawn[0] && c.drawn[1]);
+        assert_eq!(c.counts.clipped, 1);
+        assert_eq!(c.counts.overlapping_pairs, 0);
+        let ring = c.ring[0].as_ref().unwrap();
+        // two pieces, joined by one seam (there and back), and no ground between them
+        assert_eq!(crate::bridge::seams(ring).iter().filter(|&&s| s).count(), 2);
+        let a = area2(ring);
+        assert!(a <= 2 * 2 * 1000 * 3000 && a >= 2 * 2 * 1000 * 2999, "{a}");
+    }
+
+    #[test]
+    fn a_needle_of_another_in_a_piece_is_not_filled_in() {
+        // a 200 x 20 m hall, and a taller needle run 190 m into it, 2 cm wide at the hall's wall: the slit it leaves
+        // in the hall is the needle's ground, and stays cut
+        let hall = fp(vec![sq(0, 0, 20000, 2000)], 0.0, 10.0, false);
+        let needle = fp(vec![vec![P::new(-100, 999), P::new(19000, 1000), P::new(-100, 1001)]], 0.0, 20.0, false);
+        let c = clean(&[hall, needle], params());
+        assert!(c.drawn[0] && c.drawn[1]);
+        assert_eq!(c.counts.clipped, 1);
+        assert_eq!(c.counts.overlapping_pairs, 0);
+        assert!(area2(c.ring[0].as_ref().unwrap()) < 2 * 20000 * 2000);
     }
 
     #[test]

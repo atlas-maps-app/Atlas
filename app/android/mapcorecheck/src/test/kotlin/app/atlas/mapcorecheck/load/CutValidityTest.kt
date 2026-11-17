@@ -44,10 +44,10 @@ class CutValidityTest {
     companion object {
         /**
          * The canal ring's mapped pitched roofs the core draws flat, recorded 17 Nov 2026 (core-p14): shapes it does not
-         * build (double_saltbox, many), and 170 of them over a piece of the footprint that has a courtyard, until the
+         * build (double_saltbox, many), and 168 of them over a piece of the footprint that has a courtyard, until the
          * roofs are built from any footprint (a piece without one takes the building's roof by itself). Lower it as
          * they are built; never raise it.
          */
-        const val FLAT_ROOFS = 838L
+        const val FLAT_ROOFS = 836L
     }
 }
