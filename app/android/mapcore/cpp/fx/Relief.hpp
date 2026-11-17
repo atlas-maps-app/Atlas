@@ -62,9 +62,9 @@ struct ReliefStyle {
     std::uint32_t reach = 8;
     double shoulder = 1.1;
     double most = 1.16;
-    double floor = 0.42;
+    double floor = 0.5;
     std::array<double, 3> tint{0.93, 0.97, 1.07};
-    double tint_rate = 1.6;
+    double tint_rate = 1.2;
     double fade = 0.18;
     std::array<double, 2> far{18'000.0, 24'000.0};
 

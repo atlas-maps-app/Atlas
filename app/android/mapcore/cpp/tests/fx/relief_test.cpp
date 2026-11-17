@@ -208,13 +208,14 @@ TEST_CASE("a hollow darkens with its sky-view, and the shade takes the tint") {
     const double rise = wide(with.sun.y);
     const double expected = ((0.8 + (s * rise)) / (1.0 + (s * rise))) * (1.0 + (style.sky_view * -0.2));
     CHECK(hollow == doctest::Approx(expected).epsilon(1e-4));
-    // the tint: none in light, the renders' cool by q = (1 − f)·1.6 in shade
+    // the tint: none in light, the renders' cool by q = (1 − f)·rate in shade
     const shaders::float3 lit = shaders::relief_colour(with, 1.05F);
     CHECK(wide(lit.x) == doctest::Approx(1.05).epsilon(1e-6));
     CHECK(wide(lit.z) == doctest::Approx(1.05).epsilon(1e-6));
     const shaders::float3 shade = shaders::relief_colour(with, 0.8F);
-    CHECK(wide(shade.x) == doctest::Approx(0.8 * (1.0 + ((0.93 - 1.0) * 0.32))).epsilon(1e-5));
-    CHECK(wide(shade.z) == doctest::Approx(0.8 * (1.0 + ((1.07 - 1.0) * 0.32))).epsilon(1e-5));
+    const double q = 0.2 * style.tint_rate;
+    CHECK(wide(shade.x) == doctest::Approx(0.8 * (1.0 + ((0.93 - 1.0) * q))).epsilon(1e-5));
+    CHECK(wide(shade.z) == doctest::Approx(0.8 * (1.0 + ((1.07 - 1.0) * q))).epsilon(1e-5));
     // the strength: none of the light at 0, a tile's and the frame's multiplied
     const shaders::float3 lanes = fx::relief_lanes(fx::relief_texel(-0.3, 0.2, 0.7));
     const shaders::float3 none = shaders::relief_at(with, lanes, 0.0F);

@@ -25,15 +25,16 @@
     // f·(1 + a·(V − 1)); baked a tile from `directions` horizons within `reach` samples.
     "sky_view": {"factor": 0.5, "directions": 16, "reach": 8},
 
-    // The light's range: eased toward `most` from `shoulder` on (the renders clip at 1.16), never under `floor`.
+    // The light's range: eased toward `most` from `shoulder` on (the renders clip at 1.16), never under `floor` (0.5,
+    // not the renders' 0.42: on the boards' views a hollow that deep went charcoal on the warm ground).
     "shoulder": 1.1,
     "most": 1.16,
-    "floor": 0.42,
+    "floor": 0.5,
 
     // Shade takes a little of the blue sky's colour: the tint at its full, and how fast it comes as the light falls,
-    // q = (1 − f)·rate (the renders' cool and 1.6).
+    // q = (1 − f)·rate (the renders' cool; 1.2, not their 1.6, which turned San Gimignano's valleys blue-grey).
     "tint": [0.93, 0.97, 1.07],
-    "tint_rate": 1.6,
+    "tint_rate": 1.2,
 
     // How long a tile's relief fades in where none was drawn, seconds; and the camera's distance from its target over
     // which the relief fades out, metres (the world's relief beyond is ENGINE.md's terrain step 4).
