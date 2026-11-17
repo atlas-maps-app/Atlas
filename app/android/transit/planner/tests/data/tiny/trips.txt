@@ -1,0 +1,11 @@
+route_id,service_id,trip_id,realtime_trip_id,trip_headsign,trip_short_name,trip_long_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed
+R1,WK,T1,AA:1:101,Eind,101,,0,,,1,2
+R1,WK,T1F,AA:1:105,Eind,105,Snelbus,0,,,2,2
+R1,WK,T2,AA:1:102,Eind,102,,0,,,1,2
+R1,WK,T3,AA:1:103,Eind,103,,0,,,0,
+R2,WK,U1,AA:2:201,Fort,201,,0,,,1,1
+R2,WK,U2,AA:2:202,Fort,202,,0,,,1,1
+R2,WK,U3,AA:2:203,Fort,203,,0,,,1,1
+R3,WE,V1,RR:S3:301,Eind,301,Sprinter,0,,,1,1
+R3,WK,V2,RR:S3:302,Eind,302,Sprinter,0,,,1,1
+R3,SP,V3,RR:S3:303,Eind,303,Sprinter,0,,,1,1
