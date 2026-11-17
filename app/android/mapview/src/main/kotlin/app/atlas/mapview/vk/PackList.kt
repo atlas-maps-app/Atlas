@@ -40,7 +40,8 @@ class PackList(
     /**
      * Render packs listed beside the windows, by their files (each pack's id its file's name): in debug and bench builds,
      * those CI puts on its emulator (the canal ring, which its runs draw at the Westerkerk home; MapEngine.benchPacks).
-     * None on a phone.
+     * A terrain pack among them ([terrainFileId]'s names) is listed as the terrain's, for VK bench's relief. None on a
+     * phone.
      */
     private val bench: () -> List<File> = { emptyList() },
     /**
@@ -196,7 +197,14 @@ class PackList(
     fun load(): List<Pack> {
         val out = ArrayList<Pack>()
         val seen = HashSet<String>()
+        val benchTerrain = ArrayList<MapCore.PackRef>()
         for (file in runCatching { bench() }.getOrDefault(emptyList())) {
+            // a terrain pack CI puts there for VK bench's relief: the terrain's, from its file
+            val terrainId = terrainFileId(file.name)
+            if (terrainId != null) {
+                benchTerrain += MapCore.PackRef(terrainId, numberOf(terrainId), MapCore.PackRef.TERRAIN_COUNTRY, path = file.path, offset = file.lastModified(), length = file.length())
+                continue
+            }
             val read = headOf(file, seen)
             val head = read.head ?: continue
             out += packOf(file.name.removeSuffix(".atlas"), MapCore.PackRef.RENDER, head, file, read)
@@ -217,7 +225,7 @@ class PackList(
         // a file gone (evicted, or listed no longer) is forgotten: one written there again is read
         heads.keys.retainAll(seen)
         val worldOut = runCatching { world()?.let { worldOf(it) } }.getOrNull().orEmpty()
-        val terrainOut = runCatching { terrain()?.let { terrainOf(it) } }.getOrNull().orEmpty()
+        val terrainOut = benchTerrain + runCatching { terrain()?.let { terrainOf(it) } }.getOrNull().orEmpty()
         val worldKey = { r: MapCore.PackRef -> listOf(r.id, r.path, r.offset, r.length, r.identity?.contentHashCode()) }
         if (out.map { listOf(it.id, it.file, it.time, it.size) } != packs.map { listOf(it.id, it.file, it.time, it.size) } ||
             worldOut.map(worldKey) != worldRefs.map(worldKey) || terrainOut.map(worldKey) != terrainRefs.map(worldKey)
@@ -351,6 +359,16 @@ class PackList(
         /** The globe's file in the world's folder, and its id (the core's tiles/WorldIndex.hpp). */
         const val WORLD_GLOBE = "world-globe.atlas"
         const val WORLD_GLOBE_ID = "world-globe"
+
+        private val TERRAIN_FILE = Regex("""(.+-terrain)\.(\d+)-(\d+)-(\d+)\.atlas""")
+
+        /**
+         * The core's id of a terrain pack by its file's name (`<region>-terrain.<z>-<x>-<y>.atlas`, as the core's
+         * tools/relief/cut.py names a pack cut out of a terrain run): `terrain/<region>-terrain/<z>/<x>/<y>`, as a pack of
+         * that run's index is named (TerrainFetch.idOf); null for any other name.
+         */
+        fun terrainFileId(name: String): String? =
+            TERRAIN_FILE.matchEntire(name)?.destructured?.let { (index, z, x, y) -> "terrain/$index/$z/$x/$y" }
 
         private const val AMSTERDAM = "Europe/Amsterdam"
 
