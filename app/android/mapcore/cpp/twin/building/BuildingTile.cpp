@@ -17,6 +17,11 @@ namespace {
 
 using Words = std::array<std::uint32_t, 4>;
 
+/// Whether a near cell's place on its wall fits the cells' record (a byte each of its wall's columns and rows).
+[[nodiscard]] bool cells_record_holds(const geometry::Prim& q) noexcept {
+    return q.ncol >= 1 && q.ncol <= 0xFF && q.nrow >= 1 && q.nrow <= 0xFF && q.part < q.ncol * q.nrow;
+}
+
 [[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 
 [[nodiscard]] float f32(double v) noexcept { return static_cast<float>(v); }
@@ -114,6 +119,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     std::vector<const gm::Prim*> edged;
     edged.reserve(g.edged.size());
     std::vector<std::uint16_t> wall_near; // per edged record: its near slot as the heap holds it
+    std::vector<std::uint16_t> wall_also; // per edged record: the flags it is drawn with besides its own
     std::vector<std::array<std::uint32_t, 2>> cells;
     // per primitive of stage T's edged list, its place in the heap's (the near cells leave it), for the windowed walls
     std::vector<std::uint32_t> heap_of(g.edged.size(), 0);
@@ -135,14 +141,23 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
                 heap_of[i] = static_cast<std::uint32_t>(edged.size());
                 edged.push_back(&q);
                 wall_near.push_back(q.near_slot);
+                wall_also.push_back(0);
                 continue;
             }
             ATLAS_ASSERT(wall != SIZE_MAX, "a near cell before its wall");
             const gm::Prim& w = *edged[wall];
             ATLAS_ASSERT(w.item == q.item && w.face == q.face && q.sample == w.sample + 1 + q.part,
                          "a near cell that is not its wall's: its item, face and sample after the wall's");
-            ATLAS_ASSERT(q.ncol >= 1 && q.ncol <= 0xFF && q.nrow >= 1 && q.nrow <= 0xFF && q.part < q.ncol * q.nrow,
-                         "a wall's cells beyond the near cells' record");
+            if (!cells_record_holds(q)) {
+                // a wall of more cells than the cells' record holds (over 255 bays of 9 m: a wall past 2.3 km, a
+                // node mapped a degree off): its cells left out, its one cell drawn near too at the first cell's slot,
+                // as a wall of one cell is (the shader draws a far wall's cells, never the far wall, up close)
+                if (q.part == 0) {
+                    wall_near[wall] = q.near_slot;
+                    wall_also[wall] = gm::prim_flag::near;
+                }
+                continue;
+            }
             if (q.part == 0) wall_near[wall] = q.near_slot;
             ATLAS_ASSERT(q.near_slot == wall_near[wall] + q.part, "a wall's cells' slots not in a run");
             cells.push_back({static_cast<std::uint32_t>(wall),
@@ -234,8 +249,9 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         out[layout.grid_at] = lattice.words();
         layout.grid_steps = lattice.e;
     }
-    const auto put_prim = [&](std::uint32_t at, const gm::Prim& q, std::uint16_t near_slot) {
-        const std::array<std::uint32_t, 4> w{q.face, q.sample, (q.item & 0xFFFFU) | (std::uint32_t{q.flags} << 16U),
+    const auto put_prim = [&](std::uint32_t at, const gm::Prim& q, std::uint16_t near_slot, std::uint16_t also) {
+        const std::array<std::uint32_t, 4> w{q.face, q.sample,
+                                             (q.item & 0xFFFFU) | ((std::uint32_t{q.flags} | also) << 16U),
                                              std::uint32_t{near_slot} | (std::uint32_t{q.far_slot} << 16U)};
         if (g.lean) {
             // building_lean_prim's: the corners' steps two a word, then the words, its face's test point and flags
@@ -257,8 +273,9 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
             out[at + c] = {xyz[0], xyz[1], xyz[2], w[c]};
         }
     };
-    for (std::uint32_t i = 0; i < e; ++i) put_prim(layout.prims_at + (i * pv), *edged[i], wall_near[i]);
-    for (std::uint32_t i = 0; i < p; ++i) put_prim(layout.prims_at + ((e + i) * pv), g.plain[i], g.plain[i].near_slot);
+    for (std::uint32_t i = 0; i < e; ++i) put_prim(layout.prims_at + (i * pv), *edged[i], wall_near[i], wall_also[i]);
+    for (std::uint32_t i = 0; i < p; ++i)
+        put_prim(layout.prims_at + ((e + i) * pv), g.plain[i], g.plain[i].near_slot, 0);
     for (std::uint32_t i = 0; i < n; ++i) {
         Words& w = out[layout.cells_at + (i / 2)];
         const std::size_t at = std::size_t{2} * (i % 2);
