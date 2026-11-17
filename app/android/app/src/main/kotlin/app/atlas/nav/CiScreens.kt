@@ -70,6 +70,7 @@ object CiScreens {
         "datasources" to Dest.DataSources(),
         "privacy" to Dest.Privacy,
         "about" to Dest.About,
+        "licence" to Dest.Licence("Orbitron", "SIL Open Font License 1.1"),
         "onboarding" to Dest.Onboarding(),
         "onboarding2" to Dest.Onboarding(1),
         "onboarding3" to Dest.Onboarding(2),

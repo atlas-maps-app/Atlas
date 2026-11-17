@@ -39,6 +39,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -157,6 +158,19 @@ public:
         passes_ = passes;
         if (builder_) builder_->set_passes(passes);
     }
+    /// The passes the frames record from now on by their names in the registry (VK bench's configurations and its
+    /// split of the GPU's time by pass: MapCore.passes): those named in `keep`, comma-separated, or every one for "".
+    /// "" or why not (a name no registered pass has), the passes then as they were.
+    [[nodiscard]] std::string set_passes_named(std::string_view keep);
+    /// The last frame's counts by pass, a line each in the registry's order: `<name> <draws> <dispatches>
+    /// <triangles>` (a pass left out records nothing, so counts none); "" before a frame builder is made.
+    [[nodiscard]] std::string passes_line() const;
+    /// The stage F of the frames drawn since the last call, part by part (FrameBuilder::stage_f_parts: the scene's
+    /// update, the globals, the ranks, then each pass's select and update together in the registry's order, ms): the
+    /// parts a frame first, then each frame's, oldest first; and from now on kept for the next call where `keep` (VK
+    /// bench, around a measurement), else not kept at all (the app's map keeps none). At most 16,384 frames are kept;
+    /// later ones go unkept until the next call. Any thread.
+    [[nodiscard]] std::vector<double> take_stage_f(bool keep);
     /// The frames' ranks over the rows of the resident tiles not drawn too, or not (FrameBuilder::rank_undrawn: the
     /// pinch audit's measure), for the frame builder there is.
     void rank_undrawn(bool on) noexcept {
@@ -266,6 +280,12 @@ private:
     std::optional<scene::World::Landing> landing_;
     std::uint64_t active_number_ = 0;
     std::string active_id_;
+    /// take_stage_f's frames, kept by counts() (the session's call once a frame is drawn) while stage_f_keep_.
+    mutable std::mutex stage_f_mutex_;
+    mutable std::vector<double> stage_f_log_;
+    mutable std::size_t stage_f_width_ = 0;
+    bool stage_f_keep_ = false; // under stage_f_mutex_
+    void keep_stage_f() const noexcept;
     std::unique_ptr<FrameBuilder> builder_;
     std::unique_ptr<scene::World> world_; // after the builder: it goes first (its workers run the builder's passes)
     fx::FieldCache* fields_ = nullptr;    // the world's noise fields (it holds them), while made
