@@ -1,12 +1,13 @@
 # Public transport: the timetable file and the planner
 
-Atlas plans public transport journeys on the phone, without a signal, from a file of the country's timetable. This folder holds the file's format, the tool that makes the file, and the planner that reads it. Nothing here is wired into the app yet, and no workflow builds or publishes anything.
+Atlas plans public transport journeys on the phone, without a signal, from a file of the country's timetable. This folder holds the file's format, the tool that makes the file, and the planner that reads it. `.github/workflows/timetable.yml` checks all of it on Linux and publishes the Netherlands' file once a week. Nothing here is wired into the app yet.
 
 | Here | What |
 |---|---|
 | `FORMAT.md` | The timetable file: what it holds, byte by byte; what a reader checks; what is left out; the Dutch feed's licence. |
 | `pack/ttpack.py` | Makes the file from a GTFS feed. Python's standard library only. |
-| `pack/test_ttpack.py` | Holds the packer to the bytes of the tests' hand-written feed, and its cosine table to the planner's. |
+| `pack/ttlist.py` | Writes `timetable.json`, the list of published files (FORMAT.md, "How it is published"). |
+| `pack/test_ttpack.py` | Holds the packer to the bytes of the tests' hand-written feed, its cosine table to the planner's, its refusals, and the list. |
 | `planner/` | The planner, in Rust: the crate `atlas_transit` and the tool `atlas-transit`. The standard library only; the library itself is core and alloc, with no unsafe code. `src/lib.rs` says what it holds to. |
 | `rust-toolchain.toml` | The Rust it is built with, the same as the core's. |
 
@@ -18,7 +19,7 @@ OVapi publishes the Netherlands' timetable daily at `gtfs.ovapi.nl/nl/gtfs-nl.zi
 python3 -I app/android/transit/pack/ttpack.py ~/atlas/var/transit/gtfs/gtfs-nl.zip ~/atlas/var/transit/tt/nl.tt --sizes
 ```
 
-It takes about two minutes for the country (run it through `~/atlas/home/bin/heavy`), prints what it kept, what it left out and what it had to mend, and with `--sizes` each section's size. `--first`, `--days`, `--box` and `--agency` cut a piece, as the tests' file of Utrecht is.
+It takes about two minutes for the country (run it through `~/atlas/home/bin/heavy`), prints what it kept, what it left out and what it had to mend, and with `--sizes` each section's size. With `--strict` a table or column it does not read is a refusal. `--first`, `--days`, `--box` and `--agency` cut a piece, as the tests' file of Utrecht is.
 
 ## Asking it
 
@@ -49,7 +50,7 @@ CARGO_TARGET_DIR=~/atlas/var/build/transit-planner ~/.cargo/bin/cargo test --man
 CARGO_TARGET_DIR=~/atlas/var/build/transit-planner ~/.cargo/bin/cargo build --lib --no-default-features --manifest-path app/android/transit/planner/Cargo.toml   # the library without std, as an app links it
 ```
 
-`python3 -I app/android/ci/affected.py` names the first two for a change here. The tests run on a feed written by hand (`planner/tests/data/tiny`, every answer worked out on paper) and on a piece of the real timetable (the city of Utrecht, two days). With the whole country's file at hand, `ATLAS_TRANSIT_FILE=<file> cargo test --test fixed` also runs the fixed journeys across the country.
+`python3 -I app/android/ci/affected.py` names the first two for a change here; the workflow's first job runs all three on Linux, with a million files a little wrong. The tests run on a feed written by hand (`planner/tests/data/tiny`, every answer worked out on paper) and on a piece of the real timetable (the city of Utrecht, two days). With the whole country's file at hand, `ATLAS_TRANSIT_FILE=<file> cargo test --test fixed` also runs the fixed journeys across the country.
 
 How the planner is held to being right:
 - **A second opinion.** `src/reference.rs` is a connection scan over the same file, sharing the places, the walks and what is closed, and nothing of the search. The two must agree on the earliest arrival, the latest departure, and every best pair over a window.

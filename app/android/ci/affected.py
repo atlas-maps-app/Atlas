@@ -238,7 +238,7 @@ def main():
         print(f"The transit planner (in {ANDROID / 'transit'}; Rust from ~/.cargo/bin, a build folder outside the tree):")
         print("  python3 -I pack/test_ttpack.py   # the packer: the hand-written feed's bytes, the cosine table")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
-        print("  (no workflow runs these yet: they are local until one does)")
+        print("  (.github/workflows/timetable.yml runs them on Linux, weekly and by hand; no push starts it)")
     if other:
         print()
         print("Other paths, which no local suite covers (CI's do): " + ", ".join(other[:12]) + (" ..." if len(other) > 12 else ""))
