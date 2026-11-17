@@ -4,7 +4,7 @@
 // accepts must hold together: each container's children lie in the nodes before it, nested no deeper than the values'
 // coding allows, each string and key in the pool and UTF-8, each map's keys different. A tradition read must hold what
 // generic.py's looks rely on: options to pick from and colours to choose, a roof for every age.
-// Seeds: fuzz/corpus/fuzz_json (render/traditions' five files).
+// Seeds: fuzz/corpus/fuzz_json (mapcore/traditions' five files).
 #include "base/assert.hpp"
 #include "load/Tradition.hpp"
 #include "tiles/Bytes.hpp"
