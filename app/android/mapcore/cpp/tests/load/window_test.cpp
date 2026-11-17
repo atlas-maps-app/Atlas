@@ -773,8 +773,19 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
                     // as the region loaded whole has it? (the same element filed at the same place, the same ring)
                     const tl::GridPoint in_whole =
                         tl::nearest_grid(whole, whole.x(ref.lon), whole.z(ref.lat)); // the same grid point, both frames
-                    const std::string key = key_of(b, k.part, in_whole);
-                    const auto it = as_whole.find(key);
+                    // (a centroid is its corners' mean, which for one footprint in a hundred lies half a grid step
+                    // between two points: it then rounds either way, by the frame it is measured in)
+                    std::string key = key_of(b, k.part, in_whole);
+                    auto it = as_whole.find(key);
+                    for (std::int32_t d = 0; d < 9 && it == as_whole.end(); ++d) { // the nine points around it
+                        const tl::GridPoint beside{in_whole.lat + (d / 3) - 1, in_whole.lon + (d % 3) - 1};
+                        const std::string other = key_of(b, k.part, beside);
+                        if (as_whole.contains(other) || hidden_whole.contains(other)) {
+                            key = other;
+                            it = as_whole.find(key);
+                            break;
+                        }
+                    }
                     if (it == as_whole.end()) {
                         const bool hidden = hidden_whole.contains(key);
                         const bool moved = !hidden && elements_whole.contains(element_of(b, k.part));
