@@ -807,6 +807,11 @@ void Session::push_record(const FrameRecord& r) {
     if (read_ + ring_.size() < write_) read_ = write_ - ring_.size(); // a reader too slow loses the oldest
 }
 
+void Session::publish_records() {
+    const std::scoped_lock lock(records_mutex_);
+    published_ = write_;
+}
+
 std::size_t Session::records(FrameRecord* out, std::size_t capacity) {
     const std::scoped_lock lock(records_mutex_);
     std::size_t n = 0;
