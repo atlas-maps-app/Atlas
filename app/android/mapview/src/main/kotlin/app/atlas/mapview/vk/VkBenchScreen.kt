@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.IntOffset
@@ -220,10 +221,14 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
         onDispose { lifecycle.removeObserver(observer) }
     }
 
-    // The run: a coroutine through the plan; the screen shows its host and its pills.
+    // The run: a coroutine through the plan; the screen shows its host and its pills. The screen stays on while it runs
+    // (a phone's screen timeout would stop the app and pause the run, and the rest and power figures need the screen on).
+    val view = LocalView.current
+    DisposableEffect(view) { onDispose { view.keepScreenOn = false } }
     LaunchedEffect(chosen, core) {
         val c = core ?: return@LaunchedEffect
         val plan = chosen ?: return@LaunchedEffect
+        view.keepScreenOn = true
         val run = BenchRun(context, c, source, metrics, plan) { line ->
             lines += line
             Log.i(MapEngine.TAG, line)
@@ -270,6 +275,7 @@ fun VkBenchScreen(config: CoreConfig, length: VkBench.Length?, modifier: Modifie
             // Left in the colour stage (the screen went away): back to the frame's 8 bits, its guard stage closed.
             run.leaveColour()
             activeRun = null
+            view.keepScreenOn = false
         }
         status = if (table.isNotEmpty()) "Done. Tap Share table and pick the app to send it with (or Copy table, and paste it)."
         else "Done. Copy the report and paste it back."
