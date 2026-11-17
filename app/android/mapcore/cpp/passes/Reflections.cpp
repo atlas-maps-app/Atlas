@@ -30,6 +30,7 @@
 #include "frame/FrameLayout.hpp"
 #include "gen/layouts.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "passes/Ground.hpp"
 #include "passes/Team.hpp"
 #include "scene/Residency.hpp"
@@ -564,6 +565,9 @@ void prepare_reflections(geo::GroundTile& g) {
                              .top_y = (2 * wy) - top,
                              .apex_y = (2 * wy) - h};
         const std::size_t n = poly.size();
+        // a seam (geometry/Seams.hpp: a courtyard's or a piece's join) is no wall: no mirrored wall and no sample, as
+        // the sun's samples count them (sun/Samples.cpp's reflection)
+        const std::vector<std::uint8_t> seam = geo::seams(poly);
         // a gable end mirrors as a downward triangle on a wall across the ridge (the longest edge's, turned where the
         // roof is oriented across)
         const bool gabled = m.rh != 0.0 && m.gabled && n > 0;
@@ -589,7 +593,7 @@ void prepare_reflections(geo::GroundTile& g) {
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3) continue;
+            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
             const geo::V3 nrm = geo::vnorm({ez, 0.0, -ex});
             g.mirror_walls.push_back({.from = static_cast<std::uint32_t>(i),
                                       .sample = head.count++,
