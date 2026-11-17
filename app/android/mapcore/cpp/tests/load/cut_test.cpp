@@ -18,6 +18,7 @@
 #include "tiles/Checksums.hpp"
 #include "tiles/Chunks.hpp"
 #include "tiles/Directory.hpp"
+#include "tiles/Dump.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/PackWriter.hpp"
 #include "tiles/Payload.hpp"
@@ -41,6 +42,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -56,7 +58,28 @@ struct Compared {
     std::size_t missing = 0;
     std::size_t differ = 0;
     std::size_t bytes = 0;
+    std::vector<tl::LayerLines> layers; ///< how the pack's tiles and the core's compare, layer by layer
 };
+
+/// The layers the buildings' cleaning touches: the buildings and parts themselves and their variants, and what stage P
+/// derives from their rings: the things on their walls (a door's and a shopfront's wall), and the quays they line.
+constexpr std::array<std::string_view, 5> touched_layers = {"building", "part", "variant", "thing", "quay"};
+
+/// Holds every layer the buildings' cleaning does not touch to the port's, line for line (until cut 2 makes the test
+/// packs with the core), and says how the touched ones moved.
+void check_layers(const Compared& c, std::string_view what) {
+    std::string moved;
+    for (const tl::LayerLines& l : c.layers) {
+        if (std::ranges::find(touched_layers, l.layer) != touched_layers.end()) {
+            moved += std::format(" {} {}/{}", l.layer, l.differ, l.lines);
+            continue;
+        }
+        CHECK_MESSAGE(l.differ == 0, what, ": layer ", l.layer,
+                      ", which the buildings' cleaning does not touch: ", l.differ, " of ", l.lines,
+                      " lines are not the port's");
+    }
+    MESSAGE(what, ": lines not the port's, of the layers the cleaning touches:", moved);
+}
 
 Compared compare_with_pack(const std::string& path, const std::vector<tl::TileFill>& cut) {
     Compared out;
@@ -83,7 +106,16 @@ Compared compare_with_pack(const std::string& path, const std::vector<tl::TileFi
         const auto written = tl::encode_tile(*it->second);
         ATLAS_REQUIRE_OR_RETURN(out, written.has_value(), tl::describe(written.error()));
         out.bytes += written->size();
-        if (*written != raw) ++out.differ;
+        if (*written == raw) {
+            tl::compare_layers(*theirs, *theirs, out.layers); // the same tile: its lines counted, none differing
+            continue;
+        }
+        ++out.differ;
+        tl::TileDecoder again;
+        atlas::Arena arena2(8U << 20U, atlas::Growth::grows, "cut test, the core's tile");
+        const auto ours = again.decode(*written, arena2);
+        ATLAS_REQUIRE_OR_RETURN(out, ours.has_value(), tl::describe(ours.error()));
+        tl::compare_layers(*ours, *theirs, out.layers);
     }
     return out;
 }
@@ -148,7 +180,7 @@ TEST_CASE("load: the Westerkerk's tiles cut from its raw.json: the bundled pack'
     CHECK(counts.overlapping_pairs == 0);
     CHECK(counts.uncovered_outlines == 0);
     CHECK(counts.unsettled == 0);
-    CHECK(counts.unjoined == 0);
+    CHECK(counts.unmeasured == 0);
     const auto again = westerkerk();
     ATLAS_REQUIRE(again != nullptr);
     CHECK(same_tiles(cut, again->tiles));
@@ -160,6 +192,7 @@ TEST_CASE("load: the Westerkerk's tiles cut from its raw.json: the bundled pack'
             " ms");
     CHECK(cut.size() == c.tiles);
     CHECK(c.missing == 0);
+    check_layers(c, "the Westerkerk");
 }
 
 TEST_CASE("load: the Westerkerk's pack written from its raw.json, with the core's own head and style, has the "
@@ -313,6 +346,7 @@ TEST_CASE("load: the canal ring's tiles cut from its raw.json: the pack's tiles,
     CHECK(c.missing == 0);
     CHECK(counts.overlapping_pairs == 0);
     CHECK(counts.uncovered_outlines == 0);
+    check_layers(c, "the canal ring");
 }
 
 namespace {

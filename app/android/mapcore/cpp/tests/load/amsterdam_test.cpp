@@ -282,8 +282,8 @@ TEST_CASE("load: a position off the Earth refuses the document, naming its eleme
 
 // What cannot be there (the user, 16 Nov 2026): a metro station below the ground (10) and a structure under a road
 // (12) beside a building under a bridge that stands on the ground (11); a building whose relation maps it again, with a
-// courtyard (13 in 14, as Gebouw Plancius in r3604243), and whose numbers no building has (a 1000 km height, three
-// billion storeys, a base below the ground).
+// courtyard and a roof the way lacks (13 in 14, as Gebouw Plancius in r3604243), and whose numbers no building has (a
+// 1000 km height, three billion storeys, a base below the ground).
 constexpr std::string_view cannot_be = R"({"version": 0.6, "elements": [
 {"type": "way", "id": 10, "tags": {"building": "transportation", "location": "underground", "layer": "-1"},
  "geometry": [{"lat": 52.3760, "lon": 4.8840}, {"lat": 52.3760, "lon": 4.8842}, {"lat": 52.3761, "lon": 4.8842},
@@ -298,7 +298,8 @@ constexpr std::string_view cannot_be = R"({"version": 0.6, "elements": [
  "building:levels": "3000000000", "min_height": "-5"},
  "geometry": [{"lat": 52.3770, "lon": 4.8840}, {"lat": 52.3770, "lon": 4.8846}, {"lat": 52.3774, "lon": 4.8846},
               {"lat": 52.3774, "lon": 4.8840}, {"lat": 52.3770, "lon": 4.8840}]},
-{"type": "relation", "id": 14, "tags": {"type": "multipolygon", "building": "yes"},
+{"type": "relation", "id": 14, "tags": {"type": "multipolygon", "building": "yes", "name": "Gebouw Plancius",
+ "roof:shape": "hipped", "roof:height": "3"},
  "members": [{"type": "way", "ref": 13, "role": "outer", "geometry": [{"lat": 52.3770, "lon": 4.8840},
               {"lat": 52.3770, "lon": 4.8846}, {"lat": 52.3774, "lon": 4.8846}, {"lat": 52.3774, "lon": 4.8840},
               {"lat": 52.3770, "lon": 4.8840}]},
@@ -313,14 +314,27 @@ TEST_CASE("load: nothing that cannot be there") {
     const auto loaded = load::load_amsterdam(*doc, load::westerkerk_frame(), load::amsterdam_palette());
     ATLAS_REQUIRE(loaded.has_value());
     const load::Scene& s = *loaded;
-    ATLAS_REQUIRE(s.buildings.size() == 2); // 10 and 12 below the ground, 14's ring is 13's
-    CHECK(s.buildings[0].id == 11);
-    CHECK(s.counts.underground == 2);
+    ATLAS_REQUIRE(s.buildings.size() == 4); // 14's ring is 13's
+    // 10 and 12, below the ground, are hidden as mapped: kept for their places and picking, drawn by nothing
+    CHECK(s.buildings[0].id == 10);
+    CHECK(s.buildings[0].hidden);
+    CHECK(s.buildings[0].underground);
+    CHECK(s.buildings[1].id == 11);
+    CHECK(!s.buildings[1].hidden);
+    CHECK(s.buildings[2].id == 12);
+    CHECK(s.buildings[2].hidden);
+    CHECK(s.counts.underground == 1);       // by its location
+    CHECK(s.counts.underground_layer == 1); // by its layer alone
     CHECK(s.counts.doubles == 1);
-    const load::Building& b = s.buildings[1];
+    const load::Building& b = s.buildings[3];
     CHECK(b.id == 13);
     CHECK(!b.relation);
+    // the way wins where both map a key (its name), and takes from its relation what it lacks (its roof)
     CHECK(b.tags.is("name", "Plancius"));
+    CHECK(s.counts.doubles_disagree == 1);
+    CHECK(b.roof == "hipped");
+    CHECK(b.roof_h == 3.0);
+    CHECK(!b.guessed.has(load::Guess::roof_shape));
     // its courtyard, from the relation, cut out of it and joined by a seam
     CHECK(b.poly.size() == 10);
     CHECK(std::ranges::count(atlas::geometry::seams(b.poly), std::uint8_t{1}) == 2);
@@ -329,7 +343,7 @@ TEST_CASE("load: nothing that cannot be there") {
     // numbers no building has, taken as unmapped: the height guessed, the storeys from it, the base on the ground
     CHECK(b.h == 10.0);
     CHECK(b.guessed.has(load::Guess::height));
-    CHECK(b.levels == 3);
+    CHECK(b.levels == 2); // of 10 m less its roof's 3
     CHECK(b.min == 0.0);
     CHECK(s.counts.bounded == 1);
     CHECK(load::building_num(b.tags, "height") == std::nullopt);

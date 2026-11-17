@@ -21,8 +21,8 @@ import java.nio.file.Files
  * The packer on the core's stage P (ENGINE.md step 3): the bundled render packs made by the packer with the core's tool
  * (`atlas_stagep`, `-Datlas.stagep`) making their content (the tiles, the head and the style) come out the same each time,
  * byte for byte: the Westerkerk's living map and the canal ring. Since 16 Nov 2026 (core-p14) the core's buildings are its
- * own, no longer the port's, so a region's pack cut by the core keeps the port's tiles (the same tiles, the head and the
- * style byte for byte) and not their bytes. So a pack and a window the phone builds from the same data come from the same
+ * own, no longer the port's, so a pack cut by the core keeps the port's tiles, its head and its style byte for byte, and
+ * every layer the buildings' cleaning does not touch line for line ([LoadHost.TOUCHED]), until cut 2. So a pack and a window the phone builds from the same data come from the same
  * code. The tool also refuses what the port's scene would refuse (a survey's heights).
  */
 class StagePPackerTest {
@@ -32,6 +32,7 @@ class StagePPackerTest {
     @Test
     fun theBundledPacksCutByTheCoresStagePAreTheSameEachTime() {
         assumeTrue("the core's stage P tool (-Datlas.stagep)", tool != null && tool.canExecute())
+        val tiles = File(System.getProperty("atlas.tiles") ?: error("atlas.tiles names no bundled render packs"))
         val root = repo ?: error("atlas.repo names no repository")
         val sources = listOf(
             "amsterdam" to File(root, "app/android/app/src/main/assets/packs/amsterdam.atlas"),
@@ -52,6 +53,10 @@ class StagePPackerTest {
                     out
                 }
                 assertEquals("$id: the pack cut by the core's stage P again is not the same: ${difference(made[1].readBytes(), made[0].readBytes())}", "the same", difference(made[1].readBytes(), made[0].readBytes()))
+                // beside the packer's own bundled pack (the port's cut): every tile, and every layer the cleaning does not touch
+                val want = File(tiles, "$id.atlas")
+                assertTrue("no bundled render pack ${want.path}", want.isFile)
+                thePortsButTheBuildings(id, made[0], want)
             }
         } finally {
             work.deleteRecursively()
@@ -90,7 +95,7 @@ class StagePPackerTest {
                 val p = SceneToTiles.pack(element, theirs, File(work, "packer-$id"), survey = survey) { println("packer $it") }
                 val t2 = System.nanoTime()
                 println("stagep $id without its survey: ${c.written.chunks.size} tiles, ${c.written.bytes} bytes in ${(t1 - t0) / 1_000_000} ms; the packer's ${p.written.chunks.size} tiles, ${p.written.bytes} bytes in ${(t2 - t1) / 1_000_000} ms")
-                assertEquals("$id: the core's tiles are not the packer's", p.written.chunks.size, c.written.chunks.size)
+                thePortsButTheBuildings(id, mine, theirs)
                 val heads = difference(c.head.toBytes(), p.head.toBytes())
                 assertEquals("$id: the core's head is not the packer's: $heads", "the same", heads)
                 val styles = difference(c.style.toBytes(), p.style.toBytes())
@@ -186,6 +191,18 @@ class StagePPackerTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    /**
+     * The pack [core] the core's stage P cut holds the tiles of [port], the packer's own cut of the same data, and every layer the
+     * buildings' cleaning does not touch is the port's line for line (LoadHost.comparePacks, [LoadHost.TOUCHED]).
+     */
+    private fun thePortsButTheBuildings(id: String, core: File, port: File) {
+        val summary = LoadHost.comparePacks(core.path, port.path)
+        println("stagep $id beside the port's: $summary")
+        assertTrue("$id: the packs do not compare: $summary", summary.startsWith("tiles="))
+        assertTrue("$id: the core's tiles are not the packer's: $summary", " missing=0 extra=0 " in summary)
+        assertEquals("$id: layers the buildings' cleaning does not touch that are not the port's: $summary", emptyList<String>(), LoadHost.untouchedThatDiffer(summary))
     }
 
     /** Where two byte strings first differ, or "the same". */

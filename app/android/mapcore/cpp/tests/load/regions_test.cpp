@@ -4,21 +4,26 @@
 // ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it,
 // with nothing that cannot be there (load/Clean.hpp; ATLAS_CLEAN_DUMP writes its buildings for the fault detectors).
 // No tag's number, however large, ends a load or refuses one, in any look or cut.
+#include "base/pymath/PyMath.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
 #include "load/Regions.hpp"
 #include "load/Tradition.hpp"
+#include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/Json.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -34,6 +39,11 @@ namespace {
 
 namespace load = atlas::load;
 namespace osm = atlas::osm;
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
 
 std::expected<osm::Document, osm::ReadError> read(std::string_view s) {
     return osm::read_overpass(std::as_bytes(std::span(s.data(), s.size())));
@@ -142,7 +152,8 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
             loaded->land.size(), " land covers, ", loaded->water.size(), " water rings, ", loaded->water_holes.size(),
             " islands, in ", ms, " ms");
     const load::BuildingCounts& c = loaded->counts;
-    MESSAGE("grachten's buildings: ", c.underground, " below the ground, ", c.doubles, " doubles, ", c.bounded,
+    MESSAGE("grachten's buildings: ", c.underground, " below the ground by location and ", c.underground_layer,
+            " by layer, ", c.doubles, " doubles (", c.doubles_disagree, " disagreeing), ", c.bounded,
             " with numbers past the bounds, ", c.courtyards, " with courtyards, ", c.covered,
             " outlines drawn less their "
             "parts, ",
@@ -153,8 +164,9 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
     CHECK(c.overlapping_pairs == 0);
     CHECK(c.uncovered_outlines == 0);
     CHECK(c.unsettled == 0);
-    CHECK(c.unjoined == 0);
-    CHECK(c.underground == 31);
+    CHECK(c.unmeasured == 0);
+    CHECK(c.underground == 17);       // location=underground
+    CHECK(c.underground_layer == 11); // a layer below 0 alone
     CHECK(c.doubles == 8);
     CHECK(loaded->buildings.size() == buildings_after);
     CHECK(loaded->parts.size() == parts_after);
@@ -186,6 +198,69 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
         }
         f << "]}\n";
         MESSAGE("grachten's buildings written to ", out);
+    }
+}
+
+TEST_CASE("load: every region's buildings, with nothing that cannot be there and what the cleaning did "
+          "(ATLAS_REGIONS_DIR)") {
+    const std::string dir = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: the regions are not loaded here");
+        return;
+    }
+    std::vector<std::filesystem::path> regions;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) {
+        if (std::filesystem::exists(e.path() / "raw.json") && std::filesystem::exists(e.path() / "region.json")) {
+            regions.push_back(e.path());
+        }
+    }
+    std::ranges::sort(regions);
+    for (const std::filesystem::path& folder : regions) {
+        const std::string name = folder.filename().string();
+        const std::string text = read_text(folder / "raw.json");
+        const std::string json = read_text(folder / "region.json");
+        const auto doc = read(text);
+        const auto r = atlas::tiles::read_json(std::as_bytes(std::span(json.data(), json.size())));
+        if (!doc || !r) {
+            MESSAGE(name, ": does not read");
+            continue;
+        }
+        const atlas::tiles::Value origin = r->root().find("origin").value_or(atlas::tiles::Value());
+        const atlas::tiles::Value bbox = r->root().find("bbox").value_or(atlas::tiles::Value());
+        if (origin.size() != 2 || bbox.size() != 4) continue;
+        const double lat0 = origin.child(0).number().value_or(0);
+        std::shared_ptr<const load::Tradition> tradition;
+        if (const auto t = r->root().find("tradition"); t && t->string())
+            tradition = load::tradition_named(*t->string());
+        const load::RegionConfig region{.name = name,
+                                        .frame = {.lat0 = lat0,
+                                                  .lon0 = origin.child(1).number().value_or(0),
+                                                  .kx = 111320 * atlas::pymath::cos(atlas::pymath::radians(lat0)),
+                                                  .kz = 110540},
+                                        .bbox = {bbox.child(0).number().value_or(0), bbox.child(1).number().value_or(0),
+                                                 bbox.child(2).number().value_or(0),
+                                                 bbox.child(3).number().value_or(0)},
+                                        .tradition = tradition,
+                                        .palette = load::region_palette(name)};
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto loaded = load::load_region(*doc, region);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        ATLAS_REQUIRE(loaded.has_value(), name);
+        const load::BuildingCounts& c = loaded->counts;
+        const std::string line = std::format(
+            "region {}: {} buildings, {} parts; pairs {} uncovered {} flat {} (by a seam {}); underground {}+{} "
+            "doubles {} (disagreeing {}) bounded {} courtyards {} covered {} hidden {} clipped {} raised {} vanished "
+            "{} "
+            "seamed {} unsettled {} unmeasured {}; uncovered {:.1f} m², slivers {:.1f} m², dropped {:.1f} m²; {:.0f} "
+            "ms",
+            name, loaded->buildings.size(), loaded->parts.size(), c.overlapping_pairs, c.uncovered_outlines,
+            c.flat_roofs, c.flat_by_seam, c.underground, c.underground_layer, c.doubles, c.doubles_disagree, c.bounded,
+            c.courtyards, c.covered, c.hidden, c.clipped, c.raised, c.vanished, c.seamed, c.unsettled, c.unmeasured,
+            c.uncovered_m2, c.sliver_m2, c.dropped_m2, ms);
+        MESSAGE(line);
+        (void)std::printf("%s\n", line.c_str()); // NOLINT: the lines a run's log keeps
+        CHECK_MESSAGE(c.overlapping_pairs == 0, name);
+        CHECK_MESSAGE(c.uncovered_outlines == 0, name);
     }
 }
 
