@@ -482,7 +482,8 @@ fn trip(tt: &Timetable, args: &[String]) -> Result<(), String> {
 }
 
 /// A fixed journey's line: name, from, to, date, time, what is asked (`depart`, `arrive`, or `window` and minutes),
-/// and what the scan answered. Tabs between.
+/// and what the scan answered. Tabs between. A line `#feed <version>` says which feed the answers are of: on a file
+/// of another feed the planner is still held to the scan, and the kept answers are not compared.
 fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
     let path = args.first().ok_or("fixed: the journeys' file")?;
     let write = args.iter().any(|a| a == "--write");
@@ -490,7 +491,15 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
     let mut planner = Planner::new(*tt);
     let mut reference: Option<(i32, Reference)> = None;
     let (mut out, mut wrong, mut count) = (String::new(), 0, 0);
+    let mut same_feed = true;
     for line in text.lines() {
+        if let Some(version) = line.strip_prefix("#feed ") {
+            same_feed = write || tt.meta("feed_version") == Some(version.trim());
+            if write {
+                let _ = writeln!(out, "#feed {}", tt.meta("feed_version").unwrap_or(""));
+                continue;
+            }
+        }
         if line.starts_with('#') || line.trim().is_empty() {
             out.push_str(line);
             out.push('\n');
@@ -512,8 +521,13 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
         }
         let scan = &reference.as_ref().unwrap().1;
         let a = planner.plan(&q);
-        let show = |v: &[(i32, i32)]| if v.is_empty() { "none".to_string() } else { v.iter().map(|(d, a)| format!("{}>{}", clock(*d), clock(*a))).collect::<Vec<_>>().join(" ") };
         let mut bad = Vec::new();
+        for j in a.journeys.iter() {
+            if let Some(why) = impossible(&planner, &q, j) {
+                bad.push(format!("a journey that can't be made: {why}"));
+            }
+        }
+        let show = |v: &[(i32, i32)]| if v.is_empty() { "none".to_string() } else { v.iter().map(|(d, a)| format!("{}>{}", clock(*d), clock(*a))).collect::<Vec<_>>().join(" ") };
         let theirs = match asked {
             "depart" | "arrive" => {
                 let (ours, theirs) = if asked == "depart" {
@@ -536,7 +550,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
         };
         count += 1;
         let kept = f.get(6).copied().unwrap_or("");
-        if !write && kept != theirs {
+        if !write && same_feed && kept != theirs {
             bad.push(format!("the file keeps {kept}, the scan says {theirs}"));
         }
         if a.cut_short {
@@ -552,7 +566,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
         std::fs::write(path, out).map_err(|e| format!("{path}: {e}"))?;
         println!("{count} journeys written with the scan's answers; {wrong} where the planner differs");
     } else {
-        println!("{count} fixed journeys: {} agree with the scan and with what the file keeps", count - wrong);
+        println!("{count} fixed journeys: {} agree with the scan{}", count - wrong, if same_feed { " and with what the file keeps" } else { "; the file is of another feed than the kept answers, which were not compared" });
     }
     Ok(if wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

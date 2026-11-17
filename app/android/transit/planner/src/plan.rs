@@ -112,8 +112,19 @@ struct Index {
     /// A bit a stop: a rule changes from here; to here.
     rule_from: Vec<u64>,
     rule_to: Vec<u64>,
+    /// What the rules that bind (not possible, least time, the next one waits, stay seated) are about, sorted, for
+    /// the search forward and the search back: (stop, trip) changed from, (stop, line) changed from, and the stops
+    /// where a rule names only what is changed to.
+    bound: [Bound; 2],
     /// No trip's time in its service day passes this.
     max_time: i32,
+}
+
+#[derive(Default)]
+struct Bound {
+    trips: Vec<(u32, u32)>,
+    lines: Vec<(u32, u32)>,
+    stops: Vec<u32>,
 }
 
 /// What a search writes, kept between searches so that it is allocated once.
@@ -150,6 +161,8 @@ struct Work {
     /// By round: the labels held apart; and a bit a round for each stop that has one.
     held: Vec<Vec<Held>>,
     held_rounds: Vec<u32>,
+    /// By round: the rides held so far in this query, as (stop, trip, day offset, cost).
+    special_seen: Vec<Vec<(u32, u32, i32, u32)>>,
     found: Vec<Found>,
     front: Vec<Found>,
 }
@@ -207,10 +220,22 @@ impl<'a> Planner<'a> {
         let words = (stops as usize).div_ceil(64);
         let (mut rule_from, mut rule_to) = (vec![0u64; words], vec![0u64; words]);
         let mut rules_by_to = Vec::new();
+        let mut bound = [Bound::default(), Bound::default()];
         for i in 0..tt.rules() {
             let r = tt.rule(i);
             if r.from_trip == NONE && r.to_trip == NONE && r.from_line == NONE && r.to_line == NONE {
                 continue; // a rule for everyone is in the walks already
+            }
+            if (1..=4).contains(&r.kind) {
+                for (b, (stop, trip, line)) in bound.iter_mut().zip([(r.from_stop, r.from_trip, r.from_line), (r.to_stop, r.to_trip, r.to_line)]) {
+                    if trip != NONE {
+                        b.trips.push((stop, trip));
+                    } else if line != NONE {
+                        b.lines.push((stop, line));
+                    } else {
+                        b.stops.push(stop);
+                    }
+                }
             }
             rule_from[(r.from_stop >> 6) as usize] |= 1 << (r.from_stop & 63);
             rule_to[(r.to_stop >> 6) as usize] |= 1 << (r.to_stop & 63);
@@ -235,8 +260,16 @@ impl<'a> Planner<'a> {
                 }
             }
         }
+        for b in bound.iter_mut() {
+            b.trips.sort_unstable();
+            b.trips.dedup();
+            b.lines.sort_unstable();
+            b.lines.dedup();
+            b.stops.sort_unstable();
+            b.stops.dedup();
+        }
         let max_time = (latest.saturating_add(longest)).min(2 * MAX_TIME) as i32;
-        Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, max_time }, work: Work::default() }
+        Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, bound, max_time }, work: Work::default() }
     }
 
     pub fn timetable(&self) -> &Timetable<'a> {
@@ -521,6 +554,10 @@ impl Search<'_, '_> {
         w.marks.resize_with(rounds, Vec::new);
         w.held.resize_with(rounds, Vec::new);
         for h in w.held.iter_mut() {
+            h.clear();
+        }
+        w.special_seen.resize_with(rounds, Vec::new);
+        for h in w.special_seen.iter_mut() {
             h.clear();
         }
         for &(s, secs) in last {
@@ -890,33 +927,17 @@ impl Search<'_, '_> {
         if self.back { (b, a) } else { (a, b) }
     }
 
-    /// Whether the feed has a rule (other than "recommended") for changing from this trip at this stop.
-    fn has_rules(&mut self, trip: u32, stop: u32) -> bool {
-        let (lo, hi) = self.rules_from(stop);
-        if lo == hi {
+    /// Whether the feed has a rule that binds for changing from this trip at this stop.
+    fn has_rules(&self, trip: u32, stop: u32) -> bool {
+        let b = &self.ix.bound[self.back as usize];
+        if b.trips.binary_search(&(stop, trip)).is_ok() || b.stops.binary_search(&stop).is_ok() {
+            return true;
+        }
+        let at = b.lines.partition_point(|e| e.0 < stop);
+        if b.lines.get(at).is_none_or(|e| e.0 != stop) {
             return false;
         }
-        self.steps += (hi - lo) as u64;
-        let mut line = NONE;
-        for i in lo..hi {
-            let r = self.rule_at(i).1;
-            let (from, to) = self.sides(&r);
-            if !(1..=4).contains(&r.kind) || (from.1 == NONE && from.2 == NONE && to.1 == NONE && to.2 == NONE) {
-                continue;
-            }
-            if from.1 == trip {
-                return true;
-            }
-            if from.1 == NONE {
-                if line == NONE {
-                    line = self.tt.route(self.tt.route_of_trip(trip)).line;
-                }
-                if fits(from.2, line) {
-                    return true;
-                }
-            }
-        }
-        false
+        b.lines.binary_search(&(stop, self.tt.route(self.tt.route_of_trip(trip)).line)).is_ok()
     }
 
     /// Walks a route from its stop `from` on: those riding alight where it helps, those ready at a stop board the
@@ -1000,6 +1021,17 @@ impl Search<'_, '_> {
         let (from, to) = if self.back { (pos, e.pos) } else { (e.pos, pos) };
         let label = Label { time, cost, prev: e.from, next: NONE, stop, trip: e.trip, from: from as u16, to: to as u16, off: e.off as i8, kind: RIDE };
         let index = if special {
+            // the same ride at no less cost was held in an earlier search: nothing new
+            let seen = &mut self.w.special_seen[round];
+            self.steps += seen.len() as u64 / 8;
+            if seen.iter().any(|o| (o.0, o.1, o.2) == (stop, e.trip, e.off) && o.3 <= cost) {
+                return;
+            }
+            if seen.len() >= 65_536 {
+                self.cut = true;
+                return;
+            }
+            seen.push((stop, e.trip, e.off, cost));
             self.w.labels.push(label);
             self.w.special.push(self.w.labels.len() as u32 - 1);
             self.w.labels.len() as u32 - 1
