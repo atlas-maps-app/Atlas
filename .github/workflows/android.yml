@@ -47,6 +47,14 @@ on:
         description: Keep this run's caches (ccache's, Gradle's, the emulator's SDK archives) for its branch, to measure warm runs of a change to CI (delete them after)
         type: boolean
         default: false
+      look:
+        description: "The phone look tool's views to draw (PhoneLook: name=lat,lon,distance,bearing,pitch;...), over windows the core builds from the canal ring's data (empty = none)"
+        type: string
+        default: ''
+      look_base:
+        description: A commit whose core draws the same views too, beside this run's (before and after; empty = this run's alone)
+        type: string
+        default: ''
 
 # A push to `app` never cancels a run in progress: each push's run has a group of its own and goes to its end beside
 # the others, so an agent pushes when its change is ready, not when CI is idle, and every commit of `app` gets its word
@@ -151,6 +159,11 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -297,6 +310,11 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -416,6 +434,11 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -483,7 +506,7 @@ jobs:
   mapcorecheck:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: ${{ github.event.inputs.look != '' && 110 || 60 }}
     permissions:
       contents: read
       actions: write # a push to app deletes the older entries of the job's ccache cache
@@ -514,6 +537,10 @@ jobs:
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "Map core host build: LLVM's clang and libc++, and ccache"
         run: |
           LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
@@ -603,6 +630,40 @@ jobs:
         run: >-
           ./gradlew :mapcorecheck:test -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64
           -Datlas.likeness.report=${{ github.workspace }}/likeness --continue --stacktrace
+      # A run by hand that asks for the look (inputs look and look_base): the phone look tool's views drawn on lavapipe
+      # with this run's core over the windows it builds from the canal ring's data (-Datlas.phonelook.elements), and,
+      # where look_base names a commit, the same views with that commit's core, built from its own checkout, over
+      # the windows it builds from the same data: before and after, the same cameras, moment and data (artifact `look`).
+      - name: The look, with this run's core
+        if: ${{ !cancelled() && steps.core_host.outcome == 'success' && github.event.inputs.look != '' }}
+        env:
+          VIEWS: ${{ github.event.inputs.look }}
+        run: >-
+          ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.phonelook.out="$GITHUB_WORKSPACE/look/after"
+          -Datlas.phonelook.views="$VIEWS" -Datlas.phonelook.elements="$GITHUB_WORKSPACE/cache/packs/regions/grachten.atlas"
+          --stacktrace
+      - name: The look, with the core of ${{ github.event.inputs.look_base }}
+        if: ${{ !cancelled() && steps.core_host.outcome == 'success' && github.event.inputs.look != '' && github.event.inputs.look_base != '' }}
+        env:
+          VIEWS: ${{ github.event.inputs.look }}
+          BASE: ${{ github.event.inputs.look_base }}
+        working-directory: .
+        run: |
+          git fetch -q --depth=1 origin "$BASE"
+          git worktree add -q "$RUNNER_TEMP/look-base" FETCH_HEAD
+          mkdir -p "$RUNNER_TEMP/look-base/cache/packs/regions"
+          cp cache/packs/regions/grachten.atlas "$RUNNER_TEMP/look-base/cache/packs/regions/"
+          cd "$RUNNER_TEMP/look-base/app/android"
+          ./gradlew :mapcorecheck:coreHost :mapcorecheck:test --tests '*PhoneLook.draw' \
+            -Datlas.phonelook.out="$GITHUB_WORKSPACE/look/before" -Datlas.phonelook.views="$VIEWS" \
+            -Datlas.phonelook.elements="$RUNNER_TEMP/look-base/cache/packs/regions/grachten.atlas" --stacktrace
+      - name: Keep the look
+        if: ${{ !cancelled() && github.event.inputs.look != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: look
+          path: look/
+          if-no-files-found: warn
       # The artifacts Gradle fetched itself, past the caches it restored (apk's): a notice, so a test job that needed a
       # download is seen; none once apk has kept an entry with the tests' artifacts (testDependencies).
       - name: What Gradle fetched
