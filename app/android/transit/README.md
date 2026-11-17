@@ -19,7 +19,7 @@ OVapi publishes the Netherlands' timetable daily at `gtfs.ovapi.nl/nl/gtfs-nl.zi
 python3 -I app/android/transit/pack/ttpack.py ~/atlas/var/transit/gtfs/gtfs-nl.zip ~/atlas/var/transit/tt/nl.tt --sizes
 ```
 
-It takes about two minutes for the country (run it through `~/atlas/home/bin/heavy`), prints what it kept, what it left out and what it had to mend, and with `--sizes` each section's size. With `--strict` a table or column it does not read is a refusal. `--first`, `--days`, `--box` and `--agency` cut a piece, as the tests' file of Utrecht is.
+It takes a minute or two and 1.8 GB of memory for the country (run it through `~/atlas/home/bin/heavy`), prints what it kept, what it left out and what it had to mend, and with `--sizes` each section's size. With `--strict` a table or column it does not read is a refusal. `--first`, `--days`, `--box` and `--agency` cut a piece, as the tests' file of Utrecht is.
 
 ## Asking it
 
