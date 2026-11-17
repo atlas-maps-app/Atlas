@@ -9,8 +9,7 @@ import app.atlas.model.OsmType
  * says so), and its region downloaded again. A change of the category rules is no reason: a store opened under other
  * rules than it was filed under files its places anew from their tags ([Filing], [StoreRefile]). Nor is a table that a
  * store can do without: one opened from before it has it created empty ([PlaceStore] runs [CREATE] on every opening),
- * and an Atlas from before it does not read it (the outlines, 10 November 2026). A bump says in [READS] whether the
- * schema before it is still opened: it is where the old one differs from the new only by such tables and by its filing.
+ * and an Atlas from before it does not read it (the outlines, 10 November 2026).
  *
  * Coordinates are integers of 1e-7 degree ([E7]). Tags are varint blobs over two dictionaries ([TagBlob]); the lookup
  * table holds only the keys searches filter on ([TagIndex]); pure address points live in a compact table of their
@@ -18,20 +17,6 @@ import app.atlas.model.OsmType
  */
 internal object StoreSchema {
     const val VERSION = 4
-
-    /**
-     * The schemas this Atlas opens: its own, and those that differ from it only by tables a store can do without and by
-     * how its places were filed. Such a store is opened as one of [VERSION] whose places are filed anew ([PlaceStore]: the
-     * tables it lacks created empty, its filing forgotten, so [StoreRefile] files it under this Atlas's rules). Every
-     * other is refused ([StoreVersionException]), and its region taken again.
-     *
-     * 3: the packs of 4 November 2026 (packs-20261104, the last published) and the stores Atlas wrote before alpha 32.
-     * They lack the outline and paths tables (a store from before them keeps none, which a park's page draws without)
-     * and are filed under the categories before their regrouping of 5 November; their places, tags, words and text
-     * index are as 4's (the user, 12 November: "When I download the map in the latest alpha it says places are
-     * unreadable").
-     */
-    val READS: Set<Int> = setOf(3, VERSION)
 
     /** The tokenizer of both text indexes: Atlas folds the text itself, so it only splits; `_` starts a kind token. */
     private const val TOKENIZE = "tokenize=\"unicode61 remove_diacritics 0 tokenchars '_'\""

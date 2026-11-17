@@ -326,10 +326,10 @@ class RegionEngineTest {
         assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
     }
 
-    /** A pack's places of schema 3 (packs-20261104, the last published) and of this Atlas's own are taken, however the list writes the number. */
+    /** A pack's places of this Atlas's own schema are taken, however the list writes the number, and those of a list that names none. */
     @Test
-    fun aPacksPlacesOfASchemaThisAtlasOpensAreTaken() {
-        for ((i, schema) in listOf("3", "\"3\"", "4", "4.0", null).withIndex()) {
+    fun aPacksPlacesOfThisAtlassSchemaAreTaken() {
+        for ((i, schema) in listOf("4", "\"4\"", "4.0", null).withIndex()) {
             val p = packOfSchema(schema, id = "p$i")
             val e = engine(deps({ listOf(p) }))
             assertNotNull("schema $schema", e.readablePlaces(p))
@@ -340,8 +340,8 @@ class RegionEngineTest {
             assertEquals("schema $schema", 80_000L, files.places(id).length())
             assertEquals(1, hitsOf("p$i.places"))
         }
-        // nor one it cannot read, nor one the list names in a way that is no number
-        for (schema in listOf("2", "x")) assertNull(schema, engine(deps({ emptyList() })).readablePlaces(packOfSchema(schema, id = "q$schema")))
+        // not those of the schema before it (packs-20261104's), nor one the list names in a way that is no number
+        for (schema in listOf("3", "x")) assertNull(schema, engine(deps({ emptyList() })).readablePlaces(packOfSchema(schema, id = "q$schema")))
     }
 
     /** Where the phone can build the area (a town), the places of a pack it cannot read are imported, as where there is no pack. */

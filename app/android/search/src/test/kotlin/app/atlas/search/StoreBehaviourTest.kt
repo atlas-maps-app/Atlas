@@ -242,9 +242,9 @@ class StoreBehaviourTest {
     }
 
     @Test
-    fun aStoreOfASchemaThisAtlasDoesNotReadIsRefused() {
-        // 2, before 3 (which this Atlas opens as its own: StoreSchemaThreeTest), and 5, of an Atlas after it
-        for (schema in listOf(2, 5)) {
+    fun aStoreOfAnotherSchemaIsRefused() {
+        // 3, of the packs published until 17 November 2026 and of the Atlas before alpha 32, and 5, of an Atlas after this
+        for (schema in listOf(3, 5)) {
             assertFalse(PlaceStore.reads(schema))
             val pack = File(tmp.root, "old-$schema.places.db")
             val region = File(tmp.root, "old-region-$schema.db")
@@ -270,7 +270,6 @@ class StoreBehaviourTest {
                 assertTrue(runCatching { PlaceStore.open(f).close() }.exceptionOrNull() is StoreVersionException)
             }
         }
-        assertTrue(PlaceStore.reads(3))
         assertTrue(PlaceStore.reads(PlaceStore.SCHEMA))
     }
 

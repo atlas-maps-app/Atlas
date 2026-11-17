@@ -202,7 +202,7 @@ class RegionEngine(
         (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes + worldBytes(pack) } ?: pack.atlas?.bytes ?: 0L) + (readablePlaces(pack)?.diskBytes ?: 0L)
 
     /**
-     * [pack]'s place store where this Atlas can read it ([PlaceStore.reads]: a store of a schema it opens, or one the list
+     * [pack]'s place store where this Atlas can read it ([PlaceStore.reads]: a store of its own schema, or one the list
      * names no schema for); null where it has none, or one this Atlas cannot open, which is then never downloaded (the
      * user, 12 November: "When I download the map in the latest alpha it says places are unreadable").
      */

@@ -682,12 +682,11 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
 
     private fun setUp() {
         val version = runCatching { stmt("SELECT value FROM meta WHERE key = 'schema'") { st -> if (st.step()) st.getText(0).toIntOrNull() else null } }.getOrNull()
-        if (version != null && version !in StoreSchema.READS) {
+        if (version != null && version != StoreSchema.VERSION) {
             val name = file?.name ?: "This store"
-            val reads = StoreSchema.READS.sorted().joinToString(" and ")
             val pack = runCatching { meta("packer") }.getOrNull()
-                ?: throw StoreVersionException("$name was written by another version of Atlas (store schema $version; it reads $reads): install Atlas afresh")
-            throw StoreVersionException("$name is a pack of store schema $version ($pack); Atlas reads schema $reads: download the region again")
+                ?: throw StoreVersionException("$name was written by another version of Atlas (store schema $version; it reads ${StoreSchema.VERSION}): install Atlas afresh")
+            throw StoreVersionException("$name is a pack of store schema $version ($pack); Atlas reads schema ${StoreSchema.VERSION}: download the region again")
         }
         exec("PRAGMA page_size = $PAGE_SIZE")
         exec("PRAGMA journal_mode=WAL")
@@ -695,9 +694,6 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         exec("PRAGMA temp_store=MEMORY")
         exec("PRAGMA cache_size=-16000")
         for (sql in StoreSchema.CREATE) exec(sql)
-        // a store of an older schema this Atlas reads (StoreSchema.READS) has the tables it lacked now, empty; its places
-        // are filed anew under this Atlas's rules (needsRefile), and it is of this schema from here on
-        if (version != null && version != StoreSchema.VERSION) exec("DELETE FROM meta WHERE key = '${StoreRefile.FILED}'")
         exec("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema', '${StoreSchema.VERSION}')")
         dict.seed()
     }
@@ -706,11 +702,11 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         /** The languages a store indexes kind names in when the app does not say: Atlas's four search languages. */
         val DEFAULT_LANGS = listOf("en", "nl", "de", "fr")
 
-        /** The store schema this version writes; a pack's manifest names the schema it was built with. */
+        /** The store schema this version reads and writes; a pack's manifest names the schema it was built with. */
         const val SCHEMA: Int = StoreSchema.VERSION
 
-        /** Whether this Atlas opens a store of [schema] ([StoreSchema.READS]): a pack's places of another are of no use to it. */
-        fun reads(schema: Int): Boolean = schema in StoreSchema.READS
+        /** Whether this Atlas opens a store of [schema]: its own alone, and a pack's places of another are of no use to it. */
+        fun reads(schema: Int): Boolean = schema == StoreSchema.VERSION
 
         private const val PAGE_SIZE = 4096
         private const val FUZZY_BELOW = 5
@@ -728,8 +724,7 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
         private val driver by lazy { BundledSQLiteDriver() }
 
         /**
-         * Opens (or creates) the store in [file]; one of a store schema this Atlas does not read is refused
-         * ([StoreVersionException]), one of an older schema it reads opened as one of its own, to be filed anew. A
+         * Opens (or creates) the store in [file]; one of another store schema is refused ([StoreVersionException]). A
          * store filed under other category rules than this Atlas's is filed anew first ([refiled]), which takes a while
          * on a country; with [refile] false it opens at once as it was filed, for [PlaceStore.refile] in the background.
          */
