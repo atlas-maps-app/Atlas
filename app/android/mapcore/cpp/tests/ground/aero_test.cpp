@@ -6,6 +6,7 @@
 #include "geometry/Ground.hpp"
 #include "load/Window.hpp"
 #include "tests/base/require.hpp"
+#include "tests/ground/big_roads.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Grid.hpp"
@@ -178,39 +179,17 @@ TEST_CASE("ground: a dashed line's samples lie in its dashes, each segment from 
 
 namespace {
 
-/// The big roads' tags, way 40 on: untagged; a lanes or a width past any road's, or that cannot be read, each drawn
-/// as untagged; then values in range drawn as mapped, at the bounds (64 lanes, 250 m) and within them.
-[[nodiscard]] std::vector<std::string> motorway_tags() {
-    const std::string past_doubles(400, '9'); // past the doubles: an infinity, which to_int cannot take
-    return {
-        "",
-        std::format(R"(, "lanes": "{}")", past_doubles),
-        R"(, "lanes": "100000")", // 99,999 lane lines, 350 km wide
-        R"(, "lanes": "-1")",
-        R"(, "width": "500000000")", // a 500,000 km road
-        R"(, "width": "-12")",
-        R"(, "width": "NaN")",
-        R"(, "width": "inf")",
-        std::format(R"(, "width": "{}")", past_doubles),
-        R"(, "lanes": "64")",  // the most a road is drawn with
-        R"(, "width": "250")", // the widest
-        R"(, "lanes": "21")",  // Germany's most, 16 November 2026
-        R"(, "lanes": "0")",
-        R"(, "lanes": "3;2")", // a list: its first number
-    };
-}
-
-/// A window about the Westerkerk with a big road for each of motorway_tags(), each a motorway with one bend (300 m
-/// east, then 200 m north), its pack written to the tests' scratch folder.
-[[nodiscard]] std::string motorway_window(const std::vector<std::string>& tags) {
+/// A window about the Westerkerk with a big road for each of the cases, each a motorway with one bend (300 m east,
+/// then 200 m north), its pack written to the tests' scratch folder.
+[[nodiscard]] std::string motorway_window(const std::vector<atlas::test::BigRoadCase>& cases) {
     const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
     std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [)";
-    for (std::size_t i = 0; i < tags.size(); ++i) {
+    for (std::size_t i = 0; i < cases.size(); ++i) {
         const double lat = 52.3640 + (0.0008 * static_cast<double>(i)); // the bend, the middle vertex, in the tile
         data += std::format(R"({}{{"type": "way", "id": {}, "tags": {{"highway": "motorway"{}}}, "geometry": [)"
                             R"({{"lat": {:.4f}, "lon": 4.8800}}, {{"lat": {:.4f}, "lon": 4.8844}}, )"
                             R"({{"lat": {:.4f}, "lon": 4.8844}}]}})",
-                            i == 0 ? "" : ",", 40 + i, tags.at(i), lat, lat, lat + 0.0018);
+                            i == 0 ? "" : ",", 40 + i, atlas::test::overpass_tags(cases[i]), lat, lat, lat + 0.0018);
     }
     data += "]}";
     const auto built =
@@ -234,8 +213,8 @@ struct BigRoad {
 } // namespace
 
 TEST_CASE("ground: a big road's lanes and width that no road has, or that cannot be read, draw as unmapped") {
-    const std::vector<std::string> tags = motorway_tags();
-    const std::string path = motorway_window(tags);
+    const std::vector<atlas::test::BigRoadCase> cases = atlas::test::big_road_cases();
+    const std::string path = motorway_window(cases);
     ATLAS_REQUIRE(!path.empty());
     auto pack = atlas::test::open_pack(path);
     ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
@@ -252,12 +231,12 @@ TEST_CASE("ground: a big road's lanes and width that no road has, or that cannot
     ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
     const geo::P2 origin{.x = head.frame.x(tile->header.west), .z = head.frame.z(tile->header.south)};
     const geo::GroundTile g = geo::build_ground(*tile, head, *pack->style(), 0, origin);
-    std::vector<BigRoad> roads(tags.size());
-    std::vector<bool> seen(tags.size(), false);
+    std::vector<BigRoad> roads(cases.size());
+    std::vector<bool> seen(cases.size(), false);
     for (const geo::Stroke& s : g.strokes) {
         if (s.kind != geo::StrokeKind::lanes && s.kind != geo::StrokeKind::edges) continue;
         const std::uint64_t id = (s.key.element >> 18U) & ((std::uint64_t{1} << 44U) - 1);
-        REQUIRE((id >= 40 && id < 40 + tags.size()));
+        REQUIRE((id >= 40 && id < 40 + cases.size()));
         BigRoad& r = roads.at(id - 40);
         seen.at(id - 40) = true;
         if (s.kind == geo::StrokeKind::edges) {
@@ -268,31 +247,23 @@ TEST_CASE("ground: a big road's lanes and width that no road has, or that cannot
         }
         r.dashes = s.count;
     }
-    for (std::size_t i = 0; i < seen.size(); ++i) {
-        INFO("way " << 40 + i);
+    // each road as wide as drawn, its edge lines 0.5 m in; its lane lines as many as its lanes less one: two lanes'
+    // one line lies where the untagged road's does (-w / 2 + 2 + (w - 3) / 2 = 0.5), and a value past a road's or
+    // that cannot be read draws as untagged, its work as bounded (before: the abort, 99,999 lane lines 350 km wide, a
+    // negative road, a 500,000 km one that dashed without end, a negative width, an infinity's abort)
+    const BigRoad& untagged = roads[0];
+    CHECK(untagged.dashes > 0);
+    for (std::size_t i = 0; i < cases.size(); ++i) {
+        const atlas::test::BigRoadCase& c = cases[i];
+        INFO("way " << 40 + i << ": " << c.what);
         CHECK(seen[i]);
+        CHECK(roads[i].edge == doctest::Approx((c.drawn_width / 2) - 0.5));
+        if (c.drawn_lanes <= 1) {
+            CHECK(roads[i].dashes == 0);
+        } else if (c.drawn_lanes == 2) {
+            CHECK(roads[i].dashes == untagged.dashes);
+        } else {
+            CHECK(roads[i].dashes > static_cast<std::size_t>(c.drawn_lanes - 2) * untagged.dashes);
+        }
     }
-    // unmapped: two lanes, 2 · 3.5 + 3 m wide, its edge lines 0.5 m in, one lane line between them; each value past a
-    // road's or that cannot be read draws the same, its work as bounded (before: the abort, 99,999 lane lines 350 km
-    // wide, a negative road, a 500,000 km one that dashed without end, a negative width, an infinity's abort)
-    const BigRoad& unmapped = roads[0];
-    CHECK(unmapped.edge == doctest::Approx(4.5));
-    CHECK(unmapped.dashes > 0);
-    for (std::size_t i = 1; i <= 8; ++i) {
-        INFO("way " << 40 + i << tags.at(i).substr(0, 40));
-        CHECK(roads.at(i).edge == doctest::Approx(unmapped.edge));
-        CHECK(roads.at(i).dashes == unmapped.dashes);
-    }
-    // in range, as mapped: 64 lanes, 64 · 3.5 + 3 m and 63 lane lines; 250 m with two lanes, its lane line where the
-    // unmapped road's is (-125 + 2 + 247 / 2 = -5 + 2 + 7 / 2); 21 lanes; no lanes, 3 m and no lane line; a list's 3
-    CHECK(roads[9].edge == doctest::Approx((((64 * 3.5) + 3) / 2) - 0.5));
-    CHECK(roads[9].dashes > 62 * unmapped.dashes);
-    CHECK(roads[10].edge == doctest::Approx((250.0 / 2) - 0.5));
-    CHECK(roads[10].dashes == unmapped.dashes);
-    CHECK(roads[11].edge == doctest::Approx((((21 * 3.5) + 3) / 2) - 0.5));
-    CHECK(roads[11].dashes > 19 * unmapped.dashes);
-    CHECK(roads[12].edge == doctest::Approx((3.0 / 2) - 0.5));
-    CHECK(roads[12].dashes == 0);
-    CHECK(roads[13].edge == doctest::Approx((((3 * 3.5) + 3) / 2) - 0.5));
-    CHECK(roads[13].dashes > unmapped.dashes);
 }
