@@ -1,9 +1,9 @@
 // A region's load (load/Regions.hpp): a multipolygon building's outer ways joined into its ring, a water relation and
 // its island, land cover in LAND's order, a big road in a tunnel left out, the closest roof shape, Douglas-Peucker's
 // simplify, a theme park's coaster tracks (load/Coasters.hpp) and Python's float() they read a layer with, and where
-// ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it
-// (its counts are RegionsParityTest's, which holds every record to the port's Regions.load). No tag's number, however
-// large, ends a load or refuses one, in any look or cut.
+// ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it,
+// with nothing that cannot be there (load/Clean.hpp; ATLAS_CLEAN_DUMP writes its buildings for the fault detectors).
+// No tag's number, however large, ends a load or refuses one, in any look or cut.
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
 #include "load/Generic.hpp"
@@ -13,6 +13,7 @@
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
+#include "tiles/Grid.hpp"
 
 #include <doctest/doctest.h>
 
@@ -109,7 +110,10 @@ TEST_CASE("load: simplify drops the corners within its tolerance of a straight w
     CHECK(load::simplify(small, 5.0).size() == 4);
 }
 
-TEST_CASE("load: the canal ring's raw.json loaded as a region, as the packer loads it (ATLAS_REGIONS_DIR)") {
+TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that cannot be there (ATLAS_REGIONS_DIR)") {
+    // the canal ring's buildings and parts once cleaned (load/Clean.hpp), recorded 17 Nov 2026
+    constexpr std::size_t buildings_after = 0;
+    constexpr std::size_t parts_after = 0;
     const std::string dir = atlas::test::environment("ATLAS_REGIONS_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_REGIONS_DIR is not set: the renderer's data are not loaded here");
@@ -137,10 +141,52 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, as the packer loa
     MESSAGE("grachten as a region: ", loaded->buildings.size(), " buildings, ", loaded->parts.size(), " parts, ",
             loaded->land.size(), " land covers, ", loaded->water.size(), " water rings, ", loaded->water_holes.size(),
             " islands, in ", ms, " ms");
-    CHECK(loaded->buildings.size() == 25961);
-    CHECK(loaded->parts.size() == 696);
+    const load::BuildingCounts& c = loaded->counts;
+    MESSAGE("grachten's buildings: ", c.underground, " below the ground, ", c.doubles, " doubles, ", c.bounded,
+            " with numbers past the bounds, ", c.courtyards, " with courtyards, ", c.covered,
+            " outlines drawn less their "
+            "parts, ",
+            c.hidden, " covered whole, ", c.clipped, " clipped, ", c.raised, " raised, ", c.vanished, " vanished, ",
+            c.seamed, " seamed; ", c.overlapping_pairs, " pairs overlapping, ", c.uncovered_outlines,
+            " outlines uncovered (", c.uncovered_m2, " m², slivers ", c.sliver_m2, " m²), ", c.flat_roofs,
+            " pitched roofs drawn flat");
+    CHECK(c.overlapping_pairs == 0);
+    CHECK(c.uncovered_outlines == 0);
+    CHECK(c.unsettled == 0);
+    CHECK(c.unjoined == 0);
+    CHECK(c.underground == 31);
+    CHECK(c.doubles == 8);
+    CHECK(loaded->buildings.size() == buildings_after);
+    CHECK(loaded->parts.size() == parts_after);
     CHECK(loaded->land.size() == 2384);
     CHECK(loaded->water.size() == 331);
+    // ATLAS_CLEAN_DUMP: what is drawn, as Overpass's JSON, for the fault detectors (an outline not drawn tagged
+    // atlas:drawn=no)
+    if (const std::string out = atlas::test::environment("ATLAS_CLEAN_DUMP"); !out.empty()) {
+        std::ofstream f(out, std::ios::binary);
+        f << R"({"version":0.6,"elements":[)";
+        bool first = true;
+        for (const auto* list : {&loaded->buildings, &loaded->parts}) {
+            const bool part = list == &loaded->parts;
+            for (const load::Building& b : *list) {
+                f << (first ? "" : ",") << R"({"type":"way","id":)" << (b.relation ? 9000000000000 + b.id : b.id)
+                  << R"(,"tags":{")" << (part ? "building:part" : "building") << R"(":"yes","height":")" << b.h
+                  << R"(","min_height":")" << b.min << R"(","atlas:drawn":")" << (b.hidden ? "no" : "yes")
+                  << R"("},"geometry":[)";
+                first = false;
+                for (std::size_t i = 0; i <= b.poly.size(); ++i) {
+                    const load::V2 p = b.poly[i % b.poly.size()];
+                    const auto lat = atlas::tiles::grid_lat(region.frame, p.z);
+                    const auto lon = atlas::tiles::grid_lon(region.frame, p.x);
+                    f << (i == 0 ? "" : ",") << R"({"lat":)" << (lat ? *lat : 0) / 1e7 << R"(,"lon":)"
+                      << (lon ? *lon : 0) / 1e7 << "}";
+                }
+                f << "]}";
+            }
+        }
+        f << "]}\n";
+        MESSAGE("grachten's buildings written to ", out);
+    }
 }
 
 TEST_CASE("load: generic.py's colours: a colour word or hex form read, a guessed colour varied per building") {

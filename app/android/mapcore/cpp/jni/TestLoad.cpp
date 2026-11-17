@@ -1,14 +1,13 @@
-// Stage P's cut's test entry point in the host build (load/Cut.hpp), for :mapcorecheck's CutParityTest on the JVM,
-// which holds the core's cut of the canal ring to the packer's render pack of it, tile for tile and byte for byte. It
-// binds to the Kotlin object app.atlas.mapcorecheck.load.LoadHost by JNI's names; nothing of it is in the phone's
-// library.
+// Stage P's cut's test entry point in the host build (load/Cut.hpp), for :mapcorecheck's CutValidityTest on the JVM,
+// which holds the core's cut of the canal ring to nothing that cannot be there (load/Clean.hpp's validity counts) and
+// to every tile of the bundled render pack of it. It binds to the Kotlin object app.atlas.mapcorecheck.load.LoadHost by
+// JNI's names; nothing of it is in the phone's library.
 #include "base/arena.hpp"
 #include "load/Cut.hpp"
 #include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Chunks.hpp"
 #include "tiles/Container.hpp"
-#include "tiles/Dump.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Source.hpp"
@@ -23,7 +22,6 @@
 #include <iterator>
 #include <set>
 #include <span>
-#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -43,23 +41,6 @@ std::string string_of(JNIEnv* env, jstring s) {
     return out;
 }
 
-/// The first line where two canonical dumps differ, both sides, cut to 300 characters each.
-std::string first_difference(const std::string& core, const std::string& packer) {
-    std::istringstream a(core);
-    std::istringstream b(packer);
-    std::string la;
-    std::string lb;
-    for (std::size_t line = 1;; ++line) {
-        const bool ha = static_cast<bool>(std::getline(a, la));
-        const bool hb = static_cast<bool>(std::getline(b, lb));
-        if (!ha && !hb) return "no line differs";
-        if (!ha || !hb || la != lb) {
-            return std::format("line {}: core {} | packer {}", line, ha ? la.substr(0, 300) : "(none)",
-                               hb ? lb.substr(0, 300) : "(none)");
-        }
-    }
-}
-
 } // namespace
 
 extern "C" {
@@ -67,9 +48,12 @@ extern "C" {
 JNIEXPORT jint JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_abi(JNIEnv*, jclass) { return test_load_abi; }
 
 /// A region's tiles cut by the core from the raw.json at `raw` (its box from the region.json at `region_json`, its
-/// frame and its variants' tolerances from the render pack at `pack`, loaded whole and at each of them), held to that
-/// pack's tiles byte for byte: `tiles=<n> wrong=<n> bytes=<n> variants=<n> load_ms=<ms> cut_ms=<ms>`, and where a tile
-/// differs ` first=<z/x/y> <the first line of their canonical dumps that does>`; or `error=<what>`.
+/// frame and its variants' tolerances from the render pack at `pack`, loaded whole and at each of them), beside that
+/// pack's tiles, which the port cut (`missing`: the pack's tiles the core cut none of; `differ`: those whose bytes the
+/// core's cut changed, for the record), and what the loading counted of its buildings (Scene::counts: the validity
+/// counts `pairs`, `uncovered` and `flat`, then `underground`, `doubles`, `bounded`, `courtyards`, `covered`, `hidden`,
+/// `clipped`, `raised`, `vanished`, `seamed`, `unsettled`, `unjoined`): `tiles=<n> cut=<n> missing=<n> differ=<n>
+/// bytes=<n> variants=<n> pairs=<n> uncovered=<n> flat=<n> … load_ms=<ms> cut_ms=<ms>`; or `error=<what>`.
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_cutRegion(JNIEnv* env, jclass, jstring raw,
                                                                               jstring region_json, jstring pack,
                                                                               jstring name) {
@@ -132,11 +116,12 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_cutRegion(JN
     }
     tl::Zstd zstd;
     tl::TileDecoder decoder;
-    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut parity");
+    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut");
     std::vector<std::byte> bytes;
     std::vector<std::byte> scratch;
     std::size_t tiles = 0;
-    std::size_t wrong = 0;
+    std::size_t missing = 0;
+    std::size_t differ = 0;
     std::size_t written_bytes = 0;
     std::string first;
     for (const tl::ChunkRef& chunk : opened->chunks().chunks()) {
@@ -144,29 +129,27 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_cutRegion(JN
         arena.reset();
         auto theirs = opened->decode(chunk, zstd, decoder, arena, bytes, scratch);
         if (!theirs) return env->NewStringUTF(std::format("error={}", tl::describe(theirs.error())).c_str());
-        const std::string where = std::format("{}/{}/{}", int{chunk.tile.z}, chunk.tile.x, chunk.tile.y);
         const auto it = mine.find(chunk.tile.packed());
         if (it == mine.end()) {
-            if (wrong++ == 0) first = where + " the core cut no such tile";
+            if (missing++ == 0) first = std::format("{}/{}/{}", int{chunk.tile.z}, chunk.tile.x, chunk.tile.y);
             continue;
         }
         const auto written = tl::encode_tile(*it->second);
         if (!written) return env->NewStringUTF(std::format("error={}", tl::describe(written.error())).c_str());
         written_bytes += written->size();
-        if (*written == bytes) continue;
-        if (wrong++ == 0) {
-            tl::TileDecoder again;
-            atlas::Arena arena2(8U << 20U, atlas::Growth::grows, "cut parity, the core's tile");
-            const auto ours = again.decode(*written, arena2);
-            first = ours ? where + " " + first_difference(tl::canonical_dump(*ours), tl::canonical_dump(*theirs))
-                         : where + " the core's tile does not decode";
-        }
+        if (*written != bytes) ++differ;
     }
     const auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-    std::string summary =
-        std::format("tiles={} cut={} wrong={} bytes={} variants={} load_ms={:.1f} cut_ms={:.1f}", tiles, cut->size(),
-                    wrong, written_bytes, variant_features, ms(start, loaded), ms(loaded, done));
-    if (!first.empty()) summary += " first=" + first;
+    const load::BuildingCounts& c = base->counts;
+    std::string summary = std::format(
+        "tiles={} cut={} missing={} differ={} bytes={} variants={} pairs={} uncovered={} flat={} underground={} "
+        "doubles={} bounded={} courtyards={} covered={} hidden={} clipped={} raised={} vanished={} seamed={} "
+        "unsettled={} unjoined={} uncovered_m2={:.1f} sliver_m2={:.1f} load_ms={:.1f} cut_ms={:.1f}",
+        tiles, cut->size(), missing, differ, written_bytes, variant_features, c.overlapping_pairs, c.uncovered_outlines,
+        c.flat_roofs, c.underground, c.doubles, c.bounded, c.courtyards, c.covered, c.hidden, c.clipped, c.raised,
+        c.vanished, c.seamed, c.unsettled, c.unjoined, c.uncovered_m2, c.sliver_m2, ms(start, loaded),
+        ms(loaded, done));
+    if (!first.empty()) summary += " first_missing=" + first;
     return env->NewStringUTF(summary.c_str());
 }
 

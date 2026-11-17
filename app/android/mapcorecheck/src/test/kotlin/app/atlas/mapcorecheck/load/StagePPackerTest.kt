@@ -19,19 +19,19 @@ import java.nio.file.Files
 
 /**
  * The packer on the core's stage P (ENGINE.md step 3): the bundled render packs made by the packer with the core's tool
- * (`atlas_stagep`, `-Datlas.stagep`) making their content (the tiles, the head and the style) are the packer's own
- * bundled packs (`-Datlas.tiles`, made from the port's scene), byte for byte: the Westerkerk's living map and the canal
- * ring, every tile, the manifest, the head and the style. So a pack and a window the phone builds from the same data come
- * from the same code. The tool also refuses what the port's scene would refuse (a survey's heights).
+ * (`atlas_stagep`, `-Datlas.stagep`) making their content (the tiles, the head and the style) come out the same each time,
+ * byte for byte: the Westerkerk's living map and the canal ring. Since 16 Nov 2026 (core-p14) the core's buildings are its
+ * own, no longer the port's, so a region's pack cut by the core keeps the port's tiles (the same tiles, the head and the
+ * style byte for byte) and not their bytes. So a pack and a window the phone builds from the same data come from the same
+ * code. The tool also refuses what the port's scene would refuse (a survey's heights).
  */
 class StagePPackerTest {
     private val tool = System.getProperty("atlas.stagep")?.let(::File)
     private val repo = System.getProperty("atlas.repo")?.let(::File)
 
     @Test
-    fun theBundledPacksCutByTheCoresStagePAreThePackersOwnByteForByte() {
+    fun theBundledPacksCutByTheCoresStagePAreTheSameEachTime() {
         assumeTrue("the core's stage P tool (-Datlas.stagep)", tool != null && tool.canExecute())
-        val tiles = File(System.getProperty("atlas.tiles") ?: error("atlas.tiles names no bundled render packs"))
         val root = repo ?: error("atlas.repo names no repository")
         val sources = listOf(
             "amsterdam" to File(root, "app/android/app/src/main/assets/packs/amsterdam.atlas"),
@@ -41,16 +41,17 @@ class StagePPackerTest {
         try {
             for ((id, element) in sources) {
                 if (!element.isFile) {
-                    println("stagep: no element pack ${element.path}: $id is not compared here")
+                    println("stagep: no element pack ${element.path}: $id is not made here")
                     continue
                 }
-                val want = File(tiles, "$id.atlas")
-                assertTrue("no bundled render pack ${want.path}", want.isFile)
-                val made = File(work, "$id.atlas")
-                val t0 = System.nanoTime()
-                val p = SceneToTiles.pack(element, made, File(work, "engine-$id"), core = tool) { println("stagep $it") }
-                println("stagep $id: ${p.written.chunks.size} tiles, ${p.written.bytes} bytes in ${(System.nanoTime() - t0) / 1_000_000} ms")
-                assertEquals("$id: the pack cut by the core's stage P is not the packer's: ${difference(made.readBytes(), want.readBytes())}", "the same", difference(made.readBytes(), want.readBytes()))
+                val made = (1..2).map { k ->
+                    val out = File(work, "$id-$k.atlas")
+                    val t0 = System.nanoTime()
+                    val p = SceneToTiles.pack(element, out, File(work, "engine-$id-$k"), core = tool) { println("stagep $it") }
+                    println("stagep $id ($k): ${p.written.chunks.size} tiles, ${p.written.bytes} bytes in ${(System.nanoTime() - t0) / 1_000_000} ms")
+                    out
+                }
+                assertEquals("$id: the pack cut by the core's stage P again is not the same: ${difference(made[1].readBytes(), made[0].readBytes())}", "the same", difference(made[1].readBytes(), made[0].readBytes()))
             }
         } finally {
             work.deleteRecursively()
@@ -59,14 +60,15 @@ class StagePPackerTest {
 
     /**
      * The port's and Schiphol's packs with their height survey left out (SceneToTiles.withoutSurvey: the tiles cannot
-     * carry a survey yet), and the Efteling's and ARTIS's, cut by the core's stage P, are the packer's own cut of them
-     * byte for byte: what they hold that the bundled packs do not (gantries and conveyors, cranes, turbines, masts,
-     * runways, the sea, a theme park's coaster tracks, a park's and a zoo's planted woods) included. So are the regions
-     * with a building tradition (Notting Hill; Paris and San Gimignano without their surveys): each kit's details,
-     * shutters and party walls. On the Mac, where their element packs are (CI has the canal ring's alone).
+     * carry a survey yet), the Efteling's and ARTIS's, and the regions with a building tradition (Notting Hill; Paris and
+     * San Gimignano without their surveys), cut by the core's stage P, hold the tiles the packer's own cut of them does,
+     * with its head and its style byte for byte: what they hold that the bundled packs do not (gantries and conveyors,
+     * cranes, turbines, masts, runways, the sea, a theme park's coaster tracks, a park's and a zoo's planted woods, each
+     * kit's details, shutters and party walls) included. On the Mac, where their element packs are (CI has the canal
+     * ring's alone).
      */
     @Test
-    fun theRegionsWithoutTheirSurveyCutByTheCoresStagePAreThePackersOwn() {
+    fun theRegionsWithoutTheirSurveyCutByTheCoresStagePKeepThePackersTiles() {
         assumeTrue("the core's stage P tool (-Datlas.stagep)", tool != null && tool.canExecute())
         val root = repo ?: error("atlas.repo names no repository")
         val work = Files.createTempDirectory("atlas-stagep-survey").toFile()
@@ -87,8 +89,12 @@ class StagePPackerTest {
                 val t1 = System.nanoTime()
                 val p = SceneToTiles.pack(element, theirs, File(work, "packer-$id"), survey = survey) { println("packer $it") }
                 val t2 = System.nanoTime()
-                println("stagep $id without its survey: ${c.written.chunks.size} tiles, ${c.written.bytes} bytes in ${(t1 - t0) / 1_000_000} ms; the packer's ${p.written.chunks.size} tiles in ${(t2 - t1) / 1_000_000} ms")
-                assertEquals("$id: the pack cut by the core's stage P is not the packer's: ${difference(mine.readBytes(), theirs.readBytes())}", "the same", difference(mine.readBytes(), theirs.readBytes()))
+                println("stagep $id without its survey: ${c.written.chunks.size} tiles, ${c.written.bytes} bytes in ${(t1 - t0) / 1_000_000} ms; the packer's ${p.written.chunks.size} tiles, ${p.written.bytes} bytes in ${(t2 - t1) / 1_000_000} ms")
+                assertEquals("$id: the core's tiles are not the packer's", p.written.chunks.size, c.written.chunks.size)
+                val heads = difference(c.head.toBytes(), p.head.toBytes())
+                assertEquals("$id: the core's head is not the packer's: $heads", "the same", heads)
+                val styles = difference(c.style.toBytes(), p.style.toBytes())
+                assertEquals("$id: the core's style is not the packer's: $styles", "the same", styles)
             }
         } finally {
             work.deleteRecursively()

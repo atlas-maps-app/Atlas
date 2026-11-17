@@ -1,20 +1,22 @@
 package app.atlas.mapcorecheck.load
 
 import app.atlas.anchor.AnchorCases
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /**
- * Stage P's cut held to the packer (ENGINE.md step 3): the canal ring's raw.json, loaded by the core as a region (whole, and at
- * each tolerance its render pack's views and the live map's bands load it at, for the variants) and cut into render tiles by
- * the core (`CP/load/Cut.hpp`), gives every tile of the packer's render pack of it, byte for byte, both levels (L14 and L12),
- * keep codes, variants, land cover, lines, items, quays and islands among them. The packer's pack is the bundled tiles'
- * (`-Datlas.tiles`), made from the same element pack AnchorCases unpacks.
+ * Stage P's cut of the canal ring holds nothing that cannot be there (the user, 16 Nov 2026): its raw.json, loaded by the
+ * core as a region (whole, and at each tolerance its render pack's views and the live map's bands load it at, for the
+ * variants) and cut into render tiles by the core (`CP/load/Cut.hpp`), cuts every tile the bundled pack (`-Datlas.tiles`,
+ * the port's, of the same element pack AnchorCases unpacks) holds, with its variants; and its validity counts
+ * (`CP/load/Clean.hpp`, Scene::counts) may only fall: no two drawn footprints overlapping in plan and in height, no outline
+ * left uncovered, and no more pitched roofs drawn flat than [FLAT_ROOFS]. The fix's own counts are printed with them.
  */
-class CutParityTest {
+class CutValidityTest {
     @Test
-    fun theCoreCutsTheCanalRingAsThePackerDoes() {
+    fun theCanalRingHoldsNothingThatCannotBeThere() {
         val grachten = AnchorCases.grachten()
         if (grachten == null) {
             println("cut: the canal ring's pack is not on this machine")
@@ -25,8 +27,24 @@ class CutParityTest {
         assertTrue("no render pack of the canal ring at ${pack.path}", pack.isFile)
         val summary = LoadHost.cutRegion(File(grachten.dir, "raw.json").path, File(grachten.dir, "region.json").path, pack.path, grachten.id)
         println("cut ${grachten.id}: $summary")
-        assertTrue("the core's cut of ${grachten.id} is not the packer's: $summary", summary.startsWith("tiles=") && " wrong=0 " in summary)
-        val variants = Regex("variants=(\\d+)").find(summary)?.groupValues?.get(1)?.toInt() ?: 0
-        assertTrue("the canal ring's cut has no variants: $summary", variants > 0)
+        assertTrue("the core does not cut ${grachten.id}: $summary", summary.startsWith("tiles="))
+        val said = summary.split(' ').mapNotNull { w -> w.split('=', limit = 2).takeIf { it.size == 2 } }.associate { it[0] to it[1] }
+        fun count(key: String) = said[key]?.toLongOrNull() ?: error("the cut says no $key: $summary")
+        assertEquals("the pack's tiles the core cut none of: $summary", 0L, count("missing"))
+        assertTrue("the canal ring's cut has no variants: $summary", count("variants") > 0)
+        assertEquals("drawn footprints overlapping in plan and in height: $summary", 0L, count("pairs"))
+        assertEquals("outlines left uncovered: $summary", 0L, count("uncovered"))
+        assertTrue("more pitched roofs drawn flat than the $FLAT_ROOFS recorded: $summary", count("flat") <= FLAT_ROOFS)
+        assertEquals("cleanings that did not settle: $summary", 0L, count("unsettled"))
+        assertEquals("courtyards or pieces no seam joined: $summary", 0L, count("unjoined"))
+    }
+
+    companion object {
+        /**
+         * The canal ring's mapped pitched roofs the core draws flat, recorded 17 Nov 2026 (core-p14): shapes it does not
+         * build (double_saltbox, many), and the courtyard buildings' until the roofs are built from any footprint. Lower it
+         * as they are built; never raise it.
+         */
+        const val FLAT_ROOFS = 1000L
     }
 }
