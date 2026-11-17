@@ -716,7 +716,7 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     map.set_theme(sunny());
     map.set_screen(false, false, false);
     // the walls over the home view's canals (the ground's reflections test's view); the trees over the first of a few
-    // canal views whose frame mirrors one (a tree within 9 m of a quay, 30 m on: none in the home view)
+    // canal views whose frame mirrors one (a tree within 9 m of a quay, 30 m on)
     const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
     style::PaletteBlock walls{};
     for (std::uint32_t code = 48; code <= 63; ++code) walls.colours.at(code) = 0x01FF00FFU;
@@ -733,7 +733,7 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     const auto measure_mirror = [&](std::string_view name, const style::CameraState& on,
                                     const style::PaletteBlock& palette, std::size_t least) {
         style::CameraState off = on;
-        off.parts = style::camera_part::reflections;
+        off.parts |= style::camera_part::reflections;
         map.set_palette(today);
         const gpu::Pixels today_on = settled(session, map, *kept, on, sunny());
         const std::vector<std::uint32_t> trees = mirrored_trees(map);
@@ -765,8 +765,11 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
     };
     ATLAS_REQUIRE(draw_still(session, map, home), "home never complete");
     (void)measure_mirror("walls", home, walls, 21);
+    // the trees themselves left out (their crowns over the canal hide their reflections from above, and take the
+    // leaves' colour with the reflections drawn or not): the reflections still mirror them
     bool found = false;
-    for (const style::CameraState& on : canals) {
+    for (style::CameraState on : canals) {
+        on.parts |= style::camera_part::trees;
         map.set_palette(today);
         ATLAS_REQUIRE(draw_still(session, map, on), "a canal never complete");
         if (mirrored_trees(map).empty()) continue;
