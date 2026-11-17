@@ -175,6 +175,8 @@ class PushFramesTest {
     @Test
     fun withTheGlassOnThePushsFadesStillGiveTheCoreTheirAlpha() {
         show(glass = true)
+        // as on a phone, where the core draws the glass: while it does not, a frosted shape's wake waits for rest
+        compose.runOnIdle { shapes.coreDraws = true }
         val frames = push("glass")
         assertTrue("$frames", frames.sumOf { it.fadeWakes } >= 3)
     }

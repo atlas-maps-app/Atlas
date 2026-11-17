@@ -34,7 +34,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -51,11 +50,8 @@ import kotlin.math.roundToInt
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w412dp-h915dp-xhdpi")
 class MapStageFramesTest {
-    val compose = createComposeRule()
-    private val threads = MapFrameThreads()
-
     @get:Rule
-    val rules: RuleChain = RuleChain.outerRule(threads).around(compose)
+    val compose = createComposeRule()
 
     // The composables run this frame, by the source info the compiler gives each one.
     private val runs = ArrayList<String>()
@@ -114,7 +110,6 @@ class MapStageFramesTest {
             }
         }
         compose.waitForIdle()
-        threads.track(state)
         assertTrue("${mapBounds()} at $window", near(mapBounds(), window))
 
         Composer.setTracer(tracer)
@@ -146,7 +141,6 @@ class MapStageFramesTest {
             }
         }
         compose.waitForIdle()
-        threads.track(state)
         val whole = mapBounds()
         assertEquals(0f, whole.left, 0f)
 
