@@ -1,4 +1,5 @@
-// A region's load (load/Regions.hpp): a multipolygon building's outer ways joined into its ring, a water relation and
+// A region's load (load/Regions.hpp): a multipolygon building's outer ways joined into its ring, and loaded whatever
+// corner its ring starts at (a neighbour's first point too), a water relation and
 // its island, land cover in LAND's order, a big road in a tunnel left out, the closest roof shape, Douglas-Peucker's
 // simplify, a theme park's coaster tracks (load/Coasters.hpp) and Python's float() they read a layer with, and where
 // ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it,
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -78,6 +80,35 @@ constexpr std::string_view document = R"({"elements": [
 {"type": "way", "id": 6, "tags": {"highway": "primary", "layer": "1"}, "geometry": [{"lat": 52.37, "lon": 4.87}, {"lat": 52.38, "lon": 4.88}]}
 ]})";
 
+// A terrace of four houses in a row, west to east, wall to wall, and a part over the east half of the first. Each
+// relation's ring starts at a corner where a neighbour's ring starts too: 2 (two outer ways) and the part 5 (two
+// outer ways) at way 1's first point, 4 (two outer ways) at the first point of 3 (one closed outer way). Every ring is
+// mapped clockwise, so none is turned and each keeps its first point.
+constexpr std::string_view terrace = R"({"elements": [
+{"type": "way", "id": 1, "tags": {"building": "house", "building:levels": "3"}, "geometry": [
+  {"lat": 52.3700, "lon": 4.88015}, {"lat": 52.3700, "lon": 4.8800}, {"lat": 52.3701, "lon": 4.8800},
+  {"lat": 52.3701, "lon": 4.88015}, {"lat": 52.3700, "lon": 4.88015}]},
+{"type": "relation", "id": 2, "tags": {"type": "multipolygon", "building": "house"}, "members": [
+  {"type": "way", "ref": 20, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88015},
+   {"lat": 52.3701, "lon": 4.88015}, {"lat": 52.3701, "lon": 4.8803}]},
+  {"type": "way", "ref": 21, "role": "outer", "geometry": [{"lat": 52.3701, "lon": 4.8803},
+   {"lat": 52.3700, "lon": 4.8803}, {"lat": 52.3700, "lon": 4.88015}]}]},
+{"type": "relation", "id": 3, "tags": {"type": "multipolygon", "building": "house"}, "members": [
+  {"type": "way", "ref": 22, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88045},
+   {"lat": 52.3700, "lon": 4.8803}, {"lat": 52.3701, "lon": 4.8803}, {"lat": 52.3701, "lon": 4.88045},
+   {"lat": 52.3700, "lon": 4.88045}]}]},
+{"type": "relation", "id": 4, "tags": {"type": "multipolygon", "building": "house"}, "members": [
+  {"type": "way", "ref": 23, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88045},
+   {"lat": 52.3701, "lon": 4.88045}, {"lat": 52.3701, "lon": 4.8806}]},
+  {"type": "way", "ref": 24, "role": "outer", "geometry": [{"lat": 52.3701, "lon": 4.8806},
+   {"lat": 52.3700, "lon": 4.8806}, {"lat": 52.3700, "lon": 4.88045}]}]},
+{"type": "relation", "id": 5, "tags": {"type": "multipolygon", "building:part": "yes", "height": "12"}, "members": [
+  {"type": "way", "ref": 25, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88015},
+   {"lat": 52.3700, "lon": 4.880075}, {"lat": 52.3701, "lon": 4.880075}]},
+  {"type": "way", "ref": 26, "role": "outer", "geometry": [{"lat": 52.3701, "lon": 4.880075},
+   {"lat": 52.3701, "lon": 4.88015}, {"lat": 52.3700, "lon": 4.88015}]}]}
+]})";
+
 } // namespace
 
 TEST_CASE("load: a region's relations, land cover, big roads and closest roof shapes") {
@@ -109,6 +140,53 @@ TEST_CASE("load: a region's relations, land cover, big roads and closest roof sh
     CHECK(s.big[0].layer == 1.0);
 }
 
+// The port told a relation's ring from one already loaded by its first point alone, to the decimetre (regions.py's
+// load and load/Regions.cpp's relation_buildings until core-p14), so a relation whose ring started where a neighbour's
+// did was never loaded: here 2, 4 and the part 5 (the engine audit, 17 Nov 2026). A relation's ring is known by its
+// ways since.
+TEST_CASE("load: a relation whose ring starts at a neighbour's first point is loaded") {
+    const auto doc = read(terrace);
+    ATLAS_REQUIRE(doc.has_value());
+    const auto ids = [](const std::vector<load::Building>& list) {
+        std::string out;
+        for (const load::Building& record : list) out += std::format("{} ", record.id);
+        return out;
+    };
+    // as read, before the cleaning
+    const auto read_as = load::load_living(*doc, load::westerkerk_frame(), load::amsterdam_palette());
+    ATLAS_REQUIRE(read_as.has_value());
+    ATLAS_REQUIRE(ids(read_as->buildings) == "1 2 3 4 ", ids(read_as->buildings));
+    ATLAS_REQUIRE(ids(read_as->parts) == "5 ", ids(read_as->parts));
+    const std::vector<load::Building>& b = read_as->buildings;
+    // the case itself: the rings do start at the same point
+    CHECK(b[1].poly[0] == b[0].poly[0]);
+    CHECK(read_as->parts[0].poly[0] == b[0].poly[0]);
+    CHECK(b[3].poly[0] == b[2].poly[0]);
+    CHECK(!b[0].relation);
+    CHECK(b[1].relation);
+    CHECK(b[2].relation);
+    CHECK(b[3].relation);
+    CHECK(read_as->parts[0].relation);
+    for (const load::Building& house : b) CHECK(house.poly.size() == 4);
+    CHECK(read_as->parts[0].poly.size() == 4);
+    CHECK(read_as->counts.doubles == 0); // no way here is a building of its own and a relation's ring
+    // as a region loads it: every house stands, the part too, and the first house is drawn less its part
+    const auto loaded = load::load_region(*doc, amsterdam_region());
+    ATLAS_REQUIRE(loaded.has_value());
+    const load::Scene& s = *loaded;
+    CHECK(ids(s.buildings) == "1 2 3 4 ");
+    ATLAS_REQUIRE(ids(s.parts) == "5 ", ids(s.parts));
+    CHECK(std::ranges::none_of(s.buildings, &load::Building::hidden));
+    CHECK(!s.parts[0].hidden);
+    CHECK(s.parts[0].parent_id == 1);
+    CHECK(s.parts[0].h == 12.0);
+    CHECK(s.counts.covered == 1);
+    CHECK(s.counts.hidden == 0);
+    CHECK(s.counts.vanished == 0);
+    CHECK(s.counts.overlapping_pairs == 0);
+    CHECK(s.counts.uncovered_outlines == 0);
+}
+
 TEST_CASE("load: simplify drops the corners within its tolerance of a straight wall") {
     // a 20 x 10 m ring with a corner 0.3 m off its long side
     const std::vector<load::V2> ring = {{0, 0}, {10, 0.3}, {20, 0}, {20, 10}, {10, 10}, {0, 10}};
@@ -122,8 +200,8 @@ TEST_CASE("load: simplify drops the corners within its tolerance of a straight w
 
 TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that cannot be there (ATLAS_REGIONS_DIR)") {
     // the canal ring's buildings and parts once cleaned (load/Clean.hpp), recorded 17 Nov 2026
-    constexpr std::size_t buildings_after = 0;
-    constexpr std::size_t parts_after = 0;
+    constexpr std::size_t buildings_after = 25953;
+    constexpr std::size_t parts_after = 648;
     const std::string dir = atlas::test::environment("ATLAS_REGIONS_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_REGIONS_DIR is not set: the renderer's data are not loaded here");
@@ -167,7 +245,7 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that
     CHECK(c.unmeasured == 0);
     CHECK(c.underground == 17);       // location=underground
     CHECK(c.underground_layer == 11); // a layer below 0 alone
-    CHECK(c.doubles == 8);
+    CHECK(c.doubles == 11);           // 8 ways with the role outer, and the three of r20772608 without a role
     CHECK(loaded->buildings.size() == buildings_after);
     CHECK(loaded->parts.size() == parts_after);
     CHECK(loaded->land.size() == 2384);

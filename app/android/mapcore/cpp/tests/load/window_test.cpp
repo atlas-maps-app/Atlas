@@ -58,6 +58,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -718,13 +719,22 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
         bool part = false;
     };
     std::unordered_map<std::string, std::vector<tl::GridPoint>> as_whole;
+    // what the region loaded whole has of an element a window draws and it does not: hidden there, or filed elsewhere
+    const auto element_of = [](const load::Building& b, bool part) {
+        return std::format("{}{}{}", part ? "p" : "b", b.relation ? "r" : "w", b.id);
+    };
+    std::unordered_set<std::string> hidden_whole;
+    std::unordered_set<std::string> elements_whole;
     for (const auto* list : {&loaded->buildings, &loaded->parts}) {
         for (const load::Building& b : *list) {
-            if (b.hidden) continue;
-            const std::vector<tl::GridPoint> ring = grid_of(whole, b.poly);
             const load::V2 at = b.at ? *b.at : atlas::geometry::centroid(b.poly);
             const tl::GridPoint ref = tl::nearest_grid(whole, at.x, at.z);
-            as_whole[key_of(b, list == &loaded->parts, ref)] = ring;
+            elements_whole.insert(element_of(b, list == &loaded->parts));
+            if (b.hidden) {
+                hidden_whole.insert(key_of(b, list == &loaded->parts, ref));
+                continue;
+            }
+            as_whole[key_of(b, list == &loaded->parts, ref)] = grid_of(whole, b.poly);
         }
     }
     const tl::TileKey sw = tl::tile_of(load::window_level, 523'600'000, 48'720'000);
@@ -733,6 +743,9 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
     std::size_t windows = 0;
     std::size_t differ = 0;
     std::size_t absent = 0;
+    std::size_t absent_hidden = 0; // of them: hidden in the region loaded whole
+    std::size_t absent_moved = 0;  // of them: the element is there, filed at another point
+    std::string absent_first;
     load::BuildingCounts sum;
     for (std::uint32_t y = ne.y; y <= sw.y; ++y) {
         for (std::uint32_t x = sw.x; x <= ne.x; ++x) {
@@ -760,9 +773,16 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
                     // as the region loaded whole has it? (the same element filed at the same place, the same ring)
                     const tl::GridPoint in_whole =
                         tl::nearest_grid(whole, whole.x(ref.lon), whole.z(ref.lat)); // the same grid point, both frames
-                    const auto it = as_whole.find(key_of(b, k.part, in_whole));
+                    const std::string key = key_of(b, k.part, in_whole);
+                    const auto it = as_whole.find(key);
                     if (it == as_whole.end()) {
-                        ++absent;
+                        const bool hidden = hidden_whole.contains(key);
+                        const bool moved = !hidden && elements_whole.contains(element_of(b, k.part));
+                        absent_hidden += hidden ? 1U : 0U;
+                        absent_moved += moved ? 1U : 0U;
+                        if (absent++ < 6) {
+                            absent_first += std::format(" {}{}", key, hidden ? " (hidden)" : (moved ? " (moved)" : ""));
+                        }
                     } else if (it->second != k.ring) {
                         ++differ;
                     }
@@ -786,8 +806,9 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
     const std::string line = std::format(
         "the canal ring's {} windows: {} drawn footprints kept; together they leave {} pairs overlapping in plan and "
         "height, {} outlines to cut by parts, {} to hide, {} bases to raise; {} are not the region's loaded whole, {} "
-        "it does not draw; {} cleanings unsettled",
-        windows, kept.size(), c.pairs_before, c.covered, c.hidden, c.raised, differ, absent, sum.unsettled);
+        "it does not draw ({} hidden there, {} filed at another point; the first:{}); {} cleanings unsettled",
+        windows, kept.size(), c.pairs_before, c.covered, c.hidden, c.raised, differ, absent, absent_hidden,
+        absent_moved, absent_first, sum.unsettled);
     MESSAGE(line);
     (void)std::printf("%s\n", line.c_str()); // NOLINT: the line a run's log keeps
     CHECK(windows == 16);
