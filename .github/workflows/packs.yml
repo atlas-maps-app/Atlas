@@ -351,7 +351,8 @@ jobs:
         # indexes, its steps' reports and measure.tsv, as the run's artifact; kept whatever became of the steps before
         if: ${{ always() && env.PUBLISH != 'true' }}
         run: |
-          set -uo pipefail
+          # whatever is there: the runner's bash -e would stop at the first file a failed step did not write
+          set +e
           M="$RUNNER_TEMP/measures/$ID"
           mkdir -p "$M"
           if [ -d "${WORK:-}/out" ]; then
@@ -360,9 +361,9 @@ jobs:
             app/android/packer/build/install/packer/bin/packer manifest "$WORK/out" \
               "https://github.com/$GH_REPO/releases/download/$TAG" --regions app/android/packs/regions.json --split-bytes 9000000000000000000 &&
               cp "$WORK/out/$ID.pack.json" "$M/"
-            cp "$WORK/out/$ID".*.json "$WORK/out/$ID".*.idx "$WORK"/out/"$ID".windows.shard "$M/" 2> /dev/null
+            for f in "$WORK/out/$ID".*.json "$WORK/out/$ID".*.idx; do [ -f "$f" ] && cp "$f" "$M/"; done
           fi
-          cp "$RUNNER_TEMP"/measure.tsv "$RUNNER_TEMP"/places.txt "$RUNNER_TEMP"/windows.txt "$RUNNER_TEMP"/country.txt "$M/" 2> /dev/null
+          for f in measure.tsv places.txt windows.txt country.txt; do [ -f "$RUNNER_TEMP/$f" ] && cp "$RUNNER_TEMP/$f" "$M/"; done
           df -h "${WORK:-/}" > "$M/df.txt"
           {
             echo "### $ID: measured"
