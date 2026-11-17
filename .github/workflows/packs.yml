@@ -321,11 +321,12 @@ jobs:
           NEED=$(( $(stat -c %s "$WORK/out/$ID.windows") / 5 + (3 << 30) ))
           FREE=$(df --output=avail -B1 "$WORK" | tail -1)
           if [ "$FREE" -lt "$NEED" ]; then echo "::error::$WORK has $((FREE >> 20)) MiB free; the country's tiles need about $((NEED >> 20)) MiB"; exit 1; fi
-          # A window the core cannot build is left out of the index, up to 50 of them and one more for every 10,000 the
-          # index lists, and named in a warning: the phone builds it from its data, with the same core, which refuses it
-          # as this one did. On 29 October core-p8's quays could not cut 4 of the Netherlands' 23,268 windows, and the
-          # run stopped there with nothing published; on 17 November the core's water could not cut 59 of Norway's
-          # 4,411,978 (its skerries, 4.7 to 5.2 E, 60 to 62 N), and that run stopped at 50.
+          # A window the core cannot build is left out of the index and named in a warning: the phone builds it from its
+          # data, with the same core, which refuses it as this one did, so it is a hole on the map. As many pass as
+          # 50 + (the windows the index lists) / 10,000, rounded down: the Netherlands' 23,268 windows let 52 through,
+          # Norway's 1,436,563 let 193. More fail the run. On 29 October core-p8's quays could not cut 4 of the
+          # Netherlands' windows, and the run stopped there with nothing published; on 17 November core-p13's water
+          # could not cut 59 of Norway's, along its whole coast, where a flat 50 stopped the run.
           ALLOW=$(( 50 + ($(stat -c %s "$WORK/out/$ID.windows.idx") - 32) / 52 / 10000 ))
           /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f 'country\t%e\t%M\t%P' \
             app/android/packer/build/install/packer/bin/packer country "$WORK/out/$ID.windows" "$WORK/out/$ID.windows.idx" "$WORK/out" \
