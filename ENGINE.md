@@ -2,6 +2,8 @@
 
 Atlas draws its map with its own engine. This is the one document about it: what it is, how it works, what exists and what is left. It replaces every earlier plan, brief and note about the engine. Those are archived in `cache/claude-session/archive/engine-2026-10/` as history, and nothing here needs them.
 
+**Read this first.** Until 16 November 2026 the engine had to match the Python renderer, and most of this document was written for that. The user dropped that requirement (What it is; The user's answers). This document is being rewritten for it. Until it is: where a section holds the engine, a check or a step to the renderer, its port, the twin or the likeness, read it as how the engine got here, not as a rule for new work.
+
 ## What it is
 
 - **The centerpiece of the app, purpose built for Atlas.** It is done first, and the rest of the app builds on it.
@@ -9,11 +11,11 @@ Atlas draws its map with its own engine. This is the one document about it: what
 - **Global, and it builds itself.** The map covers the entire world, from the globe down to a single street. The phone gathers up-to-date map data for any place, at any time, and builds the map itself. Pre-built packs are additions, not a requirement.
 - **Every detail OSM has, as smooth and efficient as other map apps, or more** (the user, 25 October). Nothing OSM maps is dropped from the data; each detail draws from the zoom where it can be seen, and goes on in the renderer's spirit where the renderer stops. A frame's cost follows what is on screen, not how much is mapped.
 - **Independent.** The app never relies on a single source. Every input has more than one way in, and the map keeps working offline with what it has.
-- **Matches the renderer.** The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is the starting point for the look: its features, rules, colours and light.
-  - The engine matches it exactly, except where the renderer is wrong.
-  - The renderer is unfinished and has its issues. Each issue the engine fixes is named, such as melting buildings.
-  - The renderer is frozen as the yardstick: the look is refined in the engine, which goes on in the renderer's spirit where it stops.
-  - When the engine is finished, the renderer and its port are retired.
+- **Held to what a person sees, no longer to the renderer** (the user, 16 November). The Python renderer (`render/*.py`, ported byte for byte to Kotlin in `app/android/render`) is where the look started: its features, rules, colours and light. From 20 October to 16 November it was the frozen yardstick, and the engine matched it exactly. Since then:
+  - Nothing is drawn that cannot be there: overlapping buildings, streets that follow OSM's lines where a real street would not, roofs with parts missing.
+  - Other map apps are matched or beaten, judged on the engine's own pictures and on a real phone.
+  - No feature or detail the user had is lost without the user's word.
+  - The checks that held the engine to the renderer leave in cuts, in the order the user agreed (The user's answers); the first landed on 17 November. The renderer and its port are retired with them.
 - **Custom where it counts.** The data model, tile format, rules, look, passes and shaders are Atlas's own. No general map engine and no third-party tile schema: OpenMapTiles is abolished.
   - An outside piece comes in only where it is cutting edge, fits, and plugs in without a sacrifice. Today that means Vulkan-Hpp, VMA, zstd, HarfBuzz, earcut.hpp and doctest in the core, Slang for the shaders, and Planetiler as the build tool for the world's mid zooms.
   - Each is pinned (`cpp/third_party/VERSIONS.md`) and can be replaced.
@@ -420,7 +422,7 @@ The engine is done first: it is the app's centerpiece, and the rest of the app b
   - Done: **a region's load** (`load/Regions.hpp`), regions.py's rules for every place besides the living map, on top of the living map's load: buildings and parts mapped as relations, the closest roof shape the renders draw, land cover, runways, big roads and railways above the ground, power lines and their towers, marine works, cranes, masts, wind turbines, national parks, water mapped as relations with its islands, the sea closed from the coastline, the natural shores, each part's outline, and every building's look.
   - `RegionsParityTest` holds every record to the port's, loaded as the packer loads a region: the canal ring on every push (175,845 records, none different), and on the Mac New York, Notting Hill, ARTIS, the Efteling, Bergen, Paris, the port and Schiphol.
   - Done: **generic.py's looks, all of them** (`load/Generic.hpp`). Each building's kind comes from its tags and the land use it stands in. Its walls and roofs are real OSM values: the mapped ones win, and a colour word means the colour it names. The drawn colours vary per building from its own random stream, and the building gets its window rows and why. Also: Paris's stone tones and mansards, and Amsterdam's New looks (`keep_homes`: the homes keep their brick and plaster).
-  - Done: **the building traditions** (`load/Tradition.hpp`). The core reads render/traditions' files as data, each value as Python's json gives it (`tiles/Json.hpp`, the same typed values a pack's `style` carries). A tradition gives a building:
+  - Done: **the building traditions** (`load/Tradition.hpp`). The core reads the traditions' files (`app/android/mapcore/traditions`) as data, each value as Python's json gives it (`tiles/Json.hpp`, the same typed values a pack's `style` carries). A tradition gives a building:
     - the levels it usually builds, or the median of the mapped neighbours' within 80 m;
     - a roof from its rules (a Paris mansard, a canal house's narrow gable) or its roofs, with their pitch;
     - its walls and roof colours, weighted picks from the building's own random streams;
@@ -1732,7 +1734,10 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
 - Water names over the map stay level, like the quarter names (21 October 2026).
 - The canal names flow with their canal and sit on its water, as the renderer draws them (27 October 2026: "the rivers name should flow with the river and sit embeded", "They do this on the renderer", "Ive meant canal names"): the app's map drew none at the home, where the renders draw PRINSENGRACHT on the water beside the Westerkerk. The core had no fonts: only VK facts loaded them (`TextRounding.install`), so the ground's text (the canal names, the runways' designators) drew nothing in the app; the core now loads them as it starts (`MapEngine.startCore`).
 - The canal ring is bundled for the first look offline.
-- The look is refined in the engine, not in the renderer. The renderer and its port are frozen as the yardstick from 20 October 2026.
+- The look is refined in the engine, not in the renderer. The renderer and its port were frozen as the yardstick from 20 October 2026 until 16 November 2026 (the next answer).
+- **Parity is dropped** (16 November 2026: "drop the parity requirement and go on developing the engine fixing things that cant be there, overlapping buildings, streets that dont exactly copy what osm says (because thats wrong for real streets), missing roof parts, and new ideas and improvements"). The engine no longer has to match the renderer or its port, exactly or at all. It is held to what What it is says: nothing drawn that cannot be there, and "Being able to match competing maps apps or much better". Thought aloud in the same message and not decided: a makeover, auditing and rewriting large parts, pre-rendered models and other techniques beside vectors, and a low-requirement, energy-efficient 2D version through the same engine beside the full 3D one.
+- **The order after parity** (17 November 2026): the parity checks' first cut; the real map timed on the user's phone, beside the buildings' fix; roofs; streets; the second cut; and on. "Keep the Rust trial": the buildings' cleaning is written in Rust as one small trial. A Rust rewrite of the engine is not decided.
+- **The streets step builds one network** of streets, paths and heights, which stage P builds, the map draws and navigation reads, with the ground as its zero (17 November 2026: "Do whats right", to whether it should; the engine's lead took yes). Its measured heights wait for the open question below.
 - Clouds, cloud shadows and reflections come in step 4, in the plan's order (21 October 2026); the soft shadows were pulled into step 2.
 - The haze and the vignette are optional in the app's Look settings (21 October 2026), and so is the grain (23 October 2026). Off by default since 27 October 2026: "Grain vigentte and haze should be disabled by default if they add performance overhead", and each does (the composite's per-pixel steps, the grain's field, the port's full-frame noise filter).
 
@@ -1753,33 +1758,35 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
     - **A second host for the packs workflow's extract:** packs.yml reads Geofabrik alone. download.openstreetmap.fr serves the same Netherlands extract (1.64 GB on 29 October), but cut with its own boundary, so a pack built from it lists slightly different windows: a fallback, not a drop-in.
 - **Williamsburg in its own look:** yes (the default), done last.
 - **The close-range look beyond Amsterdam:** no (the default).
+- **Measured heights:** may building heights and bridge decks use the national surveys' open data and building models, credited in the app? Not asked yet. The default: nothing of it is fetched or used until the user has answered.
 
 ## How to work
 
-- **Where.** One agent, in its own worktree under `/Volumes/Download/atlas/<name>/`, on its own branch. The main disk has only a few GB free.
-- **Keep the Mac awake and on power** while the agent runs.
-- **Commits.** Commit in small steps, by explicit paths, in the repo's style, each message ending with the co-author line. When a step's tests pass:
-  1. fast-forward `app` in the main checkout;
-  2. push it: `git push https://github.com/atlas-maps-app/Atlas.git app`;
-  3. let CI decide;
-  4. at the end of a step, tag an alpha and tell the user. Besides, every night `alpha.yml` makes the latest commit of `app` that Core and Android built green the next alpha, when the app changed since the last one (the user, 23 October; `.github/scripts/nightly-alpha.sh` chooses, `release.yml` publishes). Scheduled workflows run from the repository's default branch only, which is `app` since 23 October (until then `main`, where neither this nor CI's nightly jobs ever ran).
-- **Ask first** before publishing anything else: render packs, other release assets, or a new workflow's first run.
+- **Where.** One session works on one job, in its own worktree on its own branch, and only there. The main checkout stays on `app`: nobody works in it, and finished branches land there.
+- **Commits.** Commit in small steps, by explicit paths, in the repo's style, each message ending with the co-author line. Never rewrite pushed history: fix a pushed branch with a commit on top.
+- **Landing.** Only a lead lands a branch on `app`; a builder reports its branch and its runs to its lead. A push to a branch other than `app` starts no CI: dispatch the branch's runs (`gh workflow run core.yml --ref <branch>`, and `android.yml` the same). The lead:
+  1. brings `app`'s tip into the branch, and has CI run that merge before it becomes `app`'s tip (Android for a change to the core, Core and Android for a change under `.github`);
+  2. fast-forwards `app` in the main checkout;
+  3. pushes it (`git push origin app`) and lets CI decide.
+- **Alphas.** Every night `alpha.yml` makes the latest commit of `app` that Core and Android built green the next alpha, when the app changed since the last one (the user, 23 October; `.github/scripts/nightly-alpha.sh` chooses, `release.yml` publishes). Its token cannot tag a commit whose workflow files differ from `app`'s tip, so a change under `.github` lands early in a day or right after a nightly. Scheduled workflows run from the repository's default branch only, which is `app` since 23 October (until then `main`, where neither this nor CI's nightly jobs ever ran). An alpha tagged by hand is the user's to ask for.
+- **Ask first** before publishing anything else: packs, other release assets, or a new workflow's first run. A permanent deletion (a release, a draft, data) is the user's.
 - **Stop at the user's budget cap:** commit tested work, report, and wait.
-- **Checks on the Mac: only what the change touches.** The full suites are CI's (Checks, 6). `python3 -I app/android/ci/affected.py` maps the branch's changed paths (against `app`, with what is not committed) to the ctest entries and the Gradle test tasks that cover them, and prints their commands: a test file's own entry, every test file that includes a changed header (from the build folder's dependency records), the changed areas' labels, and `:mapcorecheck`'s tests of those areas. Then push, and read CI's word; a push never waits for another's run.
-- **Build.** In `app/android/mapcore/cpp`, with `PATH=$HOME/Library/Android/sdk/cmake/4.1.2/bin:$PATH` and `ATLAS_REQUIRE_VULKAN=1`:
+- **Local checks: only what the change touches.** The full suites are CI's (Checks, 6). `python3 -I app/android/ci/affected.py` maps the branch's changed paths (against `app`, with what is not committed) to the ctest entries and the Gradle test tasks that cover them, and prints their commands: a test file's own entry, every test file that includes a changed header (from the build folder's dependency records), the changed areas' labels, and `:mapcorecheck`'s tests of those areas. Then push, and read CI's word; a push never waits for another's run.
+- **Heavy steps take turns,** sized to the machine they run on. Where the fleet's wrappers are installed, every build goes through them: `gw <gradle tasks>` for Gradle, and `heavy <name> <command>` for any other compile, test run, bench or packer run. They set the jobs, the workers, lavapipe's threads, Gradle's home and the pinned tools, so none of that is set by hand.
+- **Build.** In `app/android/mapcore/cpp`, with the cmake the repository pins on `PATH` (the Android SDK's; the wrappers put it there):
   - `cmake --preset host-debug`;
-  - `cmake --build --preset host-debug -j3`;
+  - `cmake --build --preset host-debug -j<jobs>`;
   - `ctest --preset host-debug -j2 -L <area>` (or `-R '^<area>/<name>$'`, `-L vk`), as `affected.py` says;
+  - the presets set `ATLAS_REQUIRE_VULKAN=1`, so a Vulkan test fails where it would otherwise be skipped: on a machine without Vulkan those tests, the frames and the emulator are CI's;
   - TSan, the release flags, the arm64 build and clang-tidy run on CI.
-- **Android:** `./gradlew :mapcore:assembleDebug`.
-- **The JVM checks:** the tasks `affected.py` names, such as `:mapcorecheck:test --tests 'app.atlas.mapcorecheck.sun.*'` and `:likeness:testDebugUnitTest`.
-- **Gradle settings:**
-  - flags: `--no-daemon --max-workers=2 -Patlas.tools=<the main checkout>/cache/atlas-tools`;
-  - the core's builds that Gradle runs (`:mapcorecheck:coreHost`, `:mapcore`'s NDK build) take three jobs at once here and every core on CI; `-Patlas.jobs=<n>` or `ATLAS_JOBS=<n>` sets another number (the NDK build's Vulkan-Hpp units keep their own two);
-  - `GRADLE_USER_HOME` on the Download volume;
-  - `GRADLE_RO_DEP_CACHE=$HOME/.gradle/caches`.
-- **Load.** Run lavapipe with `LP_NUM_THREADS=2`, and one heavy step at a time: the Mac has 14 GB and 8 cores.
-- **zsh.** The shell is zsh, and a variable does not split into words. Use while-read loops or `--pathspec-from-file`.
+- **Android:** `./gradlew :mapcore:assembleDebug`, through `gw` where it is installed.
+- **The JVM checks:** the tasks `affected.py` names, such as `:mapcorecheck:test --tests 'app.atlas.mapcorecheck.sun.*'`.
+- **Gradle without the wrappers:**
+  - flags: `--no-daemon --max-workers=2 -Patlas.tools=<one folder for the pinned tools, shared by every worktree>`;
+  - the core's builds that Gradle runs (`:mapcorecheck:coreHost`, `:mapcore`'s NDK build) take three jobs at once by default and every core on CI; `-Patlas.jobs=<n>` or `ATLAS_JOBS=<n>` sets another number (the NDK build's Vulkan-Hpp units keep their own two);
+  - one `GRADLE_USER_HOME` for every worktree, so each build is warm;
+  - lavapipe with `LP_NUM_THREADS=2`.
+- **zsh.** Where the shell is zsh, a variable does not split into words. Use while-read loops or `--pathspec-from-file`.
 
 **Learned the hard way:**
 - **Python's `min`, `max` and `round` go through pymath** (`pymath::min`, `pymath::max`, `pymath::round`), and Kotlin's through `pymath::java`. clang -O2 on arm64 turns a select against zero into `fminnm`, which orders -0.0 below +0.0.
@@ -1788,5 +1795,5 @@ Designed on 31 October (the user: "Continue and finish the engine"). Today the c
 - **Announce each driver call that can crash** to the crash guard (`gpu::announce`), for that call alone.
 - **No blend reads the destination's alpha,** because colour attachments may be 10-bit.
 - **Timing gates hold only with `ATLAS_TIMED=1`** on a quiet machine.
-- **The renderer's reference is a fresh run of `render/*.py`.** `cache/render` is the user's and may be outdated: never write there.
+- **`cache/render` is the user's own renders:** never write there. Until 16 November a fresh run of `render/*.py` was the engine's reference; it is no longer (What it is).
 - **Never read the renders' big SVGs into context.** Script them instead.
