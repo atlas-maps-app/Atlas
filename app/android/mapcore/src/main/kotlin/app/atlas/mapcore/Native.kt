@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 32
+    const val ABI = 33
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -184,6 +184,19 @@ object Native {
 
     /** Copies the frame records not read yet into [out] (a direct buffer of [FrameRecords.SIZE]-byte records). */
     @JvmStatic external fun records(handle: Long, out: ByteBuffer): Int
+
+    /**
+     * Every frame record written handed on now, whether or not the display has said when it showed its frame: where the
+     * device gives no presentation times (CI's emulator), [records] hands one on only eight frames later.
+     */
+    @JvmStatic external fun publishRecords(handle: Long)
+
+    /**
+     * The map's stage F part by part of the frames drawn since the last call: the parts a frame first (the scene's
+     * update, the globals, the ranks, then each pass's select and update in the registry's order), then each frame's,
+     * ms, oldest first; kept from now on for the next call where [keep] (VK bench, around a measurement), else none kept.
+     */
+    @JvmStatic external fun stageF(handle: Long, keep: Boolean): DoubleArray
 
     @JvmStatic external fun stats(handle: Long): String
 
@@ -445,6 +458,17 @@ object Native {
      * cannot, or not yet (no frame drawn since the map or its window was made).
      */
     @JvmStatic external fun shapeRecords(handle: Long, on: Boolean): String
+
+    /**
+     * The passes the map's frames record from now on, by their names in the core's registry (`CP/frame/PassRegistry.cpp`:
+     * composite, frosted, ground, buildings, …, world), comma-separated in [keep], or every one for "" (VK bench's
+     * configurations and its split of the GPU's time by pass; a pass left out still selects and updates, and records
+     * nothing). "" or why not ("no pass named …").
+     */
+    @JvmStatic external fun passes(handle: Long, keep: String): String
+
+    /** The map's last frame's counts by pass, `<name> <draws> <dispatches> <triangles>` a line in the registry's order; "" before its first frame builder. */
+    @JvmStatic external fun passCounts(handle: Long): String
 
     /**
      * Where the fling under way lands ([has]: none when false): the camera's target, bearing, pitch and distance at its
