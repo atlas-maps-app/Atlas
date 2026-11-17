@@ -59,7 +59,11 @@ static_assert(shaders::BUILDING_LEAN_PRIM_VECTORS == 3 && shaders::BUILDING_LEAN
 
 /// A level's tile's grid (building.slangh's building_grid_point): per axis its points' least snapped down to a multiple
 /// of its step, the least power of two from which each of them lies within 65535 steps and fewer than 2^24 steps from
-/// 0, so that the float sums the GPU and the twin make of its steps are exact.
+/// 0, so that the float sums the GPU and the twin make of its steps are exact. Its points are those within grid_reach
+/// of the tile's corner (heap_words' take): the others, which no building has (a height past 100 km from a pack's
+/// value), are held at its edge (steps), so they neither coarsen every other building's grid nor leave it unbounded.
+constexpr double grid_reach = 100'000.0;
+
 struct Grid {
     std::array<double, 3> lo{};
     std::array<int, 3> e{};
@@ -69,7 +73,7 @@ struct Grid {
             const double a = least.at(i) <= most.at(i) ? least.at(i) : 0.0; // no points: any grid
             const double z = least.at(i) <= most.at(i) ? most.at(i) : 0.0;
             int k = -24;
-            for (;; ++k) {
+            for (; k <= 127; ++k) { // within grid_reach, a step of 4 m at most (k = 2)
                 const double step = std::ldexp(1.0, k);
                 const double from = std::floor(a / step) * step;
                 if ((z - from) / step <= 65535.0 && std::max(std::abs(from), std::abs(z)) / step < 16'000'000.0) {
@@ -85,7 +89,9 @@ struct Grid {
     [[nodiscard]] double step(std::size_t i) const { return std::ldexp(1.0, e.at(i)); }
     /// The steps of tile-local coordinate `v` along axis i.
     [[nodiscard]] std::uint32_t steps(std::size_t i, double v) const {
-        return static_cast<std::uint32_t>(std::clamp(std::round((v - lo.at(i)) / step(i)), 0.0, 65535.0));
+        const double q = std::round((v - lo.at(i)) / step(i));
+        if (!(q > 0.0)) return 0; // NaN too
+        return q < 65535.0 ? static_cast<std::uint32_t>(q) : 65535U;
     }
     /// The point `q` steps along axis i, as the GPU's float sum makes it (exact).
     [[nodiscard]] float point(std::size_t i, std::uint32_t q) const {
@@ -209,6 +215,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
         const auto take = [&](const gm::V3& v) {
             const std::array<double, 3> l{v.x - origin_x, v.y, v.z - origin_z};
             for (std::size_t i = 0; i < 3; ++i) {
+                if (!(std::abs(l.at(i)) <= grid_reach)) continue; // held at the grid's edge (Grid), NaN too
                 lowest.at(i) = std::min(lowest.at(i), l.at(i));
                 highest.at(i) = std::max(highest.at(i), l.at(i));
             }
