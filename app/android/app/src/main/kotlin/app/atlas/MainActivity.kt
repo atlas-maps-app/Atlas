@@ -172,11 +172,12 @@ class MainActivity : ComponentActivity() {
 
     /**
      * VK bench's real map on a phone fetches the windows and the world as the app's map does (the map start's own two
-     * statements, run before the bench's screen shows); not CI's bench, which draws the canal ring it puts on the device
-     * and fetches nothing.
+     * statements, run before the bench's screen shows): the bench opened by its shortcut, its length chosen on the
+     * screen. Not a launch that names its length (CI's runs: `ci`, the crash guard's, `pills`), which draws the canal
+     * ring CI puts on the device and fetches nothing.
      */
     private fun benchFetches(services: Services, intent: Intent) {
-        if (intent.getStringExtra(EXTRA_SCREEN) != SCREEN_VKBENCH || intent.getBooleanExtra(EXTRA_VK_CI, false)) return
+        if (intent.getStringExtra(EXTRA_SCREEN) != SCREEN_VKBENCH || intent.hasExtra(EXTRA_VK_BENCH) || intent.getBooleanExtra(EXTRA_VK_CI, false)) return
         allowWorld(services, intent)
         app.atlas.mapview.MapEngine.online = { services.connectivity.online.value && !services.config.offline }
     }
