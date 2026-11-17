@@ -51,8 +51,10 @@ struct RippleLook {
     double wgrad_y2 = 0;
     double opacity = 0;
     style::ThemeBlock th{};
-    passes::PixelBox out;   ///< the result's region (the buffers hold nothing beyond it)
-    passes::PixelBox drawn; ///< the layer's (the layer holds nothing beyond it)
+    passes::PixelBox out;            ///< the result's region (the buffers hold nothing beyond it)
+    passes::PixelBox drawn;          ///< the layer's (the layer holds nothing beyond it)
+    std::uint32_t tiles = 0;         ///< the fused stages' tiles over the result's region
+    std::uint32_t tiles_reached = 0; ///< those an element of the layer reaches: the others are not computed
 };
 
 void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
@@ -77,6 +79,8 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
     std::memcpy(look.result.data(), out.bytes().data(), n * 4);
     look.out = s->out;
     look.drawn = s->drawn;
+    look.tiles = g.ripple_plan().tiles;
+    look.tiles_reached = g.ripple_plan().tiles_reached;
     look.scale = fx::ripple_scale(state.theme.wind);
     const passes::GroundFrame& f = g.decided();
     look.wgrad_y1 = f.wgrad_y1;
@@ -86,7 +90,9 @@ void take(RippleLook& look, passes::Ground& g, const frame::FrameState& state) {
 }
 
 /// The pass's result against the CPU's chain over the pass's own layer (the ripple's field the CPU's): within the
-/// result's region word for word, and beyond it transparent (the region holds all of it).
+/// result's region word for word, and beyond it transparent (the region holds all of it). The layer is its drawn box's
+/// content, transparent beyond it, as the stages read it (ripple.slang): the image keeps there what earlier frames
+/// drew while the tiles came, and the copy with it.
 struct Chain {
     std::vector<fx::Argb> want;
     std::size_t covered = 0;
@@ -98,7 +104,13 @@ struct Chain {
 Chain chain_of(const RippleLook& look, const fx::ScreenFields& fields, float density) {
     Chain c;
     const std::vector<std::uint8_t> field = fields.bytes_of(fx::Field::ripple);
-    c.want = fx::ripple_cpu(look.layer, field, look.w, look.h, look.scale, density);
+    std::vector<fx::Argb> layer = look.layer;
+    for (std::size_t i = 0; i < layer.size(); ++i) {
+        if (!look.drawn.contains(static_cast<std::int32_t>(i % look.w), static_cast<std::int32_t>(i / look.w))) {
+            layer[i] = 0;
+        }
+    }
+    c.want = fx::ripple_cpu(layer, field, look.w, look.h, look.scale, density);
     for (std::size_t i = 0; i < c.want.size(); ++i) {
         const bool in = look.out.contains(static_cast<std::int32_t>(i % look.w), static_cast<std::int32_t>(i / look.w));
         if ((c.want[i] >> 24U) != 0) {
@@ -157,10 +169,15 @@ TEST_CASE("ground: the reflections' ripple is SvgFilterRaster's chain over their
                         "differing from the CPU's",
                         look.scale, blur.x, blur.y, blur.square() ? "vImage's squares" : "WebKit's passes",
                         chain.covered, chain.differ));
-    MESSAGE(std::format("the result's region: {} × {} of the frame's {} × {} px", look.out.x1 - look.out.x0,
-                        look.out.y1 - look.out.y0, look.w, look.h));
+    MESSAGE(std::format("the result's region: {} × {} of the frame's {} × {} px, {} of its {} tiles reached by a "
+                        "reflection",
+                        look.out.x1 - look.out.x0, look.out.y1 - look.out.y0, look.w, look.h, look.tiles_reached,
+                        look.tiles));
     CHECK(blur.square());
     CHECK(look.fused); // the boxes' reaches fit the fused stages' shared memory
+    // the fused stages leave out the tiles no reflection reaches (the result there is nothing, as the chain's is)
+    CHECK(look.tiles_reached > 0U);
+    CHECK(look.tiles_reached < look.tiles);
     CHECK(chain.covered > 10000);
     CHECK_MESSAGE(chain.differ == 0, chain.first);
     CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
@@ -464,6 +481,16 @@ TEST_CASE("ground: the reflected trees' leaf filter moves their circles' samples
     CHECK(astray == 0);
     CHECK(checked > 1000);
     CHECK(wrong <= checked / 200);
+    // and the ripple's result over the layer with its leaves is the chain's, word for word: the fused stages compute
+    // every tile the moved leaves reach, and leave out the others
+    const Chain chain = chain_of(with, *latest, density);
+    MESSAGE("the canal's ripple: " << chain.covered << " pixels of the result covered, " << chain.differ
+                                   << " differing from the CPU's; " << with.tiles_reached << " of its " << with.tiles
+                                   << " tiles reached");
+    CHECK(with.fused);
+    CHECK_MESSAGE(chain.differ == 0, chain.first);
+    CHECK_MESSAGE(chain.beyond == 0, chain.beyond << " pixels of the result lie beyond its region");
+    CHECK(with.tiles_reached < with.tiles);
 }
 
 TEST_CASE("ground: the ripple's result is made once a camera, and stands while it holds still, at rest or not") {

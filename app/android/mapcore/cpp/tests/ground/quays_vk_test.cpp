@@ -2,6 +2,11 @@
 // alone, each pixel whose samples the twin's quay faces cover is the latest face's colour there: the twin's faces (each
 // a Camera.poly polygon, a wall's and its bands' grown by their .3 strokes' half width, the port's own polygons) at the
 // standard 4x sample positions, the latest painter slot winning, against the frame's pixels.
+//
+// And at eye level before a wall of the Keizersgracht by day, the walls' courses (closeup.py's coursing): the frame
+// drawn with them and without differs only along the twin's course lines (each `M x0 y0 l dx dy` of a path, its
+// stroke's width), each changed pixel between the frame without them and their joints' colour over it at the path's
+// opacity; a pixel a wide line covers whole is that blend; and from above (the home's view) no wall has courses.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
@@ -244,6 +249,190 @@ TEST_CASE("ground: the quay walls are the twin's faces, grown by their strokes, 
     CHECK(whole > 2000);
     CHECK_MESSAGE(wrong == 0, first);
     CHECK(boundary <= whole / 1000);
+}
+
+TEST_CASE("ground: at eye level a quay wall's courses are the twin's lines over the wall, at their paths' opacity") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the quay walls are not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    // a wall of the Keizersgracht (the bundled Westerkerk's quay edge from (107.9, -16.0) to (86.6, 24.1), east of the
+    // church) seen square on from 25 m, 6° down: the gaze level enough (`cam.f[1] > -0.25`), a brick's course 3.5 px.
+    // From the water's side the wall fills the frame's middle; from the land's it faces away, so of the two bearings
+    // square to it the test takes the one that shows its courses
+    const double kx = 111320 * pymath::cos(pymath::radians(52.3746));
+    const auto toward = [&](double bearing) {
+        return test::s1_camera(52.3746 - (4.05 / 110540.0), 4.8840 + (97.25 / kx), bearing, 84.0, 25.0);
+    };
+    /// A course line in device px, its half width, and its path's joints and opacity.
+    struct Line {
+        std::array<double, 2> a;
+        std::array<double, 2> b;
+        double hw = 0;
+        std::uint32_t colour = 0;
+        double opacity = 0;
+    };
+    std::vector<Line> lines;
+    std::size_t paths = 0;
+    std::size_t decided = 0;
+    const auto look = [&](const style::CameraState& camera) {
+        lines.clear();
+        paths = 0;
+        decided = 0;
+        return test::draw_ground(
+            *session, camera, test::sunny(), dir, "amsterdam", [&](passes::Ground& g, const frame::FrameState& state) {
+                twin::Stream s;
+                g.emit(state, s, passes::Ground::phase_opaque);
+                const twin::Decoded d = twin::decode(s.bytes());
+                REQUIRE(d.error.empty());
+                const float density = state.block.camera.frame.z;
+                const std::uint32_t first = g.slot(geometry::group::quay, 0, 0);
+                const auto count = static_cast<std::uint32_t>(g.decided().quays.size());
+                for (const passes::QuayFace& f : g.decided().quays) {
+                    if (f.kind == passes::QuayFace::Kind::courses) ++decided;
+                }
+                for (const twin::Element& e : d.document.elements) {
+                    if (e.layer != twin::Layer::ground || e.kind != twin::Op::path) continue;
+                    if (e.slot < first || e.slot >= first + count) continue;
+                    if (e.style.fill.kind != twin::Paint::Kind::none) continue; // a face
+                    REQUIRE(e.style.stroke.kind == twin::Paint::Kind::colour);
+                    ++paths;
+                    std::size_t start = 0;
+                    for (const std::uint32_t end : e.subpath_ends) {
+                        REQUIRE(end - start == 2U);
+                        lines.push_back({.a = {static_cast<double>(e.points[start].x * density),
+                                               static_cast<double>(e.points[start].y * density)},
+                                         .b = {static_cast<double>(e.points[start + 1].x * density),
+                                               static_cast<double>(e.points[start + 1].y * density)},
+                                         .hw = static_cast<double>(e.style.stroke_width * density) / 2,
+                                         .colour = e.style.stroke.argb,
+                                         .opacity = static_cast<double>(e.node.opacity)});
+                        start = end;
+                    }
+                }
+            });
+    };
+    style::CameraState camera = toward(118.0);
+    auto with = look(camera);
+    ATLAS_REQUIRE(with.has_value(), "the canal was not drawn with its courses");
+    if (lines.empty()) {
+        camera = toward(298.0);
+        with = look(camera);
+        ATLAS_REQUIRE(with.has_value(), "the canal was not drawn with its courses");
+    }
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    const auto without = test::draw_ground(*session, camera, test::sunny(), dir, "amsterdam", {}, 40,
+                                           [](passes::Ground& g) { g.draw_courses(false); });
+    ATLAS_REQUIRE(without.has_value(), "the canal was not drawn without its courses");
+    // the frame is 7 m of the wall wide at 25 m: two of its 5 m chunks show their lines (the others' lie beside it)
+    REQUIRE(decided >= 2);
+    REQUIRE(paths >= 2);
+    REQUIRE(lines.size() >= 20);
+    const gpu::Pixels& a = with->pixels;
+    const gpu::Pixels& b = without->pixels;
+    const auto w = static_cast<std::int64_t>(a.width);
+    const auto h = static_cast<std::int64_t>(a.height);
+    // each pixel's nearest line (its index + 1) within its half width and a pixel and a half, and whether a line
+    // covers the pixel whole
+    std::vector<std::uint32_t> near(static_cast<std::size_t>(w * h), 0);
+    std::vector<double> most(near.size(), 0.0); // the most opaque of the paths whose lines reach the pixel
+    std::vector<std::uint32_t> whole(near.size(), 0);
+    for (std::uint32_t li = 0; li < lines.size(); ++li) {
+        const Line& l = lines[li];
+        const double reach = l.hw + 1.5;
+        const auto x0 =
+            std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(std::min(l.a[0], l.b[0]) - reach)));
+        const auto x1 =
+            std::min<std::int64_t>(w - 1, static_cast<std::int64_t>(std::ceil(std::max(l.a[0], l.b[0]) + reach)));
+        const auto y0 =
+            std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(std::min(l.a[1], l.b[1]) - reach)));
+        const auto y1 =
+            std::min<std::int64_t>(h - 1, static_cast<std::int64_t>(std::ceil(std::max(l.a[1], l.b[1]) + reach)));
+        const double ex = l.b[0] - l.a[0];
+        const double ey = l.b[1] - l.a[1];
+        const double l2 = (ex * ex) + (ey * ey);
+        for (std::int64_t y = y0; y <= y1; ++y) {
+            for (std::int64_t x = x0; x <= x1; ++x) {
+                const double qx = (static_cast<double>(x) + 0.5) - l.a[0];
+                const double qy = (static_cast<double>(y) + 0.5) - l.a[1];
+                const double t = l2 > 0 ? ((qx * ex) + (qy * ey)) / l2 : 0.0;
+                const double tc = std::clamp(t, 0.0, 1.0);
+                const double dist = pymath::hypot(qx - (ex * tc), qy - (ey * tc));
+                const auto i = static_cast<std::size_t>((y * w) + x);
+                if (dist <= reach) {
+                    near[i] = li + 1;
+                    most[i] = std::max(most[i], l.opacity);
+                }
+                // whole: the pixel's box inside the stroke, away from its ends
+                const double along = t * std::sqrt(l2);
+                if (dist <= l.hw - 0.75 && along >= 1.0 && along <= std::sqrt(l2) - 1.0) whole[i] = li + 1;
+            }
+        }
+    }
+    std::size_t changed = 0;
+    std::size_t astray = 0;
+    std::size_t beyond = 0;
+    std::size_t covered = 0;
+    std::size_t blended = 0;
+    std::string first;
+    for (std::size_t i = 0; i < near.size(); ++i) {
+        bool differs = false;
+        for (std::size_t k = 0; k < 3; ++k) differs = differs || a.rgba[(i * 4) + k] != b.rgba[(i * 4) + k];
+        if (differs) {
+            ++changed;
+            if (near[i] == 0) {
+                if (astray == 0)
+                    first = std::format("pixel {} {} changed away from every line", i % a.width, i / a.width);
+                ++astray;
+                continue;
+            }
+        }
+        if (near[i] == 0) continue;
+        const Line& l = lines[(whole[i] != 0 ? whole[i] : near[i]) - 1];
+        // between the frame without them and the joints over it at the path's opacity (the most opaque path's where
+        // two paths' lines reach the pixel); a pixel a line covers whole is its own path's blend
+        bool within = true;
+        bool full = true;
+        for (std::size_t k = 0; k < 3; ++k) {
+            const auto under = static_cast<double>(b.rgba[(i * 4) + k]);
+            const auto joint = static_cast<double>((l.colour >> (16U - (8U * k))) & 0xFFU);
+            const double bound = under + ((joint - under) * most[i]);
+            const auto got = static_cast<double>(a.rgba[(i * 4) + k]);
+            within = within && got >= std::min(under, bound) - 1.5 && got <= std::max(under, bound) + 1.5;
+            full = full && std::abs(got - (under + ((joint - under) * l.opacity))) <= 1.5;
+        }
+        if (differs && !within) {
+            if (beyond == 0) first = std::format("pixel {} {} beyond its line's blend", i % a.width, i / a.width);
+            ++beyond;
+        }
+        if (whole[i] != 0) {
+            ++covered;
+            if (full) ++blended;
+        }
+    }
+    MESSAGE(std::format(
+        "the Keizersgracht at eye level, bearing {}: {} courses' paths decided, {} in the twin with {} lines; {} "
+        "pixels changed, {} away from every line, {} beyond their line's blend; {} pixels a line "
+        "covers whole, {} its joints at the path's opacity over the wall",
+        camera.bearing, decided, paths, lines.size(), changed, astray, beyond, covered, blended));
+    CHECK(changed > 2000);
+    CHECK_MESSAGE(astray == 0, first);
+    CHECK_MESSAGE(beyond == 0, first);
+    // a covered pixel another face hides (the coping, the waterline, a nearer wall) is not the blend: most are
+    CHECK(covered > 200);
+    CHECK(blended >= covered * 3 / 4);
+    // from above no wall has courses
+    const auto home = test::draw_ground(*session, test::home_camera(), test::sunny(), dir, "amsterdam",
+                                        [&](passes::Ground& g, const frame::FrameState&) {
+                                            for (const passes::QuayFace& f : g.decided().quays) {
+                                                CHECK(f.kind != passes::QuayFace::Kind::courses);
+                                            }
+                                        });
+    ATLAS_REQUIRE(home.has_value(), "the home was not drawn");
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
 }
 
 #endif

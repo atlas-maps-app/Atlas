@@ -68,6 +68,8 @@ void Ground::decide_pools() {
     std::vector<Source> lamps;
     for (std::uint32_t ti = 0; ti < f.tiles.size(); ++ti) {
         const geo::GroundTile& g = *f.tiles[ti].ground;
+        // a tile whose map lays its lamps' light (LightMap.cpp) draws no ellipse of theirs
+        if (ti < f.light_mapped.size() && f.light_mapped[ti] != 0) continue;
         for (std::uint32_t k = 0; k < g.lamps.size(); ++k)
             lamps.push_back({.order = g.lamps[k].index, .tile = ti, .k = k});
     }

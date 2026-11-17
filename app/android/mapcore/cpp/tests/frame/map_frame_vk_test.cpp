@@ -129,7 +129,7 @@ private:
 /// amsterdam.py's sunny moment of 1 October 2026, 16:00, as Kotlin writes it (tests/style/ThemeTest.cpp's).
 [[nodiscard]] style::ThemeBlock sunny() {
     style::ThemeBlock b{};
-    b.version = 1;
+    b.version = style::theme_block_version;
     b.flags = flag::weather | flag::shadow_blur | flag::cloud_shadows | flag::water_gradient | flag::wet_set;
     b.year = 2026;
     b.month = 10;
@@ -730,7 +730,8 @@ const std::vector<Part>& every_part() {
     static const std::vector<Part> parts{
         {.name = "land and roads",
          .bit = part::ground,
-         .own = {"ground above", "ground land", "ground plate", "ground streets", "ground bridges"}},
+         .own = {"ground above", "ground land", "ground plate", "ground streets", "ground bridges",
+                 "ground big roads"}},
         {.name = "water", .bit = part::water, .own = {"ground water"}},
         {.name = "canopy", .bit = part::canopy, .own = {"ground canopy"}},
         // (a big road's lines go with its asphalt)
@@ -1228,6 +1229,11 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
         std::vector<Work> on;
         on.reserve(parts.size());
         for (const Part& p : parts) on.push_back(work_of(*map.builder(), p));
+        // every pass counts its kinds apart: one at the bound folds the next kinds into its last (frame::max_kinds),
+        // and a part's own work then reads another's
+        for (const frame::PassCounters& counted : map.builder()->counters()) {
+            CHECK_MESSAGE(counted.kinds().size() < frame::max_kinds, "a pass's kinds reach frame::max_kinds: raise it");
+        }
         // each part left out in turn: every part's work then, and in the frame right after it, with everything drawn
         // again (a stage that keeps its result while its inputs stand makes it anew where they changed since the frame
         // before, which the two need not share: its work made anew is left out of their likeness), and the tiles each
@@ -1363,6 +1369,45 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
     CHECK(ranked_without < ranked_with);
     MESSAGE(
         std::format("the row of doors' ranks: {} items, {} with the buildings left out", ranked_with, ranked_without));
+    // The frame ranks the rows of the tiles it draws alone, those kept under ones fading in among them
+    // (Cover::upright), since no pass reads another tile's: they are the rows that the frame ranking every resident
+    // tile's rows, as it did before (FrameBuilder::rank_undrawn), gives those tiles, in that order. Two frames at the
+    // one camera with no tile taken between them.
+    bool compared = false;
+    for (int k = 0; k < 20 && !compared; ++k) {
+        map.rank_undrawn(true);
+        CHECK(draw(doors, 0));
+        const frame::FrameState& first = map.builder()->state();
+        REQUIRE(first.items != nullptr);
+        REQUIRE(first.ranks != nullptr);
+        const std::uint64_t changes = first.items->changes();
+        const std::vector<std::uint32_t> every(first.ranks->order().begin(), first.ranks->order().end());
+        const std::uint32_t others = first.ranks->undrawn();
+        map.rank_undrawn(false);
+        CHECK(draw(doors, 0));
+        const frame::FrameState& state = map.builder()->state();
+        REQUIRE(state.items != nullptr);
+        REQUIRE(state.ranks != nullptr);
+        REQUIRE(state.cover != nullptr);
+        if (state.items->changes() != changes) continue;
+        std::vector<std::uint32_t> handles;
+        for (const scene::CoverTile& t : state.cover->upright()) {
+            if (t.drawn != nullptr) handles.push_back(t.drawn->handle);
+        }
+        const std::span<const std::uint32_t> tile = state.items->tile();
+        std::vector<std::uint32_t> want;
+        for (const std::uint32_t row : every) {
+            if (std::ranges::find(handles, tile[row]) != handles.end()) want.push_back(row);
+        }
+        CHECK_FALSE(want.empty());
+        CHECK(std::ranges::equal(want, state.ranks->order()));
+        CHECK(every.size() - want.size() == others);
+        MESSAGE(std::format("the row of doors' ranks by tile: {} rows of {} tiles drawn, {} more of other resident "
+                            "tiles in view ranked before, {} rows of theirs left out",
+                            want.size(), handles.size(), others, state.ranks->undrawn()));
+        compared = true;
+    }
+    CHECK(compared);
     session.close();
 }
 

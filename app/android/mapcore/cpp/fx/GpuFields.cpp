@@ -31,18 +31,19 @@ constexpr std::int32_t check_side = 64;
 constexpr std::array<Block, 2> check_blocks{{{.left = 0, .top = 0, .width = check_side, .height = check_side},
                                              {.left = 1500, .top = 2000, .width = check_side, .height = check_side}}};
 
-/// fields.slang's `lattice`: the nine specs (base_x's and base_y's bits, the octaves, the channels with fractal noise
-/// at bit 8), then the nine lattices.
+/// fields.slang's `lattice`: the frame's nine fields' specs (base_x's and base_y's bits, the octaves, the channels with
+/// fractal noise at bit 8), then their nine lattices.
 [[nodiscard]] std::vector<std::uint32_t> lattice_buffer() {
     std::vector<std::uint32_t> out;
-    out.reserve((field_count * 4) + (field_count * words_a_lattice));
-    for (const FieldSpec& s : screen_fields) {
+    out.reserve((frame_field_count * 4) + (frame_field_count * words_a_lattice));
+    const std::span<const FieldSpec> specs = std::span(screen_fields).first(frame_field_count);
+    for (const FieldSpec& s : specs) {
         out.push_back(std::bit_cast<std::uint32_t>(s.noise.base_x));
         out.push_back(std::bit_cast<std::uint32_t>(s.noise.base_y));
         out.push_back(static_cast<std::uint32_t>(s.noise.octaves));
         out.push_back(static_cast<std::uint32_t>(s.need) | (s.noise.fractal ? 256U : 0U));
     }
-    for (const FieldSpec& s : screen_fields) {
+    for (const FieldSpec& s : specs) {
         const std::vector<std::uint32_t> words = lattice_words(Lattice(s.noise.seed));
         ATLAS_ASSERT(words.size() == words_a_lattice, "a lattice is fields.slang's FIELDS_LATTICE_WORDS words");
         out.insert(out.end(), words.begin(), words.end());
@@ -166,11 +167,9 @@ gpu::Result<GpuMade> GpuFields::run(Block block, float scale) const {
     buffer->invalidate();
     const std::span<const std::byte> all = buffer->bytes();
     const auto* bytes = reinterpret_cast<const std::uint8_t*>(all.data());
-    const std::span<const std::uint8_t> rgba(bytes, pixels * rgba_bytes);
-    const std::span<const std::uint8_t> rg(bytes + (pixels * rgba_bytes), pixels * rg_bytes);
-    const std::span<const std::uint8_t> r(bytes + (pixels * (rgba_bytes + rg_bytes)), pixels * r_bytes);
-    const std::span<const std::uint8_t> canopy_plane(bytes + words, pixels * canopy_bytes);
-    auto fields = std::make_shared<const ScreenFields>(size, buffer, false, rgba, rg, r, canopy_plane);
+    // the three planes of words, then the canopy's: fx/Fields.hpp's plane_offsets
+    auto fields = std::make_shared<const ScreenFields>(size, buffer, false,
+                                                       std::span<const std::uint8_t>(bytes, pixels * pixel_bytes));
     return GpuMade{.buffer = std::move(buffer), .fields = std::move(fields), .ms = ms_since(started)};
 }
 
@@ -192,7 +191,7 @@ gpu::Result<NoiseCheck> GpuFields::check() const {
     for (const Block& b : check_blocks) {
         ATLAS_GPU_LET(made, run(b, scale));
         const std::shared_ptr<const ScreenFields> want = make_block(b, scale);
-        for (std::size_t f = 0; f < field_count; ++f) {
+        for (std::size_t f = 0; f < frame_field_count; ++f) {
             const auto field = static_cast<Field>(f);
             for (std::uint32_t y = 0; y < want->size().height; ++y) {
                 for (std::uint32_t x = 0; x < want->size().width; ++x) {

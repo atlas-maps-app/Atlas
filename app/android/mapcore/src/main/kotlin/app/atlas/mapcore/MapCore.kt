@@ -57,11 +57,13 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
         /**
          * Empties the world's cache in [dir] of every head and chunk (ENGINE.md step 6: a new version of the world drops
-         * the old one's), within [budget] bytes from now on. "" or why not. Off the main thread.
+         * the old one's), the kept countries' pins with them, within [budget] bytes from now on. "" or why not. Off the
+         * main thread. (The kept countries' world, which outlives a new version until the new one's is whole, goes
+         * through [KeptWorld].)
          */
         fun worldDrop(dir: String, budget: Long): String {
             Native.load()?.let { return it.ifEmpty { "the core did not load" } }
-            return Native.worldDrop(dir, budget)
+            return Native.worldDrop(dir, budget, false)
         }
 
         @Volatile
@@ -303,7 +305,7 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
              * A pack of the world's mid-zoom base (ENGINE.md steps 5 and 6): a remote pack by its [identity] and [length]
              * (world.idx's), opened from its head in the world's cache, drawn beyond 18 km under every country's tiles.
              */
-            const val WORLD_MID = 3
+            const val WORLD_MID = KeptWorld.WORLD_MID
 
             /** The world's globe (ENGINE.md step 5: world-globe.atlas, L0 to L5), drawn where no world pack reaches. */
             const val WORLD_BASE = 4
@@ -349,6 +351,80 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun labels(block: ByteBuffer, revision: Long, least: Float = 0f): String =
         core.call("the core is closed") { Native.labels(it, block, revision, least) }
 
+    /** A name of the world the map shows and has no sprite of: the core's [id] of it, its [look] and its [text]. */
+    class NameWant(val id: Int, val look: Int, val text: String) {
+        companion object {
+            /** The looks, as the core numbers them (`scene::NameStyle`). */
+            const val CITY = 0
+            const val TOWN = 1
+            const val VILLAGE = 2
+            const val GLOBE = 3
+
+            /** A water's or a river's name: the Main board's water label (the IJ's). */
+            const val WATER = 4
+        }
+    }
+
+    /**
+     * The world's names the map's frames show without a sprite, by rank (ENGINE.md step 5, "Names"): the app draws
+     * each as the boards' labels are drawn and hands them back ([names]). Each is asked for once in two seconds. Off
+     * the main thread.
+     */
+    fun namesWanted(): List<NameWant> = core.call(emptyList()) { h ->
+        val b = ByteBuffer.wrap(Native.namesWanted(h)).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (b.remaining() < 4) return@call emptyList()
+        List(b.getInt()) {
+            val id = b.getInt()
+            val look = b.getInt()
+            val text = ByteArray(b.getInt())
+            b.get(text)
+            NameWant(id, look, String(text, Charsets.UTF_8))
+        }
+    }
+
+    /**
+     * The sprites of names the core asked for ([namesWanted]), as `state.LabelBlock` writes them, each under the id
+     * the core gave and without points (the core knows its place); one with an empty image is a name the device has
+     * no glyphs for, which the core does not ask for again. Their text is drawn no smaller than [floorDp] (the
+     * readable floor: 12 sp times Android's font scale). "" or why they were refused. Off the main thread.
+     */
+    fun names(block: ByteBuffer, floorDp: Float): String = core.call("the core is closed") { Native.names(it, block, floorDp) }
+
+    /**
+     * A name for [testNames]: its [kind] (`TestName.COUNTRY` and on, the core's `scene::NameKind`), its place, its
+     * people (a water's area in m², 0 for none known; a river's length in m) and its [text].
+     */
+    class TestName(val kind: Int, val lat: Double, val lon: Double, val people: Double, val text: String) {
+        companion object {
+            const val COUNTRY = 0
+            const val CITY = 1
+            const val TOWN = 2
+            const val VILLAGE = 3
+            const val SUBURB = 4
+            const val OCEAN = 5
+            const val SEA = 6
+            const val BAY = 7
+            const val STRAIT = 8
+            const val LAKE = 9
+            const val RESERVOIR = 10
+            const val RIVER = 11
+        }
+    }
+
+    /**
+     * Names no tile holds, which the map picks as a tile's from now on (none: an empty list): the tests' (smoke's
+     * eight scripts). "" or why they were refused. Off the main thread.
+     */
+    fun testNames(names: List<TestName>): String = core.call("the core is closed") { h ->
+        val texts = names.map { it.text.toByteArray(Charsets.UTF_8) }
+        val b = ByteBuffer.allocate(4 + names.size * 32 + texts.sumOf { it.size }).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.putInt(names.size)
+        for ((i, n) in names.withIndex()) {
+            b.putInt(n.kind).putDouble(n.lat).putDouble(n.lon).putDouble(n.people).putInt(texts[i].size).put(texts[i])
+        }
+        Native.testNames(h, b.array())
+    }
+
     /**
      * The map's markers from now on, as `state.MarkerBlock` writes them (each look the app drew once, the clusters'
      * counts, and what the core places them by; an empty block, none), at [revision]: the core places them each frame
@@ -384,10 +460,12 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
 
     /**
      * The building the app asks about from now on (FillIn's question): way or [relation] [id] (0: none), drawn plain in
-     * its walls' flat colour [wall] (0xRRGGBB, the board's), hatched while the question is open ([hatched]). Off the main
-     * thread.
+     * its walls' flat colour [wall] (0xRRGGBB, the board's; negative: their colour is not asked about, and they keep
+     * their own), hatched while the question is open ([hatched]); and, where its roof's shape is asked about, in the roof
+     * [roof] (0 its own, 1 flat, 2 gabled, 3 hipped) as the board's house. Off the main thread.
      */
-    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean) = core.call(Unit) { Native.ask(it, relation, id, wall, hatched) }
+    fun ask(relation: Boolean, id: Long, wall: Int, hatched: Boolean, roof: Int = 0) =
+        core.call(Unit) { Native.ask(it, relation, id, wall, hatched, roof) }
 
     /**
      * The screen's haze, vignette and paper grain from now on, each on (the renders' look, the default) or off: off,

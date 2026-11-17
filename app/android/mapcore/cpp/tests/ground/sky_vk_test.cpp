@@ -4,9 +4,18 @@
 // across it, and the gradient alone beyond the circle; at night (with weather) the city's glow over the sky's rows
 // above the horizon. Each pixel against the colours recomputed from the SVG's stops, within two levels (the hardware's
 // blend and its rounding).
+//
+// And the clouds with their shadows (fx/Clouds.hpp), in full mode with the fields bound, by day, under an overcast sky
+// and at night, the sun behind the camera: over the sky's rows above the horizon each pixel is cloudf's result over
+// cloudsh2's over the frame drawn without them (at night the city's glow over both), each from its table at the red
+// the clouds' field gives its matrix there, within a level a blend; no pixel below the filters' region changes; and in
+// structural mode, whose references leave out an element that is all filter, nothing is drawn.
 #if !defined(__ANDROID__)
 
 #include "base/pymath/PyMath.hpp"
+#include "fx/Clouds.hpp"
+#include "fx/FieldCache.hpp"
+#include "fx/Fields.hpp"
 #include "passes/Ground.hpp"
 #include "tests/ground/ground_draw.hpp"
 #include "tests/ground/ground_support.hpp"
@@ -18,7 +27,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
+#include <memory>
 #include <string>
+#include <vector>
 
 using namespace atlas;
 
@@ -185,6 +197,199 @@ TEST_CASE("ground: the sky layer's sun, its glow and the city's glow lie over th
         CHECK(wrong == 0);
     }
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+}
+
+TEST_CASE(
+    "ground: the sky layer's clouds and their shadows are their filters' tables at the reds of the clouds' field") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the clouds are not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    // (the sky's field goes eight frames after the last whose sky showed)
+    auto made = fx::FieldCache::create(*session->device, {.threads = 3, .sky_kept_frames = 8});
+    ATLAS_REQUIRE(made.has_value(), made.error().text());
+    const std::shared_ptr<fx::FieldCache> fields(std::move(*made));
+    const auto settle = [&fields] {
+        fields->worker().wait_idle();
+        if (fx::FieldWorker* sky = fields->sky_worker(); sky != nullptr) sky->wait_idle();
+    };
+    // the horizon in view (12° down), the sun behind the camera: no glow lies over the clouds by day
+    const style::CameraState camera = test::s1_camera(52.3746, 4.8840, 52.0, 78.0, 200.0);
+    const double density = camera.density;
+    style::ThemeBlock day = test::sunny();
+    day.sun_vector = sun_before(232.0, 30.0);
+    // The app's map at home, with the same weather, shows no sky: its frames hold the frame's four images and no byte
+    // of the clouds' field, and nothing makes one.
+    {
+        bool bound = false;
+        bool sky_bound = true;
+        const auto home = test::draw_ground(
+            *session, test::home_camera(), day, dir, "amsterdam",
+            [&](passes::Ground& g, const frame::FrameState& state) {
+                CHECK_FALSE(g.decided().clouds);
+                CHECK_FALSE(fx::sky_shows(state));
+                bound = (state.block.info.x & shaders::FRAME_FIELDS) != 0U;
+                sky_bound = (state.block.info.x & shaders::FRAME_SKY_FIELD) != 0U;
+            },
+            12, {}, frame::Mode::full, fields, settle);
+        ATLAS_REQUIRE(home.has_value(), "the map at home was not drawn");
+        CHECK(bound);
+        CHECK_FALSE(sky_bound);
+        CHECK(fields->sky_worker() == nullptr);
+        CHECK_FALSE(fields->images().sky_ready());
+    }
+    const vk::DeviceSize without_sky = fields->images().bytes();
+    const std::shared_ptr<const fx::ScreenFields> latest = fx::make_fields(
+        fx::size_of(camera.width_px, camera.height_px, density), {.threads = 3, .set = fx::FieldSet::sky});
+    style::ThemeBlock grey = day;
+    grey.flags |= style::theme_flag::overcast;
+    grey.sky_k = 0.6;
+    struct Moment {
+        const char* name;
+        style::ThemeBlock theme;
+        bool night;
+    };
+    const std::array<Moment, 3> moments{{{.name = "day", .theme = day, .night = false},
+                                         {.name = "overcast", .theme = grey, .night = false},
+                                         {.name = "night", .theme = test::night_weather(), .night = true}}};
+    for (const Moment& m : moments) {
+        CAPTURE(std::string(m.name));
+        passes::GroundFrame f;
+        bool filtered = false;
+        const auto with = test::draw_ground(
+            *session, camera, m.theme, dir, "amsterdam",
+            [&](passes::Ground& g, const frame::FrameState& state) {
+                f = g.decided();
+                constexpr std::uint32_t both = shaders::FRAME_FIELDS | shaders::FRAME_SKY_FIELD;
+                filtered = (state.block.info.x & both) == both;
+                CHECK(fx::sky_shows(state));
+            },
+            40, {}, frame::Mode::full, fields, settle);
+        ATLAS_REQUIRE(with.has_value(), "the frame was not drawn with its clouds");
+        // the sky's field is there now, made once for the size: its image's bytes over the frame's four
+        CHECK(fields->images().sky_ready());
+        CHECK(fields->sky_bound_for(latest->size()));
+        ATLAS_REQUIRE(fields->sky_worker() != nullptr, "no worker made the sky's field");
+        CHECK(fields->sky_worker()->version() == 1);
+        CHECK(fields->sky_worker()->latest() == nullptr); // its bytes are the image's alone
+        const vk::DeviceSize with_sky = fields->images().bytes();
+        MESSAGE(std::format("the fields' images at {} × {}: {} bytes for a frame with no sky, {} more with the sky's "
+                            "field ({} a pixel)",
+                            camera.width_px, camera.height_px, without_sky, with_sky - without_sky,
+                            static_cast<double>(with_sky - without_sky) /
+                                (static_cast<double>(camera.width_px) * camera.height_px)));
+        CHECK(with_sky >= without_sky + (vk::DeviceSize{camera.width_px} * camera.height_px * fx::clouds_bytes));
+        for (const std::string& message : session->take_messages()) CHECK_MESSAGE(false, message);
+        const auto without = test::draw_ground(
+            *session, camera, m.theme, dir, "amsterdam", {}, 40, [](passes::Ground& g) { g.draw_clouds(false); },
+            frame::Mode::full, fields, settle);
+        ATLAS_REQUIRE(without.has_value(), "the frame was not drawn without its clouds");
+        REQUIRE(filtered);
+        REQUIRE(f.clouds);
+        CHECK_FALSE(f.glow);
+        CHECK(f.city_glow == m.night);
+        const gpu::Pixels& a = with->pixels;
+        const gpu::Pixels& b = without->pixels;
+        REQUIRE(latest->size().width == a.width);
+        REQUIRE(latest->size().height == a.height);
+        const std::array<fx::Argb, 256> shadow_table = fx::cloud_table(f.cloud_shadow_matrix);
+        const std::array<fx::Argb, 256> cloud_table = fx::cloud_table(f.cloud_matrix);
+        CHECK(f.cloud_offset == fx::cloud_offset(static_cast<float>(density)));
+        // the filters' region: the rows above ceil(int(hy + 2) · density)
+        CHECK(f.cloud_rows == static_cast<std::uint32_t>(std::ceil(std::trunc(f.horizon + 2.0) * density)));
+        const auto level = [](fx::Argb p, std::uint32_t shift) { return static_cast<double>((p >> shift) & 0xFFU); };
+        // a premultiplied sRGB pixel over an opaque colour
+        const auto under = [&](fx::Argb p, const Colour& d) {
+            const double keep = 1.0 - (level(p, 24) / 255.0);
+            return Colour{
+                .r = level(p, 16) + (d.r * keep), .g = level(p, 8) + (d.g * keep), .b = level(p, 0) + (d.b * keep)};
+        };
+        const Colour g0 = of(0xFF9E5AU, folded(0.0F));
+        const Colour g1 = of(0xFF9E5AU, folded(0.28F));
+        std::size_t sky = 0;
+        std::size_t clouded = 0;
+        std::size_t shaded = 0;
+        std::size_t clear = 0;
+        std::size_t wrong = 0;
+        std::size_t beyond = 0;
+        double worst = 0;
+        std::string first;
+        for (std::uint32_t y = 0; y < a.height; ++y) {
+            const double uy = (static_cast<double>(y) + 0.5) / density;
+            for (std::uint32_t x = 0; x < a.width; ++x) {
+                const std::size_t i = ((static_cast<std::size_t>(y) * a.width) + x) * 4;
+                if (y >= f.cloud_rows) {
+                    // below the filters' region nothing changes
+                    if (a.rgba[i] != b.rgba[i] || a.rgba[i + 1] != b.rgba[i + 1] || a.rgba[i + 2] != b.rgba[i + 2]) {
+                        ++beyond;
+                    }
+                    continue;
+                }
+                if (uy > f.horizon - 2.0) continue; // the horizon's own rows, where the ground begins
+                ++sky;
+                const fx::CloudReds reds = fx::cloud_reds(*latest, f.cloud_offset, x, y);
+                const fx::Argb shadow = shadow_table[reds.shadow];
+                const fx::Argb cloud = cloud_table[reds.cloud];
+                if ((cloud >> 24U) != 0U) ++clouded;
+                if ((shadow >> 24U) != 0U && (cloud >> 24U) != 255U) ++shaded;
+                if ((cloud >> 24U) == 0U && (shadow >> 24U) == 0U) ++clear;
+                Colour want;
+                double slack = 1.0;
+                if (m.night) {
+                    // the city's glow lies over the clouds: from the sky's gradient up
+                    const double t = f.city_y2 != f.city_y1
+                                         ? std::clamp((uy - f.city_y1) / (f.city_y2 - f.city_y1), 0.0, 1.0)
+                                         : (uy < f.city_y1 ? 0.0 : 1.0);
+                    want = over(mix(g0, g1, t), under(cloud, under(shadow, sky_at(m.theme, f, uy))));
+                    slack = 2.0;
+                } else {
+                    const Colour bare{.r = static_cast<double>(b.rgba[i]),
+                                      .g = static_cast<double>(b.rgba[i + 1]),
+                                      .b = static_cast<double>(b.rgba[i + 2])};
+                    want = under(cloud, under(shadow, bare));
+                }
+                const double d = apart(a, x, y, want);
+                worst = std::max(worst, d);
+                if (d <= slack) continue;
+                if (wrong == 0) {
+                    first = std::format("pixel {} {}: {} {} {}, expected {:.1f} {:.1f} {:.1f} (reds {} and {})", x, y,
+                                        int(a.rgba[i]), int(a.rgba[i + 1]), int(a.rgba[i + 2]), want.r, want.g, want.b,
+                                        reds.shadow, reds.cloud);
+                }
+                ++wrong;
+            }
+        }
+        MESSAGE(std::format("the clouds, {}: horizon {:.3f}, cloudf {} {} {} {} {}, cloudsh2 {} {} {} {} {}", m.name,
+                            f.horizon, f.cloud_matrix.red, f.cloud_matrix.green, f.cloud_matrix.blue, f.cloud_matrix.k,
+                            f.cloud_matrix.offset, f.cloud_shadow_matrix.red, f.cloud_shadow_matrix.green,
+                            f.cloud_shadow_matrix.blue, f.cloud_shadow_matrix.k, f.cloud_shadow_matrix.offset));
+        MESSAGE(
+            std::format("the clouds, {}: the region's {} rows, the offset {} rows and {}/2^24; {} pixels of sky, {} "
+                        "under a cloud, {} under a shadow alone or through a cloud, {} clear; the worst {:.2f} "
+                        "levels apart, {} not their composite, {} changed below the region",
+                        m.name, f.cloud_rows, f.cloud_offset.rows, f.cloud_offset.above, sky, clouded, shaded, clear,
+                        worst, wrong, beyond));
+        CHECK(sky > 100'000U);
+        CHECK(clouded > 10'000U);
+        CHECK(shaded > 1'000U);
+        if (std::string_view(m.name) == "day") CHECK(clear > 10'000U);
+        CHECK_MESSAGE(wrong == 0, first);
+        CHECK(beyond == 0);
+        // structural mode draws none: the frame with them is the frame without
+        const auto plain = test::draw_ground(
+            *session, camera, m.theme, dir, "amsterdam",
+            [&](passes::Ground& g, const frame::FrameState&) { CHECK_FALSE(g.decided().clouds); }, 40, {},
+            frame::Mode::structural, fields, settle);
+        ATLAS_REQUIRE(plain.has_value(), "the frame was not drawn in structural mode");
+        // forty frames whose sky showed no clouds: the field, its image and its worker have gone
+        CHECK(fields->sky_worker() == nullptr);
+        CHECK_FALSE(fields->images().sky_ready());
+        CHECK_FALSE(fields->sky_bound_for(latest->size()));
+    }
+    for (const std::string& message : session->take_messages()) CHECK_MESSAGE(false, message);
 }
 
 #endif

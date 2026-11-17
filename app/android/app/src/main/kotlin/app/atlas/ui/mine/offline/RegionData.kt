@@ -200,6 +200,8 @@ data class RegionDetail(
     val progress: RegionProgress? = null,
     val error: String? = null,
     val update: UpdateInfo? = null,
+    /** How much of its map's size is the world kept with its country's tiles (ENGINE.md step 11); 0 where none is. */
+    val world: Long = 0L,
 ) {
     val id: String get() = meta.id
     val name: String get() = meta.name

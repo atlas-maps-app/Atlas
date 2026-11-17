@@ -13,8 +13,11 @@ import org.junit.Test
 class MapPartsTest {
     @Test
     fun everyPartIsABitOfItsOwnAndEveryBitAPart() {
-        assertEquals(CameraWriter.PARTS, MapPart.entries.size)
-        assertEquals((1L shl CameraWriter.PARTS) - 1, MapParts.bits(MapPart.entries.toSet()))
+        // every part of the camera state, and the one switch of the app's own above them (the light cascades' trial)
+        assertEquals(CameraWriter.PARTS + 1, MapPart.entries.size)
+        assertEquals((1L shl CameraWriter.PARTS) - 1, MapParts.cameraBits(MapParts.bits(MapPart.entries.toSet())))
+        assertEquals(1L shl MapParts.SWITCH_LIGHT_CASCADES, MapPart.LIGHT_CASCADES.bit)
+        assertEquals(MapPart.LIGHT_CASCADES.bit, MapParts.bits(MapPart.entries.toSet()) ushr CameraWriter.PARTS shl CameraWriter.PARTS)
         assertEquals(1L shl CameraWriter.PART_RAIN, MapPart.RAIN.bit)
         assertEquals(1L shl CameraWriter.PART_FROSTED, MapPart.FROSTED.bit)
         // listed once each, under the group it is named after
@@ -29,7 +32,13 @@ class MapPartsTest {
         // and "And roof edges back on"
         val quays = setOf(MapPart.QUAYS, MapPart.QUAY_WATERLINES, MapPart.QUAY_TOPS)
         val water = setOf(MapPart.RIPPLE, MapPart.GLITTER, MapPart.RINGS, MapPart.GLINTS, MapPart.WATER_STREAKS)
-        assertEquals(setOf(MapPart.PLINTHS) + quays + water, MapParts.byDefault)
+        // and the light cascades' trial, off until its own switch (the user, 12 November: "Yes, try it")
+        assertEquals(setOf(MapPart.PLINTHS, MapPart.LIGHT_CASCADES) + quays + water, MapParts.byDefault)
+        assertTrue(!MapParts.lightCascades(MapParts.bits(MapParts.byDefault)))
+        assertTrue(MapParts.lightCascades(MapParts.bits(MapParts.byDefault - MapPart.LIGHT_CASCADES)))
+        // no group's switch turns it on: the night's, off then on, leaves it out
+        val night = MapParts.toggled(MapParts.toggled(MapParts.byDefault, MapPartGroup.NIGHT), MapPartGroup.NIGHT)
+        assertTrue(MapPart.LIGHT_CASCADES in night && MapPart.LAMP_POOLS !in night)
         assertTrue(MapPart.entries.filter { it !in MapParts.byDefault }.all { it.drawn })
         assertTrue(MapPart.REFLECTIONS.drawn && MapPart.ROOF_EDGES.drawn && MapPart.CLOUD_SHADOWS.drawn)
         assertEquals(

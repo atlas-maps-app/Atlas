@@ -3,15 +3,18 @@ package app.atlas.likeness
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import app.atlas.geo.LatLon
 import app.atlas.mapview.CountryTiles
-import app.atlas.mapview.EngineFrame
-import app.atlas.mapview.MapEngine
+import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.svg.SvgCanvas
 import app.atlas.mapview.svg.SvgDocument
 import app.atlas.mapview.svg.SvgFonts
 import app.atlas.mapview.svg.SvgParser
+import app.atlas.mapview.svg.SvgRaster
 import app.atlas.render.Amsterdam
+import app.atlas.render.RenderOptions
+import app.atlas.render.data.Countries
 import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.LiveEngine
 import app.atlas.render.live.LiveRegions
@@ -38,19 +41,19 @@ import kotlin.concurrent.withLock
 import kotlin.math.min
 
 /**
- * The phone look tool's canvas side (ENGINE.md, "On the user's phone first"): today's map as the phone rasterises it
- * where the core has no tiles ("rasterising" on the map's panel), for a side by side with the core's frame of the same
- * view and moment (MT/likeness/PhoneLook.kt in :mapcorecheck draws that one). Each step is the app's own code with the
- * app's own inputs:
+ * The phone look tool's canvas side (ENGINE.md, "On the user's phone first"): the renders' frame of a view as today's map
+ * drew it on the phone where the core had no tiles, until 5 November (ENGINE.md step 3: today's map has left the phone),
+ * for a side by side with the core's frame of the same view and moment (MT/likeness/PhoneLook.kt in :mapcorecheck draws
+ * that one). Each step is today's map's code with its inputs, as the app had them:
  *
- * - the packs: a [PackLibrary] as MapData makes it (the bundled Westerkerk installed from the app's assets, the renders'
+ * - the packs: a [PackLibrary] as MapData made it (the bundled Westerkerk installed from the app's assets, the renders'
  *   element packs the phone downloads on a first visit to their boxes placed beside it, `renders` off), and
- *   [LiveRegions] over it as MapData makes it (no Overpass builds), which picks the region a view draws;
- * - the options: [MapEngine.options] after the calls MapData.wire makes with the settings unset
- *   ([MapEngine.screenEffects] with the haze, vignette and grain on, [MapEngine.leaveOut] with [MapParts.byDefault]);
- * - the frame: [LiveEngine.render] with them, each layer through [SvgParser], rasterised by [EngineFrame.rasterise] with
- *   the CPU filters at the screen's density (at most [MapEngine.maxRasterScale]), as EngineFrames.make does, on
- *   Robolectric's Android Skia; then drawn as MapController.draw draws a frame at rest: the day's earth under it.
+ *   [LiveRegions] over it as MapData made it (no Overpass builds), which picks the region a view draws;
+ * - the options: [OPTIONS], today's map's after the calls MapData.wire made with the settings unset (the haze, vignette
+ *   and grain on, the parts [MapParts.byDefault] leaves out);
+ * - the frame: [LiveEngine.render] with them, each layer through [SvgParser], rasterised by [SvgRaster.rasterise] with
+ *   the CPU filters at the screen's density (at most [MAX_RASTER_SCALE]), as today's map's frames were, on Robolectric's
+ *   Android Skia; then drawn as today's map drew a frame at rest: the day's earth under it.
  *
  * It draws only when asked:
  *
@@ -63,8 +66,8 @@ import kotlin.math.min
  * `<w>x<h>@<density>`) and `-Datlas.phonelook.packs=amsterdam,grachten,artis` (the renders' element packs on the
  * phone, from -Datlas.likeness.packs, the repository's cache/packs/regions by default), `-Datlas.phonelook.heap=512`
  * (the phone's heap in MB, which decides the regions it may load) and `-Datlas.phonelook.canvas=22` (alpha 22's frames,
- * with the map's options as they are; `next`, this branch's, with the region's own: MapEngine.optionsFor, written as
- * `<name>-canvasnext.png`). Each view is
+ * with [OPTIONS] as they are; `next`, alpha 23's to 29's, with the region's own: the core's light in the Netherlands,
+ * written as `<name>-canvasnext.png`). Each view is
  * `<name>=<lat>,<lon>,<distance m>,<bearing>,<map pitch>`, the map's principal point at 48 % of its height, as the
  * desktop render tool's. It writes `<name>-canvas.png` and `<name>-canvas.txt` (the region drawn and why, the moment's
  * light, the options, the timings).
@@ -185,12 +188,17 @@ class PhoneCanvas(work: File, packs: List<String>, private val heapMb: Long = PH
         // MapData.regions: no Overpass builds; offline here, as every pack the views need is on the "phone"
         regions = LiveRegions(library, { it.run() }, online = { false }, overpass = null, heapBudget = { ((heapMb shl 20) * LiveRegions.SCENE_SHARE).toLong() })
         LiveEngine.workDir = File(work, "engine")
-        // MapData.wire with the settings unset: the screen's effects on, the parts left out by default; and on this
-        // branch's canvas the countries whose tiles the core draws, as MapData reads them from the published list
-        // (packs-20261029's Netherlands)
-        MapEngine.screenEffects(haze = true, vignette = true, grain = true)
-        MapEngine.leaveOut(MapParts.byDefault)
-        MapEngine.countries = if (next) listOf(NETHERLANDS) else emptyList()
+    }
+
+    /**
+     * The options today's map drew [region] with: alpha 22's [OPTIONS] as they are; alpha 23's to 29's ([next]) the core's
+     * light where the core drew the country's tiles ([NETHERLANDS], as MapData read it from the published list), which in
+     * the Netherlands is TONE's whatever the region's profile (RenderOptions.tone on), as the core lights every pack there.
+     */
+    private fun optionsFor(region: app.atlas.render.live.LiveRegion): RenderOptions {
+        val (lat, lon) = region.frame.lat0 to region.frame.lon0
+        val coreLight = next && NETHERLANDS.holds(lat, lon) && Countries.of(LatLon(lat, lon)) == "NL"
+        return if (coreLight) OPTIONS.copy(tone = true) else OPTIONS
     }
 
     /** [spec] at [moment] (PhoneLookSpec.moment's text) in a [w] × [h] px frame at [density], as the phone draws it. */
@@ -198,13 +206,13 @@ class PhoneCanvas(work: File, packs: List<String>, private val heapMb: Long = PH
         val widthDp = Math.round(w / density).toInt()
         val heightDp = Math.round(h / density).toInt()
         val view = spec.view(widthDp, heightDp)
-        // EngineFrames.make: the region the view draws (opened on the first ask, ready on the next)
+        // the region the view draws (opened on the first ask, ready on the next), as today's map asked for it
         var state = regions.stateFor(view)
         if (state is LiveRegions.State.Pending) state = regions.stateFor(view)
         val st = state as? LiveRegions.State.Ready ?: return nothing(state, w, h, view)
         val region = st.region
-        // alpha 22's frames are drawn with the map's options as they are; this branch's with the region's (EngineFrames.make)
-        val opts = if (next) MapEngine.optionsFor(region) else MapEngine.options
+        // alpha 22's frames were drawn with the map's options as they are; alpha 23's to 29's with the region's
+        val opts = optionsFor(region)
         val m = PhoneLookSpec.moment(moment, region.zone)
         val t0 = System.nanoTime()
         val res = LiveEngine.render(region, view, m, opts) ?: error("the render was cancelled")
@@ -212,11 +220,11 @@ class PhoneCanvas(work: File, packs: List<String>, private val heapMb: Long = PH
         val t1 = System.nanoTime()
         val docs = ArrayList<SvgDocument>(res.layers.size)
         for (svg in res.layers) docs += SvgParser.parse(svg)
-        val scale = min(density.toFloat(), MapEngine.maxRasterScale)
+        val scale = min(density.toFloat(), MAX_RASTER_SCALE)
         val night = m == Moment.Named("night")
-        val image = EngineFrame.rasterise(docs, res.raster, fonts, scale, SvgCanvas.FilterMode.CPU, background = if (night) NIGHT else Color.TRANSPARENT)
+        val image = SvgRaster.rasterise(docs, res.raster, fonts, scale, SvgCanvas.FilterMode.CPU, background = if (night) NIGHT else Color.TRANSPARENT)
         val t2 = System.nanoTime()
-        // MapController.draw at rest: the earth (DAY_EARTH, NIGHT_EARTH), then the frame scaled from its dp to the screen
+        // today's map at rest: the earth (MapController's DAY_EARTH, NIGHT_EARTH), then the frame scaled from its dp to the screen
         val screen = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(screen)
         c.drawColor(if (night) NIGHT else DAY_EARTH)
@@ -242,10 +250,7 @@ class PhoneCanvas(work: File, packs: List<String>, private val heapMb: Long = PH
         return Frame(argb, notes)
     }
 
-    /**
-     * What the map shows where today's map draws nothing (EngineFrames: MapStatus.NoData, its reason): the day's earth
-     * alone, and "No map data here" over it where no frame was shown before (MapController.drawStatus).
-     */
+    /** What today's map showed where it drew nothing (MapStatus.NoData, its reason): the day's earth alone. */
     private fun nothing(state: LiveRegions.State, w: Int, h: Int, view: LiveView): Frame {
         val argb = IntArray(w * h) { DAY_EARTH }
         val why = (state as? LiveRegions.State.Empty)?.reason ?: state.toString()
@@ -262,7 +267,20 @@ class PhoneCanvas(work: File, packs: List<String>, private val heapMb: Long = PH
         /** The Netherlands as packs-latest lists its tiles (packs-20261029): its pack's box. */
         val NETHERLANDS = CountryTiles("netherlands", "Netherlands", app.atlas.geo.BBox(2.9361, 50.7475, 7.2305, 54.0179))
 
-        /** MapController's DAY_EARTH and NIGHT_EARTH (EngineFrames' NIGHT): what the map paints under a frame. */
+        /**
+         * Today's map's options with the settings unset (alpha 22's MapEngine.options after MapData.wire): the renders'
+         * defaults with the screen's haze, vignette and grain on, the rain and the golden wash as [MapParts.byDefault]
+         * leaves them, and no cloud shadows (today's map warped its last frame under the finger, and they would ride on it).
+         */
+        val OPTIONS = RenderOptions(
+            haze = true, vignette = true, grain = true, cloudShadows = false,
+            rain = MapPart.RAIN !in MapParts.byDefault, wash = MapPart.GOLDEN_WASH !in MapParts.byDefault,
+        )
+
+        /** Today's map's largest raster scale (device pixels per dp; the screen's density when lower). */
+        const val MAX_RASTER_SCALE = 4f
+
+        /** MapController's DAY_EARTH and today's map's NIGHT: what the map painted under a frame. */
         const val DAY_EARTH = 0xFFE4E0D8.toInt()
         const val NIGHT = 0xFF0B0F1A.toInt()
 

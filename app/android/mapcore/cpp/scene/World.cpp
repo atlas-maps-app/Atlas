@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <format>
 #include <iterator>
@@ -596,6 +597,31 @@ void World::place_items_in_frame() {
     }
 }
 
+// The item table's room, made at rest. A tile's rows are added on the render thread in the frame that takes it
+// (Residency::take_published), and when the table has no room for them every column grows at once and moves every
+// row, about 110 bytes each: on the frame a tile arrives in, which in a pinch is a frame the user watches move (at the
+// Westerkerk from 5 km the table holds 505,000 rows, 55 MB to move). So at rest the table is given room for twice the
+// rows the view's plan holds, whenever it has room for less than one and a half times them: the resident tiles' rows,
+// and for each tile the cover still asks for the mean of what the tiles of its zoom brought (of any zoom, until one of
+// its own came). Reckoned with the tiles asked for, the room is made as a view's first tiles come, while the table has
+// few rows to move, and the rest arrive into it. Twice, since a pinch brings another level's tiles while those it
+// leaves stay resident (a pinch from 5 km out to 12 km at the Westerkerk takes the table from 505,000 rows to 557,000
+// at most, the heaps' budget letting the tiles left behind go), and the first zoom out from a view was the table's new
+// high. The room is address space until rows are written into it, and it is never given back.
+void World::reserve_items() {
+    std::uint64_t planned = items_.live();
+    for (const Request& r : cover_.requests()) {
+        const RowsTaken& of_zoom = rows_by_zoom_.at(std::min<std::size_t>(r.key.z, rows_by_zoom_.size() - 1));
+        const RowsTaken& known = of_zoom.tiles != 0 ? of_zoom : rows_taken_;
+        if (known.tiles != 0) planned += (known.rows + known.tiles - 1) / known.tiles;
+    }
+    if (planned + (planned / 2) <= items_.capacity()) return;
+    const auto started = std::chrono::steady_clock::now();
+    items_.reserve(static_cast<std::size_t>(2 * planned));
+    items_reserve_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+    ++items_reserves_;
+}
+
 void World::mask_items(const ResidentTile& tile) {
     const bool coarse = coarser_ && tile.pack == coarser_->id && mask_;
     // The mask in the tile's own frame (its items' reference points are its pack frame's metres).
@@ -706,17 +732,31 @@ void World::take_neighbour_packs() noexcept {
 
 bool World::world_fading() const noexcept {
     const WorldFrame* w = world_tiles_ ? world_tiles_->frame() : nullptr;
-    return w != nullptr && w->fading;
+    // and while a tile waits for the bytes let go of for it: the frames keep coming until it is built
+    return w != nullptr && (w->fading || w->settling);
 }
 
 void World::update_world(const frame::FrameState& state, const view::GroundFrame& frame, double seconds) {
     if (!state.view) return;
     if (!world_tiles_) {
-        // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps'), which a
-        // map without the world never takes
+        // made once the store holds a world pack: its heap is the world's own (a sixth of the geometry heaps', up to a
+        // third), which a map without the world never takes
         const std::vector<std::shared_ptr<const tiles::StorePack>> open = store_.packs();
         if (device_ == nullptr || std::ranges::none_of(open, [](const auto& p) { return of_the_world(*p); })) return;
-        auto made = WorldTiles::create(*device_, store_, options_.heaps.total / 6);
+        // the world's heap: a sixth of the heaps' budget (at least 1 MiB), grown up to a third where the tiles a view
+        // draws need it (the pitched views from 60 to 1,000 km over the Netherlands, ENGINE.md step 11), within what
+        // one buffer binds; a test's heap instead
+        const vk::DeviceSize sixth =
+            std::max<vk::DeviceSize>(options_.heaps.total / 6, vk::DeviceSize{1} << 20U) & ~vk::DeviceSize{15};
+        // twice that, so its one doubling takes it to the budget exactly
+        vk::DeviceSize third = 2 * sixth;
+        if (options_.heaps.binding != 0) {
+            third = std::max(sixth, std::min(third, options_.heaps.binding & ~vk::DeviceSize{15}));
+        }
+        const vk::DeviceSize initial = options_.world_heap != 0 ? options_.world_heap : sixth;
+        const vk::DeviceSize budget =
+            options_.world_heap != 0 ? std::max(options_.world_heap, options_.world_heap_budget) : third;
+        auto made = WorldTiles::create(*device_, store_, initial, budget);
         if (!made) {
             log::error("vk world: its tiles: {}", made.error().text());
             device_ = nullptr; // not tried again
@@ -726,8 +766,11 @@ void World::update_world(const frame::FrameState& state, const view::GroundFrame
         if (wake_) world_tiles_->set_wake(wake_);
     }
     const double distance = state.placed ? state.placed->dist() : state.camera.distance;
+    // where the camera's place has no country's levels (its flag), the world under the cover up to world_from as well,
+    // out to the cover's far plane
+    const double under_far = state.camera.has(style::camera_flag::world_under) ? far_of(distance) : 0.0;
     // each level from its start moved nearer by the governor's bias
-    world_tiles_->update(*state.view, frame, distance, state.number, seconds, governor_.near(1.0));
+    world_tiles_->update(*state.view, frame, distance, state.number, seconds, governor_.near(1.0), under_far);
 }
 
 double World::reach_of(double distance) const noexcept {
@@ -766,11 +809,18 @@ void World::update(const frame::FrameState& state) {
     }
     going_.clear();
     taken_.clear();
+    items_reserve_ms_ = 0;
     residency_->take_published(items_, &taken_);
     // each tile taken in its pack frame's place: its rows' points stay as its builders gave them
     for (const std::shared_ptr<const ResidentTile>& t : taken_) {
         const std::uint32_t place = place_of(t->frame);
         for (const std::uint32_t row : t->rows) items_.set_place(row, place);
+        // what a tile of its zoom brings (reserve_items)
+        RowsTaken& of_zoom = rows_by_zoom_.at(std::min<std::size_t>(t->key.z, rows_by_zoom_.size() - 1));
+        ++of_zoom.tiles;
+        of_zoom.rows += t->rows.size();
+        ++rows_taken_.tiles;
+        rows_taken_.rows += t->rows.size();
     }
     // a part left out: the passes it alone wanted let go of in every resident tile at this frame's fence, so the heaps
     // and the cover hold each tile as it is drawn (a part back, its top-ups build them again)
@@ -869,6 +919,7 @@ void World::update(const frame::FrameState& state) {
     // what stands up, from the tiles drawn and those kept under the fading ones, their sun filled
     cover_.lay_upright();
     asked_.assign(cover_.requests().begin(), cover_.requests().end());
+    if (state.rest && reserve_items_) reserve_items();
     // The tiles drawn and those kept under them that lack a pass a part come back wants: built again for those passes
     // alone, onto the tile, which is drawn as it is until they are taken (Residency's top-ups), after every tile in
     // view the frame asks for, the drawn ones in their lane, those kept under in the ancestors'. Those of the tiles a
@@ -1294,8 +1345,28 @@ std::string World::tiles_line() const {
     }
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;
-        for (const WorldDraw& d : w->draws) finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
-        line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size(), finest, w->wanted, w->bare);
+        std::size_t land = 0; // the plain land's draws, under the cover
+        for (const WorldDraw& d : w->draws) {
+            finest = std::max(finest, static_cast<unsigned>(d.tile->key.z));
+            if (d.tile->blank) ++land;
+        }
+        // the world's heap (MB): its resident tiles' bytes of its buffer and of its budget, those the frame drew (of
+        // them its stand-ins') and the pinned ones', the resident tiles' parts (more than the tiles where one lies in
+        // parts), its largest free piece, the builds that found no room with the bytes the last asked for, the bytes
+        // the frame's wanted tiles asked for (with those of no build yet), the stand-ins let go of for the tiles they
+        // stood in for and the tiles it holds back for room; before the world's own words, which end the line
+        // (ci/smoke.sh reads them there)
+        const WorldStats ws = world_tiles_->stats();
+        const auto mb = [](vk::DeviceSize b) { return static_cast<double>(b) / 1.0e6; };
+        line +=
+            std::format(" world heap {:.1f} of {:.1f} up to {:.1f} drawn {:.1f} stand-ins {:.1f} pinned {:.1f} "
+                        "parts {} of {} piece {:.1f} no room {} last {:.2f} wanted {:.1f} unsized {} traded {} held {}",
+                        mb(ws.bytes), mb(ws.buffer), mb(ws.capacity), mb(ws.drawn_bytes), mb(ws.stand_in_bytes),
+                        mb(ws.pinned_bytes), ws.parts, ws.resident, mb(ws.largest_free), ws.no_room,
+                        mb(ws.no_room_bytes), mb(ws.wanted_bytes), ws.wanted_unsized, ws.traded, w->held);
+        line += std::format(" world {} drawn finest {} wanted {} bare {}", w->draws.size() - land, finest, w->wanted,
+                            w->bare);
+        if (w->under) line += std::format(" under land {}", land);
     }
     return line;
 }

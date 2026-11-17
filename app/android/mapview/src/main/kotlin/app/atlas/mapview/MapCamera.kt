@@ -2,7 +2,6 @@ package app.atlas.mapview
 
 import app.atlas.geo.LatLon
 import app.atlas.geo.Mercator
-import app.atlas.mapview.svg.SvgCamera
 import app.atlas.render.live.LiveCamera
 import app.atlas.render.live.RegionFrame
 import kotlin.math.PI
@@ -194,19 +193,6 @@ class MapCamera(
 
     /** Ground distance from the point below the eye to the target. */
     val groundDistance: Double get() = sqrt(eyeX * eyeX + eyeY * eyeY)
-
-    /**
-     * The engine's camera for this view, in dp (CSS pixels of the engine's SVG): its world is the region frame's
-     * (x east, y up, z south), so it only exists in a [GroundFrame.Region].
-     */
-    fun svgCamera(): SvgCamera? {
-        if (frame !is GroundFrame.Region) return null
-        val d = density.toDouble()
-        return SvgCamera(
-            targetEast, 0.0, targetSouth, bearing, LiveCamera.enginePitch(pitch), distance, fov,
-            width / d, height / d, cx = principalX / d, cy = principalY / d,
-        )
-    }
 
     override fun toString() = "MapCamera($target z=${"%.2f".format(zoom)} bearing=${"%.1f".format(bearing)} pitch=${"%.1f".format(pitch)} ${width}x$height@$density)"
 

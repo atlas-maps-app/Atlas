@@ -317,6 +317,13 @@ struct Lamp {
     P2 at;
 };
 
+/// A place of S['pois'] with its opening hours mapped (the shopfronts' OpenPlace, as the night's light on the ground
+/// reads it: passes/LightMap.hpp): where it is, and its opening_hours' place in its tile's open_hours.
+struct OpenSpot {
+    P2 at;
+    std::uint32_t hours = 0;
+};
+
 /// A lit road (S['roads']'s lit=yes, two points or more): its place in S['roads']; the night's streaks' points along
 /// it, their first and count in the tile's lit_points, along each of its segments as the streaks' loop walks it (from
 /// 4 m, then 13 m and (k · 7.3) mod 6 more each time); and the glow's: its centreline whole, its points' first and
@@ -531,6 +538,9 @@ struct GroundGpu {
     /// The roads' triangles in `above` (S['roads'], their groups below draw_over's and above the areas'), which the
     /// app's map draws by themselves after the land, `above` without them (passes/Ground.cpp's record_streets).
     Words streets;
+    /// The big roads' asphalt's triangles in `above` (draw_over's, over the roads), which the app's map draws after its
+    /// streets, their edges by their coverage as the streets' are; empty where they are not one run.
+    Words bigs;
     Words below;    ///< the land below the water, top first: indices
     Words canopy;   ///< the canopy's triangles
     Words fans;     ///< the water's pieces' fans
@@ -561,6 +571,7 @@ struct GroundLayout {
     Words vertices;
     Words above;
     Words streets;
+    Words bigs;
     Words below;
     Words canopy;
     Words fans;
@@ -624,12 +635,19 @@ struct GroundTile {
     /// The night's light: the tile's street lamps, its lit roads, their streaks' points on the water and their
     /// centrelines (the lit streets' glow).
     std::vector<Lamp> lamps;
+    /// The places whose light falls on the ground while they are open, in the tile's order, and the tile's distinct
+    /// opening hours (the light map's lights beside the lamps).
+    std::vector<OpenSpot> open_spots;
+    std::vector<std::string> open_hours;
     std::vector<LitRoad> lit_roads;
     std::vector<P2> lit_points;
     std::vector<P2> lit_lines;
     tiles::StyleRgb quay_colour = 0;
     tiles::StyleRgb quay_coping = 0;
     tiles::DayNight quay_waterline;
+    /// The quay walls' course (the style's QUAY_COURSE: a brick's with its mortar, a cut stone's from 0.3 m; none for
+    /// concrete), metres: its joints show at eye level (passes/Quays.cpp).
+    std::optional<double> quay_course;
     bool tone = false;
     /// draw_over's park shadows: the coaster tracks' (their polylines' points' heights in `heights`), and the woods'
     /// trees', whose shadows are the last of `shadows`, after the casters'.

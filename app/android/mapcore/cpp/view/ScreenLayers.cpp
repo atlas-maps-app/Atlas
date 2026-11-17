@@ -110,7 +110,7 @@ Layers layers_of(const Camera& cam, const style::ThemeBlock& th, const LayerSett
         }
         if (!l.night && th.sun_vector[1] > 0) l.sun = sun_point(cam, th.sun_vector, s.width, hy);
     }
-    l.haze = haze_of(cam, th.haze_max, s.haze0, s.haze1, s.ground_y, l.eye, hy, s.height);
+    l.haze = haze_of(cam, th.haze_max * s.haze_scale, s.haze0, s.haze1, s.ground_y, l.eye, hy, s.height);
     // truthy(th['cloud_shadows']): set, and not 0
     const bool cloud_shadows = th.has(style::theme_flag::cloud_shadows) && th.cloud_shadows != 0.0;
     if (l.weather && cloud_shadows && !l.eye) l.cloud_shadow_cut = -7 * (0.62 - th.cloud_shadows * 0.3);
@@ -118,6 +118,7 @@ Layers layers_of(const Camera& cam, const style::ThemeBlock& th, const LayerSett
     l.draws_fin = l.weather && !front && !l.eye && !s.no_fin;
     l.sky_bottom = pymath::min(s.height, hy + 2);
     l.wash = th.has(style::theme_flag::golden);
+    l.weather_gone = clamp01(s.weather_gone);
     return l;
 }
 
@@ -136,7 +137,7 @@ shaders::FrameLayers block_of(const Layers& layers, const style::ThemeBlock& th,
         b.haze_offsets[i / 4][static_cast<int>(i % 4)] = f32(decimals(h.offsets[i], 3));
         b.haze_alphas[i / 4][static_cast<int>(i % 4)] = f32(decimals(h.alphas[i], 3));
     }
-    b.vignette = {layers.draws_fin ? f32(layers.vignette_opacity()) : 0.0F, 0.0F, 0.0F, 0.0F};
+    b.vignette = {layers.draws_fin ? f32(layers.vignette_opacity()) : 0.0F, f32(layers.weather_gone), 0.0F, 0.0F};
     std::uint32_t on = steps;
     if (!layers.draws_fin) on &= ~(shaders::COMPOSITE_VIGNETTE | shaders::COMPOSITE_GRAIN);
     if (h.count == 0) on &= ~shaders::COMPOSITE_HAZE;

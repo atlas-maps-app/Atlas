@@ -27,12 +27,23 @@ constexpr std::uint32_t none = UINT32_MAX;
 
 } // namespace
 
-Stand stand_at(const Measures& m, Point p, std::size_t spot) noexcept {
+Stand stand_at(const Measures& m, Point p, std::size_t spot, float rise, float mark) noexcept {
     const float cx = p.x + (spots[2 * spot] * (m.half - m.pad));
-    const float cy = p.y + (spots[(2 * spot) + 1] * m.text_height);
+    float cy = p.y + (spots[(2 * spot) + 1] * m.text_height);
     const float half_height = (m.text_height / 2.0F) + m.pad;
-    return {
-        .x = cx, .y = cy, .box = {.l = cx - m.half, .t = cy - half_height, .r = cx + m.half, .b = cy + half_height}};
+    if (!(rise > 0.0F)) {
+        return {.x = cx,
+                .y = cy,
+                .box = {.l = cx - m.half, .t = cy - half_height, .r = cx + m.half, .b = cy + half_height}};
+    }
+    // risen: the text's lower edge `mark` over the point at a rise of 1, the box down to the mark's own lower edge
+    cy -= rise * ((m.text_height / 2.0F) + mark);
+    return {.x = cx,
+            .y = cy,
+            .box = {.l = cx - m.half,
+                    .t = cy - half_height,
+                    .r = cx + m.half,
+                    .b = std::max(cy + half_height, p.y + (rise * mark))}};
 }
 
 void priority_order(std::span<const Candidate> candidates, std::vector<std::uint32_t>& order) {
@@ -58,26 +69,66 @@ Measures scaled(const Measures& m, float scale) noexcept {
             .baseline = m.baseline * scale};
 }
 
-void place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
-           CollisionIndex& index, std::vector<Placed>& out) {
+std::uint32_t place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
+                    CollisionIndex& index, std::vector<Placed>& out, std::uint32_t* moved) {
+    if (moved != nullptr) *moved = 0;
+    // the frame's marks, asked for at the first stand that fits
+    std::span<const Mark> marks;
+    bool asked = false;
+    const auto on_a_mark = [&](const Stand& stand, const Measures& m, Point own) {
+        if (!asked) {
+            asked = true;
+            if (frame.marks != nullptr && *frame.marks) marks = (*frame.marks)();
+        }
+        // the text's own box, without the pad (a mark's radius is its room): a risen label's box reaches down over
+        // its own mark, and a mark beside that one, under the text, is not covered
+        const float half_width = m.half - m.pad;
+        const float half_height = m.text_height / 2.0F;
+        const Box text{.l = stand.x - half_width,
+                       .t = stand.y - half_height,
+                       .r = stand.x + half_width,
+                       .b = stand.y + half_height};
+        return std::ranges::any_of(marks, [&](const Mark& k) {
+            // (its own point's mark is its own: a lit place's name stands over its light by its rise)
+            if (k.x == own.x && k.y == own.y) return false;
+            return overlaps(text, {.l = k.x - k.radius, .t = k.y - k.radius, .r = k.x + k.radius, .b = k.y + k.radius});
+        });
+    };
+    std::uint32_t covering = 0;
     for (const std::uint32_t c : order) {
         const Candidate& label = candidates[c];
         bool placed = false;
+        // the first stand that fits but covers a mark: taken where none is clear of them
+        bool has_covered = false;
+        Placed covered;
         for (std::size_t p = 0; p < label.points.size() && !placed; ++p) {
             if (!projected(label.points[p])) continue;
             for (std::size_t k = 0; k < spot_count; ++k) {
-                const Stand s = stand_at(label.measures, label.points[p], k);
+                const Stand s = stand_at(label.measures, label.points[p], k, label.rise, label.mark);
                 if (!fits(s.box, frame, index)) continue;
+                const Placed at{.candidate = c,
+                                .point = static_cast<std::uint16_t>(p),
+                                .spot = static_cast<std::uint8_t>(k),
+                                .stand = s};
+                if (on_a_mark(s, label.measures, label.points[p])) {
+                    if (!has_covered) covered = at;
+                    has_covered = true;
+                    continue;
+                }
                 index.insert(s.box);
-                out.push_back({.candidate = c,
-                               .point = static_cast<std::uint16_t>(p),
-                               .spot = static_cast<std::uint8_t>(k),
-                               .stand = s});
+                out.push_back(at);
                 placed = true;
+                if (has_covered && moved != nullptr) ++*moved;
                 break;
             }
         }
+        if (!placed && has_covered) {
+            index.insert(covered.stand.box);
+            out.push_back(covered);
+            ++covering;
+        }
     }
+    return covering;
 }
 
 std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, const Frame& frame, double scale,
@@ -107,8 +158,9 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
     double size = reference_ > 0.0 && scale > 0.0 ? scale / reference_ : 1.0;
     if (reference_ <= 0.0 || size < low || size > band_high) {
         const double before = reference_;
-        reference_ = scale > 0.0 ? scale : 1.0;
-        size = 1.0;
+        // at its own size; where the floor leaves less than band_room under it, that much over it
+        size = scale > 0.0 ? std::max(1.0, low / band_room) : 1.0;
+        reference_ = scale > 0.0 ? scale / size : 1.0;
         for (State& st : states_) {
             if (!st.present) continue;
             st.present = false;
@@ -133,19 +185,23 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
     for (const std::uint32_t c : order_) {
         const std::uint32_t s = state_of_[c];
         if (s == none || !states_[s].present) {
-            others.push_back(c);
+            if (!candidates[c].hidden) others.push_back(c);
             continue;
         }
         const State& st = states_[s];
         const Candidate& label = scaled_[c];
         const bool has = st.point < label.points.size() && projected(label.points[st.point]);
-        const Stand stand = has ? stand_at(label.measures, label.points[st.point], st.spot) : Stand{};
-        const bool clear = has && clear_of(st.shown ? stand.box : grown(stand.box, margin), frame, index_);
+        const Stand stand =
+            has ? stand_at(label.measures, label.points[st.point], st.spot, label.rise, label.mark) : Stand{};
+        const bool clear =
+            has && !label.hidden && clear_of(st.shown ? stand.box : grown(stand.box, margin), frame, index_);
         if (clear) index_.insert(stand.box);
         placed_.push_back({.candidate = c, .point = st.point, .spot = st.spot, .stand = stand});
         clear_.push_back(clear ? 1 : 0);
     }
-    place(scaled_, others, frame, index_, placed_);
+    const std::size_t kept = placed_.size();
+    on_marks_ = place(scaled_, others, frame, index_, placed_, &off_marks_);
+    placed_new_ = static_cast<std::uint32_t>(placed_.size() - kept);
     clear_.resize(placed_.size(), 1);
     placed_count_ = static_cast<std::uint32_t>(std::ranges::count(clear_, std::uint8_t{1}));
 
@@ -199,7 +255,7 @@ std::span<const Drawn> Placement::update(std::span<const Candidate> candidates, 
             if (alpha > 0.0F && st.left_point < label.points.size() && projected(label.points[st.left_point])) {
                 const auto was = static_cast<float>(scale / st.left_reference);
                 const Measures m = scaled(label.measures, was);
-                const Stand stand = stand_at(m, label.points[st.left_point], st.left_spot);
+                const Stand stand = stand_at(m, label.points[st.left_point], st.left_spot, label.rise, label.mark);
                 drawn_.push_back({.candidate = c,
                                   .stand = stand,
                                   .baseline = stand.y - m.baseline,

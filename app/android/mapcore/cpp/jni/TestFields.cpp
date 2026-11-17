@@ -56,7 +56,10 @@ JNIEXPORT jbyteArray JNICALL Java_app_atlas_mapcorecheck_fx_FieldHost_kept(JNIEn
     }
     const FieldSize size{
         .width = static_cast<std::uint32_t>(width), .height = static_cast<std::uint32_t>(height), .scale = scale};
-    const auto fields = make_fields(size, MakeOptions{.threads = static_cast<unsigned>(threads), .lanes = lanes != 0});
+    // the set the field is of: the frame's nine, or the sky's clouds
+    const FieldSet set = holds(FieldSet::sky, static_cast<Field>(field)) ? FieldSet::sky : FieldSet::frame;
+    const auto fields =
+        make_fields(size, MakeOptions{.threads = static_cast<unsigned>(threads), .lanes = lanes != 0, .set = set});
     const std::vector<std::uint8_t> bytes = fields->bytes_of(static_cast<Field>(field));
     jbyteArray a = env->NewByteArray(static_cast<jsize>(bytes.size()));
     if (a == nullptr) return nullptr;

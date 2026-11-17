@@ -280,6 +280,87 @@ TEST_CASE("the geometry heaps allocate, write in place, grow keeping every range
     (void)session->take_messages();
 }
 
+TEST_CASE("a heap whose budget ended at its buffer, as a growth the device refuses ends it, places nothing beyond it "
+          "and grows no more, its free bytes and its largest piece the buffer's") {
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{64} << 10U;
+    budget.total = vk::DeviceSize{1} << 20U;
+    budget.within_device = true;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    // 100 KB in the 64 KB buffer: it doubles once, to 128 KB, within the device's budget
+    for (std::size_t i = 0; i < 100; ++i) {
+        auto r = h.allocate(scene::HeapKind::ground, 1000, 16);
+        ATLAS_REQUIRE(r.has_value(), r.error().text());
+    }
+    const vk::DeviceSize buffer = vk::DeviceSize{128} << 10U;
+    CHECK(h.capacity() == buffer);
+    CHECK(h.total() == vk::DeviceSize{1} << 20U);
+    CHECK(h.largest_free(scene::HeapKind::ground) > buffer);
+    h.end_budget();
+    CHECK(h.total() == buffer);
+    CHECK(h.free_bytes() == buffer - 100'000);
+    CHECK(h.largest_free(scene::HeapKind::ground) <= buffer - 100'000);
+    // what the buffer holds is placed in it; a range beyond finds no room, and the buffer is as it was
+    auto fits = h.allocate(scene::HeapKind::ground, 20'000, 16);
+    CHECK(fits.has_value());
+    auto beyond = h.allocate(scene::HeapKind::ground, 20'000, 16);
+    CHECK_FALSE(beyond.has_value());
+    CHECK(h.capacity() == buffer);
+    CHECK(h.stats().growths == 1);
+    (void)session->take_messages();
+}
+
+TEST_CASE("a heap's free pieces by offset, and those there would be with ranges let go of and the retired ones freed, "
+          "each joined to the pieces beside it (the room of a world tile in parts); its free bytes cut into small "
+          "pieces for a test") {
+    auto session = test::open_session();
+    if (!session) return;
+    scene::HeapBudget budget;
+    budget.initial = vk::DeviceSize{64} << 10U;
+    budget.total = vk::DeviceSize{64} << 10U;
+    auto heaps = scene::Heaps::create(*session->device, budget);
+    ATLAS_REQUIRE(heaps.has_value(), heaps.error().text());
+    scene::Heaps& h = **heaps;
+    using Sizes = std::vector<vk::DeviceSize>;
+    constexpr vk::DeviceSize tail = vk::DeviceSize{48} << 10U;
+    // four ranges of 4 KB from the start: the 48 KB after them free in one piece
+    std::array<scene::HeapRange, 4> r{};
+    for (scene::HeapRange& range : r) {
+        auto placed = h.allocate(scene::HeapKind::ground, 4096, 16);
+        ATLAS_REQUIRE(placed.has_value(), placed.error().text());
+        range = *placed;
+    }
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{tail});
+    // the second given back is a piece of its own; with the third retired, the two would join, with the first too
+    // where it went, and with the fourth as well the whole heap would be one piece
+    h.give_back(r[1]);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{4096, tail});
+    h.retire(r[2], 1);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{4096, tail});
+    CHECK(h.pieces_with({}, scene::HeapKind::ground) == Sizes{8192, tail});
+    const std::array<scene::HeapRange, 1> first{r[0]};
+    CHECK(h.pieces_with(first, scene::HeapKind::ground) == Sizes{12'288, tail});
+    const std::array<scene::HeapRange, 2> both{r[0], r[3]};
+    CHECK(h.pieces_with(both, scene::HeapKind::ground) == Sizes{vk::DeviceSize{64} << 10U});
+    h.collect(1);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes{8192, tail});
+    // cut into pieces of 1,008 bytes 16 apart: 8 and 48 of them, and the gaps' bytes taken
+    h.fragment_for_tests(scene::HeapKind::ground, 1008, 16);
+    CHECK(h.free_pieces(scene::HeapKind::ground) == Sizes(56, 1008));
+    CHECK(h.free_bytes() == 56 * 1008);
+    CHECK(h.largest_free(scene::HeapKind::ground) == 1008);
+    CHECK(h.pieces_with(first, scene::HeapKind::ground).front() == 4096 + 1008);
+    auto fits = h.allocate(scene::HeapKind::ground, 1008, 16);
+    CHECK(fits.has_value());
+    auto larger = h.allocate(scene::HeapKind::ground, 1009, 16);
+    CHECK_FALSE(larger.has_value());
+    (void)session->take_messages();
+}
+
 TEST_CASE("a range takes the free piece of the heaps nearest its end that holds it, a larger piece beyond left whole "
           "for its own") {
     auto session = test::open_session();
@@ -907,6 +988,24 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     for (const scene::CoverTile& t : w.cover()->tiles()) CHECK(t.fade == 1.0F);
     CHECK(w.cover()->missing() == 0);
     CHECK_FALSE(w.animating()); // the fades are over: the frame loop may rest
+    // These frames are at rest, so the item table has room for one and a half times the rows the view's plan holds
+    // at the least (World::reserve_items makes room for twice them when it has less: a tile's rows arriving in a pinch
+    // from here grow no column), and frames at rest with the room there make none. This view's few rows may have room
+    // enough from the adds' own doublings, and then no reserve is made at all.
+    CHECK(2 * w.items()->capacity() >= 3 * w.items()->live());
+    {
+        const std::uint64_t made = w.items_reserves();
+        const std::uint64_t growths = w.items()->growths();
+        for (std::uint64_t n = 0; n < 3; ++n) {
+            ATLAS_REQUIRE((*builder)->derive(61, n % 2, nullptr));
+            w.update((*builder)->state());
+            CHECK(w.items_reserve_ms() == 0.0);
+        }
+        CHECK(w.items_reserves() == made);
+        CHECK(w.items()->growths() == growths);
+        MESSAGE("the item table: " << w.items()->live() << " rows live, room for " << w.items()->capacity()
+                                   << ", made in " << made << " reserve(s) at rest, " << growths << " growths in all");
+    }
     const auto sun = w.residency().sun_tiles("amsterdam");
     CHECK(sun.size() >= w.residency().resident().size() / 2);
     MESSAGE(w.tiles_line() << "; " << w.cover()->tiles().size() << " drawn, " << w.items()->live()

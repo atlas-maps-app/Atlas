@@ -149,6 +149,79 @@ class RegionEngineTest {
         assertNull(engine(deps({ listOf(p) }).copyWith(tilesVersion = { "core-p1 s0" })).tilesOf(p))
     }
 
+    /** The world's keep as the engine asks for it: each call's packs and whether it fetched; a fetch may fail once. */
+    private class FakeWorld(private val bytesOf: Map<String, Long>) : WorldKeep {
+        val calls = ArrayList<Pair<Set<String>, Boolean>>()
+        var failing = false
+        override fun bytes(packId: String): Long? = bytesOf[packId]
+        override fun keep(packIds: Set<String>, fetch: Boolean, report: (Float) -> Unit) {
+            calls += packIds to fetch
+            if (fetch) {
+                report(0.5f)
+                if (failing) throw java.io.IOException("no signal")
+                report(1f)
+            }
+        }
+    }
+
+    private fun RegionDeps.withWorld(world: WorldKeep) = RegionDeps(
+        packs, packDownloader, importPlaces, segments, segmentSizes, mapBuilder, voices, clock, tilesVersion, keepParks, world,
+    )
+
+    @Test
+    fun aCountryKeptByItsTilesKeepsItsWorldWithThem() {
+        // ENGINE.md step 11: the world's tiles a view of the country draws from 18 km out to the globe
+        val p = theCountry()
+        val world = FakeWorld(mapOf("netherlands" to 640_000L))
+        val e = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(world))
+        // its size in the country list and in the estimate: its tiles, their index and its world
+        assertEquals(250_000L + 2_000L + 640_000L + 90_000L, e.countryBytes(p))
+        assertEquals(892_000L, runBlocking { e.estimate(pack, setOf(RegionLayer.MAP)) }.bytes[RegionLayer.MAP])
+        // and how much of the map is the world, for the screens to say what keeping the country costs
+        assertEquals(640_000L, runBlocking { e.estimate(pack, setOf(RegionLayer.MAP)) }.world)
+        assertEquals(640_000L, runBlocking { e.estimateAll(listOf(pack), setOf(RegionLayer.MAP)) }.world)
+        assertFalse(e.keepsWorld())
+        val id = RegionEngine.idFor("Netherlands")
+        e.begin(id, "Netherlands", pack, setOf(RegionLayer.MAP))
+        // the world's fetch fails: the map layer is not recorded, though its tiles are on the phone
+        world.failing = true
+        assertTrue(runCatching { runBlocking { e.resume(id) } }.isFailure)
+        assertEquals(listOf(setOf("netherlands") to true), world.calls)
+        assertNull(files.get(id)!!.layers[RegionLayer.MAP])
+        assertTrue(files.tiles(id).isFile)
+        // asked again: the tiles are not fetched again whole, the world is, and the layer holds both
+        world.failing = false
+        runBlocking { e.resume(id) }
+        assertEquals(2, world.calls.size)
+        val m = files.get(id)!!
+        assertEquals(MapKind.TILES.id, m.layers.getValue(RegionLayer.MAP).kind)
+        assertEquals(892_000L, m.layers.getValue(RegionLayer.MAP).bytes)
+        assertEquals(892_000L, e.details.value.single().bytes)
+        assertEquals(640_000L, e.details.value.single().world)
+        // a country is kept by its tiles: a new version of the world waits for its keep (WorldFetch's hold)
+        assertTrue(e.keepsWorld())
+        // the app's start, and a new version of the world: the kept countries' world again, fetched or only pinned
+        e.keepWorld(fetch = false)
+        assertEquals(setOf("netherlands") to false, world.calls.last())
+        // a country the world lists nothing for keeps none, and costs nothing more
+        val bare = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(FakeWorld(emptyMap())))
+        assertEquals(252_000L, runBlocking { bare.estimate(pack, setOf(RegionLayer.MAP)) }.bytes[RegionLayer.MAP])
+        assertEquals(0L, runBlocking { bare.estimate(pack, setOf(RegionLayer.MAP)) }.world)
+        // a new version of the world lists another size for it: the region's size follows the world on the phone;
+        // with no list on the phone, its share is what its download recorded
+        val grown = engine(deps({ listOf(p) }).copyWith(tilesVersion = { CORE }).withWorld(FakeWorld(mapOf("netherlands" to 650_000L))))
+        grown.refresh()
+        assertEquals(650_000L, grown.details.value.single().world)
+        assertEquals(902_000L, grown.details.value.single().bytes)
+        bare.refresh()
+        assertEquals(640_000L, bare.details.value.single().world)
+        assertEquals(892_000L, bare.details.value.single().bytes)
+        // deleted: its world is no longer kept (the keep of no country, nothing fetched)
+        e.delete(id)
+        assertEquals(emptySet<String>() to false, world.calls.last())
+        assertFalse(e.keepsWorld())
+    }
+
     private fun hitsOf(vararg names: String): Int = requested.count { path -> names.any { path.endsWith(it) } }
 
     private fun RegionDeps.copyWith(tilesVersion: () -> String?) = RegionDeps(

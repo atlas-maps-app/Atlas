@@ -20,7 +20,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.atlas.mapcore.CameraState
 import app.atlas.mapcore.FrameSource
 import app.atlas.mapcore.MapCore
-import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 
 /**
  * The core's window in Compose (plan-vector D5.1): a SurfaceView by default (its buffers go to the display's composer
@@ -131,17 +131,17 @@ private class Binding(
     // SurfaceView. Each window event is logged (`vk window: …`, a few a screen): where a window is late or never comes,
     // the log says which callback Android did not make.
     override fun surfaceCreated(holder: SurfaceHolder) {
-        Log.i(EngineFrames.TAG, "vk window: surface created")
+        Log.i(MapEngine.TAG, "vk window: surface created")
         nudge?.came()
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        Log.i(EngineFrames.TAG, "vk window: surface changed $width x $height")
+        Log.i(MapEngine.TAG, "vk window: surface changed $width x $height")
         attach(holder.surface, width, height)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        Log.i(EngineFrames.TAG, "vk window: surface destroyed")
+        Log.i(MapEngine.TAG, "vk window: surface destroyed")
         nudge?.went()
         release()
         onState(VkSurfaceState(false, 0, 0))
@@ -151,7 +151,7 @@ private class Binding(
 
     // TextureView.
     override fun onSurfaceTextureAvailable(texture: SurfaceTexture, width: Int, height: Int) {
-        Log.i(EngineFrames.TAG, "vk window: texture available $width x $height")
+        Log.i(MapEngine.TAG, "vk window: texture available $width x $height")
         nudge?.came()
         val surface = Surface(texture)
         textureSurface = surface
@@ -163,7 +163,7 @@ private class Binding(
     }
 
     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
-        Log.i(EngineFrames.TAG, "vk window: texture destroyed")
+        Log.i(MapEngine.TAG, "vk window: texture destroyed")
         nudge?.went()
         release()
         onState(VkSurfaceState(false, 0, 0))
@@ -223,7 +223,7 @@ internal class WindowNudge(private val view: View, private val root: View, priva
             root.requestLayout()
             root.invalidate()
             if (seconds == 1 || seconds % 10 == 0) {
-                Log.i(EngineFrames.TAG, "vk window: no $label window after $seconds s; a layout pass asked for")
+                Log.i(MapEngine.TAG, "vk window: no $label window after $seconds s; a layout pass asked for")
             }
         }
         view.postDelayed(this, NUDGE_MS)

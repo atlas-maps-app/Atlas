@@ -7,6 +7,7 @@
 #include "passes/Frosted.hpp"
 #include "passes/Ground.hpp"
 #include "passes/GroundText.hpp"
+#include "passes/House.hpp"
 #include "passes/Items.hpp"
 #include "passes/Labels.hpp"
 #include "passes/Markers.hpp"
@@ -36,6 +37,7 @@ constexpr std::array registry{
     Registration{.name = "frosted", .make = &make<passes::Frosted>},        // K11b: the frosted backdrops (D5.1)
     Registration{.name = "ground", .make = &make<passes::Ground>},          // K9: the ground (D10, D8's shadows)
     Registration{.name = "buildings", .make = &make<passes::Buildings>},    // K10: the buildings (D10), true depth
+    Registration{.name = "house", .make = &make<passes::House>},            // ENGINE.md step 6: the asked house
     Registration{.name = "trees", .make = &make<passes::Trees>},            // ENGINE.md step 4: the trees, true depth
     Registration{.name = "things", .make = &make<passes::Things>},          // ENGINE.md step 4: the street furniture
     Registration{.name = "items", .make = &make<passes::Items>},            // ENGINE.md step 4: a region's items

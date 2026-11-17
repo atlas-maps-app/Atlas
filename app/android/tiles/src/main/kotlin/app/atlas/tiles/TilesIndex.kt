@@ -70,7 +70,17 @@ class TilesIndex private constructor(
     fun find(x: Int, y: Int): Entry? = find(level, x, y)
 
     /** Tile ([z], [x], [y])'s pack, a window's or a level's; null where the country holds none for it. */
-    fun find(z: Int, x: Int, y: Int): Entry? {
+    fun find(z: Int, x: Int, y: Int): Entry? = at(z, x, y).let { if (it < 0) null else get(it) }
+
+    /**
+     * Whether the country lists tile ([z], [x], [y]), with a pack or with nothing to draw: for a window, whether the
+     * country's data reaches it (its windows' data holds the window; beyond the country's border it lists none).
+     * Allocates nothing.
+     */
+    fun lists(z: Int, x: Int, y: Int): Boolean = at(z, x, y) >= 0
+
+    /** Where tile ([z], [x], [y]) lies in the tiles' order; -1 where the country lists none. */
+    private fun at(z: Int, x: Int, y: Int): Int {
         var lo = 0
         var hi = xs.size - 1
         while (lo <= hi) {
@@ -79,10 +89,10 @@ class TilesIndex private constructor(
             when {
                 c < 0 -> lo = mid + 1
                 c > 0 -> hi = mid - 1
-                else -> return get(mid)
+                else -> return mid
             }
         }
-        return null
+        return -1
     }
 
     /** The index as [read] reads it. */

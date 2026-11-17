@@ -18,9 +18,12 @@
 #include "gen/layouts.hpp"
 #include "passes/Ground.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace atlas::passes {
@@ -29,7 +32,7 @@ namespace geo = atlas::geometry;
 namespace pm = atlas::pymath;
 
 std::array<float, 9> water_map(const view::Camera& cam, double water_y, double density, std::uint32_t width,
-                               std::uint32_t height) {
+                               std::uint32_t height, WaterOctaves* octaves) {
     // the home's noise on the ground: device px of the fields a metre across its view (cos yaw, sin yaw) and down it
     // (-sin yaw, cos yaw), at its target: its focal over its distance, down foreshortened by its pitch's sine
     constexpr double yaw = 52.0;
@@ -76,13 +79,31 @@ std::array<float, 9> water_map(const view::Camera& cam, double water_y, double d
     const double mx = static_cast<double>(width) / 2;
     const double my = static_cast<double>(height) / 2;
     const double wm = (w[0] * mx) + (w[1] * my) + w[2];
+    if (octaves != nullptr) *octaves = {.as_it_lies = 1.0F, .periods = {}};
     if (wm < 0) {
         const double period_x = 2.0 * width;
         const double period_y = 2.0 * height;
         const double qx = ((r0[0] * mx) + (r0[1] * my) + r0[2]) / wm;
         const double qy = ((r1[0] * mx) + (r1[1] * my) + r1[2]) / wm;
-        const double sx = period_x * pm::floor(qx / period_x);
-        const double sy = period_y * pm::floor(qy / period_y);
+        const double jx = pm::floor(qx / period_x);
+        const double jy = pm::floor(qy / period_y);
+        if (octaves != nullptr) {
+            // the footprint at the middle: the longer of the map's derivatives along the screen's x and y there
+            const auto squared = [&](std::size_t i) {
+                const double u = r0.at(i) - (qx * w.at(i));
+                const double v = r1.at(i) - (qy * w.at(i));
+                return ((u * u) + (v * v)) / (wm * wm);
+            };
+            const double lies = 4.0 / std::clamp(std::sqrt(std::max(squared(0), squared(1))), 1.0, 4.0);
+            octaves->as_it_lies = static_cast<float>(lies * lies);
+            // the periods left out, as the octaves put them back (a frame so far out that they pass an int: none)
+            constexpr double most = 1.0e9;
+            if (std::abs(jx) < most && std::abs(jy) < most) {
+                octaves->periods = {static_cast<std::int32_t>(jx), static_cast<std::int32_t>(jy)};
+            }
+        }
+        const double sx = period_x * jx;
+        const double sy = period_y * jy;
         for (std::size_t i = 0; i < 3; ++i) {
             r0[i] -= sx * w[i];
             r1[i] -= sy * w[i];
@@ -104,6 +125,41 @@ WaterPoint water_point(const std::array<float, 9>& m, float x, float y) noexcept
     const float u = ((m[0] * x) + (m[1] * y)) + m[2];
     const float v = ((m[3] * x) + (m[4] * y)) + m[5];
     return {.x = u / w, .y = v / w, .on = true};
+}
+
+GlintsRead glints_read(const std::array<float, 9>& m, const WaterOctaves& o, std::uint32_t width, std::uint32_t height,
+                       float x, float y) noexcept {
+    // glints_fs's float steps, left to right, each rounded on its own
+    GlintsRead out;
+    out.first = water_point(m, x, y);
+    if (!out.first.on) return out;
+    const float w = ((m[6] * x) + (m[7] * y)) + m[8];
+    const std::array<float, 2> dx{m[0] - (out.first.x * m[6]), m[3] - (out.first.y * m[6])};
+    const std::array<float, 2> dy{m[1] - (out.first.x * m[7]), m[4] - (out.first.y * m[7])};
+    const float foot = std::max((dx[0] * dx[0]) + (dx[1] * dx[1]), (dy[0] * dy[0]) + (dy[1] * dy[1])) / (w * w);
+    out.footprint = std::sqrt(foot);
+    if (!(foot > o.as_it_lies)) return out;
+    // (the shader's log2 is the GPU's own; here the port's, which a far pixel's blend follows within the GPU's ulps)
+    const float ratio = foot / o.as_it_lies;
+    const float l =
+        std::isfinite(ratio) ? std::min(0.5F * static_cast<float>(pm::log2(static_cast<double>(ratio))), 15.0F) : 15.0F;
+    const float n = std::floor(l);
+    out.octave = static_cast<std::uint32_t>(n);
+    out.blend = l - n;
+    // glints_octave: the point halved `octave` times about the map's own origin, the periods within 2^octave put back
+    const auto at = [&](std::uint32_t octave) {
+        // (a negative count's low bits are its remainder counted up from the period below, as the shader's int's)
+        const std::uint32_t mask = (1U << octave) - 1U;
+        const float px =
+            static_cast<float>(2U * width) * static_cast<float>(std::bit_cast<std::uint32_t>(o.periods[0]) & mask);
+        const float py =
+            static_cast<float>(2U * height) * static_cast<float>(std::bit_cast<std::uint32_t>(o.periods[1]) & mask);
+        const float scale = 1.0F / static_cast<float>(1U << octave);
+        return WaterPoint{.x = (out.first.x + px) * scale, .y = (out.first.y + py) * scale, .on = true};
+    };
+    out.second = at(out.octave + 1U);
+    out.first = at(out.octave);
+    return out;
 }
 
 double water_level(const GroundFrame& f) noexcept {
@@ -137,10 +193,15 @@ void Ground::write_wind_glints(std::vector<std::uint32_t>& words, const frame::F
     if (!glints_filtered(state) || !state.view) return;
     const std::array<fx::Argb, 256> table = fx::glint_table(fx::glint_colour(frame_.night));
     words.insert(words.end(), table.begin(), table.end());
-    // then the water's map, where glints_fs reads the field
+    // then the water's map, where glints_fs reads the field, and its octaves: the squared footprint up to which a
+    // pixel reads the field as it lies, and the whole periods the map left out on each axis
+    WaterOctaves octaves;
     const std::array<float, 9> map = water_map(state.view->camera(), water_level(frame_), state.camera.density,
-                                               state.camera.width_px, state.camera.height_px);
+                                               state.camera.width_px, state.camera.height_px, &octaves);
     for (const float v : map) words.push_back(std::bit_cast<std::uint32_t>(v));
+    words.push_back(std::bit_cast<std::uint32_t>(octaves.as_it_lies));
+    words.push_back(std::bit_cast<std::uint32_t>(octaves.periods[0]));
+    words.push_back(std::bit_cast<std::uint32_t>(octaves.periods[1]));
 }
 
 void Ground::record_wind_glints(const frame::Recording& r) {

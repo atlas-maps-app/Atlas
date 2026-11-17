@@ -58,7 +58,7 @@ class HomeChromeTest {
 
     private val categories = HOME_CATEGORIES.mapNotNull { Categories.byId(it)?.name("en") }
 
-    /** The map's log tag (mapview's EngineFrames.TAG), which the chrome's shapes log under. */
+    /** The map's log tag (mapview's MapEngine.TAG), which the chrome's shapes log under. */
     private val MAP_TAG = "AtlasMap"
 
     private fun show(glass: Boolean) {

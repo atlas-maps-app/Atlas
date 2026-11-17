@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <format>
+#include <functional>
 #include <limits>
 #include <vector>
 
@@ -305,17 +306,223 @@ TEST_CASE("a placed label stays where it is on the map, growing and shrinking wi
     CHECK(entry(drawn, 2, true) != nullptr); // its place in the band before, fading out
     CHECK(placement.fading());
 
-    // The readable floor raises the band's low end: from that size, shrinking to 0.85 of it is beyond the band.
+    // The readable floor raises the band's low end: from that size, shrinking to 0.85 of it is beyond the band. A
+    // floor that leaves less than 0.85 of room under the set's own size has it placed anew that much over it (0.9 /
+    // 0.85), so a further step out is within the band and does not place it anew again.
     drawn = placement.update(c, frame, at * 1.6, 3.0);
     const Frame floored{.width = 400, .height = 300, .least = 0.9F};
     drawn = placement.update(c, floored, at * 1.6 * 0.85, 3.1);
-    CHECK(placement.size() == 1.0F);
-    CHECK(placement.reference() == at * 1.6 * 0.85);
+    CHECK(placement.size() == doctest::Approx(0.9 / 0.85));
+    CHECK(placement.reference() == doctest::Approx(at * 1.6 * 0.85 / (0.9 / 0.85)));
+    const double placed_at = placement.reference();
+    drawn = placement.update(c, floored, at * 1.6 * 0.85 * 0.9, 3.2);
+    CHECK(placement.reference() == placed_at);
+    CHECK(placement.size() == doctest::Approx(0.9 / 0.85 * 0.9));
+    // a floor of 0.8 leaves that room: placed anew at its own size, as without a floor
+    Placement lower;
+    const Frame low{.width = 400, .height = 300, .least = 0.8F};
+    (void)lower.update(c, low, at, 0.0);
+    (void)lower.update(c, low, at * 0.75, 0.1);
+    CHECK(lower.size() == 1.0F);
+    CHECK(lower.reference() == at * 0.75);
     // without it, the same is within the band
     Placement unfloored;
     (void)unfloored.update(c, frame, at, 0.0);
     (void)unfloored.update(c, frame, at * 0.85, 0.1);
     CHECK(unfloored.size() == 0.85F);
+}
+
+TEST_CASE("a label risen over a mark at its point stands above it at every spot, its box down over the mark; at no "
+          "rise its stand is LabelPainter's, and a kept label follows its rise where it stands") {
+    const Measures m = measures(40, 20); // a text 40 by 20 px
+    const Point p{.x = 200.0F, .y = 150.0F};
+    constexpr float mark = 9.0F;
+    for (std::size_t spot = 0; spot < spot_count; ++spot) {
+        const Stand flat = stand_at(m, p, spot);
+        // no rise: the same stand to the bit, whatever the mark
+        const Stand none = stand_at(m, p, spot, 0.0F, mark);
+        CHECK(none.x == flat.x);
+        CHECK(none.y == flat.y);
+        CHECK(none.box.l == flat.box.l);
+        CHECK(none.box.t == flat.box.t);
+        CHECK(none.box.r == flat.box.r);
+        CHECK(none.box.b == flat.box.b);
+        // risen whole: up by half the text's height and the mark's radius, so the text's lower edge is at least the
+        // mark's radius over the point at every spot; the box keeps its sides and its top's pad, and reaches down to
+        // the mark's lower edge
+        const Stand up = stand_at(m, p, spot, 1.0F, mark);
+        CHECK(up.x == flat.x);
+        CHECK(up.y == flat.y - ((m.text_height / 2.0F) + mark));
+        CHECK(up.y + (m.text_height / 2.0F) <= p.y - mark);
+        CHECK(up.box.l == flat.box.l);
+        CHECK(up.box.r == flat.box.r);
+        CHECK(up.box.t == up.y - ((m.text_height / 2.0F) + m.pad));
+        CHECK(up.box.b == p.y + mark);
+        // and half way, half of it
+        const Stand half = stand_at(m, p, spot, 0.5F, mark);
+        CHECK(half.y == flat.y - (0.5F * ((m.text_height / 2.0F) + mark)));
+        CHECK(half.box.b >= half.y + (m.text_height / 2.0F) + m.pad);
+    }
+    // On a frame: a risen label at its point, and a label of lower priority whose first point lies 25 px under it,
+    // where centred or beside it would stand clear of the first's text and its pad but on the mark. The first's box
+    // holds the mark, so the second stands at its second point and nothing stands on the mark.
+    std::array<Point, 1> p0{{p}};
+    std::array<Point, 2> p1{{{.x = 200.0F, .y = 175.0F}, {.x = 60.0F, .y = 60.0F}}};
+    std::vector<Candidate> c{
+        {.id = 7, .label = 0, .priority = 5, .measures = m, .points = p0, .rise = 1.0F, .mark = mark},
+        {.id = 9, .label = 1, .priority = 1, .measures = measures(30, 20), .points = p1},
+    };
+    const Frame frame{.width = 400, .height = 300};
+    const double at = 1.0 / 400.0;
+    Placement placement;
+    auto drawn = placement.update(c, frame, at, 0.0);
+    ATLAS_REQUIRE(drawn.size() == 2);
+    CHECK(drawn[0].stand.x == 200.0F);
+    CHECK(drawn[0].stand.y == 150.0F - ((m.text_height / 2.0F) + mark));
+    // (clear of the first's text and pad, but for the mark)
+    CHECK(stand_at(c[1].measures, p1[0], 0).box.t > drawn[0].stand.y + (m.text_height / 2.0F) + m.pad);
+    CHECK(stand_at(c[1].measures, p1[0], 0).box.t < drawn[0].stand.box.b);
+    CHECK(drawn[1].stand.x == 60.0F);
+    const Box over{.l = p.x - mark, .t = p.y - mark, .r = p.x + mark, .b = p.y + mark};
+    const Box& second = drawn[1].stand.box;
+    CHECK((second.r <= over.l || second.l >= over.r || second.b <= over.t || second.t >= over.b));
+    // the rise ebbs (the light fades as the camera nears 18 km): the kept label comes down where it stands, at its
+    // spot, without a fade
+    c[0].rise = 0.5F;
+    drawn = placement.update(c, frame, at, 0.1);
+    ATLAS_REQUIRE(!drawn.empty());
+    CHECK(drawn[0].candidate == 0);
+    CHECK(drawn[0].stand.x == 200.0F);
+    CHECK(drawn[0].stand.y == 150.0F - (0.5F * ((m.text_height / 2.0F) + mark)));
+    CHECK(drawn[0].alpha == 1.0F);
+}
+
+TEST_CASE("a label being placed stands clear of the frame's marks where a spot allows and covers its own point's "
+          "alone; where every spot covers one it stands as without them; the marks are asked for only when a label "
+          "is placed") {
+    const Measures m = measures(40, 20);
+    const Point p{.x = 200.0F, .y = 150.0F};
+    std::array<Point, 1> points{{p}};
+    std::vector<Candidate> c{{.id = 7, .label = 0, .priority = 5, .measures = m, .points = points}};
+    const double at = 1.0 / 400.0;
+    const Stand centred = stand_at(m, p, 0);
+    const Stand above = stand_at(m, p, 1);
+    const auto box_of = [](const Mark& k) {
+        return Box{.l = k.x - k.radius, .t = k.y - k.radius, .r = k.x + k.radius, .b = k.y + k.radius};
+    };
+    // a stand's text: its box without the pad, and for a risen label without its reach down over its own mark
+    const auto text_of = [&m](const Stand& s) {
+        return Box{.l = s.x - (m.half - m.pad),
+                   .t = s.y - (m.text_height / 2.0F),
+                   .r = s.x + (m.half - m.pad),
+                   .b = s.y + (m.text_height / 2.0F)};
+    };
+    // without marks: centred on its point, as LabelPainter places it
+    {
+        const Frame plain{.width = 400, .height = 300};
+        Placement placement;
+        const auto drawn = placement.update(c, plain, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.x == centred.x);
+        CHECK(drawn[0].stand.y == centred.y);
+        CHECK(placement.placed_new() == 1);
+        CHECK(placement.placed_on_marks() == 0);
+    }
+    std::vector<Mark> marks;
+    int asked = 0;
+    const std::function<std::span<const Mark>()> source = [&] {
+        ++asked;
+        return std::span<const Mark>(marks);
+    };
+    const Frame lit{.width = 400, .height = 300, .marks = &source};
+    // another place's light just under its point: the centred stand's text would cover it, the stand above's does
+    // not (its pad does: a light's radius is its room, the pad is the labels')
+    marks = {{.x = p.x, .y = p.y + 5.0F, .radius = 3.0F}};
+    ATLAS_REQUIRE(overlaps(text_of(centred), box_of(marks[0])));
+    ATLAS_REQUIRE(!overlaps(text_of(above), box_of(marks[0])));
+    ATLAS_REQUIRE(overlaps(above.box, box_of(marks[0])));
+    {
+        Placement placement;
+        auto drawn = placement.update(c, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.x == above.x);
+        CHECK(drawn[0].stand.y == above.y);
+        CHECK(asked == 1);
+        CHECK(placement.placed_new() == 1);
+        CHECK(placement.placed_on_marks() == 0);
+        CHECK(placement.placed_off_marks() == 1);
+        // kept from then on: the marks are not asked for again
+        drawn = placement.update(c, lit, at, 0.1);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.y == above.y);
+        CHECK(asked == 1);
+        CHECK(placement.placed_new() == 0);
+    }
+    // the light at its own point is its own: centred, as without marks
+    marks = {{.x = p.x, .y = p.y, .radius = 3.0F}};
+    {
+        Placement placement;
+        const auto drawn = placement.update(c, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.x == centred.x);
+        CHECK(drawn[0].stand.y == centred.y);
+        CHECK(placement.placed_on_marks() == 0);
+    }
+    // a lit place's name, risen over its own light, with another place's light beside that one, under the text: its
+    // box reaches down over both, but its text covers neither, so it stands as without marks; a light where its
+    // text stands moves it
+    {
+        constexpr float halo = 9.0F;
+        std::vector<Candidate> lit_name{
+            {.id = 7, .label = 0, .priority = 5, .measures = m, .points = points, .rise = 1.0F, .mark = halo}};
+        const Stand risen = stand_at(m, p, 0, 1.0F, halo);
+        marks = {{.x = p.x, .y = p.y, .radius = halo}, {.x = p.x + 15.0F, .y = p.y, .radius = 4.0F}};
+        ATLAS_REQUIRE(overlaps(risen.box, box_of(marks[1])));
+        ATLAS_REQUIRE(!overlaps(text_of(risen), box_of(marks[1])));
+        Placement beside;
+        auto drawn = beside.update(lit_name, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.x == risen.x);
+        CHECK(drawn[0].stand.y == risen.y);
+        CHECK(beside.placed_on_marks() + beside.placed_off_marks() == 0);
+        marks[1] = {.x = p.x + 15.0F, .y = risen.y, .radius = 4.0F};
+        Placement under;
+        drawn = under.update(lit_name, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK((drawn[0].stand.x != risen.x || drawn[0].stand.y != risen.y));
+        CHECK(under.placed_off_marks() == 1);
+    }
+    // lights all about it, 10 px apart: every spot covers one, so it stands as without marks, and is counted
+    marks.clear();
+    for (int y = 100; y <= 200; y += 10) {
+        for (int x = 100; x <= 300; x += 10) {
+            marks.push_back({.x = static_cast<float>(x) + 0.5F, .y = static_cast<float>(y) + 0.5F, .radius = 2.0F});
+        }
+    }
+    for (std::size_t spot = 0; spot < spot_count; ++spot) {
+        const Box box = text_of(stand_at(m, p, spot));
+        ATLAS_REQUIRE(std::ranges::any_of(marks, [&](const Mark& k) { return overlaps(box, box_of(k)); }));
+    }
+    {
+        asked = 0;
+        Placement placement;
+        const auto drawn = placement.update(c, lit, at, 0.0);
+        ATLAS_REQUIRE(drawn.size() == 1);
+        CHECK(drawn[0].stand.x == centred.x);
+        CHECK(drawn[0].stand.y == centred.y);
+        CHECK(placement.placed_on_marks() == 1);
+        CHECK(placement.placed_off_marks() == 0);
+        CHECK(asked == 1);
+    }
+    // a label whose point does not show is not placed, and the marks are not asked for
+    {
+        asked = 0;
+        std::array<Point, 1> nowhere{{{.x = no_point, .y = no_point}}};
+        std::vector<Candidate> gone{{.id = 8, .label = 0, .priority = 5, .measures = m, .points = nowhere}};
+        Placement placement;
+        CHECK(placement.update(gone, lit, at, 0.0).empty());
+        CHECK(asked == 0);
+    }
 }
 
 TEST_CASE("placed labels that the map's turn brings together: the one of lower priority fades out, neither moves") {
@@ -354,6 +561,66 @@ TEST_CASE("placed labels that the map's turn brings together: the one of lower p
     ATLAS_REQUIRE(lower != nullptr);
     CHECK(lower->stand.x == 300.0F);
     CHECK(lower->alpha == 0.0F);
+}
+
+TEST_CASE("a label on its way out fades out where it stands and is not placed anew; a new label fades in; a label "
+          "of higher priority brought in is placed around those kept, none overlapping") {
+    // Three names in a row; the middle one leaves the pick.
+    std::array<Point, 1> a{{{.x = 100, .y = 100}}};
+    std::array<Point, 1> b{{{.x = 300, .y = 100}}};
+    std::array<Point, 1> d{{{.x = 500, .y = 100}}};
+    std::vector<Candidate> c{
+        {.id = 1, .label = 0, .priority = -1, .measures = measures(60, 20), .points = a},
+        {.id = 2, .label = 1, .priority = -2, .measures = measures(60, 20), .points = b},
+        {.id = 3, .label = 2, .priority = -3, .measures = measures(60, 20), .points = d},
+    };
+    const Frame frame{.width = 600, .height = 300};
+    Placement placement;
+    auto drawn = placement.update(c, frame, 0.01, 0.0);
+    ATLAS_REQUIRE(drawn.size() == 3);
+    c[1].hidden = true;
+    drawn = placement.update(c, frame, 0.01, 1.0);
+    const Drawn* leaving = entry(drawn, 1);
+    ATLAS_REQUIRE(leaving != nullptr);
+    CHECK(leaving->stand.x == 300.0F); // where it stood
+    CHECK(leaving->alpha == 1.0F);
+    CHECK(placement.fading());
+    drawn = placement.update(c, frame, 0.01, 1.125);
+    leaving = entry(drawn, 1);
+    ATLAS_REQUIRE(leaving != nullptr);
+    CHECK(leaving->alpha == doctest::Approx(0.5F));
+    drawn = placement.update(c, frame, 0.01, 1.3);
+    CHECK(entry(drawn, 1) == nullptr);
+    CHECK(placement.placed() == 2);
+    // gone from the frame's candidates, and a name of the highest priority comes where it stood, between the two
+    // kept: it fades in from nothing, and neither of them moves or fades (they were placed first)
+    c.erase(c.begin() + 1);
+    c[1].label = 1;
+    std::array<Point, 1> e{{{.x = 300, .y = 100}}};
+    c.push_back({.id = 4, .label = 2, .priority = 0, .measures = measures(60, 20), .points = e});
+    drawn = placement.update(c, frame, 0.01, 2.0);
+    const Drawn* fresh = entry(drawn, 2);
+    ATLAS_REQUIRE(fresh != nullptr);
+    CHECK(fresh->alpha == 0.0F);
+    CHECK(fresh->stand.x == 300.0F);
+    drawn = placement.update(c, frame, 0.01, 2.25);
+    ATLAS_REQUIRE(drawn.size() == 3);
+    for (const Drawn& one : drawn) CHECK(one.alpha == 1.0F);
+    CHECK(entry(drawn, 0)->stand.x == 100.0F);
+    CHECK(entry(drawn, 1)->stand.x == 500.0F);
+    for (std::size_t i = 0; i < drawn.size(); ++i) {
+        for (std::size_t j = i + 1; j < drawn.size(); ++j) {
+            const Box& p = drawn[i].stand.box;
+            const Box& q = drawn[j].stand.box;
+            CHECK_FALSE((p.l < q.r && q.l < p.r && p.t < q.b && q.t < p.b));
+        }
+    }
+    // a label that was never placed and comes hidden is not placed
+    std::array<Point, 1> f{{{.x = 300, .y = 250}}};
+    c.push_back({.id = 5, .label = 3, .priority = -9, .measures = measures(60, 20), .points = f, .hidden = true});
+    drawn = placement.update(c, frame, 0.01, 3.0);
+    CHECK(entry(drawn, 3) == nullptr);
+    CHECK(placement.placed() == 3);
 }
 
 TEST_CASE("a set of labels keeps every image's texels once, and a sprite goes where its anchor lands rounded") {

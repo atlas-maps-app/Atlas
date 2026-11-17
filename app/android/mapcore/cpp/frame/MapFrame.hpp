@@ -22,6 +22,7 @@
 #pragma once
 
 #include "frame/FrameBuilder.hpp"
+#include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
 #include "markers/Markers.hpp"
 #include "routes/Routes.hpp"
@@ -41,6 +42,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace atlas::fx {
@@ -83,6 +85,11 @@ struct MapOptions {
     /// The triangle governor's budget instead of the device's (scene::triangle_budget): a test's, to set the bias to
     /// work or to measure a view's triangles with none (a budget no view reaches); 0 for the device's.
     std::uint64_t triangle_budget = 0;
+    /// The world's heap in bytes instead of the world's own (scene::WorldOptions::world_heap): a test's, to hold a
+    /// view's world tiles in less room than they take; 0 for the world's.
+    std::uint64_t world_heap = 0;
+    /// The bytes that heap may grow to (scene::WorldOptions::world_heap_budget): a test's; 0 for none past it.
+    std::uint64_t world_heap_budget = 0;
     /// The frame's clear colour instead of paper's (FrameOptions::clear): a test's, to tell where nothing draws.
     std::optional<std::array<float, 4>> clear;
 };
@@ -118,12 +125,22 @@ public:
     [[nodiscard]] std::uint64_t palette_revision() const noexcept { return palette_revision_; }
     /// The app's labels from now on (MapCore.labels; null: none), drawn by the labels pass.
     void set_labels(std::shared_ptr<const labels::LabelSet> labels) noexcept { labels_ = std::move(labels); }
+    /// The world's names' sprites (labels/Names.hpp): what the frames want of the app, and what it hands back.
+    [[nodiscard]] labels::NameStore& names() noexcept { return names_; }
+    /// The map's clock at its last frame, seconds (the names' store's times are on it).
+    [[nodiscard]] double seconds() const noexcept { return seconds_; }
+    /// Names no tile holds, picked as a tile's are from now on (a test's; none: an empty list).
+    void set_extra_names(std::vector<scene::WorldName> names) { extra_names_ = std::move(names); }
     /// The app's markers from now on (MapCore.markers; null: none), drawn by the markers pass.
     void set_markers(std::shared_ptr<const markers::MarkerSet> markers) noexcept { markers_ = std::move(markers); }
     /// The app's routes and areas from now on (MapCore.routes; null: none), drawn by the routes pass.
     void set_routes(std::shared_ptr<const routes::RouteSet> routes) noexcept { routes_ = std::move(routes); }
-    /// The building the app asks about from now on (MapCore.ask; none: no question open), drawn as asked.
-    void set_asked(std::optional<AskedBuilding> asked) noexcept { asked_ = asked; }
+    /// The building the app asks about from now on (MapCore.ask; none: no question open), drawn as asked; asked about
+    /// in a roof (AskedBuilding::roof), its house is read from the tile that draws it, now where one does and else as
+    /// one comes (next).
+    void set_asked(std::optional<AskedBuilding> asked);
+    /// The house the frames draw in the asked building's place (null: none), for tests and logs.
+    [[nodiscard]] const scene::House* house() const noexcept { return house_.get(); }
     /// The screen's haze, vignette and grain on or off from now on (the app's Look settings: FrameOptions::steps
     /// without their composite steps when off; the grain off takes the materials' grain off the fills too,
     /// FrameOptions::grain), kept for every frame builder made.
@@ -139,6 +156,11 @@ public:
     void set_passes(std::uint64_t passes) noexcept {
         passes_ = passes;
         if (builder_) builder_->set_passes(passes);
+    }
+    /// The frames' ranks over the rows of the resident tiles not drawn too, or not (FrameBuilder::rank_undrawn: the
+    /// pinch audit's measure), for the frame builder there is.
+    void rank_undrawn(bool on) noexcept {
+        if (builder_) builder_->rank_undrawn(on);
     }
     /// Where the fling under way lands (scene::World::set_landing, ENGINE.md gain 26), or none; kept for a world made
     /// later.
@@ -219,9 +241,21 @@ private:
     style::PaletteBlock palette_{};
     std::uint64_t palette_revision_ = 0;
     std::shared_ptr<const labels::LabelSet> labels_;
+    labels::NameStore names_;
+    std::vector<scene::WorldName> extra_names_;
+    double seconds_ = 0;
     std::shared_ptr<const markers::MarkerSet> markers_;
     std::shared_ptr<const routes::RouteSet> routes_;
     std::optional<AskedBuilding> asked_;
+    /// The asked building's house in the roof asked about (scene/House.hpp), read from the tile that draws the
+    /// building; the tile that said it draws none of it as itself (its key and pack: not read again for the same
+    /// question); and when the tiles are next looked through for it (seconds_), while no frame draws it.
+    std::shared_ptr<const scene::House> house_;
+    std::optional<std::pair<tiles::TileKey, std::string>> house_refused_;
+    double house_due_ = 0;
+    /// Reads the asked building's house where a resident tile draws the building and the house kept is not that
+    /// tile's.
+    void read_house();
     bool gpu_noise_ = false;
     std::uint32_t steps_ = ~0U;
     bool grain_ = true;

@@ -1467,3 +1467,94 @@ TEST_CASE("buildings: the flat greys give a guessed flat roof its mid grey, the 
     CHECK(painted(&plain, mapped) == mapped.base);
     CHECK(painted(&plain, clay) == clay.base);
 }
+
+TEST_CASE(
+    "buildings: one building of a tile alone as a plain house under the roof asked about (FillIn's roof question)") {
+    // geometry::build_house, of the synthetic tile's buildings: the flat house (100: 10 × 20 m, 12 m) under each roof
+    // FillIn offers, the gabled one (101: its roof 5 m of its 15) hipped and flat; none of a houseboat, of a building
+    // the tile lacks, of a way asked as a relation, or under a roof FillIn does not offer
+    Fixture f;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = f.t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::BuildingInput in{.tile = &*tile, .head = &f.head, .level = 0, .kind = 7};
+    // what a house is made of: its primitives by kind (an n-gon once), its walls' top and its highest point
+    struct Made {
+        std::map<gm::PrimKind, int> kinds;
+        double wall_top = 0.0;
+        double top = 0.0;
+        std::size_t items = 0;
+        std::uint64_t building = 0;
+        bool guesses = false; ///< a face drawn as a guess, or as the plain box beside one
+        bool samples = true;
+    };
+    const auto made = [&](std::int64_t id, std::string_view roof) {
+        const std::optional<gm::TileBuildings> g = gm::build_house(in, id, false, roof);
+        ATLAS_REQUIRE_OR_RETURN(Made{}, g.has_value(), std::format("no house of {} under a {} roof", id, roof));
+        Made m;
+        m.items = g->items.size();
+        if (!g->items.empty()) m.building = g->items[0].spec.building;
+        for (const gm::Prim& p : g->edged) {
+            ++m.kinds[p.kind];
+            // each wall its one cell, drawn at every distance
+            if (p.kind == gm::PrimKind::cell) {
+                CHECK((p.flags & gm::prim_flag::any) == gm::prim_flag::any);
+                for (const gm::V3& q : p.p) m.wall_top = std::max(m.wall_top, q.y);
+            }
+        }
+        for (const gm::Prim& p : g->plain) {
+            if ((p.flags & gm::prim_flag::polygon) == 0) ++m.kinds[p.kind];
+            const std::size_t corners = (p.flags & gm::prim_flag::triangle) != 0 ? 3 : 4;
+            for (std::size_t k = 0; k < corners; ++k) m.top = std::max(m.top, p.p.at(k).y);
+        }
+        for (const gm::Polygon& p : g->polygons) ++m.kinds[g->plain[p.first].kind];
+        for (const gm::Face& face : g->faces) m.guesses = m.guesses || face.shape != gm::ShapeGuess::any;
+        CHECK(g->window_walls.empty());
+        CHECK(g->lean);
+        return m;
+    };
+    const std::uint64_t key100 = atlas::scene::owner_key(gm::owner_area, 100);
+    // the flat house as the plain box: its four walls up to its top, and the top
+    const Made box = made(100, "flat");
+    CHECK(box.kinds == std::map<gm::PrimKind, int>{{gm::PrimKind::cell, 4}, {gm::PrimKind::top, 1}});
+    CHECK(box.wall_top == doctest::Approx(12.0));
+    CHECK(box.top == doctest::Approx(12.0));
+    CHECK(box.items == 1);
+    CHECK(box.building == key100);
+    CHECK_FALSE(box.guesses);
+    // gabled: the loader's height for a mapped shape without one (0.45 of its shortest side, the grid's 9.98 m: 4.49 m
+    // under its 12), its walls up to the eaves, two slopes and two gable ends
+    CHECK(gm::house_roof_height(12.0, 10.0) == doctest::Approx(4.5));
+    CHECK(gm::house_roof_height(4.0, 10.0) == doctest::Approx(1.6));  // never over 0.4 of the building
+    CHECK(gm::house_roof_height(30.0, 3.0) == doctest::Approx(2.0));  // nor under 2 m
+    CHECK(gm::house_roof_height(30.0, 40.0) == doctest::Approx(5.0)); // nor over 5
+    const Made gabled = made(100, "gabled");
+    CHECK(gabled.kinds ==
+          std::map<gm::PrimKind, int>{{gm::PrimKind::cell, 4}, {gm::PrimKind::slope, 2}, {gm::PrimKind::gable, 2}});
+    CHECK(gabled.wall_top == doctest::Approx(7.5).epsilon(0.005));
+    CHECK(gabled.top == doctest::Approx(12.0));
+    CHECK_FALSE(gabled.guesses);
+    // hipped: two slopes and two hips over the same walls
+    const Made hipped = made(100, "hipped");
+    CHECK(hipped.kinds ==
+          std::map<gm::PrimKind, int>{{gm::PrimKind::cell, 4}, {gm::PrimKind::slope, 2}, {gm::PrimKind::hip, 2}});
+    CHECK(hipped.wall_top == doctest::Approx(gabled.wall_top));
+    CHECK(hipped.top == doctest::Approx(12.0));
+    // the gabled house (its roof 5 m of its 15) hipped: its own roof's height; flat: its walls up to its top
+    const Made other = made(101, "hipped");
+    CHECK(other.kinds ==
+          std::map<gm::PrimKind, int>{{gm::PrimKind::cell, 4}, {gm::PrimKind::slope, 2}, {gm::PrimKind::hip, 2}});
+    CHECK(other.wall_top == doctest::Approx(10.0));
+    CHECK(other.top == doctest::Approx(15.0));
+    const Made flattened = made(101, "flat");
+    CHECK(flattened.kinds == std::map<gm::PrimKind, int>{{gm::PrimKind::cell, 4}, {gm::PrimKind::top, 1}});
+    CHECK(flattened.wall_top == doctest::Approx(15.0));
+    // none: a houseboat, a building the tile lacks, a way asked as a relation, a roof FillIn does not offer
+    CHECK_FALSE(gm::build_house(in, 106, false, "flat").has_value());
+    CHECK_FALSE(gm::build_house(in, 999, false, "flat").has_value());
+    CHECK_FALSE(gm::build_house(in, 100, true, "flat").has_value());
+    CHECK_FALSE(gm::build_house(in, 100, false, "mansard").has_value());
+    CHECK_FALSE(gm::build_house(in, 100, false, "").has_value());
+}

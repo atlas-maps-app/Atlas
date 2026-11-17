@@ -26,7 +26,9 @@ import java.util.concurrent.TimeUnit
  * whose data does not come waits twice as long after each failure in a row, one whose data the core refuses a day; a
  * window built lately is not fetched again though the core still wants its place. The user's edits are built into
  * every window and never kept with its data; an edit builds the windows whose boxes hold its place again from their
- * kept data, before anything else.
+ * kept data, before anything else. A window the phone has nothing of, where neither the tiles nor Atlas's packs give
+ * it, is built from the element packs on the phone, offline too: it stays on a pack's data that holds its whole box
+ * (its changes asked a week on), and is fetched whole once the network gives it where its packs hold part of it alone.
  */
 class WindowsTest {
     private val dir: File = Files.createTempDirectory("windows").toFile()
@@ -67,6 +69,9 @@ class WindowsTest {
         var mergeWith: (File, ByteBuffer) -> ByteArray? = { _, _ -> null }
         var refusal = ""
 
+        /** Whether the core refuses data (its JSON) while [refusal] is set: any. */
+        var refuses: (String) -> Boolean = { true }
+
         var levels = listOf<MapCore.Window>()
 
         override fun wanted() = wanted
@@ -75,7 +80,7 @@ class WindowsTest {
         override fun box(w: MapCore.Window) = doubleArrayOf(52.36, 4.87, 52.38, 4.89)
         override fun build(w: MapCore.Window, json: File, file: File): String {
             built += json.readText()
-            if (refusal.isNotEmpty()) return refusal
+            if (refusal.isNotEmpty() && refuses(built.last())) return refusal
             file.writeText("pack ${built.size}")
             return ""
         }
@@ -332,6 +337,206 @@ class WindowsTest {
         assertTrue(offline.step(core))
         assertEquals(3, tilesAsked.size)
         assertEquals(1, fetched.size)
+    }
+
+    /** The element packs on the phone as a window's last source before Overpass: what each asked got, and the windows asked. */
+    private var held: (MapCore.Window) -> Windows.Packed? = { null }
+    private val localAsked = ArrayList<MapCore.Window>()
+
+    /** The canal ring's element pack as PackWindows answers for a window within its box: its data of 30 September, whole as of then. */
+    private val ringDate = Instant.parse("2026-09-30T08:00:00Z")
+    private val ring = answer("2026-09-30T08:00:00Z", whole = "2026-09-30T08:00:00Z", id = 12)
+
+    /** The same for a window that reaches beyond the pack's box: what the pack holds of it, never fetched whole. */
+    private val ringPart = answer("2026-09-30T08:00:00Z", whole = "1970-01-01T00:00:00Z", id = 12)
+
+    private var net = true
+    private val withLocal = Windows(
+        dir,
+        fetch = { b, file -> fetched += b; file.writeBytes(whole()) },
+        fetchDiff = { _, since, notBefore -> diffs += since to notBefore; changes(since, notBefore) },
+        clock = { now },
+        packs = { w, after -> packsAsked += w to after; packed(w, after) },
+        tiles = { w -> tilesAsked += w; tiled(w) },
+        local = { w -> localAsked += w; held(w) },
+        online = { net },
+    )
+
+    @Test
+    fun offlineAWindowThePhoneHasNothingOfIsBuiltFromAPackOnThePhoneThatHoldsItWholeAndStaysOnItsData() {
+        net = false
+        held = { Windows.Packed(gzip(ring), ringDate, "grachten") }
+        val core = Core()
+        core.wanted = listOf(w)
+        // no country's tiles hold it, no data comes offline: built at once from the packs on the phone
+        assertTrue(withLocal.step(core))
+        assertEquals(listOf(w), tilesAsked)
+        assertEquals(listOf(w), localAsked)
+        assertTrue(packsAsked.isEmpty())
+        assertTrue(fetched.isEmpty())
+        assertEquals(listOf(String(ring)), core.built)
+        // its data kept as checked now and whole as of the pack's date, as a window from a country's tiles is
+        assertEquals(String(ring), unzipped(withLocal.dataOf(w)))
+        assertEquals(now, withLocal.dataOf(w).lastModified())
+        assertEquals(ringDate, Windows.headOf(withLocal.dataOf(w))!!.whole)
+        // nothing more offline
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 500
+        assertFalse(withLocal.step(core))
+        // the network back: the window stays on its pack's data, and Overpass is asked nothing for a week
+        net = true
+        now += 500
+        assertFalse(withLocal.step(core))
+        now += 6 * day
+        assertFalse(withLocal.step(core))
+        assertTrue(fetched.isEmpty())
+        assertTrue(diffs.isEmpty())
+        // a week on its data is over four weeks old (30 September): fetched whole, as any window's then
+        now += 2 * day
+        assertTrue(withLocal.step(core))
+        assertEquals(1, fetched.size)
+        assertTrue(diffs.isEmpty())
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), core.built.last())
+        assertEquals(listOf(w), localAsked)
+        assertEquals(now, withLocal.dataOf(w).lastModified())
+    }
+
+    @Test
+    fun aWindowAPackOnThePhoneHoldsWholeTakesOverpasssChangesSinceThePacksDateAWeekOn() {
+        // a region's pack of two days ago
+        val date = Instant.parse("2026-10-20T08:00:00Z")
+        val region = answer("2026-10-20T08:00:00Z", whole = "2026-10-20T08:00:00Z", id = 12)
+        held = { Windows.Packed(gzip(region), date, "noord-holland") }
+        val core = Core()
+        core.wanted = listOf(w)
+        assertTrue(withLocal.step(core))
+        assertEquals(listOf(String(region)), core.built)
+        assertTrue(fetched.isEmpty())
+        assertEquals(now, withLocal.dataOf(w).lastModified())
+        // online all along: no whole answer on the following step, nor for a week
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 500
+        assertFalse(withLocal.step(core))
+        now += 6 * day
+        assertFalse(withLocal.step(core))
+        assertTrue(fetched.isEmpty())
+        assertTrue(diffs.isEmpty())
+        // then the changes since the pack's date, merged: one small query, no whole answer
+        now += 2 * day
+        core.mergeWith = { _, _ -> answer("2026-10-30T11:58:00Z", whole = "2026-10-20T08:00:00Z", id = 13) }
+        assertTrue(withLocal.step(core))
+        assertEquals(listOf("2026-10-20T07:30:00Z" to "2026-10-20T08:00:00Z"), diffs)
+        assertTrue(fetched.isEmpty())
+        assertEquals(date, Windows.headOf(withLocal.dataOf(w))!!.whole)
+        assertEquals(listOf(w), localAsked)
+    }
+
+    @Test
+    fun offlineAWindowThatReachesBeyondItsPacksIsBuiltFromWhatTheyHoldAndFetchedWholeOnceOnline() {
+        net = false
+        held = { Windows.Packed(gzip(ringPart), ringDate, "grachten") }
+        val core = Core()
+        core.wanted = listOf(w)
+        assertTrue(withLocal.step(core))
+        assertEquals(listOf(w), localAsked)
+        assertTrue(fetched.isEmpty())
+        assertEquals(listOf(String(ringPart)), core.built)
+        // its data is not whole there: kept as due, as never fetched whole
+        assertEquals(String(ringPart), unzipped(withLocal.dataOf(w)))
+        assertEquals(now - Windows.REFRESH_MS - 1, withLocal.dataOf(w).lastModified())
+        assertEquals(Instant.EPOCH, Windows.headOf(withLocal.dataOf(w))!!.whole)
+        assertTrue(Windows.headOf(withLocal.dataOf(w))!!.never)
+        // nothing more offline
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 500
+        assertFalse(withLocal.step(core))
+        assertTrue(fetched.isEmpty())
+        // the network back: the window's own whole answer at once, no changes asked of data never fetched whole
+        net = true
+        now += 500
+        assertTrue(withLocal.step(core))
+        assertEquals(1, fetched.size)
+        assertTrue(diffs.isEmpty())
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), core.built.last())
+        assertEquals(listOf(w), localAsked)
+        assertEquals(now, withLocal.dataOf(w).lastModified())
+    }
+
+    @Test
+    fun onlineTheElementPacksOnThePhoneComeBeforeOverpassWhereNeitherTheTilesNorAtlassPacksHoldTheWindow() {
+        held = { Windows.Packed(gzip(ringPart), ringDate, "grachten") }
+        val core = Core()
+        core.wanted = listOf(w)
+        assertTrue(withLocal.step(core))
+        assertEquals(listOf(w), tilesAsked)
+        assertEquals(listOf(w to null), packsAsked)
+        assertEquals(listOf(w), localAsked)
+        assertTrue(fetched.isEmpty())
+        assertEquals(listOf(String(ringPart)), core.built)
+        // the pack holds part of its box alone: its whole answer next, on the following step
+        core.wanted = emptyList()
+        core.inView = listOf(w)
+        now += 500
+        assertTrue(withLocal.step(core))
+        assertEquals(1, fetched.size)
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), core.built.last())
+        // the packs on the phone are asked only of a window the phone has nothing of
+        assertEquals(listOf(w), localAsked)
+    }
+
+    @Test
+    fun whereThePacksOnThePhoneHoldNoneOfItOrTheCoreRefusesTheirDataTheWindowIsFetchedFromOverpassWithNoFailureCounted() {
+        val core = Core()
+        core.wanted = listOf(w)
+        // none holds it
+        assertTrue(withLocal.step(core))
+        assertEquals(1, fetched.size)
+        assertEquals(listOf(String(answer("2026-10-22T11:59:00Z"))), core.built)
+        // they hold it, but their data does not read, the reading fails, or the core refuses it
+        for (failing in listOf<(MapCore.Window) -> Windows.Packed?>(
+            { Windows.Packed(ring, ringDate, "grachten") },
+            { throw IOException("the pack's chunk 3 does not read") },
+            { Windows.Packed(gzip(ring), ringDate, "grachten") },
+        )) {
+            held = failing
+            core.refusal = "the window's data holds a way of one point"
+            core.refuses = { it == String(ring) }
+            dir.listFiles().orEmpty().forEach { it.delete() }
+            assertTrue(withLocal.step(core))
+        }
+        assertEquals(4, fetched.size)
+        assertEquals(4, localAsked.size)
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), core.built.last())
+        assertEquals(Windows.Status.Idle, withLocal.status)
+    }
+
+    @Test
+    fun offlineAWindowThePacksOnThePhoneCannotGiveWaitsForTheNetworkUnaskedAgain() {
+        net = false
+        val core = Core()
+        core.wanted = listOf(w)
+        core.refusal = "the window's data holds a way of one point"
+        held = { Windows.Packed(gzip(ring), ringDate, "grachten") }
+        assertFalse(withLocal.step(core))
+        assertEquals(listOf(String(ring)), core.built)
+        repeat(5) {
+            now += 500
+            assertFalse(withLocal.step(core))
+        }
+        assertEquals(listOf(w), localAsked)
+        assertTrue(fetched.isEmpty())
+        assertEquals(Windows.Status.Idle, withLocal.status)
+        // the network back: no failure was counted, so the window is asked at once, and comes from Overpass where the core
+        // still refuses the packs' data
+        net = true
+        core.refuses = { it == String(ring) }
+        assertTrue(withLocal.step(core))
+        assertEquals(2, localAsked.size)
+        assertEquals(1, fetched.size)
+        assertEquals(String(answer("2026-10-22T11:59:00Z")), core.built.last())
     }
 
     @Test

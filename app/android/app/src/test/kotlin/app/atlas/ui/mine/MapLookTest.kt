@@ -23,11 +23,15 @@ class MapLookModelTest {
     private val red = Palette(colours = mapOf(Slot.RED_TILES to 0x9E5038))
 
     @Test
-    fun todaysLookIsKeptAsNothingAndAnyOtherAsItsCodeWithoutTheTone() {
-        assertNull(MapLookModel.keep(Palette()))
-        assertNull(MapLookModel.keep(Palette(tone = 1.5f)))
-        assertEquals(Palette(), MapLookModel.current(null))
-        assertEquals(Palette(), MapLookModel.current("AT1-NOPE-00000"))
+    fun theDefaultLookIsKeptAsNothingAndAnyOtherAsItsCodeWithoutTheTone() {
+        // the default look is alpha 22's, for now (the user, 4 November: "Alpha 22s look by default for now")
+        val a22 = Palette(Preset.ALPHA_22)
+        assertNull(MapLookModel.keep(a22))
+        assertNull(MapLookModel.keep(a22.copy(tone = 1.5f)))
+        assertEquals(a22, MapLookModel.current(null))
+        assertEquals(a22, MapLookModel.current("AT1-NOPE-00000"))
+        // today's look is a pick like any other
+        assertEquals(Palette(), MapLookModel.current(MapLookModel.keep(Palette(tone = 1.5f))))
         val quiet = Palette(Preset.QUIET, mapOf(Slot.WATER to 0x123456), tone = 0.5f)
         assertEquals(quiet.copy(tone = null), MapLookModel.current(MapLookModel.keep(quiet)))
     }
@@ -115,8 +119,10 @@ class MapLookWritesTest {
         MapLookWrites.take(m, Palette(Preset.ALPHA_22))
         assertEquals(Palette(Preset.ALPHA_22), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
         assertEquals(false, m[SettingsKeys.MAP_TONE_ON])
-        MapLookWrites.take(m, Palette())
+        // the default look is kept as nothing, and today's as its code
         assertNull(m[SettingsKeys.MAP_PALETTE])
+        MapLookWrites.take(m, Palette())
+        assertEquals(Palette(), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
         assertEquals(true, m[SettingsKeys.MAP_TONE_ON])
         assertEquals(1f, m[SettingsKeys.MAP_TONE])
     }

@@ -14,6 +14,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // The CPU raster of the renders' SVG (mapview's src/raster: in tests alone since today's map left the phone, ENGINE.md
+    // step 3), compiled into this module's tests as into mapview's.
+    sourceSets { getByName("test") { kotlin.srcDir(rootProject.file("mapview/src/raster/kotlin")) } }
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
@@ -45,9 +48,11 @@ android {
 }
 
 dependencies {
-    // The oracle: the port (:render through :mapview), SvgCanvas and the exact filters, the fonts, the world tape.
+    // The oracle: the port (:render through :mapview), the fonts, the world tape; SvgCanvas and the exact filters from
+    // mapview's src/raster (above).
     testImplementation(project(":mapview"))
-    // AnchorCases (the regions and the home views), RefMetrics, the parser's model.
+    // The renders' SVG model and parser the raster draws; AnchorCases (the regions and the home views), RefMetrics.
+    testImplementation(project(":anchor"))
     testImplementation(testFixtures(project(":anchor")))
     // The relief image's outline (an SVG path) as an Android Path.
     testImplementation(libs.androidx.core)

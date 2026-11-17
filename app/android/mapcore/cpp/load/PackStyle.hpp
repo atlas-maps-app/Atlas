@@ -78,9 +78,14 @@ struct StyleFacts {
 /// read.
 [[nodiscard]] std::optional<std::vector<std::byte>> world_style_section();
 
-/// world_style_section's values, typed (tiles::Pack::open): a world pack built before a change to the style file is
-/// drawn in the style the core has now, and one whose style lacks a value the core reads is not refused. Made once;
-/// null when the style file does not read.
+/// The style ladder's values (ENGINE.md step 5, "The style ladder": tiles/WorldLadder.hpp): the knots, the day's
+/// ground, water and roads, and the Globe board's Earth as CosmosArt.drawEarth draws it. The world's style holds them
+/// (world_style), not its `style` section: no pack carries them, so a change to one builds no pack again.
+[[nodiscard]] tiles::WorldLadder world_ladder() noexcept;
+
+/// world_style_section's values, typed (tiles::Pack::open), with the style ladder's (world_ladder): a world pack built
+/// before a change to the style file is drawn in the style the core has now, and one whose style lacks a value the
+/// core reads is not refused. Made once; null when the style file does not read.
 [[nodiscard]] const tiles::Style* world_style();
 
 } // namespace atlas::load

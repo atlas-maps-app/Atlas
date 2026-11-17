@@ -65,7 +65,12 @@ class PackListTest {
     private fun window(x: Int, chunks: Int? = 1, version: String? = null, tz: String? = "Europe/Amsterdam"): File {
         val b = boxOf(x)
         val f = File(windows, "14-$x-5383.atlas")
+        val before = if (f.isFile) f.lastModified() else null
         f.writeBytes(renderPack("window", "region", b.west, b.south, b.east, b.north, chunks = chunks, version = version, tz = tz, origin = cell))
+        // A window written again is new bytes by its file's time and size (PackList.Pack): the phone takes seconds to
+        // build one, a test milliseconds, and two writes of the same size within one of the file system's ticks would
+        // read as the same file (11 November, once in CI). So a rewrite's time moves on, as it does on the phone.
+        if (before != null && f.lastModified() <= before) f.setLastModified(before + 1_000)
         return f
     }
 

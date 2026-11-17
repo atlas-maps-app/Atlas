@@ -1,6 +1,6 @@
 {
   "about": "The engine's own references (ENGINE.md, from step 1): the core's frames at the boards' views and moments, as the app draws them (no engine mode, every effect, S1), stored per engine version as the SHA-256 of each frame's pixels on each platform. likeness/EngineRefs.kt holds the engine to the current version's frames; a deliberate change to what it draws is a new version, recorded with -Datlas.engine.record=true.",
-  "version": "31",
+  "version": "32",
   "size": "S1",
   "mode": "full",
   "frames": [
@@ -546,6 +546,31 @@
           "board grey": "e70358f817fc29b2df9108519e45286544b11b6893a3934083b087ba76821958",
           "board wet": "864c25fcbe30722e96240a92100d2e89c629a9232a750551ec6ab91e66cdc635",
           "board night": "895282b4a546351da9b01d7c0ef486fc7e7deafed0c6a38fe3d700105f1ca0bd"
+        }
+      }
+    },
+    "32": {
+      "note": "The glints by each pixel's footprint (the far flicker): the water's glints read their field at the octave of the pixel's footprint in it, so the Main board's frames with weather (its view from 2,300 m, where every pixel takes more than a field pixel) show them at the renders' size where they were a speckle finer than a pixel; the home's four frames are version 31's to the bit (every pixel there reads the field as it lies)",
+      "platforms": {
+        "lavapipe-macos": {
+          "home sunny": "55aa904de52edecc7980df355354545cada71cbfb3cb6428840e3a31490774a7",
+          "home grey": "e5fa6428c105286e492b30291312d40f11733dae1ea12d6e3685e7d2f8cce6e7",
+          "home wet": "86b9b4ca6faa940565ac0b3348d269c2cdcff2252f5fd4b0c5e44333951afa85",
+          "home night": "e304e1d5fbf03eed6769c1c76ef225c55e616581a3ae462aae25853ec58cf6e1",
+          "board sunny": "d908e0cd093b61ed59b9a044cd78853104a85a7b1d842ea3ea03949e49595ed9",
+          "board grey": "211123d1a107da557d5c6adf0aa459f002eb58cd3db08a001449af500b865069",
+          "board wet": "12eff8c9c239359d4da476785668dc20c00ce834ba68f6b345c4001057f046e6",
+          "board night": "a1c4c297f5eeecf6ae9033a3ad600bc69cdcbdf8e813a654e5a8bbba531a9862"
+        },
+        "lavapipe-x86_64": {
+          "home sunny": "045f9ecacaebb9efe17bdaee70e9a8ca8fb285e413d307764ae158e6e7c400c9",
+          "home grey": "096921f095a60f570ce4b1fdfce999da15ed40c96380194000a7c3c9bc3fda39",
+          "home wet": "0c56e3f05cad9cdd569c823d944a5f588a42361ceaab917764f79bfcf2b1a618",
+          "home night": "48d46bfddb610d075ee4780a070a48b3a77ab9a08b26c2de95859fd1c591d2fd",
+          "board sunny": "bdf5b98547746dbef88cc15b530cb9436809d2d24fe30ab5de0c2c3b737e9015",
+          "board grey": "3cf2885ed05d96ed109d6e9e8df6186ba48da566c10b93c3469166a188b3b359",
+          "board wet": "31d1fe7022374250426757bd59efa0a667c2ac406b869703818d4c6edf3242ce",
+          "board night": "e6ec87c04a9a4f824d311189c547bb862d62ea3f697de08c3cf8426a5d53f951"
         }
       }
     }

@@ -55,6 +55,8 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${WindowPacks.USAGE}
 
+  ${WindowsJoin.USAGE}
+
   ${CountryTiles.USAGE}
 
   ${app.atlas.packer.world.WorldTiles.USAGE}
@@ -67,12 +69,21 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${app.atlas.packer.world.WorldAssemble.USAGE}
 
-  ${app.atlas.packer.world.WorldCheck.USAGE}"""
+  ${app.atlas.packer.world.WorldCheck.USAGE}
+
+  ${app.atlas.packer.world.WorldRefs.USAGE}
+
+  ${app.atlas.packer.world.WorldKeep.USAGE}
+
+  ${app.atlas.packer.heights.HeightsBuild.USAGE}
+
+  ${app.atlas.packer.heights.HeightsCheck.USAGE}"""
 
 /**
  * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
- * data (`windows`), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
- * `world-tags`, `world-assemble` and `world-check`).
+ * data (`windows`, and `windows-join` for its shards), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
+ * `world-tags`, `world-assemble`, `world-check`, `world-refs` and `world-keep`), and the terrain's (`heights`,
+ * `heights-check`).
  */
 fun main(args: Array<String>) {
     val code = try {
@@ -201,6 +212,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "anchors" -> return Anchors.run(args, out)
         "render-tiles" -> return RenderTiles.run(args, out)
         "windows" -> return WindowPacks.run(args, out)
+        "windows-join" -> return WindowsJoin.run(args, out)
         "country" -> return CountryTiles.run(args, out)
         "world" -> return app.atlas.packer.world.WorldTiles.run(args, out)
         "globe" -> return app.atlas.packer.world.Globe.run(args, out)
@@ -208,6 +220,10 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "world-tags" -> return app.atlas.packer.world.WorldFilter.run(args, out)
         "world-assemble" -> return app.atlas.packer.world.WorldAssemble.run(args, out)
         "world-check" -> return app.atlas.packer.world.WorldCheck.run(args, out)
+        "world-refs" -> return app.atlas.packer.world.WorldRefs.run(args, out)
+        "world-keep" -> return app.atlas.packer.world.WorldKeep.run(args, out)
+        "heights" -> return app.atlas.packer.heights.HeightsBuild.run(args, out)
+        "heights-check" -> return app.atlas.packer.heights.HeightsCheck.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

@@ -7,7 +7,8 @@
 //
 // Rows come from the tiles' stage-T builders as tiles become resident (scene/Residency.hpp) and go with them; the
 // render thread alone changes the table, between frames. A freed row is reused; rows keep their numbers while they
-// live, so the ranks' order (frame/Ranks.hpp) survives a tile's arrival or departure.
+// live, so the ranks' order (frame/Ranks.hpp) survives a tile's arrival or departure. The columns grow together, all at
+// one size (reserve: an add that finds no room doubles them).
 //
 // A row's points are its tile's, in its pack frame's metres, as its builder gave them; its place maps them into the
 // frame drawn (scene/World.hpp: a place for each pack frame), as the tiles' own geometry is placed where it is drawn,
@@ -120,6 +121,13 @@ public:
     std::size_t remove_tile(std::uint32_t tile) noexcept;
     /// Forgets every row (the places stay).
     void clear() noexcept;
+    /// Room for `rows` rows in all (in use or free) without the columns growing: a growth moves every column's rows,
+    /// about 110 bytes a row, on the render thread, so the world makes the room at rest (scene/World.cpp) and a tile
+    /// that arrives in a pinch finds it. Changes no row; never shrinks.
+    void reserve(std::size_t rows);
+    /// The rows the columns hold room for, and how many times they grew (by reserve, or by an add that found no room).
+    [[nodiscard]] std::size_t capacity() const noexcept { return alive_.capacity(); }
+    [[nodiscard]] std::uint64_t growths() const noexcept { return growths_; }
 
     /// Adds a place; returns its number.
     std::uint32_t add_place(const ItemPlace& place);
@@ -177,6 +185,7 @@ private:
     std::vector<ItemPlace> places_{ItemPlace{}};
     std::size_t live_ = 0;
     std::uint64_t changes_ = 0;
+    std::uint64_t growths_ = 0;
 };
 
 } // namespace atlas::scene

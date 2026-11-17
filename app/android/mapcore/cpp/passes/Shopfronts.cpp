@@ -370,6 +370,7 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
     const bool glows = night && !state.camera.leaves_out(style::camera_part::open_glows);
     // `if DAYLIGHT:` the glow larger and its pool under it (RenderOptions.daylight, the theme's flag)
     const bool daylight = state.theme.has(style::theme_flag::daylight);
+    const bool mapped_light = state.camera.has(style::camera_flag::light_cascades);
     if (!fronts && !terraces && !glows) return out;
     const view::Camera& cam = state.view->camera();
     // far(n['x'], n['z']): the renders' radius cut, as the ranks cut the items, in engine mode about the view's target
@@ -473,15 +474,19 @@ ShopFrame shop_shapes(const frame::FrameState& state, std::uint32_t pass, const 
                 double r = pymath::max(3.0, 5 * cam.focal() / k.z);
                 if (daylight) {
                     // `<ellipse ... fill="url(#openpool)"/>` of 11 m about its foot on the ground, then the glow larger
-                    const view::Vec3 g0 = cam.cam({n.x, 0.05, n.z});
-                    const view::Vec2 pg = cam.pc(g0);
-                    const std::optional<view::Vec2> qg = cam.proj({n.x, 0.05, n.z + 11});
-                    out.pools.push_back({.node = p.node,
-                                         .cx = pg.x,
-                                         .cy = pg.y,
-                                         .rx = 11 * cam.focal() / g0.z,
-                                         .ry = pymath::max(1.0, std::abs((qg ? qg->y : pg.y) - pg.y)),
-                                         .fade = fade});
+                    // (no ellipse where the camera asks for the night's light by the ground's maps, which lay the
+                    // open places' pools cut by the buildings: passes/LightMap.hpp)
+                    if (!mapped_light) {
+                        const view::Vec3 g0 = cam.cam({n.x, 0.05, n.z});
+                        const view::Vec2 pg = cam.pc(g0);
+                        const std::optional<view::Vec2> qg = cam.proj({n.x, 0.05, n.z + 11});
+                        out.pools.push_back({.node = p.node,
+                                             .cx = pg.x,
+                                             .cy = pg.y,
+                                             .rx = 11 * cam.focal() / g0.z,
+                                             .ry = pymath::max(1.0, std::abs((qg ? qg->y : pg.y) - pg.y)),
+                                             .fade = fade});
+                    }
                     r = pymath::max(4.0, 8 * cam.focal() / k.z);
                 }
                 out.glows.push_back({.node = p.node, .id = p.id, .x = q.x, .y = q.y, .r = r, .fade = fade});

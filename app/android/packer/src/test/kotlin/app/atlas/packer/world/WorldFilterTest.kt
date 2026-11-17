@@ -106,4 +106,23 @@ class WorldFilterTest {
         assertTrue(kept('r', mapOf("type" to "multipolygon", "landuse" to "forest")))
         assertTrue(kept('n', mapOf("place" to "village")))
     }
+
+    @Test
+    fun theWatersNamesAreKeptAsTheProfileNamesThem() {
+        val waters = listOf(
+            Triple('n', OsmType.NODE, mapOf("place" to "sea", "name" to "Noordzee")),
+            Triple('r', OsmType.RELATION, mapOf("place" to "ocean", "name" to "Atlantic Ocean")),
+            Triple('n', OsmType.NODE, mapOf("natural" to "bay", "name" to "IJ")),
+            Triple('w', OsmType.WAY, mapOf("natural" to "strait", "name" to "Marsdiep")),
+            Triple('r', OsmType.RELATION, mapOf("natural" to "water", "water" to "lake", "name" to "IJsselmeer")),
+            Triple('w', OsmType.WAY, mapOf("waterway" to "river", "name" to "Rijn")),
+        )
+        for ((c, type, tags) in waters) {
+            val area = type != OsmType.NODE && tags["waterway"] == null
+            assertTrue("$tags decided", decided(type, tags, area && type == OsmType.WAY, area, type == OsmType.WAY))
+            assertTrue("$tags kept", kept(c, tags))
+        }
+        // a water's node names nothing, so the filter leaves it
+        assertFalse(kept('n', mapOf("natural" to "water", "name" to "Vijver")))
+    }
 }

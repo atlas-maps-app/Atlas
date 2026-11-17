@@ -27,3 +27,21 @@ Data:
 - The packs it makes hold **OpenStreetMap** data from Geofabrik's extracts: © OpenStreetMap contributors, ODbL 1.0.
   A place store (`*.places.db.gz`) is a derived database and a region pack (`*.atlas`) holds OpenStreetMap elements;
   both are published under the ODbL. Each release's notes carry this attribution.
+
+## Terrain: the elevation sources
+
+The terrain packs (`packer heights`, ENGINE.md part 6) hold heights from the sources below, resampled onto the tiles'
+lattice and rounded to their steps: adapted data, which each licence allows with the credit it asks. The registry
+(`../packs/terrain-sources.json`) carries the same credits, with each source's hosts and the day its terms were read;
+a further source is one entry there and one line here. About & licences shows this table (`mine_licences.py`), so the
+credits are in the app before a phone reads a terrain pack. Each Copernicus line is its licence's Art. 6(b) notice for
+adapted data and its Art. 6(c) sentence, whole. GDAL (MIT) warps the national grids in terrain.yml's job only, and is
+in no app.
+
+| Dataset | Credit | Licence | In the terrain packs of |
+|---|---|---|---|
+| Copernicus DEM GLO-30 | produced using Copernicus WorldDEM-30 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30. | Licence for the use of the Copernicus WorldDEM-30 | the gaps of the national models at L12 (and, from step 4 of the terrain, the world's L11) |
+| Copernicus DEM GLO-90 | produced using Copernicus WorldDEM-90 © DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-90. | Licence for the use of the Copernicus WorldDEM-90 | the world's terrain, L0 to L10 (from step 4 of the terrain) |
+| AHN4 terrain model | AHN (Actueel Hoogtebestand Nederland), through PDOK. CC0. | CC0 1.0 | the Netherlands, L12 to L14 |
+| TINITALY 1.1 | Tarquini S., I. Isola, M. Favalli, A. Battistini, G. Dotta (2023). TINITALY, a digital elevation model of Italy with a 10 meters cell size (Version 1.1). Istituto Nazionale di Geofisica e Vulcanologia (INGV). https://doi.org/10.13127/tinitaly/1.1. CC BY 4.0; the heights were resampled. | CC BY 4.0 | Tuscany, L12 and L13 |
+| Kartverket DTM 1 m | © Kartverket. Contains data under the Norwegian licence for Open Government data (NLOD) distributed by Kartverket; the heights were resampled. | Norwegian Licence for Open Government Data 2.0 | Norway, L12 to L14 |

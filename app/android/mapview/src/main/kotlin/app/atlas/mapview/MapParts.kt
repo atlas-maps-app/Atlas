@@ -66,6 +66,15 @@ enum class MapPart(number: Int, val group: MapPartGroup, val drawn: Boolean = tr
 
     /** The glow about a place that is open at night, by its opening hours. */
     OPEN_GLOWS(CameraWriter.PART_OPEN_GLOWS, MapPartGroup.NIGHT),
+
+    /**
+     * The night's light on the ground by radiance cascades (the user, 12 November 2026: "Yes, try it"): the lamps'
+     * and the open places' pools cut by the buildings in their way. A trial, off until its own switch turns it on
+     * (no group's switch does): not a part of the camera state but its flag CameraWriter.LIGHT_CASCADES, set while
+     * this is not left out ([MapParts.lightCascades]); its bit lies above the camera state's parts and never reaches
+     * the core as one ([MapParts.cameraBits]).
+     */
+    LIGHT_CASCADES(MapParts.SWITCH_LIGHT_CASCADES, MapPartGroup.NIGHT, drawn = false),
     RAIN(CameraWriter.PART_RAIN, MapPartGroup.WEATHER),
     GOLDEN_WASH(CameraWriter.PART_GOLDEN_WASH, MapPartGroup.WEATHER),
     WALLS(CameraWriter.PART_WALLS, MapPartGroup.BUILDINGS),
@@ -139,8 +148,8 @@ enum class MapPartGroup(private val also: () -> Set<MapPart> = { emptySet() }) {
     /** The parts listed under it, in their order. */
     val listed: List<MapPart> get() = MapPart.entries.filter { it.group == this }
 
-    /** Every part it turns off or on. */
-    val parts: Set<MapPart> get() = listed.toSet() + also()
+    /** Every part it turns off or on: a trial with a switch of its own alone ([MapPart.LIGHT_CASCADES]) is not among them. */
+    val parts: Set<MapPart> get() = listed.toSet() + also() - MapPart.LIGHT_CASCADES
 }
 
 /** The parts the map leaves out, as the settings keep them (their names) and as the camera state carries them. */
@@ -151,8 +160,17 @@ object MapParts {
      */
     val byDefault: Set<MapPart> = MapPart.entries.filterTo(mutableSetOf()) { !it.drawn }
 
-    /** The camera state's word of [parts]. */
+    /** The bit number of [MapPart.LIGHT_CASCADES] in a word of parts left out: above every part of the camera state. */
+    const val SWITCH_LIGHT_CASCADES = 63
+
+    /** The word of [parts] left out: the camera state's parts' bits, and the app's own switches' above them. */
     fun bits(parts: Set<MapPart>): Long = parts.fold(0L) { word, p -> word or p.bit }
+
+    /** The camera state's parts of a word of parts left out ([bits]): without the app's own switches. */
+    fun cameraBits(off: Long): Long = off and ((1L shl CameraWriter.PARTS) - 1)
+
+    /** Whether a word of parts left out ([bits]) asks for the night's light by radiance cascades: its switch is not left out. */
+    fun lightCascades(off: Long): Boolean = off and MapPart.LIGHT_CASCADES.bit == 0L
 
     /** The parts of [names] (MapPart names; one that is no longer a part is skipped). */
     fun named(names: Set<String>): Set<MapPart> = names.mapNotNullTo(mutableSetOf()) { n -> MapPart.entries.firstOrNull { it.name == n } }

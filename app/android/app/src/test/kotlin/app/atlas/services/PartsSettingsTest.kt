@@ -4,6 +4,9 @@ import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.datastore.preferences.core.preferencesOf
 import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteCode
+import app.atlas.mapview.palette.Preset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -65,5 +68,23 @@ class PartsSettingsTest {
         assertEquals(Triple(false, false, false), screenEffectsOn(p))
         p[SettingsKeys.MAP_GRAIN] = true
         assertEquals(Triple(false, false, true), screenEffectsOn(p))
+    }
+
+    @Test
+    fun unsetTheMapDrawsAlpha22sPaletteWithTheToneOff() {
+        // the user, 4 November: "Alpha 22s look by default for now"; its colours since 11 November
+        assertEquals(Palette(Preset.ALPHA_22), DEFAULT_PALETTE)
+        assertEquals(DEFAULT_PALETTE, mapPalette(null))
+        assertEquals(DEFAULT_PALETTE, mapPalette("AT1-NOPE-00000"))
+        assertEquals(Palette(Preset.QUIET), mapPalette(PaletteCode.write(Palette(Preset.QUIET))))
+        assertEquals(Palette(), mapPalette(PaletteCode.write(Palette())))
+        assertFalse(DEFAULT_TONE_ON)
+        assertEquals(0f, mapTone(preferencesOf()))
+        val p = mutablePreferencesOf(SettingsKeys.MAP_TONE_ON to true)
+        assertEquals(1f, mapTone(p))
+        p[SettingsKeys.MAP_TONE] = 1.5f
+        assertEquals(1.5f, mapTone(p))
+        p[SettingsKeys.MAP_TONE_ON] = false
+        assertEquals(0f, mapTone(p))
     }
 }

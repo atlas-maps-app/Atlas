@@ -14,15 +14,26 @@
 // #FFFDF4); at night the city's glow (`cityglow`: a linearGradient of #FF9E5A from 0 at 220 px above the horizon to .28
 // on it, over a rect down to the sky layer's bottom). Each is drawn translucent at its slot, so the ground nearer than
 // the sky hides it as the renders paint the ground over it: the glow at each pixel's centre (it fades to nothing at its
-// edge), the disc and the rect's bottom edge sample by sample. The clouds come with their field (K17).
+// edge), the disc and the rect's bottom edge sample by sample.
+//
+// The clouds and their shadows before the sun (ENGINE.md part 4; fx/Clouds.hpp): two rects over the sky layer's rows,
+// `<rect width=W height=hb filter="url(#cloudsh2)"/><rect width=W height=hb filter="url(#cloudf)"/>`, all filter (as
+// the glints' rect, so in full mode alone on both sides, and on the GPU where the fields are bound): at the sun's slot
+// before its glow, one triangle over the frame for each, a pixel within the filters' region taking the filter's result
+// from the moment's table of 256 at the red the clouds' field gives the matrix there (cloudsh2's through its offset),
+// premultiplied; translucent, so every nearer ground hides them as the renders paint the ground over them. At eye
+// level too: sky_layer draws the lit clouds at height (Closeup.sky_clouds) only with CLOUDS_LIT, which the renders
+// and every style have off.
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
+#include "fx/Clouds.hpp"
 #include "gen/layouts.hpp"
 #include "passes/Ground.hpp"
 
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace atlas::passes {
 
@@ -75,9 +86,20 @@ void Ground::decide_sky(const view::Camera& cam, const frame::FrameState& state)
     // sky_layer (with weather and hy > 4, where the layers have clouds), away from eye level
     f.glow = false;
     f.city_glow = false;
+    f.clouds = false;
     const std::optional<view::Layers>& l = state.layers;
-    if (!l || !l->clouds || l->eye || f.out(style::camera_part::sky)) return;
+    if (!l || !l->clouds || f.out(style::camera_part::sky)) return;
     f.sky_bottom = printed(l->sky_bottom, 1);
+    if (state.mode == frame::Mode::full && !no_clouds_ && !only_setts_) {
+        // `<filter id="cloudf" ... width="%d" height="%d">` of W and hb, the matrices' numbers as sky_layer prints them
+        const view::Clouds& c = *l->clouds;
+        const auto scale = static_cast<float>(state.camera.density);
+        f.cloud_rows = fx::cloud_rows(l->sky_bottom, scale, state.camera.height_px);
+        f.clouds = f.cloud_rows > 0;
+        f.cloud_matrix = fx::cloud_matrix(c.red, c.green, c.blue, c.k, c.t);
+        f.cloud_shadow_matrix = fx::cloud_shadow_matrix(c.red, c.green, c.blue, c.k, c.t);
+        f.cloud_offset = fx::cloud_offset(scale);
+    }
     if (l->sun) {
         // '<circle cx="%.1f" cy="%.1f" r="%d" fill="url(#sunglow)"/>'
         f.glow = true;
@@ -112,7 +134,28 @@ gpu::Result<void> Ground::make_sky_pipelines(const frame::PassContext& context, 
     translucent(city);
     ATLAS_GPU_LET(c, frame::make_pipeline(context, city, frame::Overdraw::translucent));
     p.city_glow = std::move(c);
+    // the clouds and their shadows: each filter's result from its table, over the sky and under the sun's glow
+    gpu::GraphicsDesc clouds = ground_desc(context, p, "ground clouds", "screen_vs", "clouds_fs");
+    translucent(clouds);
+    ATLAS_GPU_LET(cl, frame::make_pipeline(context, clouds, frame::Overdraw::translucent));
+    p.clouds = std::move(cl);
     return {};
+}
+
+bool Ground::clouds_filtered(const frame::FrameState& state) const noexcept {
+    constexpr std::uint32_t bound = shaders::FRAME_FIELDS | shaders::FRAME_SKY_FIELD;
+    return frame_.clouds && state.mode == frame::Mode::full && (state.block.info.x & bound) == bound &&
+           pipelines_ != nullptr && *pipelines_->clouds;
+}
+
+void Ground::write_clouds(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
+    Words& w = *words_;
+    w.clouds = static_cast<std::uint32_t>(words.size());
+    if (!clouds_filtered(state)) return;
+    const std::array<fx::Argb, 256> shadow = fx::cloud_table(frame_.cloud_shadow_matrix);
+    const std::array<fx::Argb, 256> cloud = fx::cloud_table(frame_.cloud_matrix);
+    words.insert(words.end(), shadow.begin(), shadow.end());
+    words.insert(words.end(), cloud.begin(), cloud.end());
 }
 
 void Ground::record_sky(const frame::Recording& r) {
@@ -133,7 +176,8 @@ void Ground::record_sky(const frame::Recording& r) {
 
 void Ground::record_sky_layer(const frame::Recording& r) {
     const GroundFrame& f = frame_;
-    if (!f.glow && !f.city_glow) return;
+    const bool clouds = clouds_filtered(r.state);
+    if (!f.glow && !f.city_glow && !clouds) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const Words& w = *words_;
     const auto samples = static_cast<std::uint32_t>(r.frame.pass.spec().config.samples());
@@ -142,6 +186,18 @@ void Ground::record_sky_layer(const frame::Recording& r) {
     const auto push = [&] {
         cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
     };
+    if (clouds) {
+        // cloudsh2's rect, then cloudf's, at the sun's slot before its glow
+        pc.mode = {0U, slot(geo::group::sky, 0, geo::sky_sub::sun), w.clouds, 0U};
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->clouds);
+        for (const std::uint32_t filter : {0U, 1U}) {
+            pc.colour = {f.cloud_rows, static_cast<std::uint32_t>(f.cloud_offset.rows), f.cloud_offset.above, filter};
+            push();
+            cmd.draw(3, 1, 0, 0);
+        }
+        r.counters.draw("ground clouds", 2);
+        pc.colour = {0U, 0U, 0U, 0U};
+    }
     if (f.glow) {
         // the glow, then (under a sky that is not overcast) the disc, at the sun's slot
         pc.mode = {0U, slot(geo::group::sky, 0, geo::sky_sub::sun), 0U, samples};
@@ -195,8 +251,17 @@ void Ground::emit_sky(const frame::FrameState& state, twin::Stream& out) const {
     s.fill = twin::Paint::gradient(sky);
     const auto width = static_cast<float>(state.view->camera().width());
     out.rect(s, 0.0F, 0.0F, width, static_cast<float>(state.view->camera().height()));
-    // sky_layer: the sun's glow and its disc, the city's glow (ScreenLayers.skyLayer)
+    // sky_layer: the clouds' shadows and the clouds, the sun's glow and its disc, the city's glow
+    // (ScreenLayers.skyLayer)
     const GroundFrame& f = frame_;
+    if (f.clouds) {
+        out.at(slot(geo::group::sky, 0, geo::sky_sub::sun), out.root());
+        twin::Style c;
+        c.fill = twin::Paint::colour(0xFF00'0000U);
+        const auto bottom = static_cast<float>(f.sky_bottom);
+        out.rect(c, 0.0F, 0.0F, width, bottom, 0.0F, 0.0F, {.filter = out.filter("cloudsh2")});
+        out.rect(c, 0.0F, 0.0F, width, bottom, 0.0F, 0.0F, {.filter = out.filter("cloudf")});
+    }
     if (f.glow) {
         const std::array<std::uint32_t, 3> stops = sun_stops(f.overcast);
         const std::array<std::uint32_t, 3> glow_colours{argb_of(stops[0]), argb_of(stops[1]), argb_of(stops[2])};

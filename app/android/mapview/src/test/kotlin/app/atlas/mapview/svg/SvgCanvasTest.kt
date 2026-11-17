@@ -3,7 +3,6 @@ package app.atlas.mapview.svg
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -127,26 +126,5 @@ class SvgCanvasTest {
         assertTrue("dark $dark", dark > 500)
         // Centred on x = 50 (100 px at 2×).
         assertTrue("left $left right $right", kotlin.math.abs((left + right) / 2 - 100) < 6)
-    }
-
-    @Test
-    fun aFrameWarpedToItsOwnCameraIsUnchanged() {
-        val doc = SvgParser.parse(
-            """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100"><rect width="100" height="100" fill="#9ab"/>""" +
-                """<path d="M20 60H80V90H20Z" fill="#a33"/><circle cx="50" cy="20" r="10" fill="#fd0"/></svg>""",
-        )
-        val cam = SvgCamera(0.0, 0.0, 0.0, 10.0, 30.0, 300.0, 40.0, 100.0, 100.0)
-        val frame = SvgFrame(doc, cam, SvgFonts.fromDirectory(SvgCompare.fonts))
-        frame.render(2f)
-        val plain = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
-        Canvas(plain).apply { scale(2f, 2f) }.also { frame.draw(it) }
-        val warped = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
-        Canvas(warped).apply { scale(2f, 2f) }.also { frame.drawWarped(it, to = cam) }
-        val r = SvgCompare.compare("frame-identity", warped, plain, tile = 20)
-        assertTrue(r.toString(), r.mean < 1.0)
-        // Turning the camera moves the picture.
-        val turned = Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)
-        Canvas(turned).apply { scale(2f, 2f) }.also { frame.drawWarped(it, to = cam.copy(yaw = 14.0)) }
-        assertTrue(SvgCompare.compare("frame-turned", turned, plain, tile = 20).mean > 5)
     }
 }

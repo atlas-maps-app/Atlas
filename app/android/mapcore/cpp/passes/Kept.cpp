@@ -46,6 +46,11 @@ constexpr std::uint32_t header_words = shaders::BUILDING_KEPT_HEADER * 4;
 constexpr std::uint32_t job_size = 64;
 constexpr std::uint32_t job_row = 65535;
 constexpr std::uint32_t lists = shaders::BUILDING_KEPT_LISTS;
+/// The lists with jobs of their own (the walls, the near cells, the roofs), the roofs' and the thin walls', whose
+/// primitives are the walls' jobs' candidates the cull finds thin.
+constexpr std::uint32_t job_lists = 3;
+constexpr std::uint32_t roofs_list = shaders::BUILDING_KEPT_ROOFS;
+constexpr std::uint32_t thin_list = shaders::BUILDING_KEPT_THIN;
 constexpr std::uint32_t draw_words = shaders::BUILDING_KEPT_DRAW_WORDS;
 /// The draws' first words: each list's count of kept primitives, which the next frame of the slot sizes its records by.
 constexpr std::uint32_t totals = shaders::BUILDING_KEPT_TOTALS;
@@ -55,21 +60,28 @@ constexpr std::uint32_t shape_bytes = shaders::BUILDING_SHAPE_VECTORS * 16;
 /// budget (scene::heap_budget, 64 to 256 MB), at most 16 MiB (209,715 records), past which a list's chunks are decided
 /// at each point (the Westerkerk at 9 km keeps 140,775 walls, the Main board 14,277).
 constexpr vk::DeviceSize most_shape_bytes = vk::DeviceSize{16} << 20U;
-/// The lists with shape records: the walls and the near cells (the edged lists).
-constexpr std::uint32_t shaped_lists = 2;
+/// The lists with shape records: the walls, the near cells and the thin walls (the edged lists).
+constexpr std::array<std::uint32_t, 3> shaped_lists{0, 1, thin_list};
 
 static_assert(Buildings::edged_chunk == shaders::BUILDING_KEPT_EDGED_CHUNK &&
-                  Buildings::plain_chunk == shaders::BUILDING_KEPT_PLAIN_CHUNK && lists == 3 && totals >= lists,
+                  Buildings::plain_chunk == shaders::BUILDING_KEPT_PLAIN_CHUNK && lists == 4 && roofs_list == 2 &&
+                  thin_list == 3 && totals >= lists,
               "the kept lists' chunks are the static index buffers'");
 
-/// Each list's chunk (its index buffer's primitives), vertices and indexes a primitive, and its counters' kind.
+/// Each list's chunk (its index buffer's primitives), vertices and indexes a primitive, and its counters' kind (the
+/// thin walls counted with the walls).
 constexpr std::array<std::uint32_t, lists> chunk_of{Buildings::edged_chunk, Buildings::edged_chunk,
-                                                    Buildings::plain_chunk};
+                                                    Buildings::plain_chunk, shaders::BUILDING_KEPT_THIN_CHUNK};
+static_assert(std::uint64_t{shaders::BUILDING_KEPT_THIN_CHUNK} * shaders::BUILDING_THIN_VERTICES <= 65536,
+              "a chunk of the thin walls' boxes fits its indexes' 16 bits");
 constexpr std::array<std::uint32_t, lists> vertices_of{
-    shaders::BUILDING_EDGED_VERTICES, shaders::BUILDING_EDGED_VERTICES, shaders::BUILDING_PLAIN_VERTICES};
+    shaders::BUILDING_EDGED_VERTICES, shaders::BUILDING_EDGED_VERTICES, shaders::BUILDING_PLAIN_VERTICES,
+    shaders::BUILDING_THIN_VERTICES};
+/// (a thin wall's box: two triangles over its 4 points)
+constexpr std::uint32_t thin_indices = (shaders::BUILDING_THIN_VERTICES - 2) * 3;
 constexpr std::array<std::uint32_t, lists> indices_of{Buildings::edged_indices, Buildings::edged_indices,
-                                                      Buildings::plain_indices};
-constexpr std::array<std::string_view, lists> kind_of{"walls", "near cells", "roofs"};
+                                                      Buildings::plain_indices, thin_indices};
+constexpr std::array<std::string_view, lists> kind_of{"walls", "near cells", "roofs", "walls"};
 
 /// `b`, or a buffer for `use` of at least `bytes` with room to grow by half again (within `most`) where `b` is
 /// smaller; whether it was made anew.
@@ -153,6 +165,42 @@ gpu::Result<void> Buildings::prepare_kept(const frame::PassContext& context) {
     shaped_fading_desc.vertex = "walls_shape_fading_vs";
     auto walls_shaped = frame::make_pipeline(context, shaped_desc, frame::Overdraw::opaque);
     auto walls_shaped_fading = frame::make_pipeline(context, shaped_fading_desc, frame::Overdraw::opaque);
+    // the thin walls' list's draws (record_thin_walls): blended over what lies behind, the depth tested and not
+    // written, the objects bit left alone; without them every wall stays on the samples
+    const auto thin_desc = [](gpu::GraphicsDesc desc, std::string_view name, const char* vertex) {
+        desc.label.name = name;
+        desc.vertex = vertex;
+        desc.fragment = "building_thin_fs";
+        desc.blends[0] = gpu::Blend::over();
+        desc.depth_write = false;
+        desc.stencil_test = false;
+        return desc;
+    };
+    auto thin = frame::make_pipeline(context, thin_desc(walls_desc, "kept walls thin", "walls_kept_thin_vs"),
+                                     frame::Overdraw::translucent);
+    auto thin_shaped = frame::make_pipeline(
+        context, thin_desc(shaped_desc, "kept walls shaped thin", "walls_shape_thin_vs"), frame::Overdraw::translucent);
+    // their boxes' fans: two triangles over each one's 4 points
+    auto thin_index = context.device.memory().buffer(std::uint64_t{chunk_of[thin_list]} * thin_indices * 2,
+                                                     vk::BufferUsageFlagBits::eIndexBuffer, gpu::MemoryUse::upload);
+    if (thin && thin_shaped && thin_index) {
+        auto* out = reinterpret_cast<std::uint16_t*>(thin_index->bytes().data()); // NOLINT: the mapped indexes
+        std::size_t at = 0;
+        for (std::uint32_t p = 0; p < chunk_of[thin_list]; ++p) {
+            const std::uint32_t v = p * shaders::BUILDING_THIN_VERTICES;
+            for (const std::uint32_t corner : {0U, 1U, 2U, 0U, 2U, 3U})
+                out[at++] = static_cast<std::uint16_t>(v + corner);
+        }
+        thin_index->flush();
+        k->thin_index = std::move(*thin_index);
+        k->thin = std::move(*thin);
+        k->thin_shaped = std::move(*thin_shaped);
+    } else if (!thin_index) {
+        log::warn("vk buildings: the thin walls' indexes: {}; every wall on the samples", thin_index.error().text());
+    } else {
+        log::warn("vk buildings: the thin walls' pipelines: {}; every wall on the samples",
+                  (!thin ? thin.error() : thin_shaped.error()).text());
+    }
     if (shape_scatter && walls_shaped && walls_shaped_fading) {
         k->shape_scatter = std::move(*shape_scatter);
         k->walls_shaped = std::move(*walls_shaped);
@@ -201,7 +249,9 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
     std::array<std::uint32_t, lists> base{};
     std::uint32_t places = 0;
     std::uint32_t draws = 0;
-    for (std::uint32_t list = 0; list < lists; ++list) {
+    // the walls a job may hand to the thin walls' list: every primitive of the jobs that leave it theirs
+    std::uint32_t thin_places = 0;
+    for (std::uint32_t list = 0; list < job_lists; ++list) {
         first_job[list] = static_cast<std::uint32_t>((w.size() - header_words) / job_words);
         base[list] = places;
         // record_walls' and record_roofs' order: the walls of every tile, the nearest first, then the near cells, then
@@ -215,7 +265,9 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
             const std::array<std::uint32_t, lists> ats{d.edged_at, d.cells_at, d.plain_at};
             if (runs[list] == 0) continue;
             std::array<std::byte, 64> push = d.push;
-            const std::uint32_t mode = d.tile->list_mode(list == 1);
+            // (in the app's map a level's tile's walls leave the thin ones to their own list: record_thin_walls)
+            const bool thin = list == 0 && thin_walls_ && grounded_ && d.tile->lean && *k.thin;
+            const std::uint32_t mode = d.tile->list_mode(list == 1) | (thin ? shaders::BUILDING_LIST_THIN : 0U);
             std::memcpy(push.data() + 32, &ats[list], sizeof(std::uint32_t)); // BuildingPush.at.x: the list
             std::memcpy(push.data() + 60, &mode, sizeof mode);                // BuildingPush.sun.w: the list's kind
             if (fade_every_) {
@@ -234,6 +286,7 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
                     w[at + 17] = n;
                     w[at + 18] = list;
                     places += n;
+                    if (thin) thin_places += n;
                 }
             }
         }
@@ -243,6 +296,15 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
         k.chunks[list] = (k.submitted[list] + chunk_of[list] - 1) / chunk_of[list];
         draws += k.chunks[list];
     }
+    // the thin walls' list: the walls' jobs again, its places and chunks after the roofs'
+    first_job[thin_list] = first_job[0];
+    jobs[thin_list] = jobs[0];
+    base[thin_list] = places;
+    k.submitted[thin_list] = thin_places;
+    places += thin_places;
+    k.first_draw[thin_list] = draws;
+    k.chunks[thin_list] = (thin_places + chunk_of[thin_list] - 1) / chunk_of[thin_list];
+    draws += k.chunks[thin_list];
     const auto total = static_cast<std::uint32_t>((w.size() - header_words) / job_words);
     if (total == 0) return;
     const gpu::Device& device = *k.device;
@@ -250,7 +312,7 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
     // primitives, within the budget (the roofs' none)
     vk::DeviceSize room = *k.shape_scatter ? k.shape_budget / shape_bytes : 0;
     std::uint32_t records = 0;
-    for (std::uint32_t list = 0; list < shaped_lists; ++list) {
+    for (const std::uint32_t list : shaped_lists) {
         const std::uint32_t chunk = chunk_of[list];
         const std::uint64_t want = most_shape_chunks_.has_value()
                                        ? std::uint64_t{*most_shape_chunks_} * chunk
@@ -266,7 +328,7 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
     const auto words = [](std::uint64_t n) { return vk::DeviceSize{n} * sizeof(std::uint32_t); };
     auto jobs_made = fit(device, k.jobs[slot], words(w.size()), B::eStorageBuffer, gpu::MemoryUse::upload);
     auto counts_made =
-        fit(device, k.counts[slot], words(std::uint64_t{total} * 4), B::eStorageBuffer, gpu::MemoryUse::gpu);
+        fit(device, k.counts[slot], words(std::uint64_t{total} * 8), B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto kept_made = fit(device, k.kept[slot], words(places), B::eStorageBuffer, gpu::MemoryUse::gpu);
     auto draws_made = fit(device, k.draws[slot], words(totals + (std::uint64_t{draws} * draw_words)),
                           B::eStorageBuffer | B::eIndirectBuffer, gpu::MemoryUse::readback);
@@ -305,10 +367,10 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
         w[16 + list] = record;
         record += k.records[list];
     }
-    w[3] = total;
-    w[11] = places;
-    w[15] = draws;
-    w[19] = records;
+    w[20] = total;
+    w[21] = places;
+    w[22] = draws;
+    w[23] = records;
     if (*jobs_made || *counts_made || *kept_made || *draws_made || *shapes_made) {
         gpu::SetWriter(*k.sets[slot])
             .buffer(12, vk::DescriptorType::eStorageBuffer, k.jobs[slot].handle())
@@ -351,7 +413,7 @@ void Buildings::record_kept_cull(const frame::Recording& recording) {
     recording.counters.dispatch("kept scan");
     recording.frame.sync.barrier(cmd, compute_then_compute);
     // (the scatter that decides the records where the frame has them)
-    const bool shaped = k.records[0] + k.records[1] + k.records[2] > 0;
+    const bool shaped = k.records[0] + k.records[1] + k.records[2] + k.records[3] > 0;
     cmd.bindPipeline(vk::PipelineBindPoint::eCompute, shaped ? *k.shape_scatter : *k.scatter);
     cmd.dispatch(std::min(k.jobs_now, job_row), rows, 1);
     recording.counters.dispatch("kept scatter");
@@ -362,11 +424,37 @@ void Buildings::record_kept_cull(const frame::Recording& recording) {
                                                             .dst_access = A::eShaderRead | A::eIndirectCommandRead});
 }
 
+std::uint32_t Buildings::thin_wall_chunks() const noexcept {
+    return kept_ != nullptr && kept_->jobs_now > 0 ? kept_->chunks[thin_list] : 0U;
+}
+
+void Buildings::record_thin_walls(const frame::Recording& recording) {
+    if (!drawn_kept() || kept_->chunks[thin_list] == 0) return;
+    const Kept& k = *kept_;
+    const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
+    const std::uint32_t shaped = (k.records[thin_list] + chunk_of[thin_list] - 1) / chunk_of[thin_list];
+    cmd.bindIndexBuffer(k.thin_index.handle(), 0, vk::IndexType::eUint16);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *k.layout, 2, *k.sets[k.slot], {});
+    // the list's chunks last first: the walls' jobs go the nearest tile first, and a thin wall's share lies over the
+    // thin walls behind it
+    for (std::uint32_t c = k.chunks[thin_list]; c-- > 0;) {
+        if (c + 1 == k.chunks[thin_list] || c + 1 == shaped) {
+            cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, c < shaped ? *k.thin_shaped : *k.thin);
+        }
+        cmd.drawIndexedIndirect(k.draws[k.slot].handle(),
+                                vk::DeviceSize{totals + ((k.first_draw[thin_list] + c) * draw_words)} * 4, 1,
+                                draw_words * 4);
+        // (a draw of the walls' kind without triangles of its own: the walls' list counts every wall its jobs submit,
+        // those the cull hands to this list among them)
+        recording.counters.draw(kind_of[thin_list], 0);
+    }
+}
+
 void Buildings::record_kept(const frame::Recording& recording, std::uint32_t list) {
     const Kept& k = *kept_;
     if (k.chunks[list] == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
-    const bool plain = list + 1 == lists;
+    const bool plain = list == roofs_list;
     // the list's chunks of records first, each point placed from its record, then those decided at each point (each
     // with its pipeline while a tile fades)
     const std::uint32_t shaped = (k.records[list] + chunk_of[list] - 1) / chunk_of[list];
@@ -395,7 +483,7 @@ Buildings::KeptCounts Buildings::kept_counts() const {
     KeptCounts out;
     if (kept_ == nullptr) return out;
     const Kept& k = *kept_;
-    for (std::uint32_t list = 0; list < lists; ++list) {
+    for (std::uint32_t list = 0; list < job_lists; ++list) {
         out.submitted[list] = std::uint64_t{k.submitted[list]} * (vertices_of[list] - 2);
     }
     for (const gpu::Buffer& b : k.shapes) out.shape_memory += b ? b.size() : 0;
@@ -404,15 +492,17 @@ Buildings::KeptCounts Buildings::kept_counts() const {
     draws.invalidate();
     const std::span<const std::byte> bytes = draws.bytes();
     for (std::uint32_t list = 0; list < lists; ++list) {
+        // (the thin walls are walls: counted with them)
+        const std::uint32_t as = list == thin_list ? 0 : list;
         const std::uint32_t shaped = (k.records[list] + chunk_of[list] - 1) / chunk_of[list];
         for (std::uint32_t c = 0; c < k.chunks[list]; ++c) {
             std::uint32_t indices = 0;
             std::memcpy(&indices, bytes.data() + (std::size_t{totals + ((k.first_draw[list] + c) * draw_words)} * 4),
                         sizeof indices);
             const std::uint64_t prims = indices / indices_of[list];
-            out.kept[list] += prims * (vertices_of[list] - 2);
+            out.kept[as] += prims * (vertices_of[list] - 2);
             if (c < shaped) {
-                out.shaped[list] += prims * (vertices_of[list] - 2);
+                out.shaped[as] += prims * (vertices_of[list] - 2);
                 out.shape_bytes += prims * shape_bytes;
             }
         }

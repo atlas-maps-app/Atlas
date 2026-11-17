@@ -102,6 +102,34 @@ std::optional<WorldIndex> read_world_index(std::span<const std::byte> bytes) {
 
 std::string world_pack_id(const WorldEntry& entry) { return std::format("world/{}/{}/{}", entry.z, entry.x, entry.y); }
 
+std::string terrain_pack_id(std::string_view name, const WorldEntry& entry) {
+    return std::format("terrain/{}/{}/{}/{}", name, entry.z, entry.x, entry.y);
+}
+
+Result<WorldAdded> add_terrain(Store& store, const std::string& index_path) {
+    const auto bytes = read_file(index_path);
+    if (!bytes) return std::unexpected(error(Fault::io, Site::file, static_cast<std::uint64_t>(ENOENT)));
+    const std::optional<WorldIndex> index = read_world_index(*bytes);
+    if (!index) return std::unexpected(error(Fault::bad_magic, Site::file));
+    const std::size_t slash = index_path.find_last_of('/');
+    const std::string dir = slash == std::string::npos ? std::string(".") : index_path.substr(0, slash);
+    std::string name = slash == std::string::npos ? index_path : index_path.substr(slash + 1);
+    if (const std::size_t dot = name.find_last_of('.'); dot != std::string::npos) name.resize(dot);
+    WorldAdded added;
+    for (const WorldEntry& e : index->entries) {
+        if (e.part >= index->parts.size()) return std::unexpected(error(Fault::bad_value, Site::file, e.part));
+        auto opened = store.add({.id = terrain_pack_id(name, e),
+                                 .kind = PackKind::terrain_country,
+                                 .path = std::format("{}/{}", dir, index->parts[e.part].first),
+                                 .offset = e.offset,
+                                 .length = e.length});
+        if (!opened) return std::unexpected(opened.error());
+        ++added.packs;
+        added.tiles += e.tiles;
+    }
+    return added;
+}
+
 Result<WorldAdded> add_world(Store& store, const std::string& dir) {
     const auto bytes = read_file(dir + "/world.idx");
     if (!bytes) return std::unexpected(error(Fault::io, Site::file, static_cast<std::uint64_t>(ENOENT)));

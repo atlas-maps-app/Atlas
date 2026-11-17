@@ -26,7 +26,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.toSize
 import app.atlas.mapcore.state.CameraWriter
-import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -52,10 +52,22 @@ import kotlin.math.min
  *
  * Each shape also carries the alpha its chrome is drawn at ([fade]: the fades over it, [ChromeFade]), so that the core's
  * glass fades with the tint over it, whether or not the map's SurfaceView follows a fading layer.
+ *
+ * The map is told ([onChange]: it asks the core for a frame) of each change the core's picture must follow at once: a
+ * shape it draws the glass under (frosted, while [coreDraws]) that moved, came, went or faded, the surface moving, and
+ * [coreDraws] changing. A shape the core does not frost is a keep-out alone, which changes nothing the core draws but
+ * where its labels go: its moves are written as they are laid out, and any frame the core draws meanwhile takes them,
+ * but they ask for none; the map is told once when such shapes have come to rest or gone (the second frame after
+ * their last change: [frame]), so the labels settle clear of where they stopped. A glide of the home's sheet with its
+ * eight chips thus asks the core for one frame, where it asked for eight on each frame of the glide.
  */
 @Stable
 class ChromeShapes {
-    /** Told when a shape moves, comes or goes, the surface moves, or [coreDraws] changes (the map asks for a frame). */
+    /**
+     * Told when the core's picture must follow the shapes (the map asks for a frame): a shape the core draws the glass
+     * under moves, comes, goes or fades, the surface moves, or [coreDraws] changes; and once when the shapes it does not
+     * frost have come to rest after moving, or gone.
+     */
     @Volatile
     var onChange: (() -> Unit)? = null
 
@@ -100,18 +112,18 @@ class ChromeShapes {
             end()
             return slot
         }
-        Log.w(EngineFrames.TAG, "vk chrome: more than $MAX_SHAPES shapes; this one has no glass from the core")
+        Log.w(MapEngine.TAG, "vk chrome: more than $MAX_SHAPES shapes; this one has no glass from the core")
         return -1
     }
 
     /** Frees [slot]. Main thread. */
     fun remove(slot: Int) {
         if (slot !in 0 until MAX_SHAPES || data.get(slot * STRIDE) and IN_USE == 0L) return
-        val placed = data.get(slot * STRIDE) and PLACED != 0L
+        val flags = data.get(slot * STRIDE)
         begin()
         for (i in 0 until STRIDE) data.set(slot * STRIDE + i, 0L)
         end()
-        if (placed) onChange?.invoke()
+        if (flags and PLACED != 0L) changed(glass = coreDrawsNow && flags and FROSTED != 0L)
     }
 
     /**
@@ -165,7 +177,8 @@ class ChromeShapes {
         data.set(base + TONE, tone)
         data.set(base, next)
         end()
-        if (moved || styled) onChange?.invoke()
+        // the glass follows its shape (and goes at once from one no longer frosted); a keep-out alone waits for its rest
+        if (moved || styled) changed(glass = coreDrawsNow && (frosted || flags and FROSTED != 0L))
         return moved || styled
     }
 
@@ -184,7 +197,7 @@ class ChromeShapes {
         begin()
         data.set(base + TONE, tone)
         end()
-        if (flags and PLACED != 0L) onChange?.invoke()
+        if (flags and PLACED != 0L) changed(glass = coreDrawsNow && flags and FROSTED != 0L)
     }
 
     /** The map's surface lies at ([left], [top]) in root px: the shapes are written relative to it. Main thread. */
@@ -204,8 +217,9 @@ class ChromeShapes {
      * holds (so after CameraWriter.frame), each frosted only while [coreDraws]. Shapes the core's reader would refuse
      * (far off the frame, no area) are left out; a corner wider than half the shape and a blur past 256 dp are cut to
      * what the reader takes; each carries its chrome's alpha ([fade]). On the render thread at each paced vsync;
-     * allocates nothing. True when a moving shape was
-     * carried on to the vsync: the source asks for one more frame, so that the glass comes to rest where the shape does.
+     * allocates nothing. True when a moving shape the core frosts was carried on to the vsync: the source draws one more
+     * frame (MapCameraSource.camera), so that the glass comes to rest where the shape does. A keep-out alone is carried
+     * as well, and asks for nothing: it settles with the frame its rest wakes ([frame]).
      */
     fun write(out: ByteBuffer, vsyncNanos: Long = 0L): Boolean {
         read()
@@ -242,7 +256,7 @@ class ChromeShapes {
                     top += (top - second(seen[base + BOX0])) * k
                     right += (right - first(seen[base + BOX0 + 1])) * k
                     bottom += (bottom - second(seen[base + BOX0 + 1])) * k
-                    carried = true
+                    if (frosting && flags and FROSTED != 0L) carried = true
                 }
             }
             val l = (left - ox) / d
@@ -316,13 +330,67 @@ class ChromeShapes {
     private val watched = HashMap<ViewTreeObserver, Int>()
 
     // The frame being laid out, from a frame callback posted for it (0 outside one, or in a frame none was posted for:
-    // a callback is posted for the next frame only after a frame that moved a shape, so a still UI sleeps).
+    // a callback is posted for the next frame only after a frame that moved a shape, or while the keep-outs alone have
+    // yet to settle ([frame]), so a still UI sleeps).
     private var frameTime = 0L
     private var movedThisFrame = false
     private var callbackPosted = false
     private val frameCallback = Choreographer.FrameCallback { t ->
         callbackPosted = false
-        frameTime = t
+        frame(t)
+    }
+
+    // The shapes the core does not frost: whether the core has yet to be told of a change of theirs, and whether one
+    // changed since the last frame began. Main thread.
+    private var unsettled = false
+    private var quietChange = false
+
+    /**
+     * Asks for [frame] at the next frame's start, where no window is watched (a test's own frames); null: the
+     * Choreographer's, while a window is watched.
+     */
+    internal var postFrame: (() -> Unit)? = null
+
+    /** [frame] runs at the next frame's start; false where there is no frame to wait for. Main thread. */
+    private fun wantFrame(): Boolean {
+        if (callbackPosted) return true
+        val post = postFrame
+        if (post == null && watched.isEmpty()) return false
+        callbackPosted = true
+        if (post != null) post() else Choreographer.getInstance().postFrameCallback(frameCallback)
+        return true
+    }
+
+    /**
+     * A shape changed. With [glass] (the core draws the glass under it) the map is told at once: the glass follows its
+     * chrome frame by frame. A keep-out alone is told of once it rests ([frame]); with no frame to wait for (no window
+     * watched), at once. Main thread.
+     */
+    private fun changed(glass: Boolean) {
+        if (glass || !wantFrame()) {
+            onChange?.invoke()
+            return
+        }
+        unsettled = true
+        quietChange = true
+    }
+
+    /**
+     * A frame begins at [nanos] (the Choreographer's frame time), asked for by the frame before: its layout takes that
+     * time, and the shapes the core does not frost are settled. While one of them changed in the frame before, the next
+     * frame is asked for; the first frame that begins with none changed since the last tells the map, once, so the core
+     * draws the keep-outs where they came to rest. Main thread.
+     */
+    internal fun frame(nanos: Long) {
+        callbackPosted = false
+        frameTime = nanos
+        if (!unsettled) return
+        if (quietChange) {
+            quietChange = false
+            if (wantFrame()) return
+        }
+        unsettled = false
+        onChange?.invoke()
     }
     private val preDraw = ViewTreeObserver.OnPreDrawListener {
         laidOut(if (frameTime != 0L) frameTime else System.nanoTime())
@@ -346,7 +414,7 @@ class ChromeShapes {
     private var logView: View? = null
     private val logLine = Runnable {
         logPending = false
-        Log.i(EngineFrames.TAG, describe())
+        Log.i(MapEngine.TAG, describe())
     }
 
     /** Hears each frame [view]'s window lays out (and logs the shapes a moment after they change). Main thread. */
@@ -372,9 +440,15 @@ class ChromeShapes {
             logView?.removeCallbacks(logLine)
             logPending = false
             logView = null
-            if (callbackPosted) Choreographer.getInstance().removeFrameCallback(frameCallback)
+            if (callbackPosted && postFrame == null) Choreographer.getInstance().removeFrameCallback(frameCallback)
             callbackPosted = false
             frameTime = 0L
+            // no frame comes to settle the keep-outs that changed: the map is told now
+            if (unsettled) {
+                unsettled = false
+                quietChange = false
+                onChange?.invoke()
+            }
         }
     }
 

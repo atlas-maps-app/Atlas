@@ -136,4 +136,54 @@ class WorldCutTest {
         assertEquals(BigInteger.valueOf(2L * (box[2] - box[0]).toLong() * (box[3] - box[1]).toLong()), sum)
         assertTrue(seaRings.size >= 25)
     }
+
+    @Test
+    fun theWatersNamesFollowThePlacesByRankAndTheRiversByTheirLengthOnceATile() {
+        fun point(px: Double, py: Double) = f.createPoint(Coordinate(px, py))
+        fun line(vararg xy: Double) = f.createLineString(Array(xy.size / 2) { Coordinate(xy[2 * it], xy[2 * it + 1]) })
+        val items = listOf(
+            WorldCut.Item(WorldProfile.PLACE, mapOf("kind" to "town", "name" to "Zaandam", "population" to "78000", "id" to 1L), point(100.0, 30.0)),
+            WorldCut.Item(WorldProfile.WATER_NAME, mapOf("kind" to "lake", "name" to "Sloterplas", "id" to 2L, "area" to 900_000L), point(60.0, 200.0)),
+            WorldCut.Item(WorldProfile.WATER_NAME, mapOf("kind" to "lake", "name" to "IJsselmeer", "id" to -3L, "area" to 1_100_000_000L), point(200.0, 40.0)),
+            WorldCut.Item(WorldProfile.WATER_NAME, mapOf("kind" to "sea", "name" to "Noordzee", "id" to 4L, "area" to 0L), point(20.0, 20.0)),
+            // in the tile's buffer, beyond its edge: the neighbour's
+            WorldCut.Item(WorldProfile.WATER_NAME, mapOf("kind" to "bay", "name" to "Elsewhere", "id" to 5L, "area" to 0L), point(300.0, 20.0)),
+            // a river in two pieces from beyond the north edge, the name at the middle of the longer, once
+            WorldCut.Item(WorldProfile.RIVER_NAME, mapOf("name" to "Amstel"), line(128.0, -10.0, 128.0, 140.0)),
+            WorldCut.Item(WorldProfile.RIVER_NAME, mapOf("name" to "Amstel"), line(128.0, 140.0, 130.0, 200.0)),
+            WorldCut.Item(WorldProfile.RIVER_NAME, mapOf("name" to "Zaan"), line(10.0, 100.0, 60.0, 100.0)),
+        )
+        val tile = WorldCut().cut(z, x, y, items, land).tile!!
+        val labels = tile.layers[Layer.LABEL]!!
+        fun source(l: app.atlas.rendertiles.model.Feature) = (l["source"] as Number).toInt()
+        // a rank of 0 is the column's default, which the schema leaves out
+        val bySource = labels.groupBy(::source).mapValues { (_, l) -> l.sortedBy { (it["index"] as Number?)?.toLong() ?: 0L }.map { it["name"] } }
+        assertEquals(
+            mapOf(1 to listOf("Zaandam"), WorldCut.WATER_NAMES to listOf("Noordzee", "IJsselmeer", "Sloterplas"), WorldCut.RIVER_NAMES to listOf("Amstel", "Zaan")),
+            bySource,
+        )
+        // a water's kind, id and area (count), at its point; none of a place's tags
+        val ij = labels.single { it["name"] == "IJsselmeer" }
+        assertEquals("lake", ij["kind"])
+        assertEquals(-3L, (ij["id"] as Number).toLong())
+        assertEquals(1_100_000_000L, (ij["count"] as Number).toLong())
+        assertEquals(ij["pos"], ij["prev"])
+        assertNull(ij[app.atlas.rendertiles.model.Schema.tag("place")])
+        // a river's name at the middle of its longest piece in the tile, prev before it along its run (south here), its
+        // length in the tile in metres at the name's latitude
+        val amstel = labels.single { it["name"] == "Amstel" }
+        val pos = amstel["pos"] as app.atlas.rendertiles.model.GridPoint
+        val prev = amstel["prev"] as app.atlas.rendertiles.model.GridPoint
+        assertEquals(WorldGeometry.latOfPixel(z, y, 70.0).toInt(), pos.lat)
+        assertEquals(WorldGeometry.lonOfPixel(z, x, 128.0).toInt(), pos.lon)
+        assertEquals(pos.lon, prev.lon)
+        assertEquals(WorldGeometry.latOfPixel(z, y, 70.0 - WorldCut.NAME_HALF).toInt().toDouble(), prev.lat.toDouble(), 2.0)
+        val perPixel = WorldProfile.EQUATOR_METRES * Math.cos(Math.toRadians(pos.lat / 1e7)) / (256.0 * (1 shl z))
+        assertEquals((140.0 + Math.hypot(2.0, 60.0)) * perPixel, (amstel["count"] as Number).toDouble(), 2.0)
+        assertEquals("river", amstel["kind"])
+        // the sea alone with a water's name is a tile: its name has no other tile to be in
+        val sea = WorldCut().cut(z, x, y, listOf(items[3]), null).tile!!
+        assertEquals(16, sea.layers[Layer.WATER]!!.size)
+        assertEquals(listOf("Noordzee"), sea.layers[Layer.LABEL]!!.map { it["name"] })
+    }
 }

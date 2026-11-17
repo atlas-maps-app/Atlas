@@ -148,7 +148,10 @@ void ripple_line_cs(uint3 id : SV_DispatchThreadID) {
 // push.size.w, Ripple.cpp's write_ripple): each cell by its own stage's arithmetic above, each pass over the cells the
 // passes after it read and within its region, so the result is the stages' word for word (their edge rules too: the
 // square boxes repeat the frame's edge, which the cells hold where the tile meets it; the line boxes skip what lies
-// past it). The pass takes it where the reaches fit (RIPPLE_REACH), else the stages apart.
+// past it). The pass takes it where the reaches fit (RIPPLE_REACH), else the stages apart. After the passes the plan
+// holds the tiles a row of the result and a bit a tile: whether an element of the layer reaches the tile (its box
+// spread as the result's region is). A tile none reaches reads nothing of the layer, so its result is nothing, which
+// it writes without the displacement or the boxes: the same words, as every stage maps nothing to nothing.
 
 static const int RIPPLE_TILE = 16;  // result pixels a workgroup side
 static const int RIPPLE_REACH = 8;  // the most rx or ry may be (else the stages run apart)
@@ -185,6 +188,20 @@ void ripple_fused_cs(uint3 gid : SV_GroupID, uint3 tid : SV_GroupThreadID) {
     int4 displace = plan_box(plan + 3u);
     int4 out_box = plan_box(plan + 7u);
     int2 tile = int2(out_box.x + int(gid.x) * RIPPLE_TILE, out_box.y + int(gid.y) * RIPPLE_TILE);
+    // a tile no element of the layer reaches: nothing (the whole workgroup takes this way or none of it)
+    uint reached = plan + 11u + n * 9u;
+    uint t = gid.y * words[reached] + gid.x;
+    if (((words[reached + 1u + (t >> 5u)] >> (t & 31u)) & 1u) == 0u) {
+        for (int j = int(tid.y); j < RIPPLE_TILE; j += 8) {
+            for (int i = int(tid.x); i < RIPPLE_TILE; i += 8) {
+                int2 p = tile + int2(i, j);
+                if (in_box(out_box, p)) {
+                    target[uint(p.y) * push.size.x + uint(p.x)] = 0u;
+                }
+            }
+        }
+        return;
+    }
     int2 origin = tile - int2(rx, ry); // the frame pixel of cell (0, 0)
     int wide = RIPPLE_TILE + 2 * rx;   // the cells in use
     int high = RIPPLE_TILE + 2 * ry;

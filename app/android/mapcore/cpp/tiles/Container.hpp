@@ -39,9 +39,10 @@ public:
     /// A world pack (`rhead`'s profile world_base) is drawn in `world_style` where one is given, the core's own
     /// (load::world_style, ENGINE.md step 5: the world's style in one place): its `style` section is read and kept,
     /// its magic, payload version and values' form checked, but not typed, so a value of the style file it lacks does
-    /// not refuse it. Every other pack's style is its own. With `style`, a render pack whose `style` section holds the
-    /// bytes `style` was read from (checked: the section is read and compared, never parsed) and which is drawn in the
-    /// same kind of style (the world's, or its own) shares it; any other reads its own.
+    /// not refuse it. A terrain pack (profile terrain) is drawn by no rule set: its `style` section is read and kept
+    /// likewise, and no value typed. Every other pack's style is its own. With `style`, a render pack whose `style`
+    /// section holds the bytes `style` was read from (checked: the section is read and compared, never parsed) and
+    /// which is drawn in the same kind of style (the world's, or its own) shares it; any other reads its own.
     [[nodiscard]] static Result<Pack> open(std::unique_ptr<ByteSource> source, const Style* world_style = nullptr,
                                            const std::shared_ptr<const PackStyle>& style = nullptr);
 

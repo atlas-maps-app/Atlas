@@ -76,6 +76,8 @@ class LayoutTest {
         put("CameraWriter.FOLLOW", CameraWriter.FOLLOW)
         put("CameraWriter.LOCATION", CameraWriter.LOCATION)
         put("CameraWriter.HEADING", CameraWriter.HEADING)
+        put("CameraWriter.WORLD_UNDER", CameraWriter.WORLD_UNDER)
+        put("CameraWriter.LIGHT_CASCADES", CameraWriter.LIGHT_CASCADES)
         put("CameraWriter.PART_GROUND", CameraWriter.PART_GROUND)
         put("CameraWriter.PART_WATER", CameraWriter.PART_WATER)
         put("CameraWriter.PART_CANOPY", CameraWriter.PART_CANOPY)

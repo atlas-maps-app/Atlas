@@ -25,7 +25,9 @@ import java.security.MessageDigest
  * the index. Every pack's bytes are its entry's (its SHA-256), its head the world's, every tile in its block and found
  * by the index, and every tile's ground covers its cells exactly; Monaco's land cover, roads and places are there. With
  * the core's stage P tool (-Datlas.stagep, as CI's unit-rest job gives it), the core reads every pack as its store
- * does, a range of its part, verifies it and decodes every tile to the same canonical hash as the packer's tile.
+ * does, a range of its part, verifies it and decodes every tile to the same canonical hash as the packer's tile. The
+ * extract, the land, the scratch and the packs lie in a folder whose name has a space, as a checkout's path can
+ * ("work 2"), since Planetiler takes its output as a URI.
  */
 class WorldTilesTest {
     @get:Rule
@@ -33,14 +35,15 @@ class WorldTilesTest {
 
     @Test
     fun monacosBlockIsBuiltIntoPacksAndAnIndexWhoseEveryTileCoversItsCells() {
-        val pbf = File(javaClass.getResource("/monaco-2026-10-13.osm.pbf")!!.toURI())
+        val root = tmp.newFolder("work 2")
+        val pbf = File(javaClass.getResource("/monaco-2026-10-13.osm.pbf")!!.toURI()).copyTo(File(root, "monaco-2026-10-13.osm.pbf"))
         // the land north of a straight coast at 43.725° N, and an island off it, in osmdata's EPSG:4326 layer
         val f = GeometryFactory()
         fun box(w: Double, s: Double, e: Double, n: Double) = f.createPolygon(arrayOf(Coordinate(w, s), Coordinate(w, n), Coordinate(e, n), Coordinate(e, s), Coordinate(w, s)))
-        val land = File(tmp.root, "land-polygons-split-4326.zip")
+        val land = File(root, "land-polygons-split-4326.zip")
         ShapefileWriter.zip(land, "land_polygons", listOf(ShapefileWriter.Record(box(7.30, 43.725, 7.60, 43.90)), ShapefileWriter.Record(box(7.45, 43.70, 7.46, 43.71))))
-        val out = tmp.newFolder("world")
-        val scratch = File(tmp.root, "scratch")
+        val out = File(root, "world").apply { mkdirs() }
+        val scratch = File(root, "scratch")
         val built = WorldTiles.build(pbf, land, out, scratch, 2, WorldTiles.Run(WorldTiles.rectangle(33, 23, 33, 23)), false, ::println)
         assertEquals(0.0, built.worstCover, 0.0)
         assertEquals(0, built.ringsOutside)

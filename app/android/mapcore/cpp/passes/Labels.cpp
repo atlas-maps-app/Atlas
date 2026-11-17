@@ -8,10 +8,18 @@
 #include "gen/spirv/text/sprite.hpp"
 #include "gen/spirv/text/sprite_loc1.hpp"
 #include "gpu/Descriptors.hpp"
+#include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
+#include "passes/PlacePoint.hpp"
+#include "scene/WorldLook.hpp"
+#include "scene/WorldTiles.hpp"
 
+#include <algorithm>
+#include <bit>
 #include <cstring>
 #include <limits>
+#include <optional>
+#include <string>
 
 namespace atlas::passes {
 
@@ -22,26 +30,233 @@ namespace sp = layouts::text_sprite;
 constexpr std::size_t draw_bytes = sizeof(sp::SpriteDraw);
 constexpr std::size_t slot_bytes = Labels::max_draws * draw_bytes;
 constexpr float no_point = std::numeric_limits<float>::quiet_NaN();
+/// Half a letter of a water's name over its look's size, about (the board's italic serif), and its sprite's pad,
+/// dp: how wide a name will be, to find a stand that holds it before its sprite is drawn.
+constexpr double water_letter_half = 0.26;
+constexpr double water_pad_dp = 8.0;
+/// Updates a names' buffer let go of is kept: two frame builders' frames in flight, and as many again.
+constexpr std::uint64_t retire_after = 4ULL * gpu::Frames::in_flight;
 
 } // namespace
 
 Labels::~Labels() { Labels::release(); }
+
+void Labels::pick_names(const frame::FrameState& state, const view::View& view, const view::GroundFrame& frame,
+                        std::size_t first) {
+    picked_.clear();
+    name_sprites_.clear();
+    name_waters_.clear();
+    name_points_.clear();
+    names_least_ = 0.0F;
+    labels::NameStore* store = state.names;
+    if (store == nullptr) return;
+    // The bent ground the names stand on: the world's this frame (beyond 18 km, and under the cover where it is drawn
+    // there); without it only a test's names.
+    const scene::WorldBend bend = state.world != nullptr ? state.world->bend : scene::world_bend(view, frame);
+    const view::GroundFrame& ground = state.world != nullptr ? state.world->frame : frame;
+    const auto width = static_cast<double>(state.camera.width_px);
+    const auto height = static_cast<double>(state.camera.height_px);
+    const auto point = [&](double lat, double lon) {
+        return scene::name_point(bend, ground, view, lat, lon, name_least_facing);
+    };
+    const scene::WorldNames::InView in_view = [&](double lat, double lon) {
+        const std::optional<view::Vec2> p = point(lat, lon);
+        return p && p->x >= 0.0 && p->y >= 0.0 && p->x <= width && p->y <= height;
+    };
+    const std::array<double, 7> camera{state.camera.latitude,
+                                       state.camera.longitude,
+                                       state.camera.bearing,
+                                       state.camera.pitch,
+                                       state.camera.distance,
+                                       width,
+                                       height};
+    const bool changed = camera != picked_camera_;
+    picked_camera_ = camera;
+    // a dp of the screen at the camera's target, metres: the waters are ranked by their size on the screen
+    const double focal = view.camera().focal();
+    const scene::NameScale scale{.metres_a_dp = focal > 0.0 ? state.camera.distance / focal : 0.0,
+                                 .lat = state.camera.latitude,
+                                 .lon = state.camera.longitude};
+    // A water's name stands at its own point while that lies a name's height clear of the frame's edges (two, to go
+    // back there from a stand); else at the stand it had while that shows and is water, else at one found now where
+    // its water shows on the frame (scene/WaterStand.hpp), else at its own point where that is in view at all.
+    const double density = state.camera.density;
+    const double tall = scene::name_size_dp(scene::NameStyle::water) * density;
+    const scene::WaterStands::Point stand_point = point;
+    const scene::WaterStands::Water stand_water = [&state](double lat, double lon) -> std::optional<bool> {
+        return state.world != nullptr ? scene::world_water_at(*state.world, lat, lon) : std::nullopt;
+    };
+    water_stands_.begin({.width = width,
+                         .height = height,
+                         .step = scene::stand_step_dp * scale.metres_a_dp,
+                         .px = scale.metres_a_dp > 0.0 ? density / scale.metres_a_dp : 0.0,
+                         .lat = scale.lat,
+                         .lon = scale.lon},
+                        &stand_point, &stand_water);
+    const scene::WorldNames::Stand stand =
+        [&](const scene::WorldName& water, const scene::NamePlace* held,
+            std::span<const scene::WorldName* const> waters) -> std::optional<scene::NamePlace> {
+        const bool holds = held != nullptr && water_stands_.on_frame(held->lat, held->lon, tall) &&
+                           stand_water(held->lat, held->lon).value_or(true) &&
+                           scene::WaterStands::own_place(water, held->lat, held->lon, waters);
+        if (water_stands_.on_frame(water.lat, water.lon, holds ? 2.0 * tall : tall)) {
+            return scene::NamePlace{.lat = water.lat, .lon = water.lon};
+        }
+        if (holds) return *held;
+        // half the name's width as its text will measure, about: the look's size, 0.26 of it a letter's half, and
+        // the sprite's pad
+        const auto letters = static_cast<double>(
+            std::ranges::count_if(water.text, [](char c) { return (static_cast<unsigned char>(c) & 0xC0U) != 0x80U; }));
+        const double half =
+            ((water_letter_half * letters * scene::name_size_dp(scene::NameStyle::water)) + water_pad_dp) * density;
+        if (const std::optional<scene::NamePlace> found = water_stands_.find(water, half, tall, waters)) return found;
+        if (in_view(water.lat, water.lon)) return scene::NamePlace{.lat = water.lat, .lon = water.lon};
+        return std::nullopt;
+    };
+    const auto picked = world_names_.update(state.world, state.extra_names, state.camera.distance, in_view,
+                                            state.seconds, state.rest, changed, scale, stand);
+    picked_.assign(picked.begin(), picked.end());
+    // What a lit place's light follows this frame (the world pass's look of it): the ladder's weights at the camera's
+    // distance and the point the sun is overhead of. Its name stands clear of it (scene::name_rise).
+    const tiles::WorldLadder* ladder =
+        state.world != nullptr && state.world->style != nullptr && state.world->style->ladder
+            ? &*state.world->style->ladder
+            : nullptr;
+    scene::LadderWeights weights;
+    scene::GeoPoint sun;
+    if (ladder != nullptr) {
+        weights = scene::ladder_weights(*ladder, state.camera.distance);
+        sun = scene::sub_solar(state.theme.sun_azimuth, state.theme.sun_elevation,
+                               static_cast<double>(state.theme.place_latitude),
+                               static_cast<double>(state.theme.place_longitude));
+    }
+    // Those with a sprite are candidates; the others, by rank, are what the app is asked for.
+    std::vector<labels::NameWant> wanted;
+    name_points_.reserve(picked_.size());
+    for (const scene::PickedName& name : picked_) {
+        const labels::NameSprite* sprite = store->find(name.id, state.seconds);
+        if (sprite == nullptr) {
+            if (!name.leaving) {
+                wanted.push_back(
+                    {.id = name.id, .style = static_cast<std::uint8_t>(name.style), .text = std::string(name.text)});
+            }
+            continue;
+        }
+        if (sprite->skipped) continue;
+        const std::optional<view::Vec2> p = point(name.lat, name.lon);
+        name_points_.push_back(p ? labels::Point{.x = static_cast<float>(p->x), .y = static_cast<float>(p->y)}
+                                 : labels::Point{.x = no_point, .y = no_point});
+        const double rise =
+            name.lit && ladder != nullptr ? scene::name_rise(*ladder, weights, sun, name.lat, name.lon) : 0.0;
+        candidates_.push_back(
+            {.id = name.id,
+             .label = static_cast<std::uint32_t>(first + name_sprites_.size()),
+             .priority = name.priority,
+             .measures = sprite->sprite.measures,
+             .points = std::span<const labels::Point>(&name_points_.back(), 1),
+             .hidden = name.leaving,
+             .rise = static_cast<float>(rise),
+             .mark = rise > 0.0 ? static_cast<float>(scene::light_halo_dp(*ladder, name.people) * state.camera.density)
+                                : 0.0F});
+        name_sprites_.push_back(sprite);
+        name_waters_.push_back(name.style == scene::NameStyle::water ? 1 : 0);
+        // the readable floor over the look's own size: the least a name of it is drawn at
+        names_least_ = std::max(
+            names_least_, static_cast<float>(static_cast<double>(store->floor_dp()) / scene::name_size_dp(name.style)));
+    }
+    store->want(std::move(wanted));
+}
+
+std::span<const labels::Mark> Labels::light_marks(const frame::FrameState& state, const view::View& view) {
+    marks_.clear();
+    if (state.world == nullptr || state.world->style == nullptr || !state.world->style->ladder) return marks_;
+    // the lights the world pass draws this frame: the lit places of the tiles it draws, where the caps have any
+    // weight and the night is deep enough for a light (globe.slang's globe_light)
+    const tiles::WorldLadder& ladder = *state.world->style->ladder;
+    if (!(scene::ladder_weights(ladder, state.camera.distance).caps > 0.0)) return marks_;
+    const scene::GeoPoint sun = scene::sub_solar(state.theme.sun_azimuth, state.theme.sun_elevation,
+                                                 static_cast<double>(state.theme.place_latitude),
+                                                 static_cast<double>(state.theme.place_longitude));
+    const auto width = static_cast<double>(state.camera.width_px);
+    const auto height = static_cast<double>(state.camera.height_px);
+    for (const scene::WorldDraw& draw : state.world->draws) {
+        if (draw.tile == nullptr || draw.light_cells == 0) continue;
+        for (const scene::WorldName& name : draw.tile->names) {
+            if (!name.lit || ((draw.light_cells >> name.cell) & 1U) == 0) continue;
+            if (scene::light_night(ladder, sun, name.lat, name.lon) < scene::light_least_night) continue;
+            const std::optional<view::Vec2> p =
+                scene::name_point(state.world->bend, state.world->frame, view, name.lat, name.lon, name_least_facing);
+            if (!p) continue;
+            const double radius = scene::light_halo_dp(ladder, name.people) * state.camera.density;
+            if (p->x < -radius || p->y < -radius || p->x > width + radius || p->y > height + radius) continue;
+            marks_.push_back(
+                {.x = static_cast<float>(p->x), .y = static_cast<float>(p->y), .radius = static_cast<float>(radius)});
+            if (marks_.size() >= max_marks) return marks_;
+        }
+    }
+    return marks_;
+}
+
+bool Labels::fresh_names_buffer(std::uint32_t texels) {
+    if (device_ == nullptr) return false;
+    auto made = device_->memory().buffer(std::size_t{texels} * sizeof(std::uint32_t),
+                                         vk::BufferUsageFlagBits::eStorageBuffer, gpu::MemoryUse::upload);
+    if (!made) {
+        log::error("labels: the names' buffer ({} texels): {}", texels, made.error().text());
+        return false;
+    }
+    if (arena_) retired_.emplace_back(std::move(arena_), updates_);
+    arena_ = std::move(*made);
+    arena_capacity_ = texels;
+    arena_used_ = 0;
+    arena_places_.clear();
+    ++arena_generation_;
+    return true;
+}
+
+const std::array<std::uint32_t, 2>* Labels::name_offsets(const labels::NameSprite& sprite) {
+    if (const auto at = arena_places_.find(sprite.serial); at != arena_places_.end()) return &at->second;
+    const labels::LabelSprite& s = sprite.sprite;
+    const std::size_t need = s.own.pixels.size() + s.large.pixels.size();
+    if (!arena_ || need > std::size_t{arena_capacity_} - arena_used_) return nullptr;
+    std::array<std::uint32_t, 2> places{arena_used_, 0};
+    std::byte* to = arena_.bytes().data() + (std::size_t{arena_used_} * sizeof(std::uint32_t));
+    std::memcpy(to, s.own.pixels.data(), s.own.pixels.size() * sizeof(std::uint32_t));
+    arena_used_ += static_cast<std::uint32_t>(s.own.pixels.size());
+    if (!s.large.empty()) {
+        places[1] = arena_used_;
+        std::memcpy(to + (s.own.pixels.size() * sizeof(std::uint32_t)), s.large.pixels.data(),
+                    s.large.pixels.size() * sizeof(std::uint32_t));
+        arena_used_ += static_cast<std::uint32_t>(s.large.pixels.size());
+    }
+    arena_dirty_ = true;
+    return &arena_places_.emplace(sprite.serial, places).first->second;
+}
 
 void Labels::update(const frame::FrameState& state) {
     const std::uint32_t slot = state.slot & 1U;
     drawn_count_.at(slot) = 0;
     draws_.clear();
     drawn_.clear();
+    names_drawn_ = 0;
+    waters_drawn_ = 0;
     fading_ = false; // a frame that places no labels leaves none fading
+    ++updates_;
+    std::erase_if(retired_, [&](const auto& r) { return r.second + retire_after <= updates_; });
     const labels::LabelSet* set = state.labels;
-    if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value() ||
+    // The frame the labels' places are in: the packs', or where no pack is drawn (the world alone) the world's.
+    const view::GroundFrame* frame_drawn = state.ground_frame.has_value()
+                                               ? &*state.ground_frame
+                                               : (state.world != nullptr ? &state.world->frame : nullptr);
+    if ((set == nullptr && state.names == nullptr) || !state.view.has_value() || frame_drawn == nullptr ||
         state.camera.leaves_out(style::camera_part::labels)) {
         return;
     }
-    // Each label's points on the view's device pixels (LabelPainter's GroundView: the ground at street level).
+    // Each label's points on the view's device pixels (LabelPainter's GroundView: the ground at street level; from
+    // 150 km the world's bent ground, passes/PlacePoint.hpp).
     const view::View& view = *state.view;
-    const view::GroundFrame& ground = *state.ground_frame;
-    const auto sprites = set->sprites();
+    const view::GroundFrame& ground = *frame_drawn;
+    const auto sprites = set != nullptr ? set->sprites() : std::span<const labels::LabelSprite>();
     candidates_.resize(sprites.size());
     points_.resize(sprites.size());
     for (std::uint32_t i = 0; i < sprites.size(); ++i) {
@@ -49,12 +264,14 @@ void Labels::update(const frame::FrameState& state) {
         std::vector<labels::Point>& points = points_[i];
         points.clear();
         for (const auto& [lat, lon] : s.points) {
-            const auto p = view.device_proj({ground.x(lat, lon), 0.0, ground.z(lat, lon)});
+            const auto p = place_point(state, view, ground, lat, lon);
             points.push_back(p ? labels::Point{.x = static_cast<float>(p->x), .y = static_cast<float>(p->y)}
                                : labels::Point{.x = no_point, .y = no_point});
         }
         candidates_[i] = {.id = s.id, .label = i, .priority = s.priority, .measures = s.measures, .points = points};
     }
+    // The world's names after them (theirs are the lower priorities).
+    pick_names(state, view, ground, sprites.size());
     // The chrome's keep-out shapes, dp to px as LabelPainter's caller scales them (in float).
     const auto density = static_cast<float>(state.camera.density);
     keep_out_.clear();
@@ -62,6 +279,9 @@ void Labels::update(const frame::FrameState& state) {
         keep_out_.push_back(
             {.l = k.left * density, .t = k.top * density, .r = k.right * density, .b = k.bottom * density});
     }
+    const float names_large = state.names != nullptr ? state.names->large_scale() : 0.0F;
+    // The night's lights, which a name being placed stands clear of where a spot allows (asked for only then).
+    const std::function<std::span<const labels::Mark>()> marks = [&] { return light_marks(state, view); };
     const labels::Frame frame{.width = static_cast<float>(state.camera.width_px),
                               .height = static_cast<float>(state.camera.height_px),
                               .keep_out = keep_out_,
@@ -69,26 +289,94 @@ void Labels::update(const frame::FrameState& state) {
                               .markers = state.marker_boxes != nullptr
                                              ? std::span<const labels::Box>(state.marker_boxes->boxes)
                                              : std::span<const labels::Box>(),
-                              .least = set->least()};
+                              // the readable floor: the set's, and the names' where the frame has any
+                              .least = std::max(set != nullptr ? set->least() : 0.0F, names_least_),
+                              .marks = &marks};
     // The map's scale: the reciprocal of the camera's distance (a tilted view keeps the zoom's size).
     const double scale = state.camera.distance > 0.0 ? 1.0 / state.camera.distance : 0.0;
     const auto drawn = placement_.update(candidates_, frame, scale, state.seconds);
     fading_ = placement_.fading();
+    if (placement_.placed_on_marks() + placement_.placed_off_marks() > 0) {
+        log::info("vk names: of {} placed, {} clear of a light their first stand covered, {} over one for want of a "
+                  "clear stand ({} lights)",
+                  placement_.placed_new(), placement_.placed_off_marks(), placement_.placed_on_marks(), marks_.size());
+    }
     drawn_.assign(drawn.begin(), drawn.end());
-    for (const labels::Drawn& d : drawn_) {
-        if (draws_.size() >= max_draws) break;
-        const std::uint32_t label = candidates_[d.candidate].label;
-        const labels::LabelSprite& s = sprites[label];
-        const auto [image, at] = labels::image_at(s, set->large_scale(), d);
-        const labels::SpriteImage& from = image == 0 ? s.own : s.large;
-        draws_.push_back({.target = {at.x, at.y, at.width, at.height},
-                          .source = {set->offsets()[label].at(image), from.width, from.height, 0},
-                          .fade = {d.alpha, at.scale, 0.0F, 0.0F}});
+    // The sprites to draw: a board's label from the set's texels (set 1), a name from the names' buffer. Where that
+    // has no room for a name's texels, a buffer for this frame's names (twice their texels, so the next ones have
+    // room) takes its place and the frame's sprites are laid out once more.
+    for (int pass = 0; pass < 2; ++pass) {
+        draws_.clear();
+        names_drawn_ = 0;
+        waters_drawn_ = 0;
+        std::uint64_t need = 0;
+        bool full = false;
+        for (const labels::Drawn& d : drawn_) {
+            if (draws_.size() >= max_draws) break;
+            const std::uint32_t label = candidates_[d.candidate].label;
+            if (label < sprites.size()) {
+                const labels::LabelSprite& s = sprites[label];
+                const auto [image, at] = labels::image_at(s, set->large_scale(), d);
+                const labels::SpriteImage& from = image == 0 ? s.own : s.large;
+                draws_.push_back({.target = {at.x, at.y, at.width, at.height},
+                                  .source = {set->offsets()[label].at(image), from.width, from.height, 0},
+                                  .fade = {d.alpha, at.scale, 0.0F, 0.0F}});
+                continue;
+            }
+            const labels::NameSprite& name = *name_sprites_[label - sprites.size()];
+            const labels::LabelSprite& s = name.sprite;
+            need += s.own.pixels.size() + s.large.pixels.size();
+            const std::array<std::uint32_t, 2>* places = name_offsets(name);
+            if (places == nullptr) {
+                full = true;
+                continue;
+            }
+            const auto [image, at] = labels::image_at(s, names_large, d);
+            const labels::SpriteImage& from = image == 0 ? s.own : s.large;
+            draws_.push_back({.target = {at.x, at.y, at.width, at.height},
+                              .source = {places->at(image), from.width, from.height, 1},
+                              .fade = {d.alpha, at.scale, 0.0F, 0.0F}});
+            ++names_drawn_;
+            waters_drawn_ += name_waters_[label - sprites.size()];
+        }
+        if (!full || pass == 1) break;
+        const std::uint64_t texels =
+            std::clamp<std::uint64_t>(std::bit_ceil(2 * need), first_name_texels, max_name_texels);
+        if (!fresh_names_buffer(static_cast<std::uint32_t>(texels))) break;
+    }
+    if (arena_ && arena_dirty_) {
+        arena_.flush();
+        arena_dirty_ = false;
+    }
+    if (arena_ && set_generation_.at(slot) != arena_generation_ && *sets_.at(slot) && device_ != nullptr) {
+        gpu::SetWriter(*sets_.at(slot))
+            .buffer(sp::name_texels.binding, vk::DescriptorType::eStorageBuffer, arena_.handle(), 0,
+                    std::size_t{arena_capacity_} * sizeof(std::uint32_t))
+            .apply(device_->handle());
+        set_generation_.at(slot) = arena_generation_;
     }
     if (draw_buffer_ && !draws_.empty()) {
         std::memcpy(draw_buffer_.bytes().data() + (slot * slot_bytes), draws_.data(), draws_.size() * draw_bytes);
         draw_buffer_.flush();
         drawn_count_.at(slot) = static_cast<std::uint32_t>(draws_.size());
+    }
+    // The names' line, when what the frame picks or draws of them changes: at most once a second while the camera
+    // moves, and at rest at once (its frames are few, and the last of them says what stands).
+    const auto picked_names =
+        static_cast<std::uint32_t>(std::ranges::count(picked_, false, &scene::PickedName::leaving));
+    if ((picked_names != logged_names_.at(0) || names_drawn_ != logged_names_.at(1)) &&
+        (state.rest || state.seconds - names_logged_at_ >= 1.0)) {
+        // (the waters among them said where the frame picks any: the line is the places' alone otherwise)
+        const auto picked_waters = static_cast<std::uint32_t>(std::ranges::count_if(
+            picked_, [](const auto& n) { return !n.leaving && n.style == scene::NameStyle::water; }));
+        if (picked_waters > 0) {
+            log::info("vk names: picked {} with sprites {} drawn {}, waters picked {} drawn {}", picked_names,
+                      name_sprites_.size(), names_drawn_, picked_waters, waters_drawn_);
+        } else {
+            log::info("vk names: picked {} with sprites {} drawn {}", picked_names, name_sprites_.size(), names_drawn_);
+        }
+        logged_names_ = {picked_names, names_drawn_};
+        names_logged_at_ = state.seconds;
     }
     // D16's line, when what is placed changes, at most once a second.
     if (placement_.placed() != logged_placed_ && state.seconds - logged_at_ >= 1.0) {
@@ -110,7 +398,10 @@ gpu::Result<void> Labels::prepare(const frame::PassContext& context) {
     const std::array bindings{
         gpu::Binding{.slot = sp::sprite_draws.binding,
                      .type = vk::DescriptorType::eStorageBuffer,
-                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment}};
+                     .stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment},
+        gpu::Binding{.slot = sp::name_texels.binding,
+                     .type = vk::DescriptorType::eStorageBuffer,
+                     .stages = vk::ShaderStageFlagBits::eFragment}};
     ATLAS_GPU_LET(set_layout, gpu::make_set_layout(d, bindings));
     set_layout_ = std::move(set_layout);
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
@@ -123,11 +414,16 @@ gpu::Result<void> Labels::prepare(const frame::PassContext& context) {
     ATLAS_GPU_LET(draws, context.device.memory().buffer(2 * slot_bytes, vk::BufferUsageFlagBits::eStorageBuffer,
                                                         gpu::MemoryUse::upload));
     draw_buffer_ = std::move(draws);
+    device_ = &context.device;
+    if (!fresh_names_buffer(first_name_texels)) return gpu::fail("the names' buffer");
     for (std::size_t s = 0; s < sets_.size(); ++s) {
         gpu::SetWriter(*sets_.at(s))
             .buffer(sp::sprite_draws.binding, vk::DescriptorType::eStorageBuffer, draw_buffer_.handle(), s * slot_bytes,
                     slot_bytes)
+            .buffer(sp::name_texels.binding, vk::DescriptorType::eStorageBuffer, arena_.handle(), 0,
+                    std::size_t{arena_capacity_} * sizeof(std::uint32_t))
             .apply(d);
+        set_generation_.at(s) = arena_generation_;
     }
     const std::array<vk::DescriptorSetLayout, 1> extra{*set_layout_};
     ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
@@ -160,6 +456,13 @@ void Labels::release() noexcept {
     module_.clear();
     draw_buffer_ = gpu::Buffer{};
     drawn_count_ = {};
+    arena_ = gpu::Buffer{};
+    retired_.clear();
+    arena_places_.clear();
+    arena_capacity_ = 0;
+    arena_used_ = 0;
+    set_generation_ = {};
+    device_ = nullptr;
 }
 
 void Labels::record(const frame::Recording& recording, std::uint32_t phase) {

@@ -52,13 +52,16 @@
 namespace atlas::scene {
 class Cover;         // scene/Cover.hpp
 class Heaps;         // scene/Heaps.hpp
+struct House;        // scene/House.hpp
 class ItemTable;     // scene/ItemTable.hpp
 struct ResidentPack; // scene/Packs.hpp
 struct WorldFrame;   // scene/WorldTiles.hpp
+struct WorldName;    // scene/WorldNames.hpp
 } // namespace atlas::scene
 
 namespace atlas::labels {
 struct LabelSet; // labels/ (K13): the app's label sprites for a frame (MapCore.labels, Appendix D)
+class NameStore; // labels/Names.hpp: the world's names' sprites (MapCore.names, ENGINE.md step 5's step 9)
 } // namespace atlas::labels
 
 namespace atlas::markers {
@@ -129,12 +132,25 @@ struct FrameState {
     const style::PaletteBlock* palette = nullptr;
     /// The app's label sprites for this frame (FrameInputs::labels; null: none).
     const labels::LabelSet* labels = nullptr;
+    /// The world's names' sprites (FrameInputs::names; null: the frame shows no names), and the names no tile holds.
+    labels::NameStore* names = nullptr;
+    std::span<const scene::WorldName> extra_names;
     /// The app's markers for this frame (FrameInputs::markers; null: none).
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas for this frame (FrameInputs::routes; null: none).
     const routes::RouteSet* routes = nullptr;
-    /// The building the app asks about this frame (FrameInputs::asked), if any.
+    /// The building the app asks about this frame (FrameInputs::asked), if any, where it asks about its walls' colour
+    /// (not AskedBuilding::own_wall): the buildings pass draws the tile's own building as asked.
     std::optional<AskedBuilding> asked;
+    /// The house the frame draws in that building's place (FrameInputs::house, while the cover draws the tile it was
+    /// read from, at their true depth: not under the painter switch), and that tile's place; null: none, the tile's
+    /// own building is drawn. The ranks leave the building's own items out while it is set (RankOptions::replaced).
+    const scene::House* house = nullptr;
+    shaders::TilePlace house_place{};
+    /// The house's walls: their flat colour (0xRRGGBB: the answer's or the board's grey, or the colour its tile gives
+    /// them where the app does not ask about it) and whether the board's hatch lies over them.
+    std::uint32_t house_wall = 0;
+    bool house_hatched = false;
     /// The frame slot (0 or 1): set 0's slice and the passes' own per-frame buffers.
     std::uint32_t slot = 0;
     /// The text runs the passes lay on the ground this frame (the runways' designators) for the ground's text pass,
@@ -234,12 +250,20 @@ struct FrameInputs {
     FrameScene* scene = nullptr;
     /// The app's label sprites (MapCore.labels; null: none), read by K13's labels pass.
     const labels::LabelSet* labels = nullptr;
+    /// The world's names' sprites (labels/Names.hpp; null: the frame shows no names): the labels pass says there which
+    /// names the frame shows without a sprite, and draws those the app has handed (MapCore.namesWanted, names). And
+    /// names no tile holds, picked as a tile's are (a test's: MapCore.testNames).
+    labels::NameStore* names = nullptr;
+    std::span<const scene::WorldName> extra_names;
     /// The app's markers (MapCore.markers; null: none), read by the markers pass.
     const markers::MarkerSet* markers = nullptr;
     /// The app's routes and areas (MapCore.routes; null: none), read by the routes pass.
     const routes::RouteSet* routes = nullptr;
     /// The building the app asks about (MapCore.ask), if any: the ranks and the buildings pass draw it as asked.
     std::optional<AskedBuilding> asked;
+    /// That building's house in the roof asked about (scene/House.hpp; null: none), drawn by the house's pass in the
+    /// building's place.
+    const scene::House* house = nullptr;
     /// The user's palette (MapCore.palette; null: today's).
     const style::PaletteBlock* palette = nullptr;
 };
@@ -273,6 +297,9 @@ public:
     void set_grain(bool grain) noexcept { options_.grain = grain; }
     /// The passes the frame records from the next frame on (FrameOptions::passes).
     void set_passes(std::uint64_t passes) noexcept { options_.passes = passes; }
+    /// The rows of the resident tiles the frame does not draw ranked all the same from the next frame on, as before the
+    /// ranks knew the tiles drawn (RankOptions::rank_undrawn): the pinch audit's measure of what the skip saves.
+    void rank_undrawn(bool on) noexcept { rank_undrawn_ = on; }
 
     /// Every pass's prepare (Pass::prepare) for `pass` and `output`, on several threads at once (FrameOptions::threads,
     /// ENGINE.md gain 20): the first picture waits for the longest pass, not for their sum. On a failure the first
@@ -381,6 +408,8 @@ private:
     std::array<std::string, slot_count> slot_trace_names_;
     Selectors selectors_;
     Ranks ranks_;
+    std::vector<std::uint32_t> rank_tiles_; ///< the drawn tiles' handles, ascending (RankOptions::tiles)
+    bool rank_undrawn_ = false;
     std::string configuration_;
     vk::raii::ShaderModule overdraw_module_{nullptr};
     vk::raii::ShaderModule owner_module_{nullptr};

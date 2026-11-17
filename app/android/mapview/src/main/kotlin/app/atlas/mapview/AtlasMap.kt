@@ -36,28 +36,25 @@ import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
 import app.atlas.mapview.vk.HonestMap
 import app.atlas.mapview.vk.LocalChromeShapes
-import app.atlas.mapview.vk.Transition
 import app.atlas.mapview.vk.VkHost
 import app.atlas.mapview.vk.VkSurface
 import app.atlas.mapview.vk.chromeSurface
+import app.atlas.model.Place
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * The map: Atlas's engine, the 1:1 port of the renderer the screens were drawn with (`app.atlas.render`), from the
- * region packs [MapEngine] is wired to, with gestures (pan, pinch, rotate, two- and three-finger tilt with its readout,
- * double tap, long press, two-finger measure) and the overlays on top.
+ * The map: the core ([MapEngine.core], plan-vector K11) draws it with Vulkan into its own window under all of this (a
+ * SurfaceView, or the TextureView the debug switch asks for), every place, from the packs on the phone [MapEngine] is
+ * wired to; with gestures (pan, pinch, rotate, two- and three-finger tilt with its readout, double tap, long press,
+ * two-finger measure) and the overlays the core does not draw on top, projected with the core's camera in the drawn
+ * pack's own frame. The light is the live moment (the clock and the forecast) unless [style] fixes one. [debug] shows
+ * the core's line over the map; [units] are the measuring tape's.
  *
- * Exact frames are rendered, parsed and rasterised off the main thread; while the next one is made, the last is drawn
- * warped to the camera at once, then the new one fades in. The overlays are projected with the engine's camera in the
- * region's own frame. The light is the live moment (the clock and the forecast) unless [style] fixes one.
- * [debug] shows the frame's timings over the map; [units] are the measuring tape's.
- *
- * Once the app has started the core ([MapEngine.core], plan-vector K11), the core draws the map with Vulkan into its
- * own window under all of this (a SurfaceView, or the TextureView the debug switch asks for), today's map covering it
- * only where the transitional rule wants today's map; where the phone cannot run the core, T2's honest state stands in
- * the map's place.
+ * Until the core's first picture is complete the paper covers it; where it has no tiles at a place the map says why.
+ * Where the phone cannot run the core, T2's honest state stands in the map's place. Until 5 November today's map (the
+ * renderer's port, rasterised on the canvas) drew the places the core had no tiles for (ENGINE.md step 3).
  */
 @Composable
 fun AtlasMap(
@@ -74,6 +71,12 @@ fun AtlasMap(
     onTapBuilding: ((MapPick, Offset) -> Unit)? = null,
     /** A tap on the ground the core draws: what it shows there and where the finger was (px), in place of [onTap]. */
     onTapGround: ((GroundPick, Offset) -> Unit)? = null,
+    /**
+     * The place a tap on a building the core draws opens ([MapHit.OnFeature]): the building itself or a point of
+     * interest in it, or null where it holds none (the tap is then [MapHit.Empty]). Null: a tap on a building is a tap
+     * on the map, as before.
+     */
+    featureOf: (suspend (MapPick) -> Place?)? = null,
     onCameraMove: (camera: CameraPosition, byUser: Boolean) -> Unit = { _, _ -> },
     debug: Boolean = false,
     units: UnitSystem = UnitSystem.forLocale(Locale.getDefault()),
@@ -93,6 +96,7 @@ fun AtlasMap(
     val longPressBuilding by rememberUpdatedState(onLongPressBuilding)
     val tapBuilding by rememberUpdatedState(onTapBuilding)
     val tapGround by rememberUpdatedState(onTapGround)
+    val feature by rememberUpdatedState(featureOf)
     val cameraMove by rememberUpdatedState(onCameraMove)
 
     val insets = with(density) {
@@ -118,6 +122,7 @@ fun AtlasMap(
         controller.onLongPressBuilding = if (longPressBuilding != null) { p -> longPressBuilding?.invoke(p) } else null
         controller.onTapBuilding = if (tapBuilding != null) { p, at -> tapBuilding?.invoke(p, at) } else null
         controller.onTapGround = if (tapGround != null) { p, at -> tapGround?.invoke(p, at) } else null
+        controller.featureOf = if (feature != null) { p -> feature?.invoke(p) } else null
         controller.onCameraMove = { c, u -> cameraMove(c, u) }
         // the tilt's soft tick at its stops, on the view under the fingers (Android's touch feedback setting applies)
         controller.haptic = { view.performHapticFeedback(it) }
@@ -189,7 +194,7 @@ fun AtlasMap(
             .onSizeChanged { controller.size = it.width to it.height }
             .pointerInput(controller) { pointers(controller) }
             .drawWithContent {
-                // The core's window first (its view lets the core's picture show through), then today's map and the
+                // The core's window first (its view lets the core's picture show through), then the start's paper and the
                 // overlays over it; in the honest state, no map at all.
                 drawContent()
                 if (honest != null) return@drawWithContent
@@ -229,7 +234,7 @@ private data class Inputs(
     val lookAhead: Float,
     /** A new fix: the moment moved on, so the light may have. */
     val location: UserLocation?,
-    /** The region drawn changed: its frame is the gestures' and the overlays'. */
+    /** The pack drawn changed: its frame is the gestures' and the overlays'. */
     val frame: app.atlas.render.live.RegionFrame?,
     /** Routes or areas came or went: the core draws the location only where the canvas draws nothing over the map. */
     val ground: Boolean,

@@ -18,7 +18,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -33,12 +32,8 @@ import org.robolectric.annotation.GraphicsMode
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w412dp-h915dp-xhdpi")
 class MapStageTest {
-    val compose = createComposeRule()
-    private val threads = MapFrameThreads()
-
-    /** The compose rule's teardown closes the map; its frame thread is waited for after it. */
     @get:Rule
-    val rules: RuleChain = RuleChain.outerRule(threads).around(compose)
+    val compose = createComposeRule()
 
     @Test
     fun aScreenOverTheMapTakesOnTheOneShownAndNothingIsRebuilt() {
@@ -67,7 +62,6 @@ class MapStageTest {
             }
         }
         compose.waitForIdle()
-        threads.track(home)
         val controller = home.controller
         assertNotNull(controller)
         val camera = home.camera
@@ -109,7 +103,6 @@ class MapStageTest {
             }
         }
         compose.waitForIdle()
-        threads.track(home)
         val controller = home.controller
         assertNotNull(controller)
         val camera = home.camera

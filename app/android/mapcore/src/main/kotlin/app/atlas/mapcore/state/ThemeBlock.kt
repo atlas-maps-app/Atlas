@@ -16,10 +16,24 @@ import java.nio.ByteOrder
  */
 object ThemeBlock {
     /** The layout's version (`theme_block_version`). */
-    const val VERSION = 1
+    const val VERSION = 2
+
+    /**
+     * The place the port's own moments are of (amsterdam.py's LAT0 and LON0, `Regions.resetPlace`: the Westerkerk), which
+     * a block is written for unless its writer names another.
+     */
+    const val PLACE_LAT = 52.3746
+    const val PLACE_LON = 4.8840
 
     /** The block's size in bytes. */
     const val SIZE = 256
+
+    /**
+     * The sun's elevation under which the port's live moment is night, degrees (amsterdam.py's `weather_theme`, `el <
+     * -2`; the core's `style::night_below`): where [NIGHT] flips. The core's world look ties the far world's day
+     * colours to it, so the flip makes no step there.
+     */
+    const val NIGHT_BELOW = -2.0
 
     // The flag bits (theme.slang's THEME_ bits, the shaders read them unchanged).
     const val NIGHT = 1
@@ -64,7 +78,8 @@ object ThemeBlock {
     const val AZIMUTH_AT = 152
     const val ELEVATION_AT = 160
     const val WEATHER_AT = 168
-    const val RESERVED1_AT = 248
+    const val PLACE_LAT_AT = 248
+    const val PLACE_LON_AT = 252
 
     /** The layout as (name, offset, size), named as the core's table names its fields (`CP/style/Layouts.cpp`). */
     val FIELDS: List<Triple<String, Int, Int>> = buildList {
@@ -84,7 +99,8 @@ object ThemeBlock {
         add(Triple("az", AZIMUTH_AT, 8))
         add(Triple("el", ELEVATION_AT, 8))
         WEATHER_KEYS.forEachIndexed { i, k -> add(Triple("wx.$k", WEATHER_AT + 8 * i, 8)) }
-        add(Triple("reserved1", RESERVED1_AT, 8))
+        add(Triple("place_lat", PLACE_LAT_AT, 4))
+        add(Triple("place_lon", PLACE_LON_AT, 4))
     }
 
     /** A direct, little-endian buffer for one block. */
@@ -97,13 +113,17 @@ object ThemeBlock {
      * the profile's TONE and [toneStrength] the user's strength of it (the Map look's Tone, 0 to 2: 0 lights every pack
      * without TONE; the renders' 1 writes no strength, so the block is the one the renders' light reads), and [daylight]
      * the renders' daylight (RenderOptions.daylight, amsterdam.py's ATLAS_DAYLIGHT: by day its dusk, at night the open
-     * places' pools), which the theme itself shows only at dusk. Fails on a theme without a value the block needs.
+     * places' pools), which the theme itself shows only at dusk. [placeLat] and [placeLon] say where the sun stands at
+     * [azimuth] and [elevation], degrees (float precision, a metre): the place the moment lights, which the core's world
+     * look takes the terminator from; a named moment, a look, is written for the camera's place, so the place it shows is
+     * lit as the moment is. Fails on a theme without a value the block needs.
      */
     fun write(
         out: ByteBuffer, theme: Map<String, Any?>, sun: DoubleArray, azimuth: Double, elevation: Double, golden: Boolean, tone: Boolean,
-        at: Int = 0, toneStrength: Float = 1f, daylight: Boolean = false,
+        at: Int = 0, toneStrength: Float = 1f, daylight: Boolean = false, placeLat: Double = PLACE_LAT, placeLon: Double = PLACE_LON,
     ) {
         require(toneStrength in 0f..2f) { "a TONE strength of 0 to 2, not $toneStrength" }
+        require(placeLat in -90.0..90.0 && placeLon in -180.0..180.0) { "a place on the planet, not $placeLat, $placeLon" }
         require(out.order() == ByteOrder.LITTLE_ENDIAN) { "the theme block is little-endian" }
         require(at >= 0 && out.limit() - at >= SIZE) { "no room for a theme block at $at" }
         require(sun.size == 3) { "the sun vector has three components" }
@@ -126,6 +146,8 @@ object ThemeBlock {
         out.putInt(at + VERSION_AT, VERSION)
         out.putInt(at + FLAGS_AT, flags)
         out.putFloat(at + TONE_AT, if (toneStrength != 1f) toneStrength else 0f)
+        out.putFloat(at + PLACE_LAT_AT, placeLat.toFloat())
+        out.putFloat(at + PLACE_LON_AT, placeLon.toFloat())
         val date = ints(theme, "date", 3)
         val hhmm = ints(theme, "hhmm", 2)
         out.putShort(at + YEAR_AT, date[0].toShort())

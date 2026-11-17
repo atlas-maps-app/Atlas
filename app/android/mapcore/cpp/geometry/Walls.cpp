@@ -978,6 +978,104 @@ void shop_hours(const Records& records, const tl::Layer* var,
 
 } // namespace
 
+double house_roof_height(double h, double shortest) noexcept {
+    return pm::min(h * 0.4, pm::max(2.0, pm::min(5.0, shortest * 0.45)));
+}
+
+std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t id, bool relation,
+                                         std::string_view roof) {
+    ATLAS_ASSERT(in.tile != nullptr && in.head != nullptr);
+    if (std::ranges::find(house_roofs, roof) == house_roofs.end()) return std::nullopt;
+    const tl::Layer* l = in.tile->layer(tl::LayerId::building);
+    if (l == nullptr) return std::nullopt;
+    for (std::uint32_t i = 0; i < l->count; ++i) {
+        if (l->integer(tl::building::id, i) != id) continue;
+        Building bl;
+        bl.v = values_of(*l, record_slots, i);
+        if (bl.v.relation != relation) continue;
+        std::vector<std::uint32_t> kept;
+        ring_at(l->ring(tl::building::ring, i), in.level, in.head->frame, kept, bl.poly);
+        if (bl.v.hidden || !bl.v.has_h || bl.poly.size() < 3) return std::nullopt;
+        if ((bl.v.flags & tl::building::flag_houseboat) != 0) return std::nullopt;
+        bl.id = id;
+        bl.source = Source::building;
+        bl.h = bl.v.h;
+        bl.y0 = bl.v.min;
+        // the roof asked for, plain: no kit's roof, no guess beside it
+        const bool own_pitch = (is(bl.v.roof, "gabled") || is(bl.v.roof, "hipped")) && bl.v.roof_h != 0.0;
+        bl.v.flags &= ~std::uint64_t{tl::building::flag_kit};
+        bl.v.shape_guessed = false;
+        bl.roof = roof;
+        if (roof == "flat") {
+            bl.rh = 0.0;
+        } else if (own_pitch) {
+            bl.rh = bl.v.roof_h;
+        } else {
+            const std::size_t n = bl.poly.size();
+            double shortest = hypot(bl.poly[1].x - bl.poly[0].x, bl.poly[1].z - bl.poly[0].z);
+            for (std::size_t k = 1; k < n; ++k) {
+                const V2 a = bl.poly[k];
+                const V2 c = bl.poly[(k + 1) % n];
+                shortest = pm::min(shortest, hypot(c.x - a.x, c.z - a.z));
+            }
+            bl.rh = house_roof_height(bl.h, shortest);
+        }
+        // a roof never taller than the walls it stands on leave room for
+        bl.rh = std::min(bl.rh, std::max(0.0, bl.h - bl.y0));
+        bl.wall_top = bl.h - bl.rh;
+        bl.guessed_shape = false;
+        bl.skillion = false;
+        bl.dirv = {};
+        bl.p0 = 0.0;
+        bl.span = 1.0;
+        std::optional<TileBuildings> out(std::in_place);
+        out->level = in.level;
+        out->lean = true;
+        out->cells_per_side = in.tile->header.cells_per_side;
+        std::uint16_t near_slots = 0;
+        std::uint16_t far_slots = 0;
+        {
+            Builder b(*out);
+            b.lean = true;
+            b.cell = 0;
+            b.item = 0;
+            walls(b, bl, 0);
+            roofs(b, bl, 0);
+            out->samples = b.sample;
+            near_slots = Builder::slot(b.near_slot);
+            far_slots = Builder::slot(b.far_slot);
+        }
+        const V2 c = centroid(bl.poly);
+        BuildingItem item{.spec = {.x = c.x,
+                                   .y = bl.h / 2,
+                                   .z = c.z,
+                                   .offset = 0.0,
+                                   .cut_x = c.x,
+                                   .cut_z = c.z,
+                                   .order = scene::order_of(0, 0),
+                                   .kind = in.kind,
+                                   .flags = scene::item_flag::radius,
+                                   .slots = {},
+                                   .min_depth = 2.0F,
+                                   .radius = 0.0F,
+                                   .tile = 0},
+                          .source = Source::building,
+                          .record = i,
+                          .id = id,
+                          .relation = relation,
+                          .outline = id,
+                          .outline_relation = relation,
+                          .near_slots = near_slots,
+                          .far_slots = far_slots,
+                          .boat_slots = 0};
+        item.spec.owner = scene::owner_key(owner_area, static_cast<std::uint64_t>(id));
+        item.spec.building = item.spec.owner;
+        out->items.push_back(item);
+        return out;
+    }
+    return std::nullopt;
+}
+
 TileBuildings build_buildings(const BuildingInput& in) {
     ATLAS_ASSERT(in.tile != nullptr && in.head != nullptr);
     const tl::Tile& tile = *in.tile;

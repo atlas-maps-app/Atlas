@@ -29,6 +29,7 @@
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/Swapchain.hpp"
+#include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Window.hpp"
@@ -37,6 +38,7 @@
 #include "osm/Edits.hpp"
 #include "passes/BlurCheck.hpp"
 #include "routes/Routes.hpp"
+#include "scene/WorldNames.hpp"
 #include "standin/Session.hpp"
 #include "style/CameraState.hpp"
 #include "style/Palette.hpp"
@@ -45,6 +47,7 @@
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
 #include "tiles/ExpandedCache.hpp"
+#include "tiles/Kept.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/WorldIndex.hpp"
 
@@ -427,6 +430,31 @@ public:
     void labels(std::shared_ptr<const labels::LabelSet> set) {
         on_session([this, &set] {
             map_->set_labels(std::move(set));
+            ask_frame();
+        });
+    }
+
+    /// The names the map's frames show without a sprite, by rank (labels::NameStore::ask: each asked for once in two
+    /// seconds, on the bridge's own clock, which runs while the map rests).
+    [[nodiscard]] std::vector<labels::NameWant> names_wanted() {
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        return on_session([this, now] { return map_->names().ask(now); });
+    }
+
+    /// The names' sprites the app hands back (labels::NameStore::give); "" or why they were refused.
+    [[nodiscard]] std::string names(std::vector<labels::LabelSprite> sprites, float large_scale, float floor_dp) {
+        return on_session([this, &sprites, large_scale, floor_dp] {
+            const auto kept = map_->names().give(std::move(sprites), large_scale, floor_dp, map_->seconds());
+            if (!kept) return std::string(labels::describe(kept.error()));
+            ask_frame();
+            return std::string();
+        });
+    }
+
+    /// Names no tile holds, picked as a tile's are from now on (a test's).
+    void test_names(std::vector<scene::WorldName> names) {
+        on_session([this, &names] {
+            map_->set_extra_names(std::move(names));
             ask_frame();
         });
     }
@@ -1283,14 +1311,117 @@ jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget
 }
 
 /// Empties the world's cache in `dir` of every head and chunk (a new version of the world drops the old one's:
-/// ENGINE.md step 6), its budget `budget` from now on; "" or why not.
-jstring native_world_drop(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget) {
+/// ENGINE.md step 6), its budget `budget` from now on; "" or why not. With `pinned`, all but what is pinned there: the
+/// kept countries' world stays (ENGINE.md step 11: the app pinned the new world's keep, whole, before it let the old
+/// one go); without, the pins go too.
+jstring native_world_drop(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jboolean pinned) {
     if (budget <= 0) return java(env, std::format("the world's cache: no budget ({})", budget));
     std::string why;
     const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
     if (cache == nullptr) return java(env, why);
+    if (pinned == JNI_FALSE) {
+        if (const auto unpinned = cache->set_pinned({}); !unpinned) {
+            return java(env, std::format("the world's cache: {}", tiles::describe(unpinned.error())));
+        }
+    }
+    // the cache's budget counts, and its eviction takes, the entries not pinned alone
     cache->evict_to(0);
     return java(env, "");
+}
+
+/// The world a kept country keeps (ENGINE.md step 11; tiles/Kept.hpp), pinned in the world's cache in `dir` in place of
+/// what was pinned there: the packs of the mid-zoom base whose lengths are `lengths` and whose SHA-256s lie end to end
+/// in `identities` (32 bytes each), pack i's tiles to keep the next `counts[i]` of `tiles` (packed keys). What the
+/// cache lacks of them: the tiles no pack holds, the chunks held and their bytes, how many heads are lacking, those
+/// packs' places, then four longs a chunk lacking: its pack's place, its tile (packed), its offset in the pack and its
+/// length. Null where the cache does not open, the arrays do not agree, or the pins cannot be written.
+jlongArray native_world_kept(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jlongArray lengths,
+                             jbyteArray identities, jintArray counts, jlongArray tiles) {
+    if (lengths == nullptr || identities == nullptr || counts == nullptr || tiles == nullptr || budget <= 0) {
+        return nullptr;
+    }
+    const jsize n = env->GetArrayLength(lengths);
+    const jsize all = env->GetArrayLength(tiles);
+    if (env->GetArrayLength(counts) != n ||
+        env->GetArrayLength(identities) != n * static_cast<jsize>(sizeof(tiles::Sha256Digest))) {
+        return nullptr;
+    }
+    std::vector<jlong> length(static_cast<std::size_t>(n));
+    std::vector<jint> count(static_cast<std::size_t>(n));
+    std::vector<jbyte> identity(static_cast<std::size_t>(n) * sizeof(tiles::Sha256Digest));
+    std::vector<jlong> tile(static_cast<std::size_t>(all));
+    env->GetLongArrayRegion(lengths, 0, n, length.data());
+    env->GetIntArrayRegion(counts, 0, n, count.data());
+    env->GetByteArrayRegion(identities, 0, static_cast<jsize>(identity.size()), identity.data());
+    env->GetLongArrayRegion(tiles, 0, all, tile.data());
+    std::vector<tiles::KeptPack> packs(static_cast<std::size_t>(n));
+    std::size_t at = 0;
+    for (std::size_t i = 0; i < packs.size(); ++i) {
+        if (length[i] <= 0 || count[i] < 0 || static_cast<std::size_t>(count[i]) > tile.size() - at) return nullptr;
+        tiles::KeptPack& p = packs[i];
+        p.length = static_cast<std::uint64_t>(length[i]);
+        std::memcpy(p.identity.data(), identity.data() + (i * p.identity.size()), p.identity.size());
+        p.tiles.reserve(static_cast<std::size_t>(count[i]));
+        for (jint k = 0; k < count[i]; ++k) {
+            p.tiles.push_back(tiles::TileKey::unpack(static_cast<std::uint64_t>(tile[at++])));
+        }
+    }
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) {
+        log::warn("vk world: {}", why);
+        return nullptr;
+    }
+    const auto kept = tiles::keep_packs(*cache, packs, load::world_style());
+    if (!kept) {
+        log::warn("vk world: the keep's pins were not written: {}", tiles::describe(kept.error()));
+        return nullptr;
+    }
+    std::vector<jlong> out{static_cast<jlong>(kept->unknown), static_cast<jlong>(kept->held),
+                           static_cast<jlong>(kept->held_bytes), static_cast<jlong>(kept->heads.size())};
+    for (const std::uint32_t head : kept->heads) out.push_back(static_cast<jlong>(head));
+    for (const tiles::KeptChunk& c : kept->chunks) {
+        out.push_back(static_cast<jlong>(c.pack));
+        out.push_back(static_cast<jlong>(c.tile.packed()));
+        out.push_back(static_cast<jlong>(c.offset));
+        out.push_back(static_cast<jlong>(c.length));
+    }
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// A range of the bytes of a kept world pack the app fetched, into the world's cache in `dir` (tiles::keep_range): the
+/// pack of `length` bytes whose SHA-256 is `identity`, `bytes` from `offset`. How many chunks were kept, then the tiles
+/// (packed) whose bytes were refused; null where the cache holds no head that opens the pack.
+jlongArray native_world_kept_range(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget, jlong length,
+                                   jbyteArray identity, jlong offset, jbyteArray bytes) {
+    tiles::KeptPack pack;
+    if (identity == nullptr || bytes == nullptr || budget <= 0 || length <= 0 || offset < 0 ||
+        env->GetArrayLength(identity) != static_cast<jsize>(pack.identity.size())) {
+        return nullptr;
+    }
+    pack.length = static_cast<std::uint64_t>(length);
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(pack.identity.size()),
+        reinterpret_cast<jbyte*>(pack.identity.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    std::vector<std::byte> b(static_cast<std::size_t>(env->GetArrayLength(bytes)));
+    env->GetByteArrayRegion(bytes, 0, static_cast<jsize>(b.size()),
+                            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    std::string why;
+    const auto cache = world_cache_in(string_of(env, dir), static_cast<std::uint64_t>(budget), why);
+    if (cache == nullptr) {
+        log::warn("vk world: {}", why);
+        return nullptr;
+    }
+    const auto kept = tiles::keep_range(*cache, pack, {.offset = static_cast<std::uint64_t>(offset), .bytes = b},
+                                        load::world_style());
+    if (!kept) return nullptr;
+    std::vector<jlong> out{static_cast<jlong>(kept->kept.size())};
+    for (const tiles::TileKey& t : kept->refused) out.push_back(static_cast<jlong>(t.packed()));
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
 }
 
 /// The world's tiles the map wants whose chunks are not on the phone, nearest first: eight longs each, its pack's block
@@ -1563,6 +1694,86 @@ jstring native_labels(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
     return java(env, "");
 }
 
+/// The world's names the map's frames show without a sprite, by rank, for the app to draw (ENGINE.md step 5, "Names"):
+/// little-endian, their count (u32), then each one's id (u32), its look (u32: scene::NameStyle) and its text's bytes
+/// (u32, then UTF-8). Each is asked for once in two seconds.
+jbyteArray native_names_wanted(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<labels::NameWant> wants =
+        core != nullptr ? core->names_wanted() : std::vector<labels::NameWant>{};
+    std::vector<jbyte> out;
+    const auto put = [&out](std::uint32_t v) {
+        for (unsigned k = 0; k < 4; ++k) out.push_back(static_cast<jbyte>((v >> (8U * k)) & 0xFFU));
+    };
+    put(static_cast<std::uint32_t>(wants.size()));
+    for (const labels::NameWant& w : wants) {
+        put(w.id);
+        put(w.style);
+        put(static_cast<std::uint32_t>(w.text.size()));
+        for (const char c : w.text) out.push_back(static_cast<jbyte>(c));
+    }
+    jbyteArray array = env->NewByteArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetByteArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The names' sprites the app hands back (MK/state/LabelBlock.kt's block in a direct buffer, each sprite without
+/// points; one without an image is a name the device has no glyphs for), their text drawn no smaller than `floor_dp`
+/// (the readable floor: 12 sp times Android's font scale). "" or why they were refused.
+jstring native_names(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, jfloat floor_dp) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    void* address = block == nullptr ? nullptr : env->GetDirectBufferAddress(block);
+    const jlong capacity = block == nullptr ? 0 : env->GetDirectBufferCapacity(block);
+    if (address == nullptr || capacity < 0) return java(env, "the names must be a direct buffer");
+    auto read =
+        labels::read_label_block(std::span(static_cast<const std::byte*>(address), static_cast<std::size_t>(capacity)));
+    if (!read) return java(env, std::format("the names were refused: {}", read.error()));
+    if (read->sprites.empty()) return java(env, "");
+    const std::string why = core->names(std::move(read->sprites), read->large_scale, floor_dp);
+    return java(env, why.empty() ? why : std::format("the names were refused: {}", why));
+}
+
+/// Names no tile holds, picked as a tile's are from now on (a test's: smoke's eight scripts): little-endian, their
+/// count (u32), then each one's kind (u32: scene::NameKind), latitude, longitude and people (f64 each: a water's
+/// area in m², a river's length in m) and its text's bytes (u32, then UTF-8). "" or why they were refused.
+jstring native_test_names(JNIEnv* env, jclass /*cls*/, jlong handle, jbyteArray block) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    std::vector<jbyte> bytes(block == nullptr ? 0 : static_cast<std::size_t>(env->GetArrayLength(block)));
+    if (!bytes.empty()) env->GetByteArrayRegion(block, 0, static_cast<jsize>(bytes.size()), bytes.data());
+    std::size_t at = 0;
+    const auto take = [&](void* to, std::size_t n) {
+        if (bytes.size() - at < n) return false;
+        std::memcpy(to, bytes.data() + at, n);
+        at += n;
+        return true;
+    };
+    std::uint32_t count = 0;
+    if (!take(&count, 4)) return java(env, "the names were refused: no count");
+    std::vector<scene::WorldName> names;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::uint32_t kind = 0;
+        std::uint32_t length = 0;
+        scene::WorldName name;
+        if (!take(&kind, 4) || !take(&name.lat, 8) || !take(&name.lon, 8) || !take(&name.people, 8) ||
+            !take(&length, 4) || bytes.size() - at < length ||
+            kind > static_cast<std::uint32_t>(scene::NameKind::river)) {
+            return java(env, std::format("the names were refused: name {} is cut short, or of no kind", i));
+        }
+        name.kind = static_cast<scene::NameKind>(kind);
+        if (scene::is_water(name.kind)) {
+            name.extent = name.people;
+            name.people = 0.0;
+        }
+        name.text.assign(reinterpret_cast<const char*>(bytes.data() + at), length);
+        at += length;
+        names.push_back(std::move(name));
+    }
+    core->test_names(std::move(names));
+    return java(env, "");
+}
+
 /// The app's markers for the map (MK/state/MarkerBlock.kt's block in a direct buffer, markers/Markers.hpp's
 /// read_marker_block: each marker's look as the app drew it, the clusters' counts, and what the core places them by),
 /// at `revision`; an empty block takes them away. "" or why they were refused.
@@ -1610,9 +1821,11 @@ jstring native_routes(JNIEnv* env, jclass /*cls*/, jlong handle, jobject block, 
 }
 
 /// The building the app asks about (FillIn's question; frame/Asked.hpp): way or relation `id` (0: none, the question
-/// closed), its walls' flat colour `wall` (0xRRGGBB) and whether it is drawn hatched (the question still open).
-void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation, jlong id, jint wall,
-                jboolean hatched) {
+/// closed), its walls' flat colour `wall` (0xRRGGBB; negative: their colour is not asked about, and they keep the
+/// colour its tile gives them), whether it is drawn hatched (the question still open), and the roof it is asked about
+/// in (`roof`: 0 its own, 1 flat, 2 gabled, 3 hipped: scene::house_roof).
+void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation, jlong id, jint wall, jboolean hatched,
+                jint roof) {
     Core* core = core_of(handle);
     if (core == nullptr) return;
     if (id == 0) {
@@ -1621,8 +1834,10 @@ void native_ask(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean relation
     }
     core->ask(frame::AskedBuilding{.id = id,
                                    .relation = relation == JNI_TRUE,
-                                   .wall = static_cast<std::uint32_t>(wall) & 0xFF'FFFFU,
-                                   .hatched = hatched == JNI_TRUE});
+                                   .wall = wall < 0 ? 0U : static_cast<std::uint32_t>(wall) & 0xFF'FFFFU,
+                                   .hatched = wall >= 0 && hatched == JNI_TRUE,
+                                   .roof = static_cast<std::uint8_t>(roof >= 0 && roof <= 3 ? roof : 0),
+                                   .own_wall = wall < 0});
 }
 
 /// The building under the view's device point (`x`, `y`) as the map's last frame drew it (frame/MapFrame.hpp's pick):
@@ -1798,8 +2013,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 63>& methods() {
-    static const std::array<JNINativeMethod, 63> table{{
+const std::array<JNINativeMethod, 68>& methods() {
+    static const std::array<JNINativeMethod, 68> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -1853,11 +2068,14 @@ const std::array<JNINativeMethod, 63>& methods() {
         method("moment", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_moment)),
         method("palette", "(JLjava/nio/ByteBuffer;)Ljava/lang/String;", fn(&native_palette)),
         method("labels", "(JLjava/nio/ByteBuffer;JF)Ljava/lang/String;", fn(&native_labels)),
+        method("namesWanted", "(J)[B", fn(&native_names_wanted)),
+        method("names", "(JLjava/nio/ByteBuffer;F)Ljava/lang/String;", fn(&native_names)),
+        method("testNames", "(J[B)Ljava/lang/String;", fn(&native_test_names)),
         method("markers", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_markers)),
         method("routes", "(JLjava/nio/ByteBuffer;J)Ljava/lang/String;", fn(&native_routes)),
         method("pick", "(JFF)Ljava/lang/String;", fn(&native_pick)),
         method("pickGround", "(JFF)Ljava/lang/String;", fn(&native_pick_ground)),
-        method("ask", "(JZJIZ)V", fn(&native_ask)),
+        method("ask", "(JZJIZI)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
@@ -1871,7 +2089,9 @@ const std::array<JNINativeMethod, 63>& methods() {
         method("worldCache", "(JLjava/lang/String;J)Ljava/lang/String;", fn(&native_world_cache)),
         method("worldHeld", "(Ljava/lang/String;J[B)[Z", fn(&native_world_held)),
         method("worldHead", "(Ljava/lang/String;JIJ[B[J[[B)Ljava/lang/String;", fn(&native_world_head)),
-        method("worldDrop", "(Ljava/lang/String;J)Ljava/lang/String;", fn(&native_world_drop)),
+        method("worldDrop", "(Ljava/lang/String;JZ)Ljava/lang/String;", fn(&native_world_drop)),
+        method("worldKept", "(Ljava/lang/String;J[J[B[I[J)[J", fn(&native_world_kept)),
+        method("worldKeptRange", "(Ljava/lang/String;JJ[BJ[B)[J", fn(&native_world_kept_range)),
         method("worldWants", "(J)[J", fn(&native_world_wants)),
         method("worldBlocks", "(J)[J", fn(&native_world_blocks)),
         method("worldKeep", "(JJ[BJ[B)[J", fn(&native_world_keep)),

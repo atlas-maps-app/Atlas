@@ -48,7 +48,8 @@ struct FrameLayers {
     float4 haze_colour;     // rgb: the theme's haze colour, its 8-bit levels / 255; a: 0
     float4 haze_offsets[7]; // the stops' offsets (0 to 1, ascending), four a vector, as the SVG prints them
     float4 haze_alphas[7];  // the stops' opacities, as the SVG prints them
-    float4 vignette;        // x: fin's opacity at the corners (.2, .38 at night); y, z, w: 0
+    float4 vignette;        // x: fin's opacity at the corners (.2, .38 at night); y: how much of the moment's weather
+                            // over the screen is gone, 0 to 1 (the style ladder's: 0 up to 600 km, 1 from 2,000); z, w: 0
     uint4 steps;            // x: the COMPOSITE_ bits of the steps that run; y: the output's levels (255 or 1023); z, w: 0
 };
 
@@ -435,14 +436,27 @@ inline int composite_wash_alpha12(int t) {
     return COMPOSITE_WASH_A1 - (COMPOSITE_WASH_A1 * (t - COMPOSITE_WASH_MID)) / (4096 - COMPOSITE_WASH_MID);
 }
 
+/// `alpha12` (an opacity in 1/4096) at `kept` of 4096 of itself, to the nearest: the weather's steps where the style
+/// ladder thins them (composite_weather_kept). At 4096 the opacity itself.
+inline int composite_kept(int alpha12, int kept) {
+    return (alpha12 * kept + 2048) / 4096;
+}
+
+/// How much of the moment's weather over the screen the layers keep, in 1/4096: 4096 less what the ladder has taken
+/// (FrameLayers::vignette.y).
+inline int composite_weather_kept(FrameLayers l) {
+    float gone = l.vignette.y < 0.0f ? 0.0f : (l.vignette.y > 1.0f ? 1.0f : l.vignette.y);
+    return 4096 - int(floor(gone * 4096.0f + 0.5f));
+}
+
 /// A whole level `c` under the wash at `t`: the channel's colour between its two stops' (`c0` to `c1` over the first
-/// part, `c1` after), at the wash's opacity.
-inline float composite_wash_level(float c, uint c0, uint c1, int t, float n) {
+/// part, `c1` after), at `kept` of 4096 of the wash's opacity.
+inline float composite_wash_level(float c, uint c0, uint c1, int t, float n, int kept) {
     uint w = c1;
     if (t <= COMPOSITE_WASH_MID) {
         w = c0 + ((c1 - c0) * uint(t) + uint(COMPOSITE_WASH_MID / 2)) / uint(COMPOSITE_WASH_MID);
     }
-    return composite_haze_level(c, float(w) / 255.0f, composite_wash_alpha12(t), n);
+    return composite_haze_level(c, float(w) / 255.0f, composite_kept(composite_wash_alpha12(t), kept), n);
 }
 
 /// The finished colour of a pixel, as levels of the output (whole numbers), from its colour (levels: the mean of its
@@ -452,14 +466,18 @@ inline float composite_wash_level(float c, uint c0, uint c1, int t, float n) {
 /// the cloud shadows' pixel there, 0 for none; `rain`: the rain's opacity there (1/4096, composite_rain_alpha12), 0 for
 /// none. The finished colour from the haze's and the vignette's opacities at the pixel (1/4096), however they were
 /// found: the composite takes them from the frame's tables (gain 2), the twin from composite_steps_fx's own arithmetic.
+/// The moment's weather (the clouds' shadows, the rain, the wash) is drawn at what the ladder keeps of its opacity
+/// (composite_weather_kept: all of it up to a camera 600 km from its target, where each step is as it was to the bit;
+/// thinning with the haze from there, none at 2,000 km, where the steps' bits go), so it ends without a step.
 inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, int rain, int haze, int wash,
                                      int vignette, uint3 grain) {
     float n = float(l.steps.y);
     uint steps = l.steps.x & COMPOSITE_DRAWN;
     float3 c = levels;
+    int kept = composite_weather_kept(l);
     if ((steps & COMPOSITE_CLOUD_SHADOWS) != 0u && cloud != 0u) {
         uint a8 = cloud >> 24u;
-        uint a12 = (a8 * 1720u + 127u) / 255u;
+        uint a12 = uint(composite_kept(int((a8 * 1720u + 127u) / 255u), kept));
         uint r = ((((cloud >> 16u) & 0xFFu) * 255u) + (a8 / 2u)) / a8;
         uint g = ((((cloud >> 8u) & 0xFFu) * 255u) + (a8 / 2u)) / a8;
         uint b = (((cloud & 0xFFu) * 255u) + (a8 / 2u)) / a8;
@@ -469,9 +487,10 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, i
         c = s;
     }
     if ((steps & COMPOSITE_RAIN) != 0u && rain > 0) {
-        float3 r = {composite_haze_level(c.x, float(COMPOSITE_RAIN_R) / 255.0f, rain, n),
-                    composite_haze_level(c.y, float(COMPOSITE_RAIN_G) / 255.0f, rain, n),
-                    composite_haze_level(c.z, float(COMPOSITE_RAIN_B) / 255.0f, rain, n)};
+        int a = composite_kept(rain, kept);
+        float3 r = {composite_haze_level(c.x, float(COMPOSITE_RAIN_R) / 255.0f, a, n),
+                    composite_haze_level(c.y, float(COMPOSITE_RAIN_G) / 255.0f, a, n),
+                    composite_haze_level(c.z, float(COMPOSITE_RAIN_B) / 255.0f, a, n)};
         c = r;
     }
     if ((steps & COMPOSITE_HAZE) != 0u && l.haze.w > 0.0f) {
@@ -481,9 +500,9 @@ inline float3 composite_steps_alphas(FrameLayers l, float3 levels, uint cloud, i
         c = h;
     }
     if ((steps & COMPOSITE_WASH) != 0u) {
-        float3 w = {composite_wash_level(c.x, COMPOSITE_WASH_R0, COMPOSITE_WASH_R1, wash, n),
-                    composite_wash_level(c.y, COMPOSITE_WASH_G0, COMPOSITE_WASH_G1, wash, n),
-                    composite_wash_level(c.z, COMPOSITE_WASH_B0, COMPOSITE_WASH_B1, wash, n)};
+        float3 w = {composite_wash_level(c.x, COMPOSITE_WASH_R0, COMPOSITE_WASH_R1, wash, n, kept),
+                    composite_wash_level(c.y, COMPOSITE_WASH_G0, COMPOSITE_WASH_G1, wash, n, kept),
+                    composite_wash_level(c.z, COMPOSITE_WASH_B0, COMPOSITE_WASH_B1, wash, n, kept)};
         c = w;
     }
     if ((steps & COMPOSITE_GRAIN) != 0u && grain.z != 0u) {

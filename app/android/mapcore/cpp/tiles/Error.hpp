@@ -72,6 +72,7 @@ enum class LayerId : std::uint8_t {
     built = 13,
     dem = 14,
     variant = 15,
+    heights = 16, ///< a terrain tile's raster (tiles/Heights.hpp): no layer of the map's schema, read by its own reader
 };
 
 /// A reader's error: fault, site, and for a column the layer and the column's name, for a style's value its name

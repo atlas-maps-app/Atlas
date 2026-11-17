@@ -307,7 +307,7 @@ Result<Tile> TileDecoder::decode(std::span<const std::byte> raw, Arena& arena) {
         const Entry& e = entries[j];
         const LayerSchema* schema = schema_of(static_cast<LayerId>(e.id));
         if (schema == nullptr) {
-            skipped[at_skipped++] = {.id = e.id, .count = e.count};
+            skipped[at_skipped++] = {.id = e.id, .count = e.count, .columns = e.columns, .bytes = e.bytes};
             continue;
         }
         Layer& layer = layers[at_known++];

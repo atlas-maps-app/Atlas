@@ -217,9 +217,15 @@ sourceSets {
         // only :core's ExactMath), and the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and
         // parts with the app's own CoreMoment and MapParts, and the palette CoreMoment recolours the theme by.
         val mapviewKotlin = rootProject.layout.projectDirectory.dir("mapview/src/main/kotlin/app/atlas/mapview").asFile
-        val mapviewShared = listOf("svg/Turbulence.kt", "MapParts.kt", "vk/CoreMoment.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
+        // and the keeper of a kept country's world (MT/tiles/KeptWorldTest.kt), which runs over the core's own cache
+        val mapviewShared = listOf("MapParts.kt", "vk/CoreMoment.kt", "vk/WorldKeeper.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
         kotlin.srcDir(mapviewKotlin)
         kotlin.exclude { it.file.isFile && it.file.startsWith(mapviewKotlin) && it.file !in mapviewShared }
+        // The port's Turbulence, in mapview's raster sources (src/raster: in tests alone, ENGINE.md step 3).
+        val rasterKotlin = rootProject.layout.projectDirectory.dir("mapview/src/raster/kotlin/app/atlas/mapview").asFile
+        val rasterShared = listOf("svg/Turbulence.kt").map(rasterKotlin::resolve).toSet()
+        kotlin.srcDir(rasterKotlin)
+        kotlin.exclude { it.file.isFile && it.file.startsWith(rasterKotlin) && it.file !in rasterShared }
     }
 }
 
@@ -254,6 +260,10 @@ tasks.named("compileTestKotlin") { dependsOn(mapcoreAndroidFree) }
 
 dependencies {
     packerTool(project(":packer"))
+    // the globe check's Earth (likeness/GlobeCheck.kt): the Globe board's land and cities cut into a globe pack by the
+    // packer's own world code
+    testImplementation(project(":packer"))
+    testImplementation(libs.jts.core)
     testImplementation(project(":core"))
     // the phone's reader of a region's windows' index (WindowPackBuildTest), and of its country's tiles (PhoneLook)
     testImplementation(project(":tiles"))
@@ -338,7 +348,7 @@ tasks.test {
     if (providers.systemProperty("atlas.render.out").isPresent) outputs.upToDateWhen { false }
     // The phone look tool (likeness/PhoneLook.kt): what to draw and where, and the folder it compares; it runs every
     // time it is asked.
-    for (p in listOf("out", "views", "moment", "size", "parts", "path", "canal", "list", "work", "compare")) {
+    for (p in listOf("out", "views", "moment", "size", "parts", "path", "canal", "list", "work", "compare", "world", "under", "elements", "part")) {
         providers.systemProperty("atlas.phonelook.$p").orNull?.let {
             systemProperty("atlas.phonelook.$p", it)
             outputs.upToDateWhen { false }

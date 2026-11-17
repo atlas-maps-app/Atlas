@@ -44,6 +44,8 @@ public:
     static constexpr std::uint32_t chip = 2;
     static constexpr std::uint32_t joins_prev = 1;
     static constexpr std::uint32_t joins_next = 2;
+    /// A piece or an area measured on the view, where the ground bends (route.slang's ROUTE_SCREEN).
+    static constexpr std::uint32_t on_view = 4;
 
     Routes() = default;
     Routes(const Routes&) = delete;
@@ -80,6 +82,10 @@ private:
         double sb = 0.0;
         bool joined = false;
         bool ends = false;
+        /// Where the ground bends the piece's points are the view's device px (ax, az and bx, bz), and this the
+        /// device px a metre of the ground across it spans on the view at its middle: its width on the view, as the
+        /// ribbon lying on the ground has it (thinner where the view looks along the ground across it).
+        double across = 0.0;
     };
     std::vector<Piece> pieces_;
     std::vector<std::array<float, 4>> quads_; // per piece, its quad on the view and whether it reaches the view

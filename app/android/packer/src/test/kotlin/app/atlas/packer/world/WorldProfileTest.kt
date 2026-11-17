@@ -91,6 +91,43 @@ class WorldProfileTest {
     }
 
     @Test
+    fun theWatersNamesAreTheWorldsOwnFromTheirLevels() {
+        fun names(type: OsmType, closed: Boolean, vararg kv: Pair<String, String>) =
+            profile.decide(tags(*kv), type, closed, closed || type == OsmType.RELATION, type == OsmType.WAY)
+                .filter { it.layer == WorldProfile.WATER_NAME || it.layer == WorldProfile.RIVER_NAME }.map { listOf(it.layer, it.kind, it.minLevel, it.name) }
+        val w = WorldProfile.WATER_NAME
+        // seas and oceans from L6, as nodes or areas; a bay or a strait as a node from L8 (an area from its size's level)
+        assertEquals(listOf(listOf(w, "sea", 6, "Noordzee")), names(OsmType.NODE, false, "place" to "sea", "name" to "Noordzee"))
+        assertEquals(listOf(listOf(w, "ocean", 6, "Atlantic Ocean")), names(OsmType.RELATION, false, "place" to "ocean", "name" to "Atlantic Ocean"))
+        assertEquals(listOf(listOf(w, "bay", 8, "IJ")), names(OsmType.NODE, false, "natural" to "bay", "name" to "IJ"))
+        assertEquals(listOf(listOf(w, "strait", 6, "Marsdiep")), names(OsmType.WAY, true, "natural" to "strait", "name" to "Marsdiep"))
+        // lakes and reservoirs are natural=water areas with a lake's water=* or none, drawn as water too
+        assertEquals(listOf(listOf(w, "lake", 6, "IJsselmeer")), names(OsmType.RELATION, false, "natural" to "water", "water" to "lake", "name" to "IJsselmeer"))
+        assertEquals(listOf(listOf(w, "reservoir", 6, "Lac de Vouglans")), names(OsmType.WAY, true, "natural" to "water", "water" to "reservoir", "name" to "Lac de Vouglans"))
+        assertEquals(listOf(listOf(w, "lake", 6, "Sloterplas")), names(OsmType.WAY, true, "natural" to "water", "name" to "Sloterplas"))
+        assertEquals(
+            listOf(WorldProfile.WATER, WorldProfile.WATER_NAME),
+            profile.decide(tags("natural" to "water", "name" to "Sloterplas"), OsmType.WAY, true, true, true).map { it.layer },
+        )
+        // a river's or a canal's water, a node of water, a lake without a name: no name
+        assertEquals(emptyList<Any>(), names(OsmType.WAY, true, "natural" to "water", "water" to "river", "name" to "Amstel"))
+        assertEquals(emptyList<Any>(), names(OsmType.NODE, false, "natural" to "water", "name" to "Vijver"))
+        assertEquals(emptyList<Any>(), names(OsmType.WAY, true, "natural" to "water", "water" to "lake"))
+        assertEquals(emptyList<Any>(), names(OsmType.WAY, true, "natural" to "water", "water" to "canal", "name" to "Prinsengracht"))
+        // a river's name along its line from L9, beside the river drawn from L8; a canal's is no river's
+        assertEquals(listOf(listOf(WorldProfile.RIVER_NAME, "river", 9, "Rijn")), names(OsmType.WAY, false, "waterway" to "river", "name" to "Rijn"))
+        assertEquals(emptyList<Any>(), names(OsmType.WAY, false, "waterway" to "canal", "name" to "Noordzeekanaal"))
+        // the level a water's name first shows at: 2,000 dp² at the level's start, 13.24 m a dp at L11 at 52° N
+        assertEquals(13.2387, WorldProfile.dpMetres(11, 52.0), 1e-3)
+        assertEquals(11, WorldProfile.nameLevel(0.36e6, 52.0))
+        assertNull(WorldProfile.nameLevel(0.34e6, 52.0))
+        assertEquals(10, WorldProfile.nameLevel(1.5e6, 52.0))
+        assertEquals(6, WorldProfile.nameLevel(1.1e9, 52.0))
+        // nearer the equator a dp is more metres, so the same lake shows later
+        assertEquals(11, WorldProfile.nameLevel(1.0e6, 0.0))
+    }
+
+    @Test
     fun numbersAndAreasAsStagePReadsThem() {
         assertEquals(-1.0, WorldProfile.num(" -1"))
         assertEquals(12.5, WorldProfile.num("12.5 m"))

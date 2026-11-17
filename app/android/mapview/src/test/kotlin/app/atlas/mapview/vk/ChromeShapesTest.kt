@@ -69,6 +69,8 @@ class ChromeShapesTest {
     @Test
     fun aMovingShapeIsCarriedOnToTheVsyncByAFrameAtMostAndLandsWhereItRests() {
         val shapes = ChromeShapes()
+        // the core draws its glass: a carried write says so, for the one more frame that brings the glass to rest
+        shapes.coreDraws = true
         val s = shapes.add()
         fun x(out: ByteBuffer) = keepOuts(out)[0].left * 2.5f
         val out = state()
@@ -112,6 +114,13 @@ class ChromeShapesTest {
         // No vsync given: as it lies.
         assertFalse(shapes.write(out))
         assertEquals(60f, x(out), 1e-3f)
+        // A keep-out alone (the glass not the core's) is carried the same way and asks for no frame more.
+        shapes.coreDraws = false
+        shapes.place(s, 70f, 100f, 270f, 200f, 10f, 50f, 1f, true, 20 * frame)
+        shapes.place(s, 80f, 100f, 280f, 200f, 10f, 50f, 1f, true, 21 * frame)
+        shapes.place(s, 90f, 100f, 290f, 200f, 10f, 50f, 1f, true, 22 * frame)
+        assertFalse(shapes.write(out, 23 * frame))
+        assertEquals(100f, x(out), 1e-3f)
     }
 
     @Test

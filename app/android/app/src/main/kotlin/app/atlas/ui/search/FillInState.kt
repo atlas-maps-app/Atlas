@@ -27,14 +27,25 @@ internal data class FillInState(
     val adds: List<Pair<String, String>> get() = FillIn.adds(colour, roof)
 
     /**
-     * The building [id] as the board draws it while its front's colour is asked: plain in the board's grey, hatched,
-     * until the colour is answered ("Can't tell" leaves it open), in the answer's colour after, through the end; null
-     * where the colour is mapped already, so the map draws the building as mapped.
+     * The building [id] as the board draws it while FillIn asks about it. Its front's colour asked: plain in the
+     * board's grey, hatched, until the colour is answered ("Can't tell" leaves it open), in the answer's colour after,
+     * through the end; its colour mapped already: in its own. Its roof's shape asked: the board's house, the plain box
+     * until the roof is answered ("Can't tell" leaves it so), under the roof picked after; its roof mapped already: its
+     * own. Null where neither is asked, so the map draws the building as mapped.
      */
-    fun asked(id: OsmId): AskedBuilding? = when {
-        FillIn.Ask.COLOUR !in asks -> null
-        colour != null -> AskedBuilding(id, colour.drawn, hatched = false)
-        else -> AskedBuilding(id, FillIn.OPEN_WALL, hatched = true)
+    fun asked(id: OsmId): AskedBuilding? {
+        val colours = FillIn.Ask.COLOUR in asks
+        val roofs = FillIn.Ask.ROOF in asks
+        if (!colours && !roofs) return null
+        val under = when {
+            !roofs -> AskedBuilding.ROOF_OWN
+            else -> roof?.let { AskedBuilding.roofOf(it.shape) } ?: AskedBuilding.ROOF_FLAT
+        }
+        return when {
+            !colours -> AskedBuilding(id, AskedBuilding.OWN_WALL, hatched = false, roof = under)
+            colour != null -> AskedBuilding(id, colour.drawn, hatched = false, roof = under)
+            else -> AskedBuilding(id, FillIn.OPEN_WALL, hatched = true, roof = under)
+        }
     }
 
     /** Whether the question asked now has its answer (the board's Next is dimmed until it has). */

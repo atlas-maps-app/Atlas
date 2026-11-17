@@ -91,7 +91,7 @@ class MapFacadeTest {
                 val block = ThemeBlock.allocate()
                 ThemeBlock.write(block, th, doubleArrayOf(sun.x, sun.y, sun.z), az, el, golden = false, tone = false)
                 assertEquals("", Native.moment(handle, block))
-                block.putInt(ThemeBlock.VERSION_AT, 2)
+                block.putInt(ThemeBlock.VERSION_AT, ThemeBlock.VERSION + 1)
                 assertEquals("the theme was refused: version", Native.moment(handle, block))
                 assertEquals("the theme must be a direct buffer of 256 bytes", Native.moment(handle, ByteBuffer.allocate(256)))
 
@@ -124,6 +124,39 @@ class MapFacadeTest {
                 val first = ByteBuffer.allocateDirect(12).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(0x314C424C).putInt(0).putInt(0).flip() as ByteBuffer
                 assertEquals("the labels were refused: not a block of label sprites", Native.labels(handle, first, 8L, 0f))
                 assertEquals("the labels must be a direct buffer", Native.labels(handle, ByteBuffer.allocate(8), 6L, 0f))
+
+                // The world's names (ENGINE.md step 5, "Names"): none wanted before a frame shows any; their sprites as
+                // the app hands them back, under the core's ids and without points (the second without an image: a name
+                // the device has no glyphs for); refused, and why; and a test's names, which no tile holds.
+                assertEquals(0, ByteBuffer.wrap(Native.namesWanted(handle)).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt())
+                val none = LabelBlock.Image(0, 0, 0, 0, IntArray(0))
+                val names = listOf(
+                    LabelBlock.Sprite(0x80000001L.toInt(), 0, 40.5f, 10.5f, 20f, -7f, image(6, 4), image(9, 6), DoubleArray(0)),
+                    LabelBlock.Sprite(0x80000002L.toInt(), 0, 0f, 0f, 0f, 0f, none, null, DoubleArray(0)),
+                )
+                assertEquals("", Native.names(handle, LabelBlock.write(names), 12f))
+                assertEquals("", Native.names(handle, LabelBlock.write(emptyList()), 12f))
+                assertEquals(
+                    "the names were refused: the large images' scale is not 0 or from 1 to 4, or 0 with a large image",
+                    Native.names(handle, LabelBlock.write(names, largeScale = 0.5f), 12f),
+                )
+                assertEquals(
+                    "the names were refused: sprite 0 is larger than a sprite may be",
+                    Native.names(handle, LabelBlock.write(listOf(sprite(4, 3000, 1, DoubleArray(0)))), 12f),
+                )
+                assertEquals("the names were refused: not a block of label sprites", Native.names(handle, notLabels.rewind() as ByteBuffer, 12f))
+                assertEquals("the names must be a direct buffer", Native.names(handle, ByteBuffer.allocate(8), 12f))
+                val tokyo = "\u6771\u4EAC".toByteArray(Charsets.UTF_8)
+                val given = ByteBuffer.allocate(4 + 32 + tokyo.size).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    .putInt(1).putInt(1).putDouble(35.68).putDouble(139.77).putDouble(3.7e7).putInt(tokyo.size).put(tokyo)
+                assertEquals("", Native.testNames(handle, given.array()))
+                assertEquals("the names were refused: name 0 is cut short, or of no kind", Native.testNames(handle, given.array().copyOf(20)))
+                // a water's kind is a name's kind too (a lake's, with its area where a place has its people); past the river's none
+                given.putInt(4, 9)
+                assertEquals("", Native.testNames(handle, given.array()))
+                given.putInt(4, 12)
+                assertEquals("the names were refused: name 0 is cut short, or of no kind", Native.testNames(handle, given.array()))
+                assertEquals("", Native.testNames(handle, ByteArray(4)))
 
                 // The markers: a chosen pin with its value and its name (its looks with the name right and left), a dot and a
                 // cluster of 12, as the app writes them, with a cluster's count in white; none; refused, and why.
@@ -178,10 +211,14 @@ class MapFacadeTest {
                 // A pick before the map has drawn a frame (hosts have no window): none.
                 assertEquals("", Native.pick(handle, 100f, 200f))
 
-                // The building FillIn asks about: hatched in the board's grey, then in its answer's colour, then none.
-                Native.ask(handle, false, 4242L, 0xA2A5A9, true)
-                Native.ask(handle, true, 4242L, 0x453433, false)
-                Native.ask(handle, false, 0L, 0, false)
+                // The building FillIn asks about: hatched in the board's grey, then in its answer's colour, as the
+                // board's house under each roof (no tile draws it here: no house, and none is looked for in vain), its
+                // walls' colour not asked about, then none.
+                Native.ask(handle, false, 4242L, 0xA2A5A9, true, 0)
+                Native.ask(handle, true, 4242L, 0x453433, false, 0)
+                for (roof in 1..3) Native.ask(handle, false, 4242L, 0x453433, false, roof)
+                Native.ask(handle, false, 4242L, -1, false, 2)
+                Native.ask(handle, false, 0L, 0, false, 0)
 
                 // The screen's haze and vignette off, then on again (the app's Look settings).
                 Native.screen(handle, false, false, false)
@@ -376,6 +413,37 @@ class MapFacadeTest {
             assertTrue(junk.exceptionOrNull()?.message.orEmpty(), junk.exceptionOrNull()?.message.orEmpty().startsWith("the edits are refused"))
             val heap = runCatching { Native.editWindow(14, x, y, source.path, ByteBuffer.wrap("[]".toByteArray()), none.path) }
             assertTrue(heap.exceptionOrNull()?.message.orEmpty().contains("direct buffer"))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun theWorldAKeptCountryKeepsIsPinnedThroughTheFacade() {
+        // ENGINE.md step 11 (tiles/Kept.hpp; world_test holds the cache's pins and the keep's chunks): the calls' shape
+        val dir = Files.createTempDirectory("atlas-worldkept").toFile()
+        try {
+            val budget = 1L shl 20
+            fun key(z: Int, x: Int, y: Int) = (z.toLong() shl 48) or (x.toLong() shl 24) or y.toLong()
+            // no country kept: nothing pinned, nothing lacking (unknown tiles, chunks held, their bytes, heads lacking)
+            assertTrue(longArrayOf(0, 0, 0, 0).contentEquals(Native.worldKept(dir.path, budget, LongArray(0), ByteArray(0), IntArray(0), LongArray(0))))
+            // a pack whose head is not on the phone: its head lacking (pack 0), its chunks not known yet; its head pinned
+            val identity = ByteArray(32) { it.toByte() }
+            val tiles = longArrayOf(key(9, 262, 168), key(11, 1050, 673))
+            assertTrue(longArrayOf(0, 0, 0, 1, 0).contentEquals(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(2), tiles)))
+            assertEquals(1, File(dir, "pinned").readLines().size)
+            // a range of it before its head: not kept
+            assertNull(Native.worldKeptRange(dir.path, budget, 4_000, identity, 0, ByteArray(100)))
+            // arrays that do not agree, a pack of no length: refused
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), identity, intArrayOf(3), tiles))
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(4_000), ByteArray(31), intArrayOf(2), tiles))
+            assertNull(Native.worldKept(dir.path, budget, longArrayOf(0), identity, intArrayOf(2), tiles))
+            // the world dropped but its pinned keep (a new version taken once its own keep is whole): the pin stays
+            assertEquals("", Native.worldDrop(dir.path, budget, true))
+            assertEquals(1, File(dir, "pinned").readLines().size)
+            // the world dropped (a new version where no country is kept): nothing pinned
+            assertEquals("", Native.worldDrop(dir.path, budget, false))
+            assertEquals(0, File(dir, "pinned").readLines().size)
         } finally {
             dir.deleteRecursively()
         }

@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import app.atlas.mapview.svg.SvgCanvas
 import app.atlas.mapview.svg.SvgDocument
 import app.atlas.mapview.svg.SvgParser
+import app.atlas.mapview.svg.SvgRaster
 import app.atlas.mapview.svg.TurbulenceCache
 import app.atlas.render.Amsterdam
 import app.atlas.render.Regions
@@ -25,7 +26,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The exact raster made faster without a byte changed. [EngineFrame.rasterise] with its large filters in bands on the
+ * The exact raster made faster without a byte changed. [SvgRaster.rasterise] with its large filters in bands on the
  * filter workers and their noise kept in a [TurbulenceCache] (made cold, read warm, and read back from disk by a new
  * cache) against the single-thread raster with no cache: the 12 filter probes, the Westerkerk home by day (at the
  * boards' ×2 and a phone's ×2.625), by night and in the rain, from the port, and the Main board (Python's render, on the
@@ -45,13 +46,12 @@ class ParallelRasterTest {
 
     @After
     fun cleanUp() {
-        MapEngine.forgetCacheDir()
         for (d in dirs) d.deleteRecursively()
     }
 
     private fun raster(
-        docs: List<SvgDocument>, scale: Float, bands: Int, noise: TurbulenceCache?, stats: EngineFrame.RasterStats? = null, cancelled: () -> Boolean = { false },
-    ): Bitmap = EngineFrame.rasterise(docs, null, EngineTestKit.fonts, scale, SvgCanvas.FilterMode.CPU, bands = bands, noise = noise, stats = stats, cancelled = cancelled)
+        docs: List<SvgDocument>, scale: Float, bands: Int, noise: TurbulenceCache?, stats: SvgRaster.Stats? = null, cancelled: () -> Boolean = { false },
+    ): Bitmap = SvgRaster.rasterise(docs, null, EngineTestKit.fonts, scale, SvgCanvas.FilterMode.CPU, bands = bands, noise = noise, stats = stats, cancelled = cancelled)
 
     private fun differing(a: IntArray, b: Bitmap): Int {
         val p = SvgCanvas.premultipliedPixels(b)
@@ -71,7 +71,7 @@ class ParallelRasterTest {
         val cache = TurbulenceCache(d)
         val lines = ArrayList<String>()
         fun check(label: String, bands: Int, noise: TurbulenceCache?) {
-            val stats = EngineFrame.RasterStats()
+            val stats = SvgRaster.Stats()
             val n = differing(ref, raster(docs, scale, bands, noise, stats))
             lines.add("%-22s %-18s %d bytes differ; %d filtered, filters %.0f ms".format(name, label, n, stats.filtered, stats.filterMillis))
             assertEquals("$name, $label: differing pixels", 0, n)
@@ -122,36 +122,6 @@ class ParallelRasterTest {
     }
 
     /**
-     * The app's wiring: the map's frames keep their noise under [MapEngine.useCacheDir]'s directory, and at the next
-     * launch [MapEngine.warmUp] for the screen readies exactly those fields (the warm-up's filter scale is the frames'),
-     * so the first frame makes no noise and is the same.
-     */
-    @Test
-    fun theNextLaunchWarmsUpTheNoiseTheLastOneKept() {
-        val sunny = westerkerk(listOf("sunny")).getValue("sunny")
-        // the frames' scale on a phone of density 2.625, as the app rasterises them (the screen's density, up to the cap)
-        val scale = minOf(2.625f, MapEngine.maxRasterScale)
-        val ref = SvgCanvas.premultipliedPixels(raster(sunny, scale, 1, null))
-        val d = dir()
-        MapEngine.useCacheDir(d, warm = false)
-        val kept = TurbulenceCache.shared!!
-        raster(sunny, scale, SvgCanvas.DEFAULT_BANDS, kept)
-        kept.close()
-        val screens = TurbulenceCache(File(d, "noise")).kept().filter { it.steps.isEmpty() }
-        assertTrue("$screens", screens.size >= 4)
-        // the next launch: a new cache over the same files, warmed for the 412 × 915 dp screen at density 2.625
-        MapEngine.forgetCacheDir()
-        MapEngine.useCacheDir(d, warm = false)
-        MapEngine.warmUp(412f, 915f, 2.625f)!!.join()
-        val warmed = TurbulenceCache.shared!!
-        val s = warmed.stats()
-        assertTrue("$s", s.tilesFromDisk > 1000 && s.tilesMade == 0L)
-        assertEquals(0, differing(ref, raster(sunny, scale, SvgCanvas.DEFAULT_BANDS, warmed)))
-        assertEquals("the first frame makes no noise", 0L, warmed.stats().tilesMade)
-        println("warm-up from disk: ${warmed.stats()}")
-    }
-
-    /**
      * plan-anywhere's gate for the home's raster: the second frame's filters take at most 30 % of the first's. Both
      * frames run the filters in bands; the first makes the noise, the second reads it. Each is the best of three, after a
      * frame that warms the JIT.
@@ -162,7 +132,7 @@ class ParallelRasterTest {
         fun millis(since: Long) = (System.nanoTime() - since) / 1e6
         for (scale in floatArrayOf(2f, 2.625f)) {
             raster(sunny, scale, 1, null)
-            val plain = EngineFrame.RasterStats()
+            val plain = SvgRaster.Stats()
             var t = System.nanoTime()
             raster(sunny, scale, 1, null, plain)
             val plainAll = millis(t)
@@ -173,12 +143,12 @@ class ParallelRasterTest {
             var secondAll = Double.MAX_VALUE
             repeat(3) {
                 val cache = TurbulenceCache(dir())
-                val a = EngineFrame.RasterStats()
+                val a = SvgRaster.Stats()
                 t = System.nanoTime()
                 raster(sunny, scale, SvgCanvas.DEFAULT_BANDS, cache, a)
                 firstAll = minOf(firstAll, millis(t))
                 val made = cache.stats().tilesMade
-                val b = EngineFrame.RasterStats()
+                val b = SvgRaster.Stats()
                 t = System.nanoTime()
                 raster(sunny, scale, SvgCanvas.DEFAULT_BANDS, cache, b)
                 secondAll = minOf(secondAll, millis(t))

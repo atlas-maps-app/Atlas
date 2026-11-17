@@ -34,6 +34,9 @@ static const uint FRAME_NO_CORNICES = 8192u;
 // The user's palette has Atlas's guesses off: a guessed roof's shape gives way to the plain box in its place
 // (building.slangh's BUILDING_FACE_SHAPE_GUESSED and BUILDING_FACE_SHAPE_PLAIN).
 static const uint FRAME_PLAIN_ROOFS = 16384u;
+// The sky's field, the clouds', is bound for the frame's size (CP/fx/FieldCache.hpp: made only for a frame whose sky
+// shows its clouds) and the frame is in full mode: the ground draws the sky layer's clouds (clouds_fs).
+static const uint FRAME_SKY_FIELD = 32768u;
 
 /// The thin strokes of the buildings in the style of the frame's active pack (tiles/Style.hpp's EdgesStyle, the engine's
 /// style file's `buildings` and `houseboats`; a coarser pack drawn around it, made with the same file, draws them so

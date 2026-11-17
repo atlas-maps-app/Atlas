@@ -36,6 +36,7 @@
 #include "scene/Heaps.hpp"
 #include "scene/ItemTable.hpp"
 #include "scene/WorkerHints.hpp"
+#include "tiles/Sections.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/Style.hpp"
 #include "view/Camera.hpp"
@@ -49,6 +50,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <thread>
@@ -97,6 +99,9 @@ struct ResidentTile {
     std::string pack;
     tiles::PackKind kind = tiles::PackKind::render;
     view::GroundFrame frame;
+    /// For a window built from part of its box's data (the element packs on the phone), that part
+    /// (tiles::StorePack::data_of): the ground lays its plate under it alone where the world draws.
+    std::optional<tiles::DataBox> data;
     /// Its south-west corner at street level, in its pack frame's metres.
     view::Vec3 origin;
     /// The ladder index it was built at (its tolerance).

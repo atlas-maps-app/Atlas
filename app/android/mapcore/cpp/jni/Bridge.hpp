@@ -35,8 +35,18 @@ namespace atlas::jni {
 /// Native.painter gone (the phone draws true depth alone since 30 October; the core keeps the painter's order for its
 /// own checks), and Native.wantedLevels and levelsInView (a frame cell's levels' tiles the map wants, and those it
 /// draws, ENGINE.md one pack per country, step 7). 26: the world's fetch (ENGINE.md step 6): Native.packs' remote world
-/// packs by their SHA-256, and Native.worldCache, worldHeld, worldHead, worldWants, worldBlocks and worldKeep.
-inline constexpr jint abi = 26;
+/// packs by their SHA-256, and Native.worldCache, worldHeld, worldHead, worldWants, worldBlocks and worldKeep. 27: the
+/// world's names (ENGINE.md step 5's step 9): Native.namesWanted (the names the frames show without a sprite),
+/// Native.names (their sprites, the app's) and Native.testNames (names no tile holds, a test's). 28: the theme block's
+/// version 2, which carries the place its sun's azimuth and elevation are of (the moment lights the place the map
+/// draws; the world's look takes the terminator from it). 29: the world's waters' names: Native.namesWanted's looks
+/// have a fifth, a water's (scene::NameStyle::water), and Native.testNames takes the waters' kinds and a river. 30:
+/// Native.ask takes the roof the building is asked about in (FillIn's roof question: its house, scene/House.hpp), and a
+/// negative wall for walls whose colour is not asked about. 31: the world a kept country keeps (ENGINE.md step 11):
+/// Native.worldKept (its packs' heads and tiles' chunks pinned in the world's cache, what is lacking said) and
+/// Native.worldKeptRange (a fetched range of one of them kept). 32: Native.worldDrop says whether the pinned keep stays
+/// (a new world's keep is whole before the old world's goes).
+inline constexpr jint abi = 32;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

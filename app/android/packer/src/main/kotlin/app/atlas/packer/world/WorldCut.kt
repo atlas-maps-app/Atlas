@@ -11,10 +11,16 @@ import app.atlas.rendertiles.model.Layer
 import app.atlas.rendertiles.model.RenderTile
 import app.atlas.rendertiles.model.Schema
 import com.onthegomap.planetiler.VectorTile
+import org.locationtech.jts.geom.Coordinate
 import org.locationtech.jts.geom.Geometry
+import org.locationtech.jts.geom.LineString
 import org.locationtech.jts.geom.Point
 import org.locationtech.jts.geom.Polygon
+import org.locationtech.jts.geom.util.LinearComponentExtracter
 import org.locationtech.jts.geom.util.PolygonExtracter
+import org.locationtech.jts.linearref.LengthIndexedLine
+import org.locationtech.jts.operation.overlayng.OverlayNG
+import org.locationtech.jts.operation.overlayng.OverlayNGRobust
 
 /**
  * One world tile cut on the grid at its box and its cells (ENGINE.md step 5: "their geometry is cut at their 4 × 4
@@ -28,7 +34,11 @@ import org.locationtech.jts.geom.util.PolygonExtracter
  * - ROAD: secondaries and tertiaries (class, their class's width as a guess), in the roads' drawing order;
  * - LINE: rail (source 1), big roads (2, motorways over trunks over primaries), runways (3) and rivers ([RIVERS],
  *   drawn with the water);
- * - LABEL source 1: the places, by rank (a country, then cities, towns, villages and suburbs, each by population).
+ * - LABEL source 1: the places, by rank (a country, then cities, towns, villages and suburbs, each by population);
+ *   source 2 ([WATER_NAMES]): the water's names at their points, by rank (oceans, seas, bays and straits, lakes and
+ *   reservoirs, each by area), `count` their areas in m²; source 3 ([RIVER_NAMES]): the rivers' names, one a river a
+ *   tile at the middle of its longest piece, `prev` before it along the baseline, `count` its length in the tile in
+ *   metres, by length. The core's places pass reads source 1 alone (world-names-format.md, the world session's note).
  */
 class WorldCut(private val tags: StagePTags = StagePTags.STAGE_P) {
     /** A cut tile and how its cells' ground fills them. */
@@ -205,6 +215,46 @@ class WorldCut(private val tags: StagePTags = StagePTags.STAGE_P) {
             add(Layer.LABEL, fields, cell, null, index.toLong(), p.pos)
         }
 
+        // the water's names at their points, by rank (source 2, after the places: the core's places pass leaves them)
+        val waters = (byLayer[WorldProfile.WATER_NAME] ?: emptyList()).mapNotNull { f ->
+            val p = f.geometry as? Point ?: return@mapNotNull null
+            val name = f.attrs["name"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val lat = WorldGeometry.latOfPixel(z, y, p.y).toInt()
+            val lon = WorldGeometry.lonOfPixel(z, x, p.x).toInt()
+            if (lat < tileBox[0] || lat >= tileBox[2] || lon < tileBox[1] || lon >= tileBox[3]) return@mapNotNull null
+            WaterName(f.attrs, name, GridPoint(lat, lon))
+        }.sortedWith(WaterName.BY_RANK)
+        for ((index, w) in waters.withIndex()) {
+            val fields = LinkedHashMap<String, Any?>()
+            fields["source"] = WATER_NAMES
+            fields["index"] = index.toLong()
+            fields["id"] = w.id
+            fields["name"] = w.name
+            fields["pos"] = w.pos
+            fields["prev"] = w.pos
+            fields["count"] = w.squareMetres
+            fields["kind"] = w.kind
+            add(Layer.LABEL, fields, Cells.cellOf(Cells.TileKey(z, x, y), w.pos.lat, w.pos.lon), null, order(1, index), w.pos)
+        }
+
+        // the rivers' names along their lines, a river's once a tile, by its length in the tile (source 3)
+        val rivers = (byLayer[WorldProfile.RIVER_NAME] ?: emptyList())
+            .mapNotNull { f -> f.attrs["name"]?.toString()?.takeIf { it.isNotBlank() }?.let { it to f.geometry } }
+            .groupBy({ it.first }, { it.second })
+            .mapNotNull { (name, pieces) -> riverName(name, pieces, z, x, y) }
+            .sortedWith(compareByDescending<RiverName> { it.metres }.thenBy { it.name })
+        for ((index, r) in rivers.withIndex()) {
+            val fields = LinkedHashMap<String, Any?>()
+            fields["source"] = RIVER_NAMES
+            fields["index"] = index.toLong()
+            fields["name"] = r.name
+            fields["pos"] = r.pos
+            fields["prev"] = r.prev
+            fields["count"] = r.metres
+            fields["kind"] = WorldProfile.RIVER
+            add(Layer.LABEL, fields, Cells.cellOf(Cells.TileKey(z, x, y), r.pos.lat, r.pos.lon), null, order(2, index), r.pos)
+        }
+
         if (out.none { it.layer != Layer.WATER || it.fields["tidal"] != true }) return Cut(null, Cover(worst, worstArea, outside))
         return Cut(RenderTile.of(z, x, y, out), Cover(worst, worstArea, outside))
     }
@@ -220,6 +270,61 @@ class WorldCut(private val tags: StagePTags = StagePTags.STAGE_P) {
             val BY_RANK: Comparator<Place> = compareBy<Place> { PLACE_RANK.indexOf(it.kind).let { r -> if (r < 0) PLACE_RANK.size else r } }
                 .thenBy { (it.attrs["scalerank"] as? Number)?.toInt() ?: 0 }.thenByDescending { it.population }.thenBy { it.id ?: Long.MAX_VALUE }.thenBy { it.name ?: "" }
         }
+    }
+
+    /** A water's name from Planetiler's tile (or the globe's): its kind, its id (none for Natural Earth's), its area in m². */
+    private class WaterName(val attrs: Map<String, Any?>, val name: String, val pos: GridPoint) {
+        val kind: String = attrs["kind"].toString()
+        val id: Long? = (attrs["id"] as? Number)?.toLong()
+        val squareMetres: Long = (attrs["area"] as? Number)?.toLong()?.coerceAtLeast(0) ?: 0L
+
+        companion object {
+            /** Oceans, seas, bays and straits, lakes and reservoirs, each by area (largest first; a node's none, last). */
+            val BY_RANK: Comparator<WaterName> = compareBy<WaterName> { WATER_RANK[it.kind] ?: WATER_RANK.size }
+                .thenByDescending { it.squareMetres }.thenBy { it.id ?: Long.MAX_VALUE }.thenBy { it.name }
+        }
+    }
+
+    /** A river's name in a tile: its point on the river, a point before it along its baseline, its length in the tile (m). */
+    private class RiverName(val name: String, val pos: GridPoint, val prev: GridPoint, val metres: Long)
+
+    /**
+     * River [name]'s name in tile ([z], [x], [y]) from its [pieces] (Planetiler's lines of that name, in the tile's
+     * pixels, its buffer beyond the edges): the pieces cut at the tile's edges, the name at the middle of the longest
+     * by length; `prev` [NAME_HALF] before it on the chord from the river's point that far before the middle to its
+     * point that far after (a piece shorter than twice that: its ends), so prev → pos is the baseline's direction as a
+     * canal name's is; its length the pieces' in the tile, in metres at the name's latitude. Null where none lies in the
+     * tile.
+     */
+    private fun riverName(name: String, pieces: List<Geometry>, z: Int, x: Int, y: Int): RiverName? {
+        val box = WorldGeometry.FLOAT.toGeometry(org.locationtech.jts.geom.Envelope(0.0, 256.0, 0.0, 256.0))
+        val lines = pieces.flatMap { g ->
+            LinearComponentExtracter.getLines(OverlayNGRobust.overlay(g, box, OverlayNG.INTERSECTION)).map { it as LineString }
+        }.filter { it.length > 0.0 }
+        if (lines.isEmpty()) return null
+        val longest = lines.maxBy { it.length }
+        val along = LengthIndexedLine(longest)
+        val middle = longest.length / 2
+        val h = minOf(NAME_HALF, middle)
+        val at = along.extractPoint(middle)
+        val before = along.extractPoint(middle - h)
+        val after = along.extractPoint(middle + h)
+        var dx = after.x - before.x
+        var dy = after.y - before.y
+        if (dx == 0.0 && dy == 0.0) {
+            // a loop: its ends meet, so the way it leaves its middle
+            val next = along.extractPoint(minOf(longest.length, middle + 1e-3))
+            dx = next.x - at.x
+            dy = next.y - at.y
+        }
+        val d = Math.hypot(dx, dy)
+        val prevPx = if (d > 0.0) Coordinate(at.x - dx / d * NAME_HALF, at.y - dy / d * NAME_HALF) else at
+        fun grid(c: Coordinate) = GridPoint(WorldGeometry.latOfPixel(z, y, c.y).toInt(), WorldGeometry.lonOfPixel(z, x, c.x).toInt())
+        val pos = grid(at)
+        val tileBox = Grid.tileBox(z, x, y)
+        if (pos.lat < tileBox[0] || pos.lat >= tileBox[2] || pos.lon < tileBox[1] || pos.lon >= tileBox[3]) return null
+        val metresPerPixel = WorldProfile.EQUATOR_METRES * Math.cos(Math.toRadians(Grid.deg(pos.lat))) / (256.0 * (1 shl z))
+        return RiverName(name, pos, grid(prevPx), Math.round(lines.sumOf { it.length } * metresPerPixel))
     }
 
     /** [g]'s pieces in each cell of [rects], as lines. */
@@ -249,6 +354,20 @@ class WorldCut(private val tags: StagePTags = StagePTags.STAGE_P) {
 
         /** The places' ranks. */
         val PLACE_RANK = listOf("country", "city", "town", "village", "suburb")
+
+        /** LABEL's source for the water's names at their points (0 a canal's name, 1 a place). */
+        const val WATER_NAMES = 2
+
+        /** LABEL's source for the rivers' names along their lines. */
+        const val RIVER_NAMES = 3
+
+        /** The water's names' ranks by kind: oceans, seas, then bays and straits, then lakes and reservoirs. */
+        val WATER_RANK: Map<String, Int> = linkedMapOf(
+            WorldProfile.OCEAN to 0, WorldProfile.SEA to 1, WorldProfile.BAY to 2, WorldProfile.STRAIT to 2, WorldProfile.LAKE to 3, WorldProfile.RESERVOIR to 3,
+        )
+
+        /** Half a river's name's baseline, tile pixels: 48 dp at the level's start. */
+        const val NAME_HALF = 48.0 * WorldProfile.DP
 
         private fun order(rank: Int, index: Int): Long = (rank.toLong() shl 32) or index.toLong()
 

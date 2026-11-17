@@ -1,6 +1,8 @@
 // The item table (scene/ItemTable.hpp).
 #include "scene/ItemTable.hpp"
 
+#include <algorithm>
+
 namespace atlas::scene {
 
 std::uint32_t ItemTable::add(const ItemSpec& item) {
@@ -10,6 +12,8 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
         free_.pop_back();
     } else {
         row = static_cast<std::uint32_t>(x_.size());
+        // no room: every column to twice the rows at once, so that they stay of one size
+        if (row == capacity()) reserve(std::max<std::size_t>(2 * capacity(), 64));
         x_.push_back(0);
         y_.push_back(0);
         z_.push_back(0);
@@ -52,6 +56,30 @@ std::uint32_t ItemTable::add(const ItemSpec& item) {
     ++live_;
     ++changes_;
     return row;
+}
+
+void ItemTable::reserve(std::size_t rows) {
+    if (rows <= capacity()) return;
+    x_.reserve(rows);
+    y_.reserve(rows);
+    z_.reserve(rows);
+    offset_.reserve(rows);
+    cut_x_.reserve(rows);
+    cut_z_.reserve(rows);
+    order_.reserve(rows);
+    kind_.reserve(rows);
+    flags_.reserve(rows);
+    min_depth_.reserve(rows);
+    max_depth_.reserve(rows);
+    radius_.reserve(rows);
+    tile_.reserve(rows);
+    owner_.reserve(rows);
+    building_.reserve(rows);
+    cell_.reserve(rows);
+    place_.reserve(rows);
+    slots_.reserve(rows * bands);
+    alive_.reserve(rows); // last: capacity() reads it, so a reserve that threw part way is done again
+    ++growths_;
 }
 
 void ItemTable::update(std::uint32_t row, const ItemSpec& item) noexcept {

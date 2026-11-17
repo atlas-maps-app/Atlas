@@ -3,6 +3,7 @@ package app.atlas.packer
 import app.atlas.geo.BBox
 import app.atlas.packer.pbf.PbfReader
 import app.atlas.packer.windows.Answer
+import app.atlas.packer.windows.Cells
 import app.atlas.packer.windows.ClipPolygon
 import app.atlas.packer.windows.Extract
 import app.atlas.packer.windows.LeftOut
@@ -16,6 +17,7 @@ import java.lang.management.MemoryType
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.util.BitSet
 import java.util.EnumMap
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
@@ -32,6 +34,11 @@ import java.util.zip.Deflater
  * back in `<id>.windows` with their index `<id>.windows.idx` ([WindowsIndex]). The phone takes a window's data from them
  * before it asks Overpass, and asks Overpass only for the changes since the pack's date.
  *
+ * A country larger than the Netherlands builds them in shards (`--shard I/N`, each a job's step of its own, so the
+ * heap holds a shard's part of the extract): each shard cuts the windows of a run of the region's frame cells' columns
+ * (L10, as the phone stores a frame cell's windows as one pack), the columns shared out by the extract's nodes, and
+ * [WindowsJoin] joins the shards into the files the whole run writes, byte for byte.
+ *
  * The windows listed are those whose box, with a kilometre around it, lies inside the extract's polygon (Geofabrik's
  * `.poly`, which Osmium cut the extract with: every node inside, every way with a node inside whole), and whose answer
  * the extract holds whole: every node of every way in it, every member of every relation in it. A relation across the
@@ -40,7 +47,7 @@ import java.util.zip.Deflater
  * nothing in it is listed too, so the phone never asks for the open sea.
  */
 object WindowPacks {
-    const val USAGE = """packer windows <in.osm.pbf> <out-dir> --poly <region.poly> --core <atlas_stagep> [--id ID] [--bbox W,S,E,N] [--threads N] [--level 1-9]
+    const val USAGE = """packer windows <in.osm.pbf> <out-dir> --poly <region.poly> --core <atlas_stagep> [--id ID] [--bbox W,S,E,N] [--threads N] [--level 1-9] [--shard I/N]
       The windows' data of a Geofabrik extract: for every L14 window whose box (the core's load::window_box, which the
       core's stage P tool --core prints) lies, with a kilometre around it, inside the extract's polygon (--poly, its
       .poly beside it), exactly the JSON a public Overpass server answers to the phone's window query for that box as
@@ -48,13 +55,87 @@ object WindowPacks {
       <out-dir>/<id>.windows, with their index <id>.windows.idx (WindowsIndex). A window whose answer the extract does
       not hold whole is left out, counted by why.
       --bbox keeps the windows whose box meets it (a region cut from a bigger extract). --id defaults to the file's name
-      less -latest.osm.pbf or .osm.pbf; --threads to the machine's cores."""
+      less -latest.osm.pbf or .osm.pbf; --threads to the machine's cores.
+      --shard I/N cuts shard I of N alone: the windows of the L10 columns (frame cells) that fall to it, the columns
+      shared out by the extract's nodes, from what its windows need of the extract (every node's position, but only
+      its own cells' tagged nodes and ways, and the ways of the relations asked for), into <out-dir> with
+      <id>.windows.shard naming the run's plan. packer windows-join joins the N folders into the whole run's files."""
 
     /** The windows' level: load::window_level. */
     const val LEVEL = 14
 
     /** How far beyond a window's box the extract's polygon must reach, in metres. */
     const val MARGIN = 1000.0
+
+    /** A shard's own file beside its windows' data: its place in the run ([Shard.text]). */
+    const val SHARD_SUFFIX = ".windows.shard"
+
+    /**
+     * Shard [index] of [count] of a run: the run's [plan] (each shard's L10 columns, in order; [IntRange.EMPTY] for a
+     * shard with none), and the shard's [windows] of the run's [of] (inside the polygon, listed or left out).
+     */
+    class Shard(val index: Int, val count: Int, val plan: List<IntRange>, val windows: Int, val of: Int) {
+        val columns: IntRange get() = plan[index - 1]
+
+        /** The shard's file, `<id>.windows.shard`, which [WindowsJoin] checks the shards by. */
+        fun text(): String = "shard $index/$count\nplan ${plan.joinToString(" ") { range(it) }}\nwindows $windows/$of\n"
+
+        companion object {
+            fun range(r: IntRange): String = if (r.isEmpty()) "-" else "${r.first}..${r.last}"
+
+            /** A shard's file read back; [from] names it in the error. */
+            fun parse(text: String, from: File): Shard {
+                fun bad(): Nothing = throw IOException("$from is not a windows shard's file")
+                val lines = text.lines().filter { it.isNotEmpty() }.associate { it.substringBefore(' ') to it.substringAfter(' ', "") }
+                fun pair(key: String): List<Int> = lines[key]?.split('/')?.mapNotNull { it.toIntOrNull() }?.takeIf { it.size == 2 } ?: bad()
+                val (i, n) = pair("shard")
+                val (windows, of) = pair("windows")
+                val plan = (lines["plan"] ?: bad()).split(' ').map { r ->
+                    if (r == "-") IntRange.EMPTY else r.split("..").mapNotNull { it.toIntOrNull() }.takeIf { it.size == 2 }?.let { it[0]..it[1] } ?: bad()
+                }
+                if (n !in 1..64 || i !in 1..n || plan.size != n || windows !in 0..of) bad()
+                return Shard(i, n, plan, windows, of)
+            }
+        }
+    }
+
+    /**
+     * The run's L10 columns ([windows]' x shr 4) shared out among [n] shards in order, each a run of columns, so that the
+     * shard holding the most of the extract's nodes ([nodes], by L10 column, each column counted a node more) holds as
+     * few as can be: the least such most found by halving, the columns then filled in at it, a shard closed early where
+     * the columns left are as many as the shards left, so every shard gets one where there are as many columns. A shard
+     * gets none ([IntRange.EMPTY]) only where there are fewer columns than shards: the last ones.
+     */
+    fun plan(windows: List<Window>, nodes: LongArray, n: Int): List<IntRange> {
+        val columns = windows.map { it.x shr 4 }.distinct().sorted()
+        val m = columns.size
+        val weight = LongArray(m) { nodes[columns[it].coerceIn(0, nodes.size - 1)] + 1 }
+        fun runs(most: Long): Int {
+            var k = 1
+            var sum = 0L
+            for (w in weight) if (sum + w > most) { k++; sum = w } else sum += w
+            return k
+        }
+        var lo = weight.maxOrNull() ?: 0L
+        var hi = weight.sum()
+        while (lo < hi) {
+            val mid = (lo + hi) / 2
+            if (runs(mid) <= n) hi = mid else lo = mid + 1
+        }
+        val plan = ArrayList<IntRange>(n)
+        var j = 0
+        for (s in 0 until n) {
+            if (j >= m) {
+                plan += IntRange.EMPTY
+                continue
+            }
+            val start = j
+            var sum = weight[j++]
+            while (j < m && (s == n - 1 || (sum + weight[j] <= lo && m - j > n - s - 1))) sum += weight[j++]
+            plan += columns[start]..columns[j - 1]
+        }
+        return plan
+    }
 
     /** What [build] made, and what it measured. */
     class Result(
@@ -74,6 +155,10 @@ object WindowPacks {
         val heapPeak: Long?,
         /** The elements that left the most windows out: their description and how many. */
         val by: List<Pair<String, Int>> = emptyList(),
+        /** The shard this build cut, or null for the whole run. */
+        val shard: Shard? = null,
+        /** The pass a shard surveys the extract in first. */
+        val surveyMillis: Long = 0,
     )
 
     /** The biggest window listed: its tile, its answer's bytes and gzip member's, its elements. */
@@ -108,9 +193,14 @@ object WindowPacks {
         val level = options["--level"]?.let { it.toIntOrNull()?.takeIf { n -> n in 1..9 } ?: throw UsageException("bad --level '$it': want 1 to 9") }
             ?: Deflater.BEST_COMPRESSION
         val clip = options["--bbox"]?.let(::parseBox)
+        val (shard, shards) = options["--shard"]?.let { v ->
+            val m = Regex("([0-9]{1,2})/([0-9]{1,2})").matchEntire(v)?.groupValues?.drop(1)?.map { it.toInt() }
+            if (m == null || m[1] !in 1..64 || m[0] !in 1..m[1]) throw UsageException("bad --shard '$v': want I/N, 1 <= I <= N <= 64")
+            m[0] to m[1]
+        } ?: (1 to 1)
         val r = build(
             pbf, File(positional[1]), ClipPolygon.read(poly), id, threads, level, clip,
-            boxes = { x0, y0, x1, y1 -> coreBoxes(core, x0, y0, x1, y1) }, log = out,
+            boxes = { x0, y0, x1, y1 -> coreBoxes(core, x0, y0, x1, y1) }, log = out, shard = shard, shards = shards,
         )
         report(r, out)
         return 0
@@ -119,20 +209,24 @@ object WindowPacks {
     /** The report's lines for [r]. */
     fun report(r: Result, out: (String) -> Unit) {
         val left = r.leftOut.values.sum()
+        r.shard?.let { s ->
+            out("shard ${s.index} of ${s.count}: L10 columns ${Shard.range(s.columns)} (the run's ${s.plan.joinToString(" ") { Shard.range(it) }}), ${s.windows} of its ${s.of} windows inside the polygon")
+        }
         out("${r.data.name}: ${r.listed} windows (${r.empty} of them empty), ${r.dataBytes} bytes gzipped from ${r.jsonBytes} bytes of JSON; data of ${r.date}")
         out("${r.index.name}: ${r.index.length()} bytes")
         out("left out: $left" + if (left == 0) "" else " (" + r.leftOut.entries.filter { it.value > 0 }.joinToString("; ") { "${it.value}: ${it.key.why}" } + ")")
         for ((what, n) in r.by) out("  $n left out by $what")
         r.biggest?.let { b -> out("the biggest window: 14/${b.x}/${b.y}, ${b.jsonBytes} bytes of JSON, ${b.gzipBytes} gzipped, ${b.elements} elements") }
         out("the extract: ${r.extract}")
-        out("time: ${r.millis / 1000} s (reading ${r.readMillis / 1000} s, cutting ${r.cutMillis / 1000} s)" + (r.heapPeak?.let { ", heap peak ${it shr 20} MiB" } ?: ""))
+        val survey = if (r.shard == null) "" else "surveying ${r.surveyMillis / 1000} s, "
+        out("time: ${r.millis / 1000} s (${survey}reading ${r.readMillis / 1000} s, cutting ${r.cutMillis / 1000} s)" + (r.heapPeak?.let { ", heap peak ${it shr 20} MiB" } ?: ""))
     }
 
     /**
      * The windows' data of [pbf] cut by [polygon] into [outDir]: `<id>.windows` and `<id>.windows.idx`, each through a
      * file beside it renamed once whole. [boxes] gives the windows of a range of L14 tiles (x0, y0, x1, y1, inclusive)
      * with their boxes, in order of x, then y: the core's tool's ([coreBoxes]). With [clip], only the windows whose box
-     * meets it.
+     * meets it. With [shards] over 1, shard [shard] of them alone ([Shard], [plan]), and its file `<id>.windows.shard`.
      */
     fun build(
         pbf: File,
@@ -144,7 +238,10 @@ object WindowPacks {
         clip: BBox? = null,
         boxes: (Int, Int, Int, Int) -> List<Window>,
         log: (String) -> Unit = {},
+        shard: Int = 1,
+        shards: Int = 1,
     ): Result {
+        require(shards in 1..64 && shard in 1..shards) { "shard $shard of $shards" }
         val started = System.nanoTime()
         fun ms() = (System.nanoTime() - started) / 1_000_000
         val pools = ManagementFactory.getMemoryPoolMXBeans().filter { it.type == MemoryType.HEAP && it.isValid }
@@ -165,20 +262,42 @@ object WindowPacks {
         }.sortedWith(compareBy({ it.x }, { it.y }))
         log("windows: ${windows.size} of the ${all.size} in tiles $x0..$x1 by $y0..$y1${if (clip == null) "" else " meeting $clip"} lie inside the polygon with ${MARGIN.toInt()} m around them")
 
-        val extract = Extract.read(pbf, minOf(threads, 8))
-        val read = ms()
+        // a shard: the run's plan from a survey of the extract, its own windows, and what they need of the extract
+        var part: Shard? = null
+        var mine = windows
+        var keep: Extract.Keep? = null
+        var surveyed = 0L
+        if (shards > 1) {
+            val survey = Extract.survey(pbf, minOf(threads, 8))
+            val plan = plan(windows, survey.columns, shards)
+            val columns = plan[shard - 1]
+            mine = windows.filter { (it.x shr 4) in columns }
+            val cells = Cells.over(windows)
+            val looked = BitSet(cells.count)
+            for (w in mine) cells.window(w) { looked.set(it) }
+            keep = Extract.Keep(cells, looked, survey.members)
+            part = Shard(shard, shards, plan, mine.size, windows.size)
+            surveyed = ms()
+            log("cutting shard $shard of $shards, L10 columns ${Shard.range(columns)} of the run's ${plan.joinToString(" ") { Shard.range(it) }}: ${mine.size} of the ${windows.size} windows, " +
+                "looking at ${looked.cardinality()} of the ${cells.count} cells; surveyed in ${surveyed / 1000} s (${survey.members.size} ways in the relations asked for)")
+        }
+
+        val extract = Extract.read(pbf, minOf(threads, 8), keep)
+        val read = ms() - surveyed
         val held = "${extract.nodeCount} nodes (${extract.taggedCount} tagged), ${extract.wayCount} ways (${extract.brokenWays} lacking nodes), " +
             "${extract.relationCount} relations asked for (${extract.brokenRelations} lacking members), ${extract.twice} with a key twice; " +
-            "${extract.bytes shr 20} MiB held (${extract.nodeBytes shr 20} the nodes' positions, ${extract.jsonBytes shr 20} the elements' tags)"
+            "${extract.bytes shr 20} MiB held (${extract.nodeBytes shr 20} the nodes' positions, ${extract.jsonBytes shr 20} the elements' tags)" +
+            if (keep == null) "" else "; the shard's cells left out ${extract.droppedTagged} tagged nodes and ${extract.droppedWays} ways"
         log("read in ${read / 1000} s: $held")
 
+        // the grid over the run's windows, whole or a shard of it
         val cut = WindowCut(extract, windows, dateText, level)
         log("cells: ${cut.cells.rows} by ${cut.cells.cols}, ${cut.indexBytes shr 20} MiB of index")
         outDir.mkdirs()
         val data = File(outDir, id + Manifest.WINDOWS_SUFFIX)
         val index = File(outDir, id + Manifest.WINDOWS_INDEX_SUFFIX)
         val dataPart = File(data.path + ".part")
-        val entries = ArrayList<WindowsIndex.Entry>(windows.size)
+        val entries = ArrayList<WindowsIndex.Entry>(mine.size)
         var offset = 0L
         var jsonBytes = 0L
         var empty = 0
@@ -206,7 +325,7 @@ object WindowPacks {
                     if (entries.size % 5000 == 0) log("  ${entries.size} windows, ${offset shr 20} MiB (${ms() / 1000} s)")
                 }
                 val ahead = ArrayDeque<Future<Answer>>()
-                for (w in windows) {
+                for (w in mine) {
                     ahead.addLast(pool.submit(Callable { cut.answer(w, works.get()) }))
                     if (ahead.size >= threads * 4) take(result(ahead.removeFirst()))
                 }
@@ -223,12 +342,18 @@ object WindowPacks {
         val indexPart = File(index.path + ".part")
         indexPart.outputStream().buffered().use { WindowsIndex.of(LEVEL, WindowsIndex.QUERY, date, offset, entries).write(it) }
         move(indexPart, index)
+        if (part != null) {
+            val side = File(outDir, id + SHARD_SUFFIX)
+            val sidePart = File(side.path + ".part")
+            sidePart.writeText(part.text())
+            move(sidePart, side)
+        }
         val peak = pools.sumOf { runCatching { it.peakUsage.used }.getOrDefault(0L) }.takeIf { it > 0 }
         val culprits = by.entries.sortedByDescending { it.value }.take(10).map { (k, n) ->
             val (why, id) = k
             (if (why == LeftOut.RELATION) extract.describeRelation(id) else "${why.name.lowercase()} $id") to n
         }
-        return Result(data, index, date, entries.size, empty, leftOut, offset, jsonBytes, biggest, held, ms(), read, cutMillis, peak, culprits)
+        return Result(data, index, date, entries.size, empty, leftOut, offset, jsonBytes, biggest, held, ms(), read, cutMillis, peak, culprits, part, surveyed)
     }
 
     /** The L14 tiles around [polygon]'s box (within [clip]), one more each side: x0, y0, x1, y1 (y from the north). */
@@ -281,7 +406,7 @@ object WindowPacks {
         throw e.cause ?: e
     }
 
-    private fun move(from: File, to: File) {
+    internal fun move(from: File, to: File) {
         if (!from.renameTo(to)) {
             to.delete()
             if (!from.renameTo(to)) throw IOException("cannot move $from to $to")
@@ -298,8 +423,8 @@ object WindowPacks {
     }
 
     private const val MAX_LAT = 85.0511287798066
-    private val VALUED = setOf("--poly", "--core", "--id", "--bbox", "--threads", "--level")
-    private val ID = Regex("[a-z0-9][a-z0-9-]*")
+    private val VALUED = setOf("--poly", "--core", "--id", "--bbox", "--threads", "--level", "--shard")
+    internal val ID = Regex("[a-z0-9][a-z0-9-]*")
 
     /** A date as Overpass writes its data's: `YYYY-MM-DDTHH:MM:SSZ`. */
     private val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss'Z'").withZone(ZoneOffset.UTC)

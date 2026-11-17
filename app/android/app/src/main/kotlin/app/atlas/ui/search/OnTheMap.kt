@@ -91,6 +91,8 @@ internal fun OnTheMap(
             },
             onLongPress = onLongPress,
             onLongPressBuilding = onLongPressBuilding,
+            // a short tap on a building opens the place it is, or the one in it under the finger (MapHit.OnFeature)
+            featureOf = { b -> services.localData.feature(b.id, b.at) },
         )
         Row(
             Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 16.dp, vertical = 12.dp),

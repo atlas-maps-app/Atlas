@@ -2,18 +2,18 @@
 // weather_theme about once a minute (MK/state/ThemeBlock.kt, through MapCore.moment), read and checked here, and the
 // shaders' Theme made from it.
 //
-// The block, version 1, little-endian; every value is the port's own, the doubles bit for bit:
+// The block, version 2, little-endian; every value is the port's own, the doubles bit for bit:
 //
-//     0  u32  version (1)                     64  f64  haze_max, sun_k, amb_k, sky_k (1 without),
+//     0  u32  version (2)                     64  f64  haze_max, sun_k, amb_k, sky_k (1 without),
 //     4  u32  flags (theme_flag)                       shadow_op, shadow_blur, cloud_shadows, _dusk (0 without)
 //     8  i16  year     10 u8 month  11 u8 day  128  f64  the sun vector _L, x y z
 //    12  u8   hour     13 u8 minute            152  f64  the sun's azimuth and elevation (degrees)
 //    14  u8   the moment's name (MomentName)  168  f64  the hour's weather (th['wx']): cloud, low, rain, wind, gust,
 //    15  u8   the hour's WMO code, 255 without           wind_dir, temp, pressure, vis, hum (0 without)
-//    16  rgba sky_top, sky_hor, haze, sun, amb, 248  u64  reserved (0)
-//             ground, road, water, water_top,
-//             water_bot, shadow (a: 255 where the
-//             theme has the colour, else 0)
+//    16  rgba sky_top, sky_hor, haze, sun, amb, 248  f32  the place the sun's azimuth and elevation are of:
+//             ground, road, water, water_top,           its latitude and longitude (degrees; version 2: the place
+//             water_bot, shadow (a: 255 where the       the moment lights, which the world's look takes the
+//             theme has the colour, else 0)             terminator from, ENGINE.md step 5)
 //    60  f32  the user's TONE strength (0-2) with tone_strength, else 0
 //
 // The reader accepts a block only as the port makes one:
@@ -24,7 +24,8 @@
 //   ranges light_f32's bound holds for, style/Light.hpp; the port's own values reach 1.0, 0.84 and 1.7); shadow_blur
 //   in 0-64, cloud_shadows and _dusk in 0-1 with their flags and 0 without; wet only where wet is set;
 // - a unit sun vector (within 10^-12 in its square), above the horizon when the sun's elevation is, straight down
-//   when it is not; an azimuth in 0-360 and an elevation within ±90 degrees;
+//   when it is not; an azimuth in 0-360 and an elevation within ±90 degrees; a place of a latitude within ±90 and a
+//   longitude within ±180 degrees;
 // - with weather, cloud and low in 0-1, rain up to 500 mm, wind and gust up to 500 km/h, a direction in 0-360, a
 //   temperature of -100 to 70 °C, a pressure of 800-1200 hPa, a visibility up to 10^6 m, a humidity of 0-100 % and a
 //   WMO code up to 99 (or 255, none); without weather, all 0 and the code 255.
@@ -41,8 +42,12 @@
 
 namespace atlas::style {
 
+/// The sun's elevation under which the port's live moment is night, degrees (amsterdam.py's weather_theme, `el < -2`;
+/// ThemeBlock.NIGHT_BELOW in Kotlin, whose test holds the port's flag to it): where the block's night flag flips.
+inline constexpr double night_below = -2.0;
+
 /// The theme block's layout version (ThemeBlock.VERSION in Kotlin).
-inline constexpr std::uint32_t theme_block_version = 1;
+inline constexpr std::uint32_t theme_block_version = 2;
 
 /// The theme block's size in bytes (ThemeBlock.SIZE in Kotlin).
 inline constexpr std::size_t theme_block_size = 256;
@@ -63,7 +68,7 @@ inline constexpr std::uint32_t golden = shaders::THEME_GOLDEN;
 inline constexpr std::uint32_t tone = shaders::THEME_TONE;
 inline constexpr std::uint32_t tone_strength = shaders::THEME_TONE_STRENGTH;
 inline constexpr std::uint32_t daylight = shaders::THEME_DAYLIGHT;
-/// Every bit version 1 knows; a block with another is refused.
+/// Every bit the version knows; a block with another is refused.
 inline constexpr std::uint32_t known = 0x1FFFU;
 } // namespace theme_flag
 
@@ -89,7 +94,7 @@ struct Rgb8 {
     std::uint8_t a;
 };
 
-/// The theme block, version 1, as Kotlin writes it (the layout above).
+/// The theme block, version 2, as Kotlin writes it (the layout above).
 struct ThemeBlock {
     std::uint32_t version;
     std::uint32_t flags;
@@ -133,7 +138,10 @@ struct ThemeBlock {
     double pressure;
     double visibility;
     double humidity;
-    std::uint64_t reserved1;
+    /// The place the sun's azimuth and elevation are of, degrees: where the moment lights the map (the pack's own
+    /// origin, or the camera's target), and for a named moment, a look, the camera's place.
+    float place_latitude;
+    float place_longitude;
 
     [[nodiscard]] constexpr bool has(std::uint32_t flag) const noexcept { return (flags & flag) != 0U; }
 };
@@ -145,13 +153,13 @@ static_assert(offsetof(ThemeBlock, sky_top) == 16 && offsetof(ThemeBlock, shadow
 static_assert(offsetof(ThemeBlock, haze_max) == 64 && offsetof(ThemeBlock, dusk) == 120);
 static_assert(offsetof(ThemeBlock, sun_vector) == 128 && offsetof(ThemeBlock, sun_azimuth) == 152);
 static_assert(offsetof(ThemeBlock, cloud) == 168 && offsetof(ThemeBlock, humidity) == 240 &&
-              offsetof(ThemeBlock, reserved1) == 248);
+              offsetof(ThemeBlock, place_latitude) == 248 && offsetof(ThemeBlock, place_longitude) == 252);
 
 /// Why a theme block was refused.
 enum class ThemeError : std::uint8_t {
     size,       // not 256 bytes
     version,    // another layout version
-    flags,      // a flag bit version 1 does not know, or wet without wet_set
+    flags,      // a flag bit the version does not know, or wet without wet_set
     reserved,   // a reserved field that is not 0, a TONE strength without its flag, or an absent colour not all 0
     date,       // not a real date and time of day in 1900-2200
     moment,     // a moment name past the known ones

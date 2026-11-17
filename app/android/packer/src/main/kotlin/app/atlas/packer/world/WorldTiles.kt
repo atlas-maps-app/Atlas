@@ -361,7 +361,9 @@ object WorldTiles {
 
     /**
      * Planetiler's run of [profile] over [pbf] into [mbtiles] from L6 to [maxLevel] within [bounds] (lon/lat), on
-     * [threads] threads, its temporary files in [scratch]/tmp (deleted after).
+     * [threads] threads, its temporary files in [scratch]/tmp (deleted after). [mbtiles] goes to Planetiler as its file
+     * URI: 0.7.0 parses an output path's string as a URI (overwriteOutput(Path) hands it to URI.create), and a path with
+     * a space in it, as a checkout's can have, is no URI.
      */
     fun planetiler(pbf: File, mbtiles: File, scratch: File, threads: Int, bounds: Envelope, profile: WorldProfile, maxLevel: Int) {
         val arguments = Arguments.of(
@@ -373,7 +375,7 @@ object WorldTiles {
             ),
         )
         try {
-            Planetiler.create(arguments).setProfile(profile).addOsmSource("osm", pbf.toPath()).overwriteOutput(mbtiles.toPath()).run()
+            Planetiler.create(arguments).setProfile(profile).addOsmSource("osm", pbf.toPath()).overwriteOutput(mbtiles.toPath().toUri().toString()).run()
         } finally {
             File(scratch, "tmp").deleteRecursively()
         }

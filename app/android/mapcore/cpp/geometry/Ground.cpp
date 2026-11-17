@@ -30,6 +30,8 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace atlas::geometry {
 
@@ -830,6 +832,7 @@ private:
         out_.quay_colour = style_.quay_colour;
         out_.quay_coping = style_.quay_coping;
         out_.quay_waterline = style_.quay_waterline;
+        out_.quay_course = style_.quay_course;
         out_.tone = style_.tone;
     }
 
@@ -845,6 +848,17 @@ private:
                 const tl::GridPoint p = l->point(tl::thing::pos, i);
                 out_.lamps.push_back({.index = static_cast<std::uint32_t>(l->integer(tl::thing::index, i)),
                                       .at = {.x = f.x(p.lon), .z = f.z(p.lat)}});
+            }
+            // S['pois'] with opening hours (geometry/Shopfronts.cpp's places), each distinct opening_hours once
+            std::unordered_map<std::string_view, std::uint32_t> hours_at;
+            for (std::uint32_t i = 0; i < l->count; ++i) {
+                if (!l->boolean(tl::thing::poi, i).value_or(false)) continue;
+                const std::optional<std::string_view> oh = l->string(tl::thing::tag_opening_hours, i);
+                if (!oh || oh->empty()) continue;
+                const auto [at, made] = hours_at.try_emplace(*oh, static_cast<std::uint32_t>(out_.open_hours.size()));
+                if (made) out_.open_hours.emplace_back(*oh);
+                const tl::GridPoint p = l->point(tl::thing::pos, i);
+                out_.open_spots.push_back({.at = {.x = f.x(p.lon), .z = f.z(p.lat)}, .hours = at->second});
             }
         }
         const tl::Layer* l = tile_.layer(tl::LayerId::road);
@@ -924,6 +938,7 @@ std::size_t GroundTile::bytes() const noexcept {
            (runways.capacity() * sizeof(RunwayRef)) + (quays.capacity() * sizeof(QuayEdge)) +
            (tracks.capacity() * sizeof(ShadowTrack)) + (heights.capacity() * sizeof(double)) +
            (woods.capacity() * sizeof(ShadowTree)) + (lamps.capacity() * sizeof(Lamp)) +
+           (open_spots.capacity() * sizeof(OpenSpot)) + (open_hours.capacity() * sizeof(std::string)) +
            (lit_roads.capacity() * sizeof(LitRoad)) + (lit_points.capacity() * sizeof(P2)) +
            (lit_lines.capacity() * sizeof(P2)) + (mirror_heads.capacity() * sizeof(MirrorHead)) +
            (mirror_walls.capacity() * sizeof(MirrorWall)) + (thin_chunks.capacity() * sizeof(ThinChunk));
@@ -1066,6 +1081,11 @@ GroundGpu pack(const GroundTile& g) {
     // the roads' triangles in `above`: one run, their groups between draw_over's and the areas'
     std::size_t streets_from = 0;
     std::size_t streets_to = 0;
+    // the big roads' asphalt's triangles in `above` (draw_over's, over the roads): one run where they follow one
+    // another, as their group's fills do; none (their run empty) should another kind's fill lie among them
+    std::size_t bigs_from = 0;
+    std::size_t bigs_to = 0;
+    bool bigs_apart = false;
     for (const std::uint32_t f : order) {
         const Fill& fill = g.fills[f];
         switch (fill.kind) {
@@ -1081,8 +1101,13 @@ GroundGpu pack(const GroundTile& g) {
             } else {
                 ATLAS_ASSERT(fill.group < group::road || fill.group >= group::over);
             }
+            if (fill.kind == FillKind::big) {
+                bigs_apart = bigs_apart || (bigs_to != bigs_from && bigs_to != above.size());
+                if (bigs_to == bigs_from) bigs_from = above.size();
+            }
             triangles(f, above);
             if (fill.kind == FillKind::road) streets_to = above.size();
+            if (fill.kind == FillKind::big) bigs_to = above.size();
             break;
         }
     }
@@ -1094,6 +1119,8 @@ GroundGpu pack(const GroundTile& g) {
     out.above = put(above);
     out.streets = {.first = out.above.first + static_cast<std::uint32_t>(streets_from),
                    .count = static_cast<std::uint32_t>(streets_to - streets_from)};
+    out.bigs = {.first = out.above.first + static_cast<std::uint32_t>(bigs_from),
+                .count = bigs_apart ? 0U : static_cast<std::uint32_t>(bigs_to - bigs_from)};
     out.below = put(below);
     out.canopy = put(canopy);
     out.fans = put(fans);

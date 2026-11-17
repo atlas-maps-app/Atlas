@@ -171,10 +171,13 @@ struct CellInfo {
     std::int32_t top_cm = 0; ///< the highest point they draw, centimetres above the street
 };
 
-/// A layer of the directory this reader does not define (counted, not decoded).
+/// A layer of the directory this reader does not define (counted, not decoded): its id, its features, and its
+/// columns as the tile holds them, for a reader of its own (a terrain tile's raster: tiles/Heights.hpp).
 struct SkippedLayer {
     std::uint8_t id = 0;
     std::uint32_t count = 0;
+    std::uint16_t columns = 0;
+    std::span<const std::byte> bytes;
 };
 
 /// A decoded tile: views into the chunk's bytes and the arena it was decoded into.

@@ -7,7 +7,20 @@
 // face and its sample says (K8's quay samples), its own .3 stroke edging it; a tall wall in sun (TONE, water deeper
 // than 2 m) in columns of about 5 m, three bands high, one path of the lit bands and one of the unlit; the dark band at
 // its waterline; its coping, lit as the wall. Each as face() keeps it: Camera.poly at 300 px of margin, 0.12 px² of
-// area at least (a band's over 0.03). Eye-level courses (CU.coursing) are still to come.
+// area at least (a band's over 0.03).
+//
+// At eye level (the gaze less than about 14.5° down: `cam.f[1] > -0.25`) by day, a wall that is drawn shows its
+// courses (render/closeup.py's coursing, with the region's QUAY_COURSE: a brick's 6.25 cm, a cut stone's 45 cm in Paris
+// and Bergen, none for concrete), after its wall and before its waterline: the piece in chunks of 5 m at most, each
+// with a course 1.6 px high or more at its middle's depth a path of its bed joints (a line a course from the wall's
+// foot, 0.38 m above the water, up to 0.2 m under the street, 12 mm before the wall, each clipped at the near plane
+// and kept within 5 px of the frame), and for a cut stone its head joints staggered course by course; stroked
+// max(.35, focal · .011 / depth) wide (.008 for stone) in #E2D9CB (#5E5548) at .3 (.26) of how far the course's
+// height has come from 1.6 px toward 3.8. Each path is a slot among the quay's faces; its lines go through the line
+// stage (shaders/ground/ground.slang's stroke_vs under GROUND_COURSES: their ends in the frame's words, at the near
+// plane clipped as _seg clips them). Named difference: a cut stone's head joints blend over its bed joints where they
+// meet (the port's path composites them as one layer). The app's camera never looks that level (its steepest tilt
+// 20° down), so only the renders' own frames draw them.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/FrameLayout.hpp"
@@ -250,6 +263,7 @@ void Ground::decide_quays(const frame::FrameState& state) {
                       .sampled = toward && p.sampled};
         const auto wall = face_of(face, wy);
         const bool f1 = walls && face_kept(cam, wall, 300, 0.12, false, cs);
+        bool wall_drawn = false; // the port's f1 as drawn: the wall, or its bands' paths
         if (f1 && g.tone && toward && wy < -2 && p.sampled && p.columns > 0) {
             // a tall quay wall in sun: its lit bands' path, then its unlit ones'
             for (const bool want : {true, false}) {
@@ -266,10 +280,20 @@ void Ground::decide_quays(const frame::FrameState& state) {
                         any = face_kept(cam, band_of(b, wy, j, m), 300, 0.03, true, cs);
                     }
                 }
-                if (any) f.quays.push_back(b);
+                if (any) {
+                    f.quays.push_back(b);
+                    wall_drawn = true;
+                }
             }
         } else if (f1) {
             f.quays.push_back(face);
+            wall_drawn = true;
+        }
+        // at eye level the quay wall shows its brick courses: `if cam.f[1] > -0.25 and th.get('wx') and not night and
+        // f1`, f1 the wall as drawn (its bands' paths where it is in bands)
+        if (wall_drawn && !f.night && !no_courses_ && g.quay_course && *g.quay_course != 0.0 &&
+            cam.forward().y > -0.25) {
+            course_paths(cam, face, wy, *g.quay_course, f.quays);
         }
         QuayFace waterline = face;
         waterline.kind = QuayFace::Kind::waterline;
@@ -313,6 +337,105 @@ std::uint32_t lit_mix(std::uint32_t lit, std::uint32_t unlit, double k) noexcept
     return out;
 }
 
+void course_paths(const view::Camera& cam, const QuayFace& wall, double wy, double course, std::vector<QuayFace>& out) {
+    // coursing(cam, a, b, b[0] - a[0], b[1] - a[1], el_, n3, WY + 0.38, -0.2, QUAY_COURSE), `if el_ > 0.2`
+    const double ex = wall.bx - wall.ax;
+    const double ez = wall.bz - wall.az;
+    const double elen = pm::hypot(ex, ez);
+    const double y0 = wy + 0.38;
+    constexpr double top = -0.2;
+    if (!(elen > 0.2) || top - y0 < 0.3) return;
+    const bool stone = course >= 0.3;
+    const auto n = static_cast<std::uint32_t>(pm::max(1.0, pm::ceil(elen / 5.0)));
+    for (std::uint32_t k = 0; k < n; ++k) {
+        const double u0 = static_cast<double>(k) / n;
+        const double u1 = static_cast<double>(k + 1) / n;
+        const double dm =
+            pm::max(cam.depth({wall.ax + ((ex * (u0 + u1)) / 2), (y0 + top) / 2, wall.az + ((ez * (u0 + u1)) / 2)}),
+                    cam.near());
+        const double sp = (cam.focal() * course) / dm; // the course's height on the screen
+        if (sp < 1.6) continue;
+        const double op = pm::min(1.0, (sp - 1.6) / 2.2);
+        QuayFace c = wall;
+        c.kind = QuayFace::Kind::courses;
+        c.colour = stone ? 0x5E5548U : 0xE2D9CBU;
+        c.lit = c.unlit = c.colour;
+        c.sampled = false;
+        c.chunk = k;
+        c.chunks = n;
+        c.course = course;
+        c.width = printed(pm::max(0.35, (cam.focal() * (stone ? 0.008 : 0.011)) / dm), 2);
+        c.opacity = printed((stone ? 0.26 : 0.3) * op, 2);
+        out.push_back(c);
+    }
+}
+
+void course_lines(const view::Camera& cam, const QuayFace& f, double wy, double nx, double nz,
+                  std::vector<CourseLine>& out) {
+    // closeup.py's coursing over its chunk k of n: `u0, u1 = k / n, (k + 1) / n`
+    const double ex = f.bx - f.ax;
+    const double ez = f.bz - f.az;
+    const double elen = pm::hypot(ex, ez);
+    const double u0 = static_cast<double>(f.chunk) / f.chunks;
+    const double u1 = static_cast<double>(f.chunk + 1) / f.chunks;
+    const double y0 = wy + 0.38;
+    constexpr double top = -0.2;
+    const double course = f.course;
+    const double near = cam.near();
+    // _seg: both ends in camera coordinates, the one behind the near plane moved to it; none where both are
+    const auto seg = [&](const view::Vec3& p, const view::Vec3& q, CourseLine& line) {
+        view::Vec3 a = cam.cam(p);
+        view::Vec3 b = cam.cam(q);
+        if (a.z < near && b.z < near) return false;
+        if (a.z < near) {
+            const double t = (near - a.z) / (b.z - a.z);
+            a = {a.x + ((b.x - a.x) * t), a.y + ((b.y - a.y) * t), a.z + ((b.z - a.z) * t)};
+        }
+        if (b.z < near) {
+            const double t = (near - b.z) / (a.z - b.z);
+            b = {b.x + ((a.x - b.x) * t), b.y + ((a.y - b.y) * t), b.z + ((a.z - b.z) * t)};
+        }
+        line = {.a = p, .b = q, .pa = cam.pc(a), .pb = cam.pc(b)};
+        return true;
+    };
+    const std::size_t before = out.size();
+    // the bed joints: `y = y0 + course; while y < top - 0.02`
+    const double p0x = (f.ax + (ex * u0)) + (nx * 0.012);
+    const double p0z = (f.az + (ez * u0)) + (nz * 0.012);
+    const double p1x = (f.ax + (ex * u1)) + (nx * 0.012);
+    const double p1z = (f.az + (ez * u1)) + (nz * 0.012);
+    double y = y0 + course;
+    while (y < top - 0.02) {
+        CourseLine line;
+        const bool ahead = seg({p0x, y, p0z}, {p1x, y, p1z}, line);
+        // the port leaves out a line wholly more than 5 px beside the frame
+        const bool beside = pm::max(line.pa.x, line.pb.x) < -5 || pm::min(line.pa.x, line.pb.x) > cam.width() + 5 ||
+                            pm::max(line.pa.y, line.pb.y) < -5 || pm::min(line.pa.y, line.pb.y) > cam.height() + 5;
+        if (ahead && !beside) out.push_back(line);
+        y += course;
+    }
+    // cut stone: the blocks' head joints too, 2.1 courses long, staggered course by course (`if stone and segs`)
+    if (!(course >= 0.3) || out.size() == before) return;
+    const double bl = course * 2.1;
+    const double seg_len = elen * (u1 - u0);
+    std::uint32_t row = 0;
+    y = y0;
+    while (y < top - (course * 0.5)) {
+        const double y1 = pm::min(top, y + course);
+        double t = (static_cast<double>(row % 2) * bl) / 2;
+        while (t < seg_len) {
+            const double at = u0 + (t / elen);
+            const double x = (f.ax + (ex * at)) + (nx * 0.012);
+            const double z = (f.az + (ez * at)) + (nz * 0.012);
+            CourseLine line;
+            if (seg({x, y, z}, {x, y1, z}, line)) out.push_back(line);
+            t += bl;
+        }
+        y += course;
+        ++row;
+    }
+}
+
 namespace {
 
 [[nodiscard]] std::uint32_t bits_of(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
@@ -342,6 +465,7 @@ void Ground::write_quays(std::vector<std::uint32_t>& words) {
     };
     for (std::size_t j = 0; j < frame_.quays.size(); ++j) {
         const QuayFace& e = frame_.quays[j];
+        if (e.kind == QuayFace::Kind::courses) continue; // the line stage's (write_course_points)
         const DrawnTile& t = frame_.tiles[e.tile];
         if (!t.pass->ranges[1] && !t.pass->ranges[0]) continue;
         const geo::GroundTile& g = *t.ground;
@@ -367,6 +491,47 @@ void Ground::write_quays(std::vector<std::uint32_t>& words) {
     }
 }
 
+void Ground::write_course_points(std::vector<std::uint32_t>& words, std::vector<CoursePath>& paths) const {
+    std::vector<CourseLine> lines;
+    for (std::size_t j = 0; j < frame_.quays.size(); ++j) {
+        const QuayFace& e = frame_.quays[j];
+        if (e.kind != QuayFace::Kind::courses) continue;
+        const DrawnTile& t = frame_.tiles[e.tile];
+        if (!t.pass->ranges[1] && !t.pass->ranges[0]) continue;
+        const geo::GroundTile& g = *t.ground;
+        const geo::QuayEdge& q = g.quays[e.edge];
+        lines.clear();
+        course_lines(*t.cam, e, q.wy, q.nx, q.nz, lines);
+        // a run's segments are 14 bits of its instance word
+        if (lines.empty() || lines.size() > 0x4000) continue;
+        paths.push_back({.face = static_cast<std::uint32_t>(j),
+                         .first = static_cast<std::uint32_t>(words.size()),
+                         .lines = static_cast<std::uint32_t>(lines.size())});
+        for (const CourseLine& l : lines) {
+            for (const view::Vec3& c : {l.a, l.b}) {
+                words.push_back(bits_of(static_cast<float>(c.x - g.origin.x)));
+                words.push_back(bits_of(static_cast<float>(c.y)));
+                words.push_back(bits_of(static_cast<float>(c.z - g.origin.z)));
+            }
+        }
+    }
+}
+
+void Ground::record_courses(const frame::Recording& r) {
+    const Words& w = *words_;
+    if (w.course_count == 0 || !*pipelines_->line) return;
+    const vk::raii::CommandBuffer& cmd = r.frame.cmd;
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipelines_->line);
+    layouts::ground_ground::PushConstants pc{};
+    pc.at = {w.tiles, w.slots, w.theme, w.runs};
+    const auto samples = static_cast<std::uint32_t>(r.frame.pass.spec().config.samples());
+    // each line from the near plane on, as _seg clips it; its points the words'
+    pc.mode = {ground_flag::near_clip | ground_flag::courses, 0U, w.course_instances, samples};
+    cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
+    cmd.draw(6, w.course_count, 0, 0);
+    r.counters.draw("ground quay courses", std::uint64_t{w.course_count} * 2, w.course_count);
+}
+
 void Ground::record_quays(const frame::Recording& r) {
     const Words& w = *words_;
     if (w.quay_count == 0 || !*pipelines_->quay) return;
@@ -390,12 +555,38 @@ void Ground::emit_quays(const frame::FrameState& state, twin::Stream& out) const
     std::vector<std::uint32_t> ends;
     std::vector<twin::Subpath> subpaths;
     std::vector<view::Vec3> cs;
+    std::vector<CourseLine> courses;
     for (std::size_t j = 0; j < f.quays.size(); ++j) {
         const QuayFace& e = f.quays[j];
         const DrawnTile& t = f.tiles[e.tile];
         const double wy = t.ground->quays[e.edge].wy;
         points.clear();
         ends.clear();
+        if (e.kind == QuayFace::Kind::courses) {
+            // `<path d="M%.1f %.1fl%.1f %.1f..." stroke=... stroke-width="%.2f" opacity="%.2f" fill="none"/>`: each
+            // line from its first end as printed by its printed way to its other
+            const geo::QuayEdge& q = t.ground->quays[e.edge];
+            courses.clear();
+            course_lines(*t.cam, e, wy, q.nx, q.nz, courses);
+            if (courses.empty()) continue;
+            subpaths.clear();
+            for (const CourseLine& l : courses) {
+                const auto x = static_cast<float>(printed(l.pa.x, 1));
+                const auto y = static_cast<float>(printed(l.pa.y, 1));
+                points.push_back({.x = x, .y = y});
+                points.push_back({.x = x + static_cast<float>(printed(l.pb.x - l.pa.x, 1)),
+                                  .y = y + static_cast<float>(printed(l.pb.y - l.pa.y, 1))});
+            }
+            for (std::size_t k = 0; k < courses.size(); ++k) {
+                subpaths.push_back({.points = std::span<const twin::Point>(points).subspan(2 * k, 2), .closed = false});
+            }
+            out.at(slot(geo::group::quay, static_cast<std::uint32_t>(j), 0), out.root());
+            twin::Style s;
+            s.stroke = twin::Paint::colour(0xFF00'0000U | e.colour);
+            s.stroke_width = static_cast<float>(e.width);
+            out.path(s, subpaths, {.opacity = static_cast<float>(e.opacity)});
+            continue;
+        }
         if (e.kind == QuayFace::Kind::lit_bands || e.kind == QuayFace::Kind::dark_bands) {
             const bool want = e.kind == QuayFace::Kind::lit_bands;
             for (std::uint32_t c = 0; c < e.columns; ++c) {

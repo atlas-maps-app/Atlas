@@ -65,8 +65,8 @@ struct NoiseCheck {
 };
 
 /// The renders' filters' noises the check holds a device to: the screen fields' (mat, grain, ripple, glints, cloud
-/// shadows), the trees' and reflections' (crown, its tone, leaf, foliage), the regions' canopy, and a glint band at eye
-/// level.
+/// shadows), the trees' and reflections' (crown, its tone, leaf, foliage), the regions' canopy, a glint band at eye
+/// level, and the sky layer's clouds.
 [[nodiscard]] std::span<const Turbulence> checked_noises() noexcept;
 
 /// Runs the byte check on `device` (on its queue, waiting for it: before frames are drawn, or between them): each of

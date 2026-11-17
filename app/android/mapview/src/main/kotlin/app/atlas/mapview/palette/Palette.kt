@@ -212,7 +212,7 @@ data class Palette(
     /** The switches this palette draws with. */
     val switches: Int get() = flags ?: base.flags
 
-    /** True when this palette draws every colour as today's map does (the core then takes no palette). */
+    /** True when this palette draws every colour as the renders do ([Slot.today]: the core then takes no palette). */
     val isToday: Boolean get() = Slot.entries.all { colour(it) == it.today } && switches == 0
 
     /** How many colours differ from the base's (the Colour the map board's "6 colours changed"). */

@@ -95,6 +95,7 @@ std::string_view name_of(LayerId layer) noexcept {
     case LayerId::built: return "built";
     case LayerId::dem: return "dem";
     case LayerId::variant: return "variant";
+    case LayerId::heights: return "heights";
     }
     return "unknown";
 }

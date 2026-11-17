@@ -6,6 +6,7 @@
 #include "frame/FrameLayout.hpp"
 #include "gen/spirv/overlay/location.hpp"
 #include "gen/spirv/overlay/location_loc1.hpp"
+#include "passes/PlacePoint.hpp"
 #include "style/CameraState.hpp"
 #include "view/Camera.hpp"
 #include "view/Ladder.hpp"
@@ -118,20 +119,22 @@ void Overlays::release() noexcept {
 void Overlays::update(const frame::FrameState& state) {
     Placed& placed = slots_.at(state.slot & 1U);
     placed = {};
-    if (!state.camera.has(style::camera_flag::location) || !state.view.has_value() || !state.ground_frame.has_value() ||
+    if (!state.camera.has(style::camera_flag::location) || !state.view.has_value() || place_frame(state) == nullptr ||
         state.camera.leaves_out(style::camera_part::location)) {
         return;
     }
     const view::View& view = *state.view;
     const view::Camera& camera = view.camera();
-    const view::GroundFrame& ground = *state.ground_frame;
+    const view::GroundFrame& ground = *place_frame(state);
     const style::Location& l = state.camera.location;
     const double density = view.device().density;
     const auto width = static_cast<double>(state.camera.width_px);
     const auto height = static_cast<double>(state.camera.height_px);
-    // The fix on the street; behind the near plane, nothing (GroundView.project).
+    // The fix on the street; behind the near plane, nothing (GroundView.project). From 150 km the dot stands on the
+    // world's bent ground, and behind its horizon there is none (passes/PlacePoint.hpp).
     const view::Vec3 fix{ground.x(l.latitude, l.longitude), 0.0, ground.z(l.latitude, l.longitude)};
-    const auto dot = view.device_proj(fix);
+    const bool on_sphere = places_on_sphere(state);
+    const auto dot = place_point(state, view, ground, l.latitude, l.longitude);
     if (!dot) return;
     ol::LocationPush& p = placed.push;
     const view::Vec3& eye = camera.eye();
@@ -139,9 +142,11 @@ void Overlays::update(const frame::FrameState& state) {
     const auto r = static_cast<double>(l.accuracy);
     p.ground = {static_cast<float>(fix.x - eye.x), static_cast<float>(fix.y - eye.y), static_cast<float>(fix.z - eye.z),
                 static_cast<float>(r)};
-    // The accuracy where it is wider than 20 dp at the fix's depth (AreaPaths.circle's measure) and on the view.
+    // The accuracy where it is wider than 20 dp at the fix's depth (AreaPaths.circle's measure) and on the view. Its
+    // circle is the shader's, on the street: where the world is the sphere it would part from the dot, and it is
+    // left out (20 dp are 2 km of accuracy from 150 km).
     const double across = r * camera.focal() * density / camera.depth(fix);
-    if (across > 20.0 * density) {
+    if (!on_sphere && across > 20.0 * density) {
         const Box b = circle_box(view, fix, r, width, height);
         if (on_screen(b, width, height)) {
             placed.parts |= accuracy;
@@ -161,7 +166,7 @@ void Overlays::update(const frame::FrameState& state) {
     std::uint32_t flags = 0;
     if (state.camera.has(style::camera_flag::heading)) {
         const auto [lat, lon] = destination(l.latitude, l.longitude, static_cast<double>(l.heading), 15.0);
-        if (const auto ahead = view.device_proj({ground.x(lat, lon), 0.0, ground.z(lat, lon)})) {
+        if (const auto ahead = place_point(state, view, ground, lat, lon)) {
             turn = pymath::atan2(ahead->y - dot->y, ahead->x - dot->x) + (pymath::pi / 2.0);
             flags = 1U; // LOCATION_HEADING
         }

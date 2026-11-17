@@ -139,7 +139,11 @@ public:
     ~Memory();
 
     [[nodiscard]] Result<Image> image(const vk::ImageCreateInfo& info, MemoryUse use) const;
-    [[nodiscard]] Result<Buffer> buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, MemoryUse use) const;
+    /// A buffer of `size` bytes. `within_budget`: none past the device's budget, an error instead (VMA's WITHIN_BUDGET:
+    /// the driver's own budget where it reports one, VK_EXT_memory_budget, else VMA's estimate, 80 % of the heap). VMA
+    /// then asks the driver for its budget now and then within the allocation, a call among the allocation's own.
+    [[nodiscard]] Result<Buffer> buffer(vk::DeviceSize size, vk::BufferUsageFlags usage, MemoryUse use,
+                                        bool within_budget = false) const;
     /// Everything above. The budget asks the driver (VK_EXT_memory_budget: VMA fetches it now and then), so it is read
     /// only behind a crash guard's stage, as every driver call is (gpu/Guard.hpp).
     [[nodiscard]] MemoryStats stats() const;

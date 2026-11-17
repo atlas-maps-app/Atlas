@@ -8,7 +8,9 @@
 #include "gen/spirv/overlay/route.hpp"
 #include "gen/spirv/overlay/route_loc1.hpp"
 #include "gpu/Descriptors.hpp"
+#include "passes/PlacePoint.hpp"
 #include "routes/Routes.hpp"
+#include "scene/WorldBend.hpp"
 #include "view/Camera.hpp"
 #include "view/Ladder.hpp"
 
@@ -109,13 +111,13 @@ void Routes::update(const frame::FrameState& state) {
     draws_.clear();
     chips_.clear();
     const routes::RouteSet* set = state.routes;
-    if (set == nullptr || !state.view.has_value() || !state.ground_frame.has_value() ||
+    if (set == nullptr || !state.view.has_value() || place_frame(state) == nullptr ||
         state.camera.leaves_out(style::camera_part::routes)) {
         return;
     }
     const view::View& view = *state.view;
     const view::Camera& camera = view.camera();
-    const view::GroundFrame& ground = *state.ground_frame;
+    const view::GroundFrame& ground = *place_frame(state);
     const double density = view.device().density;
     const auto width = static_cast<double>(state.camera.width_px);
     const auto height = static_cast<double>(state.camera.height_px);
@@ -131,8 +133,70 @@ void Routes::update(const frame::FrameState& state) {
         return std::array<float, 4>{static_cast<float>(x - eye.x), static_cast<float>(-eye.y),
                                     static_cast<float>(z - eye.z), static_cast<float>(along)};
     };
+    // Where the ground bends (a camera beyond 18 km: the drop, and from 150 km the sphere) the street's plane is not
+    // where the ground is drawn: a place is then taken on the view, at its point on the bent ground
+    // (passes/PlacePoint.hpp) with its depth along the view, and the draws are measured there, in device px
+    // (route.slang's ROUTE_SCREEN). Up to 18 km everything is on the street, as before.
+    const bool bent = view.drop() > 0.0;
+    struct Seen {
+        view::Vec2 px;
+        double depth = 0.0;
+    };
+    const auto seen = [&](double lat, double lon) -> std::optional<Seen> {
+        const std::optional<view::Vec2> px = place_point(state, view, ground, lat, lon);
+        if (!px) return std::nullopt;
+        const view::Vec3 at = places_on_sphere(state)
+                                  ? scene::world_point(state.world->bend, state.world->frame, lat, lon,
+                                                       scene::wrap_shift(state.world->bend, lon))
+                                  : view.bent({ground.x(lat, lon), 0.0, ground.z(lat, lon)});
+        const double depth = camera.depth(at);
+        if (depth < near_clip || depth > far) return std::nullopt;
+        return Seen{.px = *px, .depth = depth};
+    };
+    const auto on_view_at = [](double x, double y, double along) {
+        return std::array<float, 4>{static_cast<float>(x), 0.0F, static_cast<float>(y), static_cast<float>(along)};
+    };
+    // a frame point's place on the view (the bent ground's), and a short length of the ground to measure it by
+    const auto seen_at = [&](double x, double z) {
+        return seen(ground.lat0 - (z / ground.kz), ground.lon0 + (x / ground.kx));
+    };
+    const double probe = distance * 0.002;
     // The areas whose circles reach the view.
     for (const routes::Area& a : set->areas()) {
+        if (bent) {
+            // Its circle lies on the bent ground: on the view an ellipse about its centre's point, by where a short
+            // length east and one south of the centre stand there. The draw carries the view's px to the ground's
+            // metres about the centre (b), so the shader measures the circle on the ground as it does on the street.
+            const double x = ground.x(a.latitude, a.longitude);
+            const double z = ground.z(a.latitude, a.longitude);
+            const std::optional<Seen> c = seen_at(x, z);
+            const std::optional<Seen> east = seen_at(x + probe, z);
+            const std::optional<Seen> south = seen_at(x, z + probe);
+            if (!c || !east || !south || draws_.size() >= max_draws) continue;
+            // px a metre: east's (ex, ey) and south's (sx, sy)
+            const double ex = (east->px.x - c->px.x) / probe;
+            const double ey = (east->px.y - c->px.y) / probe;
+            const double sx = (south->px.x - c->px.x) / probe;
+            const double sy = (south->px.y - c->px.y) / probe;
+            const double det = (ex * sy) - (sx * ey);
+            if (!(std::abs(det) > 1e-12)) continue;
+            const auto r = static_cast<double>(a.radius);
+            const double reach_x = r * pymath::hypot(ex, sx);
+            const double reach_y = r * pymath::hypot(ey, sy);
+            const Box b{.left = c->px.x - reach_x,
+                        .top = c->px.y - reach_y,
+                        .right = c->px.x + reach_x,
+                        .bottom = c->px.y + reach_y};
+            if (!on_screen(b, width, height)) continue;
+            draws_.push_back({.a = on_view_at(c->px.x, c->px.y, r),
+                              .b = {static_cast<float>(sy / det), static_cast<float>(-sx / det),
+                                    static_cast<float>(-ey / det), static_cast<float>(ex / det)},
+                              .width = {static_cast<float>(area_line_dp / 2.0 * density), 0.0F, 0.0F, 0.0F},
+                              .box = quad_of(b, 2.0, width, height),
+                              .more = {},
+                              .look = {a.fill, a.stroke, on_view, area}});
+            continue;
+        }
         const double cx = ground.x(a.latitude, a.longitude);
         const double cz = ground.z(a.latitude, a.longitude);
         const auto r = static_cast<double>(a.radius);
@@ -154,7 +218,58 @@ void Routes::update(const frame::FrameState& state) {
     for (const routes::Route& route : set->routes()) {
         pieces_.clear();
         bool open = false; // the last piece reached its segment's end: a run goes on
-        for (std::size_t i = 1; i < route.points.size(); ++i) {
+        // On the bent ground: the route's points on the view, one closer than 1.5 px to the last kept left out (a
+        // route of a country's length has a point every few metres), each piece between two kept points; a point
+        // behind the eye, over the horizon or beyond the haze ends the run.
+        std::optional<Seen> kept;
+        double kept_along = 0.0;
+        double kept_x = 0.0;
+        double kept_z = 0.0;
+        for (std::size_t i = 0; bent && i < route.points.size(); ++i) {
+            const auto& [lat, lon, along] = route.points[i];
+            const double x = ground.x(lat, lon);
+            const double z = ground.z(lat, lon);
+            const std::optional<Seen> here = seen(lat, lon);
+            if (!here) {
+                if (open) pieces_.back().ends = true;
+                kept.reset();
+                open = false;
+                continue;
+            }
+            const bool last = i + 1 == route.points.size();
+            if (kept) {
+                const double dx = here->px.x - kept->px.x;
+                const double dy = here->px.y - kept->px.y;
+                if (!last && (dx * dx) + (dy * dy) < static_cast<double>(merge_px2)) continue;
+                // what a metre of the ground across the piece spans on the view, at its middle: by a short length
+                // to its side there (by its depth where that does not stand on the view)
+                const double len = pymath::hypot(x - kept_x, z - kept_z);
+                const double mx = (kept_x + x) / 2.0;
+                const double mz = (kept_z + z) / 2.0;
+                double across = focal_px / ((kept->depth + here->depth) / 2.0);
+                if (len > 0.0) {
+                    const std::optional<Seen> mid = seen_at(mx, mz);
+                    const std::optional<Seen> side =
+                        seen_at(mx - ((z - kept_z) / len * probe), mz + ((x - kept_x) / len * probe));
+                    if (mid && side) across = pymath::hypot(side->px.x - mid->px.x, side->px.y - mid->px.y) / probe;
+                }
+                pieces_.push_back({.ax = kept->px.x,
+                                   .az = kept->px.y,
+                                   .sa = kept_along,
+                                   .bx = here->px.x,
+                                   .bz = here->px.y,
+                                   .sb = along,
+                                   .joined = open,
+                                   .ends = last,
+                                   .across = across});
+                open = true;
+            }
+            kept = here;
+            kept_along = along;
+            kept_x = x;
+            kept_z = z;
+        }
+        for (std::size_t i = 1; !bent && i < route.points.size(); ++i) {
             const auto& [lat0, lon0, s0] = route.points[i - 1];
             const auto& [lat1, lon1, s1] = route.points[i];
             const double x0 = ground.x(lat0, lon0);
@@ -201,6 +316,17 @@ void Routes::update(const frame::FrameState& state) {
             shown_.resize(pieces_.size());
             for (std::size_t k = 0; k < pieces_.size(); ++k) {
                 const Piece& p = pieces_[k];
+                if (bent) {
+                    // on the view: the segment's box, grown by its half-width there
+                    const double hw = std::max(h * p.across, least);
+                    const Box b{.left = std::min(p.ax, p.bx) - hw,
+                                .top = std::min(p.az, p.bz) - hw,
+                                .right = std::max(p.ax, p.bx) + hw,
+                                .bottom = std::max(p.az, p.bz) + hw};
+                    shown_[k] = on_screen(b, width, height) ? 1 : 0;
+                    quads_[k] = quad_of(b, 2.0, width, height);
+                    continue;
+                }
                 const double ha = std::max(h, least * camera.depth({p.ax, 0.0, p.az}) / focal_px);
                 const double hb = std::max(h, least * camera.depth({p.bx, 0.0, p.bz}) / focal_px);
                 const double len = pymath::hypot(p.bx - p.ax, p.bz - p.az);
@@ -222,6 +348,18 @@ void Routes::update(const frame::FrameState& state) {
                 // a piece meets the one drawn before it, or after it, where its run goes on into it
                 const bool prev = p.joined && k > 0 && shown_[k - 1] != 0;
                 const bool next = k + 1 < pieces_.size() && pieces_[k + 1].joined && shown_[k + 1] != 0;
+                if (bent) {
+                    const double hw = std::max(h * p.across, least);
+                    draws_.push_back({.a = on_view_at(p.ax, p.az, p.sa),
+                                      .b = on_view_at(p.bx, p.bz, p.sb),
+                                      .width = {static_cast<float>(hw), static_cast<float>(least),
+                                                static_cast<float>(period), static_cast<float>(dash)},
+                                      .box = quads_[k],
+                                      .more = {static_cast<float>(route.travelled), 0.0F, 0.0F, 0.0F},
+                                      .look = {colour, faded,
+                                               (prev ? joins_prev : 0U) | (next ? joins_next : 0U) | on_view, piece}});
+                    continue;
+                }
                 draws_.push_back({.a = relative(p.ax, p.az, p.sa),
                                   .b = relative(p.bx, p.bz, p.sb),
                                   .width = {static_cast<float>(h), static_cast<float>(least),
@@ -240,7 +378,8 @@ void Routes::update(const frame::FrameState& state) {
         run_breaks_.clear();
         std::size_t start = 0; // the run's first point in run_
         const auto add = [&](double x, double z, bool force) {
-            const auto p = view.device_proj({x, 0.0, z});
+            // (on the bent ground a piece's points are the view's already)
+            const std::optional<view::Vec2> p = bent ? std::optional(view::Vec2{x, z}) : view.device_proj({x, 0.0, z});
             if (!p) return;
             const std::array<float, 2> q{static_cast<float>(p->x), static_cast<float>(p->y)};
             const std::size_t n = run_.size() - start;

@@ -199,6 +199,7 @@ void Buildings::update(const frame::FrameState& state) {
     runs_.clear();
     drawn_handles_.clear();
     dithers_ = false;
+    grounded_ = state.grounded;
     stroke_counts_ = {};
     window_counts_ = {};
     if (strokes_ != nullptr) {
@@ -478,7 +479,11 @@ void Buildings::record(const frame::Recording& recording, std::uint32_t phase) {
         record_decide(recording);
         record_window_decide(recording);
         break;
-    case strokes_phase: record_strokes(recording); break;
+    case strokes_phase:
+        // the thin walls under the roofs' thin edges, which lie over the walls
+        record_thin_walls(recording);
+        record_strokes(recording);
+        break;
     case materials_phase: record_materials(recording); break;
     case roof_lines_phase: record_roof_lines(recording); break;
     case kit_walls_phase: record_kit_walls(recording); break;

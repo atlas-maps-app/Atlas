@@ -18,7 +18,9 @@
 //   - the clumps by depth, far to near (a stable sort), in three slices, each slice's circles in four tones: the under
 //     tone or the side's (nrm.y < -0.45, from stage T), the lit tone where lam = nrm · L > -0.2 (0.35 of the clump's
 //     radius toward the sun, 0.72 of its radius), the highlight where lam > 0.35 and the crown's sun bit is set (0.55
-//     toward it, 0.36 of it); lam is -1 at night.
+//     toward it, 0.36 of it); lam is -1 at night. While the bit's swap fades (K8), the highlight comes and goes as the
+//     tones cross-fade: it is drawn wherever the crown draws lit at all, its colour between the lit tone it lies on
+//     and its own by how lit the crown draws, so it neither appears nor goes at once.
 // Every value the port prints is snapped to its tenth at rest (camera.slang's snap_tenth), from the unrounded value
 // the port prints: c0[0] - w0, p[0] - rr * 0.2, rr * 0.72.
 //
@@ -510,11 +512,6 @@ inline float tree_sun_amount(uint sample, uint2 texel, bool has, float weight, b
     return now != 0u ? weight : 1.0f - weight;
 }
 
-/// Whether the crown counts as lit for its highlight tone: its sample's newest bit.
-inline bool tree_sunlit(uint sample, uint2 texel, bool has, bool night) {
-    return !night && has && ((texel.x >> (sample & 31u)) & 1u) != 0u;
-}
-
 /// A tone mixed from its unlit and lit colours (0xBBGGRR) by `amount`, rounded to 8-bit levels.
 inline uint tree_mix(uint unlit, uint lit, float amount) {
     if (amount <= 0.0f) {
@@ -531,6 +528,13 @@ inline uint tree_mix(uint unlit, uint lit, float amount) {
         out |= uint(v + 0.5f) << (8u * i);
     }
     return out;
+}
+
+/// A crown's highlight's tone (0xBBGGRR) where the crown draws `amount` lit: its own, from its `unlit` and `lit`
+/// colours, where the crown is lit; while its sun bit's swap fades, between the lit tone it lies on (`lit_tone`, as
+/// the crown draws it now) and its own, so the highlight comes and goes as the tones cross-fade.
+inline uint tree_highlight_tone(uint lit_tone, uint unlit, uint lit, float amount) {
+    return tree_mix(lit_tone, tree_mix(unlit, lit, amount), amount);
 }
 
 /// A colour 0xBBGGRR as the shaders draw it (0 to 1).

@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 26
+    const val ABI = 32
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -320,8 +320,28 @@ object Native {
         ranges: Array<ByteArray>,
     ): String
 
-    /** Empties the world's cache in [dir] of every head and chunk (a new version of the world drops the old one's); "" or why not. */
-    @JvmStatic external fun worldDrop(dir: String, budget: Long): String
+    /**
+     * Empties the world's cache in [dir] of every head and chunk (a new version of the world drops the old one's); "" or
+     * why not. With [pinned], of all but what is pinned there ([worldKept]: the kept countries' world stays).
+     */
+    @JvmStatic external fun worldDrop(dir: String, budget: Long, pinned: Boolean): String
+
+    /**
+     * The world a kept country keeps (ENGINE.md step 11), pinned in the world's cache in [dir] in place of what was
+     * pinned there: the packs of [lengths] bytes whose SHA-256s lie end to end in [identities] (32 bytes each), pack i's
+     * tiles to keep the next `counts[i]` of [tiles] (keys packed as [wantedWindows]'). What the cache lacks of them: the
+     * tiles no pack holds, the chunks held and their bytes, how many heads are lacking, those packs' places, then four
+     * numbers a chunk lacking: its pack's place, its tile, its offset in the pack and its length. Null where the cache
+     * does not open, the arrays do not agree or the pins cannot be written.
+     */
+    @JvmStatic external fun worldKept(dir: String, budget: Long, lengths: LongArray, identities: ByteArray, counts: IntArray, tiles: LongArray): LongArray?
+
+    /**
+     * A range of the bytes of a kept world pack ([length] bytes, its SHA-256 [identity]) from [offset], into the
+     * world's cache in [dir]: its whole chunks checked and kept. The chunks kept, then the refused ones' tiles (packed);
+     * null where the cache holds no head that opens the pack.
+     */
+    @JvmStatic external fun worldKeptRange(dir: String, budget: Long, length: Long, identity: ByteArray, offset: Long, bytes: ByteArray): LongArray?
 
     /**
      * The world's tiles the map wants whose chunks are not on the phone, nearest first: eight numbers each, its pack's
@@ -363,6 +383,27 @@ object Native {
     @JvmStatic external fun labels(handle: Long, block: ByteBuffer, revision: Long, least: Float): String
 
     /**
+     * The world's names the map's frames show without a sprite, by rank (ENGINE.md step 5, "Names"), little-endian:
+     * their count (u32), then each one's id (u32), its look (u32: 0 a city's, 1 a town's, 2 a village's, 3 the Globe
+     * board's) and its text (u32 bytes, then UTF-8). Each is asked for once in two seconds.
+     */
+    @JvmStatic external fun namesWanted(handle: Long): ByteArray
+
+    /**
+     * The names' sprites (`state.LabelBlock`'s block in a direct buffer, each sprite without points; one without an
+     * image is a name the device has no glyphs for), their text drawn no smaller than [floorDp]; "" or why they were
+     * refused.
+     */
+    @JvmStatic external fun names(handle: Long, block: ByteBuffer, floorDp: Float): String
+
+    /**
+     * Names no tile holds, picked as a tile's are from now on (a test's), little-endian: their count (u32), then each
+     * one's kind (u32: 0 a country, 1 a city, 2 a town, 3 a village, 4 a suburb), latitude, longitude and people (f64
+     * each) and its text (u32 bytes, then UTF-8); "" or why they were refused.
+     */
+    @JvmStatic external fun testNames(handle: Long, block: ByteArray): String
+
+    /**
      * The map's markers (`state.MarkerBlock`'s block in a direct buffer; an empty block takes them away) at [revision];
      * "" or why they were refused.
      */
@@ -389,9 +430,11 @@ object Native {
 
     /**
      * The building the app asks about (FillIn's question): way or [relation] [id] (0: none, the question closed), its
-     * walls' flat colour [wall] (0xRRGGBB), drawn [hatched] while the question is open.
+     * walls' flat colour [wall] (0xRRGGBB; negative: their colour is not asked about), drawn [hatched] while the
+     * question is open, and the roof it is asked about in ([roof]: 0 its own, 1 flat, 2 gabled, 3 hipped), which the
+     * core draws as the board's house in the building's place.
      */
-    @JvmStatic external fun ask(handle: Long, relation: Boolean, id: Long, wall: Int, hatched: Boolean)
+    @JvmStatic external fun ask(handle: Long, relation: Boolean, id: Long, wall: Int, hatched: Boolean, roof: Int)
 
     /** The screen's haze, vignette and paper grain for the map, each on or off (the app's Look settings). */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)

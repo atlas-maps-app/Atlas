@@ -11,9 +11,11 @@ import app.atlas.render.Real
 import app.atlas.rendertiles.model.Grid
 import com.onthegomap.planetiler.geo.GeoUtils
 import org.locationtech.jts.algorithm.Area
+import org.locationtech.jts.algorithm.construct.MaximumInscribedCircle
 import org.locationtech.jts.geom.Coordinate
 import org.locationtech.jts.geom.Envelope
 import org.locationtech.jts.geom.Geometry
+import org.locationtech.jts.geom.Point
 import org.locationtech.jts.geom.Polygon
 import org.locationtech.jts.geom.util.PolygonExtracter
 import org.locationtech.jts.operation.union.UnaryUnionOp
@@ -48,6 +50,11 @@ data class Decision(val layer: String, val kind: String, val minLevel: Int, val 
  * - runways (regions.py's aeroways) from L10;
  * - places: countries and cities at every level, towns from L8, villages from L10, suburbs at L11 (every node with a
  *   `place` is a place label in stage P), with their name, population, capital and admin_level;
+ * - the water's names, the world's own (ENGINE.md step 5, "Names"; no region draws them): oceans and seas (place=ocean
+ *   and sea) at every level, bays and straits (natural=bay and strait) mapped as nodes from L8, and every named area of
+ *   them, lakes and reservoirs (natural=water) from the first level at whose start it covers [NAME_DP2] dp², each at
+ *   the centre of its largest inscribed circle with its area ([waterLabel]); the rivers' names (named waterway=river
+ *   ways) from L9 as lines of their own, joined by name in each tile ([RIVER_NAME]), so the rivers drawn keep theirs;
  * - no buildings.
  *
  * Built-up areas are the land cover's residential, commercial, retail and industrial kinds, as in the renders. Every
@@ -123,7 +130,34 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
         if (land == null) decisions = decisions.filter { it.layer != LAND }
         if (decisions.isEmpty()) return
         audit?.record(type, element.id(), decisions, sf, land)
-        for (d in decisions) emit(d, sf, fc, element.id(), t, land)
+        for (d in decisions) emit(d, sf, fc, element.id(), type, t, land)
+    }
+
+    /** A water's name's point (world coordinates), its area in m² (0 for a node) and the level it first shows at. */
+    class WaterLabel(val point: Point, val squareMetres: Long, val level: Int)
+
+    /**
+     * Where [sf]'s name of kind [kind] stands: a node at itself (an ocean or a sea from L6, a bay or a strait from L8);
+     * an area at the centre of its largest polygon's largest inscribed circle (to 1/1,000 of that polygon's box), with
+     * its area (the shells' less the holes', as stage P measures a ring), from L6 for an ocean or a sea and otherwise
+     * from the first level at whose start it covers [NAME_DP2] dp² at that point's latitude; null where it is too small
+     * for L11 or has no area.
+     */
+    private fun waterLabel(sf: SourceFeature, kind: String): WaterLabel? {
+        if (sf.isPoint) {
+            val p = runCatching { sf.worldGeometry() }.getOrNull() as? Point ?: return null
+            return WaterLabel(p, 0, if (kind == OCEAN || kind == SEA) MIN_LEVEL else NAMED_NODE_LEVEL)
+        }
+        val g = runCatching { sf.polygon() }.getOrNull() ?: return null
+        val polygons = PolygonExtracter.getPolygons(g).map { it as Polygon }.filter { !it.isEmpty }
+        if (polygons.isEmpty()) return null
+        val m2 = polygons.sumOf { p -> squareMetres(p.exteriorRing.coordinates) - (0 until p.numInteriorRing).sumOf { squareMetres(p.getInteriorRingN(it).coordinates) } }
+        if (m2 <= 0.0) return null
+        val largest = polygons.maxBy { it.area }
+        val env = largest.envelopeInternal
+        val point = MaximumInscribedCircle.getCenter(largest, maxOf(env.width, env.height) / 1000.0) as? Point ?: return null
+        val level = if (kind == OCEAN || kind == SEA) MIN_LEVEL else nameLevel(m2, GeoUtils.getWorldLat(point.y)) ?: return null
+        return WaterLabel(point, Math.round(m2), level)
     }
 
     /**
@@ -139,7 +173,14 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
         return polygons.singleOrNull() ?: UnaryUnionOp.union(polygons)
     }
 
-    private fun emit(d: Decision, sf: SourceFeature, fc: FeatureCollector, id: Long, t: TagView, land: Geometry?) {
+    private fun emit(d: Decision, sf: SourceFeature, fc: FeatureCollector, id: Long, type: OsmType, t: TagView, land: Geometry?) {
+        if (d.layer == WATER_NAME) {
+            val at = waterLabel(sf, d.kind) ?: return
+            // a relation's id negated, so a way's and a relation's of one number are two waters
+            fc.geometry(WATER_NAME, at.point).setAttr("kind", d.kind).setAttr("name", d.name).setAttr("id", if (type == OsmType.RELATION) -id else id)
+                .setAttr("area", at.squareMetres).setZoomRange(at.level, MAX_LEVEL).setBufferPixels(BUFFER.toDouble())
+            return
+        }
         val f = when (d.layer) {
             LAND -> fc.geometry(LAND, land!!).setAttr("kind", d.kind)
             WATER -> fc.polygon(WATER)
@@ -147,6 +188,7 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
             RAIL -> fc.line(RAIL)
             AERO -> fc.line(AERO).setAttr("kind", d.kind)
             RIVER -> fc.line(RIVER)
+            RIVER_NAME -> fc.line(RIVER_NAME).setAttr("name", d.name)
             PLACE -> fc.point(PLACE).setAttr("kind", d.kind).setAttr("name", d.name).setAttr("id", id)
                 .setAttr("population", t["population"]).setAttr("capital", t["capital"]).setAttr("admin_level", t["admin_level"])
             else -> throw IllegalStateException("no layer ${d.layer}")
@@ -214,7 +256,36 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
         }
         // the world's own: rivers, which no region draws as lines
         if (way && line && t.isValue("waterway", "river")) out += Decision(RIVER, "river", RIVER_LEVEL)
+        // and the water's names: a river's along its line, a sea's, a bay's or a lake's at its point
+        val name = t["name"]?.takeIf { it.isNotBlank() }
+        if (name != null) {
+            if (way && line && t.isValue("waterway", "river")) out += Decision(RIVER_NAME, "river", RIVER_NAME_LEVEL, name)
+            waterKind(t, node, area)?.let { out += Decision(WATER_NAME, it, if (node && it != OCEAN && it != SEA) NAMED_NODE_LEVEL else MIN_LEVEL, name) }
+        }
         return out
+    }
+
+    /**
+     * The kind of water a named element with tags [t] names, a [node] or an [area]: `ocean` and `sea` (place=*), `bay`
+     * and `strait` (natural=*), and of natural=water areas `reservoir` (water=reservoir) and `lake` (no water=*, or one
+     * of [LAKE_WATERS]); null for the rest (a river's or a canal's water, a pond of a farm or a works' basin).
+     */
+    fun waterKind(t: TagView, node: Boolean, area: Boolean): String? {
+        if (!node && !area) return null
+        when (t["place"]) {
+            OCEAN -> return OCEAN
+            SEA -> return SEA
+        }
+        when (t["natural"]) {
+            "bay" -> return BAY
+            "strait" -> return STRAIT
+            "water" -> if (area) {
+                val w = t["water"]
+                if (w == "reservoir") return RESERVOIR
+                if (w == null || w in LAKE_WATERS) return LAKE
+            }
+        }
+        return null
     }
 
     /** regions.py's `land_kind(t)`. */
@@ -234,7 +305,7 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
      */
     override fun postProcessLayerFeatures(layer: String, zoom: Int, items: List<VectorTile.Feature>): List<VectorTile.Feature> = when (layer) {
         LAND, WATER -> FeatureMerge.mergeNearbyPolygons(items, MIN_AREA, MIN_AREA, MERGE_DISTANCE, MERGE_BUFFER)
-        ROAD, BIG, RAIL, AERO, RIVER -> FeatureMerge.mergeLineStrings(items, 0.0, TOLERANCE, BUFFER.toDouble())
+        ROAD, BIG, RAIL, AERO, RIVER, RIVER_NAME -> FeatureMerge.mergeLineStrings(items, 0.0, TOLERANCE, BUFFER.toDouble())
         else -> items
     }
 
@@ -248,9 +319,46 @@ class WorldProfile(private val tags: StagePTags = StagePTags.STAGE_P, val audit:
         const val RIVER = "river"
         const val PLACE = "place"
 
+        /** The water's names at their points (oceans, seas, bays, straits, lakes, reservoirs) and the rivers' along their lines. */
+        const val WATER_NAME = "water_name"
+        const val RIVER_NAME = "river_name"
+
+        /** The kinds of the water's names. */
+        const val OCEAN = "ocean"
+        const val SEA = "sea"
+        const val BAY = "bay"
+        const val STRAIT = "strait"
+        const val LAKE = "lake"
+        const val RESERVOIR = "reservoir"
+
+        /** The water=* of a natural=water area named as a lake. */
+        val LAKE_WATERS = setOf("lake", "lagoon", "oxbow", "pond", "lake;pond", "basin;lake")
+
+        /** The rivers' names from L9 (ENGINE.md step 5: rivers along their line from L11 to L9). */
+        const val RIVER_NAME_LEVEL = 9
+
+        /** A bay or a strait mapped as a node, which says no size, from L8. */
+        const val NAMED_NODE_LEVEL = 8
+
+        /**
+         * A lake's (or a bay's, a strait's) name from the first level at whose start it covers this many dp²: a name of
+         * 15 dp is about 1,000 dp², so its water about twice that around it (about 0.35 km² at L11 at 52° N).
+         */
+        const val NAME_DP2 = 2_000.0
+
         /** The world's mid-zoom levels. */
         const val MIN_LEVEL = 6
         const val MAX_LEVEL = 11
+
+        /** The equator's length on the sphere stage P's frames use for Mercator's scale, metres. */
+        const val EQUATOR_METRES = 40_075_016.686
+
+        /** The metres in a dp at level [z]'s start, where a tile is 910 dp wide, at latitude [lat] (degrees). */
+        fun dpMetres(z: Int, lat: Double): Double = EQUATOR_METRES * Math.cos(Math.toRadians(lat)) / (1 shl z) * (DP / 256.0)
+
+        /** The first level from L6 at whose start [squareMetres] at latitude [lat] cover [NAME_DP2] dp²; null: none to L11. */
+        fun nameLevel(squareMetres: Double, lat: Double): Int? =
+            (MIN_LEVEL..MAX_LEVEL).firstOrNull { z -> dpMetres(z, lat).let { d -> squareMetres >= NAME_DP2 * d * d } }
 
         /**
          * A level starts where its tiles are about 910 dp wide (as L12's are at 9.4 km), so a dp is 256 / 910 of a

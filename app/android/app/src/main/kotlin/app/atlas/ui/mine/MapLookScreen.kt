@@ -70,6 +70,8 @@ import app.atlas.mapview.palette.Preset
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.services.DEFAULT_PALETTE
+import app.atlas.services.DEFAULT_TONE_ON
 import app.atlas.services.SettingsKeys
 import app.atlas.services.SettingsStore
 import app.atlas.ui.kit.CssShadow
@@ -92,7 +94,7 @@ fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
     val code by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
     val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
-    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, true).collectAsStateWithLifecycle(true)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, DEFAULT_TONE_ON).collectAsStateWithLifecycle(DEFAULT_TONE_ON)
     val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
     val current = remember(code) { MapLookModel.current(code) }
     val saved = remember(savedText) { MapLookModel.savedOf(savedText) }
@@ -263,13 +265,13 @@ private fun PresetsCard(current: Palette, savedName: String?, names: Map<Preset,
 
 /**
  * What the map draws, in a few words: the saved palette's name ([savedName]), else where an unsaved palette comes from
- * and how many colours it changes, else the preset's name ("Today · the default" for today's look).
+ * and how many colours it changes, else the preset's name ("Alpha 22 · the default" for the default look).
  */
 @Composable
 internal fun paletteLine(current: Palette, savedName: String?, names: Map<Preset, String>): String = when {
     savedName != null -> savedName
     current.changed > 0 -> changedLine(current, names)
-    current == Palette() -> stringResource(R.string.mine_look_default, names.getValue(Preset.TODAY))
+    current == DEFAULT_PALETTE -> stringResource(R.string.mine_look_default, names.getValue(DEFAULT_PALETTE.base))
     else -> names.getValue(current.base)
 }
 

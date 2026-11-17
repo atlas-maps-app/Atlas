@@ -62,7 +62,8 @@ public:
     virtual void update(const FrameState& state, Globals& globals) = 0;
 
     /// The frame block's flags its resources allow this frame (frame.slang's FRAME_FIELDS: the fields and byte tables
-    /// are bound), asked after update; none by default. The frame keeps FRAME_FIELDS in full mode alone.
+    /// are bound; FRAME_SKY_FIELD: the sky's field is), asked after update; none by default. The frame keeps them in
+    /// full mode alone.
     [[nodiscard]] virtual std::uint32_t frame_flags(const FrameState& state) const noexcept {
         (void)state;
         return 0;

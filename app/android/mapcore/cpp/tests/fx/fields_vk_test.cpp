@@ -96,6 +96,7 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     layout.set_image(frame::Global::noise_rg, images.view(1), images.sampler());
     layout.set_image(frame::Global::noise_r, images.view(2), images.sampler());
     layout.set_image(frame::Global::noise_canopy, images.view(3), images.canopy_sampler());
+    layout.set_image(frame::Global::noise_clouds, images.sky_view(), images.sampler());
     layout.set_buffer(frame::Global::byte_tables, images.tables());
     auto begun = layout.begin_frame(frame, frame - 1, 1, 1);
     ATLAS_REQUIRE_OR_RETURN(out, begun.has_value(), begun.error().text());
@@ -152,8 +153,10 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     return out;
 }
 
-/// The thirteen bytes the fields hold at pixel `at` (rows from the top), as fields_check packs them.
-[[nodiscard]] std::array<std::uint32_t, 4> packed_at(const fx::ScreenFields& f, std::size_t at) {
+/// The fifteen bytes the frame's fields `f` and the sky's `sky` hold at pixel `at` (rows from the top), as fields_check
+/// packs them.
+[[nodiscard]] std::array<std::uint32_t, 4> packed_at(const fx::ScreenFields& f, const fx::ScreenFields& sky,
+                                                     std::size_t at) {
     const auto word = [](std::span<const std::uint8_t> b) {
         std::uint32_t w = 0;
         for (std::size_t i = 0; i < b.size(); ++i) w |= static_cast<std::uint32_t>(b[i]) << (8U * i);
@@ -161,7 +164,8 @@ std::vector<std::array<std::uint32_t, 4>> ask(const gpu::Device& device, const f
     };
     return {word(f.rgba().subspan(at * fx::rgba_bytes, fx::rgba_bytes)),
             word(f.rg().subspan(at * fx::rg_bytes, fx::rg_bytes)), word(f.r().subspan(at * fx::r_bytes, fx::r_bytes)),
-            f.canopy()[at]};
+            static_cast<std::uint32_t>(f.canopy()[at]) |
+                (word(sky.clouds().subspan(at * fx::clouds_bytes, fx::clouds_bytes)) << 8U)};
 }
 
 #if !defined(__ANDROID__)
@@ -204,18 +208,32 @@ TEST_CASE("the fields and the byte tables reach the shaders byte for byte, and m
         CAPTURE(size.height);
         ++frame;
         const auto fields = fx::make_fields(size, {.threads = 2});
+        const auto sky = fx::make_fields(size, {.threads = 2, .set = fx::FieldSet::sky});
+        // the frame's set holds no byte of the clouds, and the sky's none of the others
+        CHECK(fields->clouds().empty());
+        CHECK(sky->rgba().empty());
+        CHECK(sky->clouds().size() == static_cast<std::size_t>(size.width) * size.height * fx::clouds_bytes);
         const bool resized = (*images)->ready();
+        const vk::DeviceSize before = (*images)->bytes();
         auto staged = (*images)->stage(*fields);
         ATLAS_REQUIRE(staged.has_value(), staged.error().text());
         CHECK((*images)->staged());
+        // no image of the sky's until it is staged: the frame's four alone
+        CHECK((*images)->sky_ready() == resized);
+        auto sky_staged = (*images)->stage_sky(*sky);
+        ATLAS_REQUIRE(sky_staged.has_value(), sky_staged.error().text());
+        CHECK((*images)->sky_ready());
+        CHECK((*images)->sky_size() == size);
         run_once(device, [&](const vk::raii::CommandBuffer& cmd) { (*images)->record_upload(cmd, sync, frame); });
         CHECK_FALSE((*images)->staged());
         CHECK((*images)->ready());
         CHECK((*images)->size() == size);
-        // The staging buffer until this frame has finished, and the last size's images until the one before.
-        CHECK((*images)->retired() == (resized ? 2U : 1U));
+        CHECK((*images)->bytes() > before);
+        // The two staging buffers until this frame has finished, and the last size's images (the frame's, and the
+        // sky's) until the one before.
+        CHECK((*images)->retired() == (resized ? 4U : 2U));
 
-        // Every pixel's thirteen bytes.
+        // Every pixel's fifteen bytes.
         std::vector<Probe> every;
         every.reserve(static_cast<std::size_t>(size.width) * size.height);
         for (std::uint32_t y = 0; y < size.height; ++y) {
@@ -227,7 +245,7 @@ TEST_CASE("the fields and the byte tables reach the shaders byte for byte, and m
         ATLAS_REQUIRE(got.size() == every.size());
         std::size_t differ = 0;
         for (std::size_t i = 0; i < every.size(); ++i) {
-            if (got[i] != packed_at(*fields, i)) ++differ;
+            if (got[i] != packed_at(*fields, *sky, i)) ++differ;
         }
         CHECK_MESSAGE(differ == 0, differ << " of " << every.size() << " pixels differ");
 

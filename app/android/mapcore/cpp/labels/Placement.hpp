@@ -14,8 +14,17 @@
 //   once it is clear again (by a pixel, so it does not flicker at the edge). Labels not yet placed (a point the frame
 //   brings in) are placed around the kept ones, at the set's size.
 // - The band: a set is drawn from 0.7 to 1.5 times its own size (the readable floor, Frame::least, may raise the low
-//   end); beyond it the set is placed anew at its own size, each label fading out over 250 ms where it stood as its
-//   new place fades in (the set standing for its own next level until the levels' sets come).
+//   end); beyond it the set is placed anew at its own size (over it where the floor is near it: band_room), each
+//   label fading out over 250 ms where it stood as its new place fades in (the set standing for its own next level
+//   until the levels' sets come).
+//
+// - The marks: a frame may have marks its labels stand clear of where a spot allows, the city lights of a night frame
+//   (ENGINE.md step 5, "Names"). A label being placed takes the first of its spots that fits and covers no mark but
+//   the one at its own point, by its text's box without the pad (a mark's radius is its room; a risen label's box
+//   reaches down over its own mark, and a mark beside that one, under the text, is not covered); where each fitting
+//   spot covers one, the first that fits, as without marks. Marks bear
+//   on placing alone: a placed label keeps its place, and its box grows and shrinks with the map as the marks' places
+//   do. The marks are asked for only when a label is placed.
 //
 // Everything is device px. The measures are the app's, taken from the paint LabelPainter draws with (MapCore.labels),
 // so at its own size a label's box is LabelPainter's to the bit.
@@ -26,6 +35,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string>
 #include <vector>
@@ -59,8 +69,19 @@ struct Stand {
     Box box;
 };
 
-/// The stand of a label of measures `m` at spot `spot` about point `p`, in LabelPainter's float arithmetic.
-[[nodiscard]] Stand stand_at(const Measures& m, Point p, std::size_t spot) noexcept;
+/// The stand of a label of measures `m` at spot `spot` about point `p`, in LabelPainter's float arithmetic. A label
+/// risen over a mark at its point (Candidate::rise, Candidate::mark) stands `rise` of the way up to where its text's
+/// lower edge lies `mark` px over the point, and its box reaches down over the mark by as much, so no other label
+/// stands on the mark; at a rise of 0 the stand is LabelPainter's to the bit.
+[[nodiscard]] Stand stand_at(const Measures& m, Point p, std::size_t spot, float rise = 0.0F,
+                             float mark = 0.0F) noexcept;
+
+/// A mark a label stands clear of where a spot allows (a city's light): its middle and its radius, device px.
+struct Mark {
+    float x = 0.0F;
+    float y = 0.0F;
+    float radius = 0.0F;
+};
 
 /// What a frame's labels stand within and clear of: the frame, the chrome's keep-out boxes, the markers' boxes; and the
 /// least size a label may draw at, a fraction of its own (the readable floor: 0, none).
@@ -70,6 +91,8 @@ struct Frame {
     std::span<const Box> keep_out;
     std::span<const Box> markers;
     float least = 0.0F;
+    /// The frame's marks (the file's head), asked for when a label is placed, once a call of place: null, none.
+    const std::function<std::span<const Mark>()>* marks = nullptr;
 };
 
 /// One label of a frame: its stable id, its index in the caller's list, its priority, its measures and its points this
@@ -80,6 +103,14 @@ struct Candidate {
     std::int32_t priority = 0;
     Measures measures;
     std::span<const Point> points;
+    /// A label on its way out (a name the frame no longer picks): one placed fades out where it stands, as one that
+    /// meets another does, and one not placed is not placed.
+    bool hidden = false;
+    /// A label that stands clear of a mark drawn at its point (a city's name over its light at night, as on a map of
+    /// dots and labels): how far it has risen, 0 (about its point, as every other label) to 1, and the mark's radius,
+    /// device px, which does not grow with the set's size. Each of the six spots is then above the mark.
+    float rise = 0.0F;
+    float mark = 0.0F;
 };
 
 /// A label's place: its candidate (index into the frame's candidates), the point and the spot it took, its stand.
@@ -103,9 +134,12 @@ void priority_order(std::span<const Candidate> candidates, std::vector<std::uint
 [[nodiscard]] Measures scaled(const Measures& m, float scale) noexcept;
 
 /// LabelPainter's placement: `candidates` in `order`, each at its first fitting point and spot, appended to `out` in
-/// that order; `index` holds the placed boxes after (it is not reset: boxes already in it are kept clear of).
-void place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
-           CollisionIndex& index, std::vector<Placed>& out);
+/// that order; `index` holds the placed boxes after (it is not reset: boxes already in it are kept clear of). With
+/// marks on the frame, at its first fitting point and spot that covers no mark but its own point's, else as without.
+/// Returns how many it placed over a mark for want of a clear spot; `moved`, where given, takes how many it placed
+/// clear of a mark that their first fitting stand would have covered.
+std::uint32_t place(std::span<const Candidate> candidates, std::span<const std::uint32_t> order, const Frame& frame,
+                    CollisionIndex& index, std::vector<Placed>& out, std::uint32_t* moved = nullptr);
 
 /// A label as the frame draws it.
 struct Drawn {
@@ -129,6 +163,10 @@ public:
     /// be to come back, px.
     static constexpr double band_low = 0.7;
     static constexpr double band_high = 1.5;
+    /// The room a set placed anew has under its size before the band's low end: where the readable floor leaves less
+    /// (a low end over 0.85 of its own size: a name of 12 dp under a floor of 12 sp), the set is placed that much over
+    /// its own size, so a zoom out does not place it anew at once.
+    static constexpr double band_room = 0.85;
     static constexpr float margin = 1.0F;
 
     /// This frame's labels at `seconds`, the map's scale being `scale` (anything that grows with the map as the zoom
@@ -142,6 +180,11 @@ public:
     /// The last update's CPU time, ms, and how many labels it drew clear (placed and not hidden).
     [[nodiscard]] double millis() const noexcept { return millis_; }
     [[nodiscard]] std::uint32_t placed() const noexcept { return placed_count_; }
+    /// How many labels the last update placed anew, and how many of them over a mark for want of a clear spot.
+    [[nodiscard]] std::uint32_t placed_new() const noexcept { return placed_new_; }
+    [[nodiscard]] std::uint32_t placed_on_marks() const noexcept { return on_marks_; }
+    /// And how many of them clear of a mark that their first fitting stand would have covered.
+    [[nodiscard]] std::uint32_t placed_off_marks() const noexcept { return off_marks_; }
     /// The set's size this frame, a fraction of its own; and the scale its band was placed at (0: none yet).
     [[nodiscard]] float size() const noexcept { return size_; }
     [[nodiscard]] double reference() const noexcept { return reference_; }
@@ -183,6 +226,9 @@ private:
     bool fading_ = false;
     double millis_ = 0.0;
     std::uint32_t placed_count_ = 0;
+    std::uint32_t placed_new_ = 0;
+    std::uint32_t on_marks_ = 0;
+    std::uint32_t off_marks_ = 0;
     double reference_ = 0.0;
     float size_ = 1.0F;
 };

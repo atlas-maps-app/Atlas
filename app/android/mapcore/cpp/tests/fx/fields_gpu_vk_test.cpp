@@ -98,12 +98,13 @@ struct Probe {
     std::uint32_t unused;
 };
 
-/// The four images' bytes as the shaders read them once `images` uploaded what it staged as frame `frame` (every
-/// earlier one finished): mat.slang's fields_check at every pixel through set 1 of `layout` (fields_vk_test's way),
-/// rows from the top, four bytes a pixel an image (the canopy's one).
-[[nodiscard]] std::array<std::vector<std::uint8_t>, 4> read_back(const gpu::Device& device, fx::FieldImages& images,
-                                                                 frame::FrameLayout& layout, std::uint64_t frame) {
-    std::array<std::vector<std::uint8_t>, 4> out;
+/// The frame's four images' bytes as the shaders read them once `images` uploaded what it staged as frame `frame`
+/// (every earlier one finished): mat.slang's fields_check at every pixel through set 1 of `layout` (fields_vk_test's
+/// way), rows from the top, four bytes a pixel an image (the canopy's one). The sky's image is not staged here:
+/// noise_clouds reads its placeholder.
+[[nodiscard]] std::array<std::vector<std::uint8_t>, fx::image_count>
+read_back(const gpu::Device& device, fx::FieldImages& images, frame::FrameLayout& layout, std::uint64_t frame) {
+    std::array<std::vector<std::uint8_t>, fx::image_count> out;
     const gpu::Sync sync(device.enabled().synchronization2);
     run_once(device, [&](const vk::raii::CommandBuffer& cmd) { images.record_upload(cmd, sync, frame); });
     const vk::raii::Device& d = device.handle();
@@ -216,8 +217,8 @@ TEST_CASE("the GPU's byte check holds its noises and its fields' kept bytes to t
     const auto check = (*made)->check();
     ATLAS_REQUIRE(check.has_value(), check.error().text());
     CHECK_MESSAGE(check->exact, check->first);
-    // The eleven noises over two blocks of 64 × 64, then the eight fields over the same blocks.
-    CHECK(check->pixels == (std::size_t{11} * 2 * 64 * 64) + (fx::field_count * 2 * 64 * 64));
+    // The checked noises over two blocks of 64 × 64, then the fields over the same blocks.
+    CHECK(check->pixels == (fx::checked_noises().size() * 2 * 64 * 64) + (fx::frame_field_count * 2 * 64 * 64));
     CHECK(check->differ == 0);
     MESSAGE("the byte check: " << check->pixels << " pixels in " << ms_since(started) << " ms");
     const auto messages = session->take_messages();
@@ -264,7 +265,8 @@ TEST_CASE("every field at S1 and at the Pixel 10 Pro's size made on the GPU is t
         CHECK(std::ranges::equal(g.rg(), cpu->rg()));
         CHECK(std::ranges::equal(g.r(), cpu->r()));
         CHECK(std::ranges::equal(g.canopy(), cpu->canopy()));
-        for (std::size_t f = 0; f < fx::field_count; ++f) {
+        CHECK(g.clouds().empty()); // the sky's field is no part of the frame's
+        for (std::size_t f = 0; f < fx::frame_field_count; ++f) {
             CAPTURE(std::string(fx::screen_fields[f].name));
             CHECK(fx::hash_of(g.bytes_of(static_cast<fx::Field>(f))) == ref.kept[f]);
         }
@@ -278,10 +280,9 @@ TEST_CASE("every field at S1 and at the Pixel 10 Pro's size made on the GPU is t
         ATLAS_REQUIRE(staged.has_value(), staged.error().text());
         const auto cpu_images = read_back(device, **from_cpu, **layout, ++frame);
         const auto gpu_images = read_back(device, **from_gpu, **layout, ++frame);
-        const std::array<std::span<const std::uint8_t>, 4> planes{cpu->rgba(), cpu->rg(), cpu->r(), cpu->canopy()};
-        for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t i = 0; i < fx::image_count; ++i) {
             CAPTURE(i);
-            CHECK(std::ranges::equal(cpu_images.at(i), planes.at(i)));
+            CHECK(std::ranges::equal(cpu_images.at(i), cpu->plane(i)));
             CHECK(std::ranges::equal(gpu_images.at(i), cpu_images.at(i)));
         }
         MESSAGE(std::format("fields {}x{} at a first start: the CPU's {:.0f} ms on 3 threads; the GPU's {:.0f} ms "

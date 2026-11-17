@@ -78,6 +78,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/Dump.hpp"
 #include "tiles/Error.hpp"
+#include "tiles/Heights.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Schema.hpp"
@@ -376,6 +377,20 @@ private:
         }
         out += std::format("tile {} {} {} {} {}\n", c.tile.z, c.tile.x, c.tile.y, tile->feature_count(),
                            tl::hex(tl::canonical_hash(*tile)));
+        // a terrain pack's tile: its raster read with every check (tiles/Heights.hpp), and its numbers on a line of
+        // their own, `heights <level> <x> <y> <side> <apron> <step's bits> <base> <max> <flags> <hash>`
+        const bool terrain = head->profile == tl::Profile::terrain;
+        if (!terrain && !tl::has_heights(*tile)) continue;
+        const auto heights = tl::read_heights(*tile, arena);
+        if (!heights) {
+            (void)std::fprintf(stderr, "atlas_stagep: %s: tile %d/%u/%u: %s\n", path.c_str(), int{c.tile.z}, c.tile.x,
+                               c.tile.y, tl::describe(heights.error()).c_str());
+            all = false;
+            continue;
+        }
+        out += std::format("heights {} {} {} {} {} {:016x} {} {} {} {}\n", c.tile.z, c.tile.x, c.tile.y, heights->side,
+                           heights->apron, std::bit_cast<std::uint64_t>(heights->step), heights->base, heights->max,
+                           heights->flags, tl::hex(tl::heights_hash(*heights)));
     }
     if (std::fputs(out.c_str(), stdout) < 0 || std::fflush(stdout) != 0) {
         return std::unexpected(Failure{.why = "stdout could not be written"});

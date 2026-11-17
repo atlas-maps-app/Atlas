@@ -26,6 +26,9 @@ object LabelBlock {
      */
     const val BAND_TOP = 1.5f
 
+    /** The longest side an image may have, px (the core's `labels::LabelSet::max_sprite_side`): a block with a larger one is refused whole. */
+    const val MAX_SIDE = 2048
+
     /** One image of a label: [width] × [height] premultiplied pixels, R in the low byte, and where its anchor lies in it. */
     class Image(val width: Int, val height: Int, val anchorX: Int, val anchorY: Int, val pixels: IntArray) {
         init {

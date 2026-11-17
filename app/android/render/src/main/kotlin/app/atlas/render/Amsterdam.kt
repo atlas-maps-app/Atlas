@@ -151,6 +151,13 @@ object Amsterdam {
     /** The place's clock against UTC on these dates (CEST here; each region sets its own). */
     var TZ_H = 2
 
+    /**
+     * The minutes of the place's clock offset past its whole hours [TZ_H] (Kolkata's 30, Kathmandu's 45): 0 for every
+     * render region, whose renders floor the offset to the hour (regions.py), and the live moment's own zone's
+     * otherwise, so the sun is the instant's.
+     */
+    var TZ_M = 0
+
     // render/amsterdam.py:25 sun_position
     /** The sun's azimuth and elevation in degrees at [tUtc], over the place drawn (or [lat], [lon]). */
     fun sunPosition(tUtc: LocalDateTime, lat0: Double? = null, lon0: Double? = null): Pair<Double, Double> {
@@ -612,7 +619,7 @@ object Amsterdam {
     /** A moment's light, sky, water and rain from the real weather (overcast, sun between clouds, or night). */
     fun weatherTheme(name: String, date: List<Int>, hhmm: List<Int>, daylight: Boolean = false): Dict {
         val w = wxAt(date, hhmm[0], hhmm[1])
-        val (_, el) = sunPosition(LocalDateTime.of(date[0], date[1], date[2], hhmm[0], hhmm[1]).minusHours(TZ_H.toLong()))
+        val (_, el) = sunPosition(LocalDateTime.of(date[0], date[1], date[2], hhmm[0], hhmm[1]).minusHours(TZ_H.toLong()).minusMinutes(TZ_M.toLong()))
         val night = el < -2
         val th = theme("name" to name, "date" to date, "hhmm" to hhmm, "night" to night, "wx" to w)
         val cloud = d(w["cloud"])
@@ -740,7 +747,7 @@ object Amsterdam {
     /** `(az, el)` of a theme's moment, and the sun vector render() uses (`_L`): toward the sun, or straight down at night. */
     fun sunOf(th: Map<String, Any?>): Triple<Double, Double, V3> {
         val hm = ints(th["hhmm"]); val dt = ints(th["date"])
-        val (az, el) = sunPosition(LocalDateTime.of(dt[0], dt[1], dt[2], hm[0], hm[1]).minusHours(TZ_H.toLong()))
+        val (az, el) = sunPosition(LocalDateTime.of(dt[0], dt[1], dt[2], hm[0], hm[1]).minusHours(TZ_H.toLong()).minusMinutes(TZ_M.toLong()))
         return Triple(az, el, if (el > 0) Living.sunVector(az, el) else V3(0.0, -1.0, 0.0))
     }
 

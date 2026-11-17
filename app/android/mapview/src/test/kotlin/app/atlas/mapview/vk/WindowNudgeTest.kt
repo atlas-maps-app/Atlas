@@ -5,7 +5,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
-import app.atlas.mapview.EngineFrames
+import app.atlas.mapview.MapEngine
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -48,7 +48,7 @@ class WindowNudgeTest {
         return root.asked - before
     }
 
-    private fun lines() = ShadowLog.getLogsForTag(EngineFrames.TAG).map { it.msg }.filter { it.startsWith("vk window: no ") }
+    private fun lines() = ShadowLog.getLogsForTag(MapEngine.TAG).map { it.msg }.filter { it.startsWith("vk window: no ") }
 
     @Test
     fun aViewWithNoWindowAsksEachSecondUntilItComes() {

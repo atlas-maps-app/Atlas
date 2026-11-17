@@ -12,6 +12,7 @@
 // output folder (world.idx, its parts and world-globe.atlas), its packs are checked so and each level's tiles, features
 // and bytes printed, a line a level: `world level <z> ...`.
 #include "base/pymath/PyMath.hpp"
+#include "load/PackStyle.hpp"
 #include "passes/World.hpp"
 #include "scene/Cells.hpp"
 #include "scene/WorldTiles.hpp"
@@ -23,6 +24,7 @@
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Grid.hpp"
+#include "tiles/Kept.hpp"
 #include "tiles/Payload.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/WorldIndex.hpp"
@@ -804,6 +806,296 @@ TEST_CASE("scene: a world tile's geometry lies the land under everything, then t
     CHECK(atlas::scene::world_far(1e6, 1e6) == doctest::Approx(std::sqrt((2.0 * 6'371'000.0 * 1e6) + 1e12)));
 }
 
+TEST_CASE("scene: a world tile's lit places are its lights in the world's style, sized by their people; a town from "
+          "L10 on, a village never, and none without the ladder; a globe's tile carries its coast") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    const auto places = [](std::uint8_t z, std::uint32_t x, std::uint32_t y) {
+        TileBytes tile = world_tile(z, x, y);
+        TileHeader header;
+        header.cells_per_side = tile.n;
+        const auto tb = tile.grid_box();
+        header.south = tb[0];
+        header.west = tb[1];
+        header.north = tb[2];
+        header.east = tb[3];
+        const auto b = atlas::test::cell_box(header, 5);
+        LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+        label.cells = {5, 5, 5, 5, 5};
+        const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {{b[0] + 10, b[1] + 10},
+                                                                                 {b[0] + 20, b[1] + 20},
+                                                                                 {b[0] + 30, b[1] + 30},
+                                                                                 {b[0] + 40, b[1] + 40},
+                                                                                 {b[0] + 50, b[1] + 50}};
+        label.columns = {
+            {"source", Codec::u8, col::u8({1, 1, 1, 1, 1})},
+            {"index", Codec::delta, col::delta({0, 1, 2, 3, 4})},
+            {"name", Codec::str, col::str(tile, {"Tokyo", "Madrid", "Utrecht", "Zaandam", "Westzaan"})},
+            {"pos", Codec::point, col::point(at)},
+            {"prev", Codec::point, col::point(at)},
+            {"count", Codec::varu, col::varu({1, 1, 1, 1, 1})},
+            {"kind", Codec::str, col::str(tile, {"city", "city", "city", "town", "village"})},
+            {"tag:population", Codec::str, col::str(tile, {"37000000", " 6700000 (2021)", "360000", "72000", ""})}};
+        tile.layers.back() = label;
+        return tile;
+    };
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto built = [&](std::uint8_t z, std::uint32_t x, std::uint32_t y,
+                           const atlas::tiles::Style* style) -> atlas::scene::WorldGeometry {
+        TileBytes tile = places(z, x, y);
+        const auto raw = tile.encode();
+        auto decoded = decoder.decode(raw, arena);
+        ATLAS_REQUIRE_OR_RETURN({}, decoded.has_value(), describe(decoded.error()));
+        return atlas::scene::build_world_geometry(*decoded, style);
+    };
+    // L9: its three cities, by their people the first size, the second (the number its tag's text starts with, as the
+    // packer ranks by it) and the third; its town not yet
+    const atlas::scene::WorldGeometry g9 = built(9, 262, 168, world);
+    REQUIRE(g9.lights == 3);
+    const std::size_t lights9 = (4 * std::size_t{g9.triangles}) + (3 * std::size_t{g9.segments});
+    REQUIRE(g9.words.size() == lights9 + (2 * std::size_t{g9.lights}));
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        const std::uint32_t what = g9.words[lights9 + (2 * std::size_t{i}) + 1];
+        CHECK((what & 0xFFU) == i);
+        CHECK(((what >> 8U) & 0xFFU) == 5U);
+    }
+    // each light's place is its node's, a vertex word within the tile's cell 5 (row 1, column 1)
+    const std::uint32_t at = g9.words[lights9];
+    CHECK((at & 0xFFFFU) > 16'383U);
+    CHECK((at & 0xFFFFU) < 32'768U);
+    CHECK((at >> 16U) > 16'383U);
+    CHECK((at >> 16U) < 32'768U);
+    // L10: the town too, of the third size
+    const atlas::scene::WorldGeometry g10 = built(10, 525, 336, world);
+    REQUIRE(g10.lights == 4);
+    CHECK((g10.words[g10.words.size() - 1] & 0xFFU) == 2U);
+    // the globe's levels: a city alone (its tiles hold Natural Earth's by scalerank)
+    CHECK(built(5, 16, 10, world).lights == 3);
+    // none without the world's style
+    CHECK(built(9, 262, 168, nullptr).lights == 0);
+    // a globe's tile carries its coast among its lines: each edge of its land that is not its cells' cut, here the
+    // east edge of each half cell's land, a meridian (one u), in the coast's entry with no width; the base's none
+    const auto coasts = [](const atlas::scene::WorldGeometry& g) {
+        std::size_t n = 0;
+        const std::size_t lines = 4 * std::size_t{g.triangles};
+        for (std::size_t i = 0; i < g.segments; ++i) {
+            const std::uint32_t what = g.words[lines + (3 * i) + 2];
+            if ((what & 0xFFU) != atlas::scene::world_palette::coast) continue;
+            ++n;
+            CHECK((what >> 16U) == 0U);
+            CHECK((g.words[lines + (3 * i)] & 0xFFFFU) == (g.words[lines + (3 * i) + 1] & 0xFFFFU));
+        }
+        return n;
+    };
+    const atlas::scene::WorldGeometry g0 = built(0, 0, 0, world);
+    CHECK(coasts(g0) >= 5);
+    // the coast's segments are the last of the tile's, and counted: a frame under the ramps leaves them out
+    CHECK(g0.coast == coasts(g0));
+    REQUIRE(g0.segments > g0.coast);
+    for (std::size_t i = 0; i < g0.segments; ++i) {
+        const std::uint32_t what = g0.words[(4 * std::size_t{g0.triangles}) + (3 * i) + 2];
+        CHECK(((what & 0xFFU) == atlas::scene::world_palette::coast) == (i >= g0.segments - g0.coast));
+    }
+    CHECK(coasts(g9) == 0);
+    CHECK(g9.coast == 0);
+    // nor is the world's own edge a coast: land that Mercator's square cuts beyond 85° south (Antarctica's), its last
+    // latitude a little off the tile's, has its three other edges for its coast
+    {
+        TileBytes tile = world_tile(0, 0, 0);
+        TileHeader header;
+        header.cells_per_side = tile.n;
+        const auto tb = tile.grid_box();
+        header.south = tb[0];
+        header.west = tb[1];
+        header.north = tb[2];
+        header.east = tb[3];
+        const auto b = atlas::test::cell_box(header, 13);
+        const std::int32_t last = b[0] + 500;
+        REQUIRE(last < -850'000'000);
+        const std::vector<atlas::test::Ring> land = {
+            {.lat = {last, last, b[2] - 100'000, b[2] - 100'000},
+             .lon = {b[1] + 100'000, b[3] - 100'000, b[3] - 100'000, b[1] + 100'000},
+             .keep = {}}};
+        LayerBytes land_layer{.id = static_cast<std::uint8_t>(LayerId::ground)};
+        land_layer.cells = {13};
+        land_layer.columns = {{"source", Codec::u8, col::u8({ground::source_land_base})},
+                              {"index", Codec::delta, col::delta({0})},
+                              {"ring", Codec::geom, col::geom(land)},
+                              {"kind", Codec::str, col::str(tile, {"land"})}};
+        tile.layers = {land_layer};
+        const auto raw = tile.encode();
+        auto decoded = decoder.decode(raw, arena);
+        ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+        const atlas::scene::WorldGeometry cut = atlas::scene::build_world_geometry(*decoded, world);
+        REQUIRE(cut.coast > 0);
+        const std::size_t lines = 4 * std::size_t{cut.triangles};
+        for (std::size_t i = 0; i < cut.segments; ++i) {
+            const std::uint32_t from = cut.words[lines + (3 * i)] >> 16U;
+            const std::uint32_t to = cut.words[lines + (3 * i) + 1] >> 16U;
+            // no segment along the tile's last row of the grid
+            CHECK_FALSE((from >= 65'530U && to >= 65'530U));
+        }
+    }
+    CHECK(coasts(built(0, 0, 0, nullptr)) == 0);
+    CHECK(atlas::scene::world_lights(6, "city"));
+    CHECK(!atlas::scene::world_lights(9, "town"));
+    CHECK(atlas::scene::world_lights(11, "town"));
+    CHECK(!atlas::scene::world_lights(3, "town"));
+    CHECK(!atlas::scene::world_lights(11, "village"));
+}
+
+TEST_CASE("scene: a world tile's names are its places of the kinds the world names, in the packer's rank, each with "
+          "its own name, its people, its capital and its place") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    TileBytes tile = world_tile(9, 262, 168);
+    TileHeader header;
+    header.cells_per_side = tile.n;
+    const auto tb = tile.grid_box();
+    header.south = tb[0];
+    header.west = tb[1];
+    header.north = tb[2];
+    header.east = tb[3];
+    const auto b5 = atlas::test::cell_box(header, 5);
+    const auto b6 = atlas::test::cell_box(header, 6);
+    LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    // cell 5 holds the tile's first, third and fifth places by rank and a hamlet, cell 6 its second and fourth, a
+    // place without a name and a canal's name
+    label.cells = {5, 5, 5, 5, 6, 6, 6, 6};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {
+        {b5[0] + 10, b5[1] + 10}, {b5[0] + 20, b5[1] + 20}, {b5[0] + 30, b5[1] + 30}, {b5[0] + 40, b5[1] + 40},
+        {b6[0] + 10, b6[1] + 10}, {b6[0] + 20, b6[1] + 20}, {b6[0] + 30, b6[1] + 30}, {b6[0] + 40, b6[1] + 40}};
+    label.columns = {
+        {"source", Codec::u8, col::u8({1, 1, 1, 1, 1, 1, 1, 0})},
+        {"index", Codec::delta, col::delta({0, 2, 4, 6, 1, 3, 5, 0})},
+        {"name", Codec::str,
+         col::str(tile, {"Nederland", "\xd0\x9c\xd0\xbe\xd1\x81\xd0\xba\xd0\xb2\xd0\xb0", "Westzaan", "Haaldersbroek",
+                         "Amsterdam", "Zaandam", "", "Zaan"})},
+        {"pos", Codec::point, col::point(at)},
+        {"prev", Codec::point, col::point(at)},
+        {"count", Codec::varu, col::varu({1, 1, 1, 1, 1, 1, 1, 4})},
+        {"kind", Codec::str, col::str(tile, {"country", "city", "village", "hamlet", "city", "town", "town", ""})},
+        {"tag:population", Codec::str,
+         col::str(tile, {"17000000", "13000000", "", "120", " 900000 (2021)", "72000", "5000", ""})},
+        {"tag:capital", Codec::str, col::str(tile, {"", "", "", "", "yes", "", "", ""})}};
+    tile.layers.back() = label;
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    const auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const std::vector<atlas::scene::WorldName> names = atlas::scene::build_world_names(*decoded);
+    REQUIRE(names.size() == 5);
+    using atlas::scene::NameKind;
+    CHECK(names[0].text == "Nederland");
+    CHECK(names[0].kind == NameKind::country);
+    CHECK(names[0].people == 17'000'000.0);
+    CHECK(names[0].cell == 5);
+    CHECK(names[1].text == "Amsterdam");
+    CHECK(names[1].kind == NameKind::city);
+    CHECK(names[1].capital);
+    CHECK(names[1].people == 900'000.0);
+    CHECK(names[1].cell == 6);
+    CHECK(names[1].lat == doctest::Approx(Frame::degrees(b6[0] + 10)));
+    CHECK(names[1].lon == doctest::Approx(Frame::degrees(b6[1] + 10)));
+    // a name in its own script, as its bytes
+    CHECK(names[2].text == "\xd0\x9c\xd0\xbe\xd1\x81\xd0\xba\xd0\xb2\xd0\xb0");
+    CHECK_FALSE(names[2].capital);
+    CHECK(names[3].text == "Zaandam");
+    CHECK(names[3].kind == NameKind::town);
+    CHECK(names[4].text == "Westzaan");
+    CHECK(names[4].kind == NameKind::village);
+    CHECK(names[4].people == 0.0);
+    // by rank among the labels: under the boards' (0 or more), the country, the capital, the city, the town, the
+    // village
+    using atlas::scene::name_priority;
+    CHECK(name_priority(names[0]) < 0);
+    CHECK(name_priority(names[0]) > name_priority(names[1]));
+    CHECK(name_priority(names[1]) > name_priority(names[2]));
+    CHECK(name_priority(names[2]) > name_priority(names[3]));
+    CHECK(name_priority(names[3]) > name_priority(names[4]));
+}
+
+TEST_CASE("scene: a world tile's names hold its waters and its rivers after its places, each by the packer's rank, a "
+          "water with its area and a river with its length in the tile") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    TileBytes tile = world_tile(9, 262, 168);
+    TileHeader header;
+    header.cells_per_side = tile.n;
+    const auto tb = tile.grid_box();
+    header.south = tb[0];
+    header.west = tb[1];
+    header.north = tb[2];
+    header.east = tb[3];
+    const auto b5 = atlas::test::cell_box(header, 5);
+    const auto b6 = atlas::test::cell_box(header, 6);
+    LayerBytes label{.id = static_cast<std::uint8_t>(LayerId::label)};
+    // a cell's rows as the packer writes them: its places, then its waters, then its rivers, each by its rank in the
+    // tile. Cell 5: a town, the tile's second water, a water of no kind the world names, its first river; cell 6: a
+    // city, the tile's first water, a water without a name, a node's bay (no area), its second river
+    label.cells = {5, 5, 5, 5, 6, 6, 6, 6, 6};
+    const std::initializer_list<std::pair<std::int32_t, std::int32_t>> at = {
+        {b5[0] + 10, b5[1] + 10}, {b5[0] + 20, b5[1] + 20}, {b5[0] + 30, b5[1] + 30},
+        {b5[0] + 40, b5[1] + 40}, {b6[0] + 10, b6[1] + 10}, {b6[0] + 20, b6[1] + 20},
+        {b6[0] + 30, b6[1] + 30}, {b6[0] + 40, b6[1] + 40}, {b6[0] + 50, b6[1] + 50}};
+    label.columns = {
+        {"source", Codec::u8, col::u8({1, 2, 2, 3, 1, 2, 2, 2, 3})},
+        {"index", Codec::delta, col::delta({1, 1, 3, 0, 0, 0, 2, 4, 1})},
+        {"name", Codec::str,
+         col::str(tile, {"Zaandam", "Markermeer", "Sluis", "Zaan", "Amsterdam", "IJsselmeer / Lake IJssel", "",
+                         "Hoornse Hop", "Maas / Meuse"})},
+        {"pos", Codec::point, col::point(at)},
+        {"prev", Codec::point, col::point(at)},
+        {"count", Codec::varu, col::varu({1, 593'000'000, 5'000, 12'400, 1, 1'125'000'000, 9'000'000, 0, 8'300})},
+        {"kind", Codec::str, col::str(tile, {"town", "lake", "lock", "river", "city", "lake", "lake", "bay", "river"})},
+        {"tag:population", Codec::str, col::str(tile, {"72000", "", "", "", "900000", "", "", "", ""})},
+        {"tag:capital", Codec::str, col::str(tile, {"", "", "", "", "yes", "", "", "", ""})}};
+    tile.layers.back() = label;
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    const auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const std::vector<atlas::scene::WorldName> names = atlas::scene::build_world_names(*decoded);
+    using atlas::scene::NameKind;
+    REQUIRE(names.size() == 7);
+    // the places by rank, as before
+    CHECK(names[0].text == "Amsterdam");
+    CHECK(names[1].text == "Zaandam");
+    CHECK(names[1].extent == 0.0);
+    // the waters by rank: each at its point with its area; the one of no kind and the nameless one are left out
+    CHECK(names[2].text == "IJsselmeer");
+    CHECK(names[2].kind == NameKind::lake);
+    CHECK(names[2].extent == 1'125'000'000.0);
+    CHECK(names[2].cell == 6);
+    CHECK(names[2].lat == doctest::Approx(Frame::degrees(b6[0] + 20)));
+    CHECK(names[2].lon == doctest::Approx(Frame::degrees(b6[1] + 20)));
+    CHECK(names[2].people == 0.0);
+    CHECK_FALSE(names[2].lit);
+    CHECK(names[3].text == "Markermeer");
+    CHECK(names[3].extent == 593'000'000.0);
+    CHECK(names[3].cell == 5);
+    CHECK(names[4].text == "Hoornse Hop");
+    CHECK(names[4].kind == NameKind::bay);
+    CHECK(names[4].extent == 0.0);
+    // the rivers by rank: each with its length in the tile
+    CHECK(names[5].text == "Zaan");
+    CHECK(names[5].kind == NameKind::river);
+    CHECK(names[5].extent == 12'400.0);
+    // a name of several languages' is its first part
+    CHECK(names[6].text == "Maas");
+    CHECK(names[6].extent == 8'300.0);
+    // no water is lit
+    for (const atlas::scene::WorldName& n : names) CHECK((!atlas::scene::is_water(n.kind) || !n.lit));
+}
+
 TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its level's length on the bent ground, each of "
           "the tile's winding, and the poles' caps are grids of it") {
     // an L5 tile: its cells 2.8° wide, its triangles' edges up to 280 km, its level's length 99 km
@@ -859,7 +1151,7 @@ TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its leve
         CHECK(length(g.words[at], g.words[at + 1]) <= limit * 1.001);
     }
     // the caps: 128 by 16 quads, every triangle of the tiles' winding, in its palette entry and cell 0
-    const atlas::scene::WorldGeometry cap = atlas::scene::world_cap_geometry(atlas::scene::world_palette::south_cap);
+    const atlas::scene::WorldGeometry cap = atlas::scene::world_cap_geometry(atlas::scene::world_palette::ice);
     CHECK(cap.triangles == 4096U);
     CHECK(cap.segments == 0U);
     REQUIRE(cap.words.size() == 4U * 4096U);
@@ -870,7 +1162,7 @@ TEST_CASE("scene: stage T cuts a world tile's triangles and segments to its leve
         const double twice = area(cap.words[3 * t], cap.words[(3 * t) + 1], cap.words[(3 * t) + 2]);
         if (!(twice > 0)) ++cap_backwards;
         cap_total += twice / 2.0;
-        if (cap.words[(3 * std::size_t{cap.triangles}) + t] == atlas::scene::world_palette::south_cap) ++cap_looks;
+        if (cap.words[(3 * std::size_t{cap.triangles}) + t] == atlas::scene::world_palette::ice) ++cap_looks;
     }
     CHECK(cap_backwards == 0);
     CHECK(cap_looks == cap.triangles);
@@ -927,6 +1219,73 @@ TEST_CASE("scene: a world tile's cells over a descendant are the packer's, rows 
     }
 }
 
+TEST_CASE("scene: the globe's ice, its glaciers and its ice shelves, is the ice's entry in the world's style, and the "
+          "land's without it") {
+    using namespace atlas::tiles;
+    using atlas::test::LayerBytes;
+    namespace col = atlas::test::columns;
+    TileBytes tile = world_tile(3, 4, 2);
+    TileHeader header;
+    header.cells_per_side = tile.n;
+    const auto tb = tile.grid_box();
+    header.south = tb[0];
+    header.west = tb[1];
+    header.north = tb[2];
+    header.east = tb[3];
+    const auto b = atlas::test::cell_box(header, 5);
+    const std::int32_t w = (b[3] - b[1]) / 4;
+    const auto square = [&](std::int32_t k) {
+        return atlas::test::Ring{.lat = {b[0], b[0], b[2], b[2]},
+                                 .lon = {b[1] + (k * w), b[1] + ((k + 1) * w), b[1] + ((k + 1) * w), b[1] + (k * w)},
+                                 .keep = {}};
+    };
+    // the land under everything, a glacier on it (land cover), and an ice shelf over the sea (an area)
+    LayerBytes ground{.id = static_cast<std::uint8_t>(LayerId::ground)};
+    ground.cells = {5, 5, 5};
+    ground.columns = {
+        {"source", Codec::u8, col::u8({ground::source_land_base, ground::source_land, ground::source_area})},
+        {"index", Codec::delta, col::delta({0, 1, 2})},
+        {"ring", Codec::geom, col::geom({square(0), square(1), square(2)})},
+        {"kind", Codec::str, col::str(tile, {"land", "glacier", "ice_shelf"})}};
+    tile.layers = {ground};
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "test");
+    TileDecoder decoder;
+    const auto raw = tile.encode();
+    const auto decoded = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(decoded.has_value(), describe(decoded.error()));
+    const auto entries = [&](const atlas::tiles::Style* style) {
+        const atlas::scene::WorldGeometry g = atlas::scene::build_world_geometry(*decoded, style);
+        std::array<std::size_t, atlas::scene::world_palette::size> count{};
+        for (std::size_t t = 0; t < g.triangles; ++t) {
+            ++count.at(g.words[(3 * std::size_t{g.triangles}) + t] & 0xFFU);
+        }
+        return count;
+    };
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    const auto with = entries(world);
+    CHECK(with[atlas::scene::world_palette::land] > 0);
+    // the glacier and the shelf: as many triangles each as the land's square, all the ice's
+    CHECK(with[atlas::scene::world_palette::ice] == 2 * with[atlas::scene::world_palette::land]);
+    // without the world's style (no ladder) they are the land's, as before
+    const auto without = entries(nullptr);
+    CHECK(without[atlas::scene::world_palette::ice] == 0);
+    CHECK(without[atlas::scene::world_palette::land] == 3 * with[atlas::scene::world_palette::land]);
+    // the ice's colour: the ladder's #E8EEF2 by day, a fifth of it at night as the land cover's
+    atlas::style::ThemeBlock theme{};
+    theme.ground = {.r = 10, .g = 20, .b = 30, .a = 255};
+    const std::vector<std::uint32_t> day = atlas::passes::World::palette_of(theme, false, world);
+    const std::vector<std::uint32_t> night = atlas::passes::World::palette_of(theme, true, world);
+    CHECK(day[atlas::scene::world_palette::ice] == 0xFFF2EEE8U);
+    CHECK((night[atlas::scene::world_palette::ice] & 0xFFU) == doctest::Approx(0xE8 * 0.2).epsilon(0.02));
+    CHECK(((night[atlas::scene::world_palette::ice] >> 16U) & 0xFFU) == doctest::Approx(0xF2 * 0.2).epsilon(0.02));
+    // and under the night's caps the day's palette has it whole
+    theme.flags |= atlas::style::theme_flag::night;
+    CHECK(atlas::passes::World::day_palette_of(theme, world)[atlas::scene::world_palette::ice] == 0xFFF2EEE8U);
+    // a style without the ladder leaves the entry the land's
+    CHECK(atlas::passes::World::palette_of(theme, false, nullptr)[atlas::scene::world_palette::ice] == 0xFF1E140AU);
+}
+
 TEST_CASE("passes: the world's palette is the theme's land, water and roads, and its land where the style has none") {
     atlas::style::ThemeBlock theme{};
     theme.ground = {.r = 10, .g = 20, .b = 30, .a = 255};
@@ -939,4 +1298,222 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
     CHECK(p[atlas::scene::world_palette::road] == 0xFF5A5046U);
     CHECK(p[atlas::scene::world_palette::rail] == 0xFF1E140AU);
     CHECK(p[atlas::scene::world_palette::kinds + 3] == 0xFF1E140AU);
+    // the day's palette under the ladder's caps: the moment's own by day (the sun 5 degrees up or more); at night the
+    // ladder's ground, water and roads, and the style's colours by day
+    const atlas::tiles::Style* world = atlas::load::world_style();
+    REQUIRE(world != nullptr);
+    for (const double elevation : {5.0, 30.0, 90.0}) {
+        theme.sun_elevation = elevation;
+        CHECK(atlas::passes::World::day_share(theme) == 1.0);
+        CHECK(atlas::passes::World::day_palette_of(theme, world) ==
+              atlas::passes::World::palette_of(theme, false, world));
+    }
+    // between the night's start and there, between the two, so the far world does not step when the night flag flips:
+    // at the flip (the sun 2 degrees under the horizon, still day) the ladder's own, half way (1.5 degrees up) the
+    // mean, a channel at a time
+    theme.sun_elevation = atlas::style::night_below;
+    CHECK(atlas::passes::World::day_share(theme) == 0.0);
+    const std::vector<std::uint32_t> flip = atlas::passes::World::day_palette_of(theme, world);
+    CHECK(flip[atlas::scene::world_palette::land] == 0xFFC2CFD6U);
+    CHECK(flip[atlas::scene::world_palette::water] == 0xFF90754FU);
+    CHECK(flip[atlas::scene::world_palette::road] == 0xFFB4C1C9U);
+    theme.sun_elevation = 1.5;
+    CHECK(atlas::passes::World::day_share(theme) == doctest::Approx(0.5));
+    const std::vector<std::uint32_t> half = atlas::passes::World::day_palette_of(theme, world);
+    const std::vector<std::uint32_t> own = atlas::passes::World::palette_of(theme, false, world);
+    for (const std::size_t entry :
+         {std::size_t{atlas::scene::world_palette::land}, std::size_t{atlas::scene::world_palette::water},
+          std::size_t{atlas::scene::world_palette::road}}) {
+        for (unsigned shift = 0; shift < 24; shift += 8) {
+            const auto a = static_cast<double>((flip[entry] >> shift) & 0xFFU);
+            const auto b = static_cast<double>((own[entry] >> shift) & 0xFFU);
+            CHECK(std::abs(static_cast<double>((half[entry] >> shift) & 0xFFU) - ((a + b) / 2.0)) <= 0.5);
+        }
+    }
+    theme.flags |= atlas::style::theme_flag::night;
+    CHECK(atlas::passes::World::day_share(theme) == 0.0);
+    const std::vector<std::uint32_t> night = atlas::passes::World::palette_of(theme, true, world);
+    const std::vector<std::uint32_t> day = atlas::passes::World::day_palette_of(theme, world);
+    REQUIRE(day.size() == atlas::scene::world_palette::size);
+    CHECK(day[atlas::scene::world_palette::land] == 0xFFC2CFD6U);
+    CHECK(day[atlas::scene::world_palette::water] == 0xFF90754FU);
+    CHECK(day[atlas::scene::world_palette::road] == 0xFFB4C1C9U);
+    theme.flags = 0;
+    const std::vector<std::uint32_t> by_day = atlas::passes::World::palette_of(theme, false, world);
+    for (std::size_t k = atlas::scene::world_palette::rail; k < day.size(); ++k) {
+        if (k != atlas::scene::world_palette::ice && k < atlas::scene::world_palette::kinds) {
+            CHECK(day[k] == by_day[k]);
+        }
+    }
+    CHECK(night[atlas::scene::world_palette::land] == 0xFF1E140AU);
+    // without the ladder the day's palette is the moment's
+    theme.flags |= atlas::style::theme_flag::night;
+    CHECK(atlas::passes::World::day_palette_of(theme, nullptr) ==
+          atlas::passes::World::palette_of(theme, true, nullptr));
+}
+
+TEST_CASE("tiles: the cache keeps its pinned entries whatever their age, out of its budget, across a restart") {
+    // ENGINE.md step 11: the world's tiles a kept country draws offline are pinned in the world's cache
+    TempDir dir;
+    const std::size_t entry = cache_header_bytes + 1000;
+    const auto key = [](int i) {
+        return CacheKey{.kind = CacheKind::chunk, .source = Sha256::of(as_bytes(std::format("chunk {}", i)))};
+    };
+    const std::string payload(1000, 'p');
+    {
+        auto opened = ExpandedCache::open(dir.path() + "/cache", 2 * entry);
+        ATLAS_REQUIRE(opened);
+        ExpandedCache& c = **opened;
+        // two pinned, one of them not there yet; the budget of two entries is the others'
+        const std::array<CacheKey, 2> pins{key(0), key(1)};
+        ATLAS_REQUIRE(c.set_pinned(pins));
+        CHECK(c.pins() == 2);
+        CHECK(c.pinned(key(0)));
+        CHECK(!c.pinned(key(2)));
+        CHECK(c.pinned_bytes() == 0);
+        ATLAS_REQUIRE(c.put(key(0), as_bytes(payload)));
+        CHECK(c.pinned_bytes() == entry);
+        for (int i = 2; i < 6; ++i) ATLAS_REQUIRE(c.put(key(i), as_bytes(payload)));
+        // the oldest of the others went, the pinned one stays though it is the oldest of all
+        CHECK(c.holds(key(0)));
+        CHECK(!c.holds(key(2)));
+        CHECK(!c.holds(key(3)));
+        CHECK(c.holds(key(4)));
+        CHECK(c.holds(key(5)));
+        CHECK(c.entries() == 3);
+        CHECK(c.bytes() == 3 * entry);
+        // an entry written under a pinned key is pinned from the start, whatever its size
+        ATLAS_REQUIRE(c.put(key(1), as_bytes(std::string(5 * entry, 'x'))));
+        CHECK(c.pinned_bytes() == entry + cache_header_bytes + (5 * entry));
+        auto too_big = c.put(key(9), as_bytes(std::string(5 * entry, 'x')));
+        ATLAS_REQUIRE(!too_big);
+        CHECK(too_big.error().fault == Fault::too_big);
+        // emptied down to nothing, the pinned ones stay
+        c.evict_to(0);
+        CHECK(c.entries() == 2);
+        CHECK(c.holds(key(0)));
+        CHECK(c.holds(key(1)));
+        // a pinned entry removed: its bytes off the pinned ones', its key pinned still
+        c.remove(key(1));
+        CHECK(c.pinned_bytes() == entry);
+        CHECK(c.pinned(key(1)));
+    }
+    {
+        // a restart: the pins from their file, so the open's eviction leaves the pinned entry
+        auto opened = ExpandedCache::open(dir.path() + "/cache", 1);
+        ATLAS_REQUIRE(opened);
+        ExpandedCache& c = **opened;
+        CHECK(c.pins() == 2);
+        CHECK(c.holds(key(0)));
+        CHECK(c.pinned_bytes() == entry);
+        CHECK(atlas::test::held(c.get(key(0))).payload.size() == 1000);
+        // no longer pinned: the others' again, and over the budget of one byte it goes
+        ATLAS_REQUIRE(c.set_pinned({}));
+        CHECK(c.pins() == 0);
+        CHECK(c.pinned_bytes() == 0);
+        CHECK(!c.holds(key(0)));
+        CHECK(c.entries() == 0);
+    }
+    auto opened = ExpandedCache::open(dir.path() + "/cache", 2 * entry);
+    ATLAS_REQUIRE(opened);
+    CHECK((*opened)->pins() == 0);
+}
+
+TEST_CASE("tiles: a kept country's world: its packs' heads and its tiles' chunks pinned, what is lacking said, a "
+          "fetched range kept") {
+    // ENGINE.md step 11 (tiles/Kept.hpp): the app reads world-keep.json's packs and tiles; the core says which heads
+    // and chunks the cache lacks, and pins them all
+    TempDir dir;
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    const auto bytes = world_pack({world_tile(9, 262, 168), world_tile(10, 525, 336), world_tile(11, 1050, 673)}, fine);
+    const auto other = world_pack({world_tile(9, 263, 168), world_tile(10, 527, 336)}, fine);
+    auto cache = ExpandedCache::open(dir.path() + "/cache", std::uint64_t{1} << 22U);
+    ATLAS_REQUIRE(cache);
+    ExpandedCache& c = **cache;
+    // a pack's head as the app fetches it: its bytes before its chunks and after them
+    const auto head_of = [](const std::vector<std::byte>& pack) {
+        auto whole = Pack::open(std::make_unique<MemorySource>(std::span<const std::byte>(pack)));
+        ATLAS_REQUIRE_OR_RETURN((std::array<PackBytes, 2>{}), whole.has_value(), "the pack opens");
+        const Section* section = find_section(whole->sections(), "chunks");
+        ATLAS_REQUIRE_OR_RETURN((std::array<PackBytes, 2>{}), section != nullptr, "its chunks");
+        const std::span<const std::byte> all(pack);
+        const std::uint64_t end = section->offset + section->stored;
+        return std::array<PackBytes, 2>{
+            {{.offset = 0, .bytes = all.first(section->offset)}, {.offset = end, .bytes = all.subspan(end)}}};
+    };
+    // the keep: two of the first pack's three tiles and one the pack does not hold; the other pack's two
+    const std::array<KeptPack, 2> keep{
+        KeptPack{.kind = PackKind::world_mid,
+                 .length = bytes.size(),
+                 .identity = Sha256::of(bytes),
+                 .tiles = {TileKey(11, 1050, 673), TileKey(9, 262, 168), TileKey(11, 1, 1)}},
+        KeptPack{.kind = PackKind::world_mid,
+                 .length = other.size(),
+                 .identity = Sha256::of(other),
+                 .tiles = {TileKey(9, 263, 168), TileKey(10, 527, 336)}}};
+    const auto ref_of = [](const KeptPack& p) {
+        return PackRef{.id = "p", .kind = p.kind, .length = p.length, .fetch = Store::absent(), .identity = p.identity};
+    };
+    // nothing on the phone: both heads lacking and pinned, no chunk known yet
+    auto first = keep_packs(c, keep);
+    ATLAS_REQUIRE(first);
+    CHECK(first->heads == std::vector<std::uint32_t>{0, 1});
+    CHECK(first->chunks.empty());
+    CHECK(c.pins() == 2);
+    CHECK(c.pinned({.kind = CacheKind::pack_head, .source = keep[0].identity}));
+    // a range before its head: refused
+    CHECK(!keep_range(c, keep[0], {.offset = 0, .bytes = std::span<const std::byte>(bytes)}));
+    // the first head came: its two tiles' chunks lacking, the tile it does not hold counted, the other head lacking
+    ATLAS_REQUIRE(Store::keep_head(c, ref_of(keep[0]), head_of(bytes)));
+    auto second = keep_packs(c, keep);
+    ATLAS_REQUIRE(second);
+    CHECK(second->heads == std::vector<std::uint32_t>{1});
+    ATLAS_REQUIRE(second->chunks.size() == 2);
+    CHECK(second->unknown == 1);
+    CHECK(second->held == 0);
+    CHECK(second->chunks[0].pack == 0);
+    CHECK(second->chunks[0].tile == TileKey(11, 1050, 673));
+    CHECK(second->chunks[1].tile == TileKey(9, 262, 168));
+    CHECK(c.pins() == 4); // two heads, two chunks
+    // the first chunk's bytes fetched and handed over: kept, pinned, and no longer lacking
+    const KeptChunk want = second->chunks[0];
+    const std::span<const std::byte> all(bytes);
+    auto kept = keep_range(c, keep[0], {.offset = want.offset, .bytes = all.subspan(want.offset, want.length)});
+    ATLAS_REQUIRE(kept);
+    CHECK(kept->kept == std::vector<TileKey>{TileKey(11, 1050, 673)});
+    CHECK(kept->refused.empty());
+    auto third = keep_packs(c, keep);
+    ATLAS_REQUIRE(third);
+    ATLAS_REQUIRE(third->chunks.size() == 1);
+    CHECK(third->chunks[0].tile == TileKey(9, 262, 168));
+    CHECK(third->held == 1);
+    CHECK(third->held_bytes == want.length);
+    CHECK(c.pinned_bytes() > want.length);
+    // the pack's whole bytes handed over: the tile not of the keep is kept in the cache too, but not pinned, so the
+    // cache emptied of the others keeps the head and the keep's two chunks
+    ATLAS_REQUIRE(keep_range(c, keep[0], {.offset = 0, .bytes = all}));
+    CHECK(c.entries() == 4);
+    c.evict_to(0);
+    CHECK(c.entries() == 3);
+    auto whole = keep_packs(c, keep);
+    ATLAS_REQUIRE(whole);
+    CHECK(whole->chunks.empty());
+    CHECK(whole->held == 2);
+    // offline, the map's store opens the pack and loads the kept tiles from the cache alone
+    {
+        Store store(&c);
+        ATLAS_REQUIRE(store.add(ref_of(keep[0])));
+        Zstd zstd;
+        std::vector<std::byte> raw;
+        ATLAS_REQUIRE(store.load(store.find(TileKey(11, 1050, 673))[0], zstd, raw));
+        ATLAS_REQUIRE(store.load(store.find(TileKey(9, 262, 168))[0], zstd, raw));
+        CHECK(!store.load(store.find(TileKey(10, 525, 336))[0], zstd, raw));
+    }
+    // the country no longer kept: nothing pinned, and the cache emptied holds nothing
+    auto none = keep_packs(c, {});
+    ATLAS_REQUIRE(none);
+    CHECK(none->heads.empty());
+    CHECK(c.pins() == 0);
+    c.evict_to(0);
+    CHECK(c.entries() == 0);
 }

@@ -379,7 +379,7 @@ data class LiveProgress(val stage: Stage, val region: String, val fraction: Doub
 
 /** The port's module state a scene's load leaves (the place, its weather, palette and moments), to put back before rendering it. */
 class EngineState private constructor(
-    private val lat0: Double, private val lon0: Double, private val kx: Double, private val kz: Double, private val tzH: Int,
+    private val lat0: Double, private val lon0: Double, private val kx: Double, private val kz: Double, private val tzH: Int, private val tzM: Int,
     private val brickOld: List<String>, private val plaster: List<String>, private val brickNew: List<String>,
     private val waterY: Double, private val quayCol: String, private val quayCourse: Double?, private val tone: Boolean, private val winStyle: String?,
     private val wxd: Map<String, Any?>, private val themes: LinkedHashMap<String, Dict>, private val airHaze: Boolean, private val cloudsLit: Boolean,
@@ -387,7 +387,7 @@ class EngineState private constructor(
     /** Puts the state back into the port's modules. */
     fun restore() {
         val a = Amsterdam
-        a.LAT0 = lat0; a.LON0 = lon0; a.KX = kx; a.KZ = kz; a.TZ_H = tzH
+        a.LAT0 = lat0; a.LON0 = lon0; a.KX = kx; a.KZ = kz; a.TZ_H = tzH; a.TZ_M = tzM
         a.BRICK_OLD.clear(); a.BRICK_OLD.addAll(brickOld)
         a.PLASTER.clear(); a.PLASTER.addAll(plaster)
         a.BRICK_NEW.clear(); a.BRICK_NEW.addAll(brickNew)
@@ -402,7 +402,7 @@ class EngineState private constructor(
         fun capture(): EngineState {
             val a = Amsterdam
             return EngineState(
-                a.LAT0, a.LON0, a.KX, a.KZ, a.TZ_H, a.BRICK_OLD.toList(), a.PLASTER.toList(), a.BRICK_NEW.toList(),
+                a.LAT0, a.LON0, a.KX, a.KZ, a.TZ_H, a.TZ_M, a.BRICK_OLD.toList(), a.PLASTER.toList(), a.BRICK_NEW.toList(),
                 a.WATER_Y, a.QUAY_COL, a.QUAY_COURSE, a.TONE, a.WIN_STYLE, a.WXD, LinkedHashMap(a.THEMES), a.AIR_HAZE, a.CLOUDS_LIT,
             )
         }

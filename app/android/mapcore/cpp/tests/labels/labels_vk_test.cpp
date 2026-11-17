@@ -9,9 +9,11 @@
 #include "frame/FrameBuilder.hpp"
 #include "frame/PassRegistry.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "labels/Names.hpp"
 #include "labels/Sprites.hpp"
 #include "passes/GroundText.hpp"
 #include "passes/Labels.hpp"
+#include "scene/WorldNames.hpp"
 #include "standin/View.hpp"
 #include "tests/base/require.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
@@ -85,12 +87,12 @@ struct Expected {
 };
 
 [[nodiscard]] Expected expect(std::span<const layouts::text_sprite::SpriteDraw> draws,
-                              std::span<const std::uint32_t> texels) {
+                              std::span<const std::uint32_t> texels, std::span<const std::uint32_t> names = {}) {
     Expected e;
     e.rgb.resize(std::size_t{frame_width} * frame_height * 3);
     for (std::size_t i = 0; i < e.rgb.size(); ++i) e.rgb[i] = std::round(static_cast<double>(clear.at(i % 3)) * 255.0);
     for (const auto& d : draws) {
-        const auto sprite = texels.subspan(d.source[0]);
+        const auto sprite = (d.source[3] != 0 ? names : texels).subspan(d.source[0]);
         const auto sw = static_cast<std::int32_t>(d.source[1]);
         const auto sh = static_cast<std::int32_t>(d.source[2]);
         const auto texel = [&](std::int32_t x, std::int32_t y) {
@@ -283,6 +285,164 @@ TEST_CASE("the board's labels drawn: each sprite's texels land whole at its plac
         }
         renderer->reset();
     }
+    const auto messages = session->take_messages();
+    for (const auto& m : messages) MESSAGE("validation: " << m);
+    CHECK(messages.empty());
+}
+
+TEST_CASE("the world's names drawn among the board's labels: asked for by rank, each sprite's texels from the names' "
+          "own buffer at its place, a name without glyphs left out, and a larger buffer once the first is full") {
+    auto session = test::open_session();
+    if (!session) return;
+    const gpu::Device& device = *session->device;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const std::array<std::string_view, 1> composite{"composite"};
+    std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
+    auto owned = std::make_unique<passes::Labels>();
+    const passes::Labels* labels = owned.get();
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(device, *cache, std::move(passes), {.clear = clear, .steps = 0});
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    passes::SpriteGlobals globals(device);
+    const double lat0 = standin::origin_latitude;
+    const double lon0 = standin::origin_longitude;
+    const view::GroundFrame ground{
+        .lat0 = lat0, .lon0 = lon0, .kx = 111320.0 * pymath::cos(pymath::radians(lat0)), .kz = 110540.0};
+    Stub world(ground, &globals);
+    // One label of the board's at the target; three names about it that no tile holds (a test's), by rank a city, a
+    // town and a village, the town one the device has no glyphs for.
+    std::vector<labels::LabelSprite> board;
+    board.push_back(sprite(1, 31, 13, lat0, lon0, 5));
+    const auto set = labels::LabelSet::make(board, 1, 0.0F, 1.5F);
+    ATLAS_REQUIRE(set.has_value(), labels::describe(set.error()));
+    const auto place = [&](std::string text, scene::NameKind kind, double people, double dlat, double dlon) {
+        return scene::WorldName{
+            .kind = kind, .people = people, .lat = lat0 + dlat, .lon = lon0 + dlon, .text = std::move(text)};
+    };
+    std::vector<scene::WorldName> extra{place("Village", scene::NameKind::village, 900.0, 0.0015, -0.002),
+                                        place("City", scene::NameKind::city, 800'000.0, -0.0015, 0.002),
+                                        place("Town", scene::NameKind::town, 40'000.0, 0.0015, 0.002)};
+    labels::NameStore store;
+    style::CameraState camera = standin::board_view(frame_width, frame_height, 2.0);
+    camera.flags = style::camera_flag::rest;
+    const gpu::Configuration config = configurations(device).front();
+    auto output = gpu::Offscreen::create(device, {.width = frame_width, .height = frame_height}, 2, gpu::Depth::eight);
+    ATLAS_REQUIRE(output.has_value(), output.error().text());
+    auto renderer = gpu::Renderer::create(device, **output, **builder, config);
+    ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+    double seconds = 1.0;
+    const auto draw = [&](int frames) {
+        for (int f = 0; f < frames; ++f) {
+            (*builder)->set_inputs({.camera = camera,
+                                    .seconds = seconds,
+                                    .scene = &world,
+                                    .labels = set->get(),
+                                    .names = &store,
+                                    .extra_names = extra});
+            seconds += 1.0;
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
+        }
+        (*renderer)->drain();
+    };
+    // The names' sprites as the app would hand them, by id; the texels of the names' buffer as the pass lays them out.
+    std::vector<labels::LabelSprite> handed;
+    const auto check = [&](std::size_t names_drawn, const char* what) {
+        auto pixels = (*output)->read((*output)->latest());
+        ATLAS_REQUIRE(pixels.has_value(), pixels.error().text());
+        std::vector<std::uint32_t> arena(labels->name_texels(), 0U);
+        std::size_t names = 0;
+        for (std::size_t i = 0; i < labels->draws().size(); ++i) {
+            const auto& d = labels->draws()[i];
+            if (d.source[3] == 0) continue;
+            ++names;
+            // the sprite drawn: the one of this size among those handed
+            const auto of = std::ranges::find_if(handed, [&d](const labels::LabelSprite& h) {
+                return (h.own.width == d.source[1] && h.own.height == d.source[2]) ||
+                       (h.large.width == d.source[1] && h.large.height == d.source[2]);
+            });
+            ATLAS_REQUIRE(of != handed.end());
+            const labels::SpriteImage& from = of->own.width == d.source[1] ? of->own : of->large;
+            ATLAS_REQUIRE(std::size_t{d.source[0]} + from.pixels.size() <= arena.size());
+            std::ranges::copy(from.pixels, arena.begin() + d.source[0]);
+        }
+        const Expected want = expect(labels->draws(), (*set)->texels(), arena);
+        std::size_t differ = 0;
+        for (std::size_t p = 0; p < std::size_t{frame_width} * frame_height; ++p) {
+            for (std::size_t k = 0; k < 3; ++k) {
+                differ +=
+                    std::fabs(static_cast<double>(pixels->rgba[(4 * p) + k]) - want.rgb[(3 * p) + k]) > 1.0 ? 1U : 0U;
+            }
+        }
+        MESSAGE(std::format("{}: {} sprites drawn, {} of them names; the names' buffer {} of {} texels, buffer {}",
+                            what, labels->draws().size(), names, labels->name_texels_used(), labels->name_texels(),
+                            labels->name_buffers()));
+        CHECK(names == names_drawn);
+        CHECK(labels->names_drawn() == names_drawn);
+        CHECK(differ == 0);
+    };
+    // The first frame: the board's label alone; the three names are wanted, by rank.
+    draw(2);
+    check(0, "before the names' sprites");
+    CHECK(labels->names().size() == 3);
+    const std::vector<labels::NameWant> wants = store.ask(0.0);
+    ATLAS_REQUIRE(wants.size() == 3);
+    CHECK(wants[0].text == "City");
+    CHECK(wants[0].style == static_cast<std::uint8_t>(scene::NameStyle::city));
+    CHECK(wants[1].text == "Town");
+    CHECK(wants[1].style == static_cast<std::uint8_t>(scene::NameStyle::town));
+    CHECK(wants[2].text == "Village");
+    CHECK(wants[2].style == static_cast<std::uint8_t>(scene::NameStyle::village));
+    for (const labels::NameWant& w : wants) CHECK((w.id & scene::name_id_bit) != 0);
+    // The app hands the city's and the village's sprites; the town's without an image (no glyphs).
+    const auto name_sprite = [](std::uint32_t id, std::uint32_t seed, std::uint32_t width, std::uint32_t height) {
+        labels::LabelSprite made = sprite(seed, width, height, 0.0, 0.0, 0);
+        made.id = id;
+        made.points.clear();
+        return made;
+    };
+    handed.push_back(name_sprite(wants[0].id, 4, 37, 15));
+    handed.push_back(name_sprite(wants[2].id, 5, 29, 11));
+    {
+        std::vector<labels::LabelSprite> give = handed;
+        give.push_back(labels::LabelSprite{.id = wants[1].id});
+        ATLAS_REQUIRE(store.give(std::move(give), 1.5F, 12.0F, seconds).has_value());
+    }
+    draw(2);
+    check(2, "with the names' sprites");
+    CHECK(store.ask(100.0).empty());
+    CHECK(labels->name_buffers() == 1);
+    // under the board's label by priority, in the names' buffer, each at its own place on whole pixels
+    ATLAS_REQUIRE(labels->draws().size() == 3);
+    CHECK(labels->draws()[0].source[3] == 0);
+    CHECK(labels->draws()[1].source[3] == 1);
+    CHECK(labels->draws()[1].source[1] == 37);
+    CHECK(labels->draws()[2].source[1] == 29);
+    CHECK(labels->draws()[1].fade[0] == 1.0F);
+    // More names over time than the first buffer holds (65,536 texels): other names come to the two places, round
+    // after round, each of 13,600 texels with its large image; once the buffer is full, one with this frame's names
+    // takes its place, and the frame's pixels are theirs.
+    for (std::uint32_t round = 0; round < 4; ++round) {
+        extra = {place("Round " + std::to_string(round), scene::NameKind::city, 800'000.0, -0.0015, 0.002),
+                 place("Other " + std::to_string(round), scene::NameKind::city, 700'000.0, 0.0015, -0.002)};
+        camera.sequence += 1;
+        camera.bearing += 0.0001; // the camera moved: the names are picked again
+        draw(1);
+        const std::vector<labels::NameWant> more = store.ask(200.0 + (10.0 * round));
+        ATLAS_REQUIRE(more.size() == 2);
+        handed.push_back(name_sprite(more[0].id, 20 + (2 * round), 101 + (2 * round), 41));
+        handed.push_back(name_sprite(more[1].id, 21 + (2 * round), 102 + (2 * round), 41));
+        {
+            std::vector<labels::LabelSprite> give(handed.end() - 2, handed.end());
+            ATLAS_REQUIRE(store.give(std::move(give), 1.5F, 12.0F, seconds).has_value());
+        }
+        draw(2);
+        check(2, "another round of names");
+    }
+    CHECK(labels->name_buffers() >= 2);
+    CHECK(labels->name_texels_used() <= labels->name_texels());
+    renderer->reset();
     const auto messages = session->take_messages();
     for (const auto& m : messages) MESSAGE("validation: " << m);
     CHECK(messages.empty());

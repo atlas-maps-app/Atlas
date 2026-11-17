@@ -1,6 +1,8 @@
 // The frame's counters (frame/Counters.hpp).
 #include "frame/Counters.hpp"
 
+#include "base/assert.hpp"
+
 #include <format>
 
 namespace atlas::frame {
@@ -9,7 +11,10 @@ Count& PassCounters::of(std::string_view kind) noexcept {
     for (KindCount& k : kinds_) {
         if (k.kind == kind) return k.count;
     }
-    // A pass that counts more kinds than the budget folds the rest into its last one.
+    // A pass that counts more kinds than the budget folds the rest into its last one: its total holds, but that
+    // kind's count is no longer its own (on 12 November the buildings' shadows read one draw too many for it), so a
+    // debug build stops here and the map's parts' test holds every pass under the bound (map_frame_vk_test.cpp).
+    ATLAS_DEBUG_ASSERT(!kinds_.full(), "a pass counts more kinds than frame::max_kinds: raise it");
     if (kinds_.full()) return kinds_[kinds_.size() - 1].count;
     return kinds_.emplace_back(KindCount{.kind = kind, .count = {}}).count;
 }

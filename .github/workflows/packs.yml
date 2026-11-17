@@ -30,9 +30,10 @@ on:
         type: choice
         options: [also, only, skip]
         default: also
-  # The monthly run (the 2nd at 02:17 UTC, once Geofabrik's extracts of the 1st are out) is off until the user says
-  # go (21 October 2026): the workflow has never run, and its first run publishes every region's packs and the render
-  # packs. To turn it on, restore:
+  # The monthly run (ENGINE.md step 11), the 2nd at 02:17 UTC, once Geofabrik's extracts of the 1st are out: the
+  # regions regions.json marks monthly (the Netherlands), published as a run by hand publishes them; no render packs.
+  # It is off until the user says go (21 October 2026), as it publishes those regions' packs by itself. To turn it on,
+  # restore:
   # schedule:
   #   - cron: '17 2 2 * *'
 
@@ -78,9 +79,12 @@ jobs:
         id: plan
         env:
           REGIONS: ${{ github.event.inputs.regions }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           FILE=app/android/packs/regions.json
+          # the monthly run: the regions marked monthly
+          if [ "$EVENT" = schedule ]; then REGIONS=$(jq -r '[.regions[] | select(.monthly == true) | .id] | join(",")' "$FILE"); fi
           # shellcheck disable=SC2016 # jq's own variables, not the shell's
           WANT='($ids | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))'
           UNKNOWN=$(jq -r --arg ids "${REGIONS:-}" "$WANT - [.regions[].id] | join(\",\")" "$FILE")
@@ -88,7 +92,7 @@ jobs:
           MATRIX=$(jq -c --arg ids "${REGIONS:-}" "$WANT as \$want
             | [.regions[] | select((\$want | length) == 0 or (.id as \$i | \$want | index(\$i) != null))
                | {id, name, url, country: (.country // \"\"), bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false),
-                  windows: (if .windows == false then false else true end),
+                  windows: (if .windows == false then false else true end), shards: (.shards // 1),
                   atlas: ((.atlas // (if ((.bbox[2] - .bbox[0]) * (.bbox[3] - .bbox[1])) <= 0.6 then .bbox else null end)) // [] | map(tostring) | join(\",\"))}]" "$FILE")
           if [ "$(jq length <<< "$MATRIX")" -eq 0 ]; then echo "::error::No regions to build"; exit 1; fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
@@ -125,6 +129,7 @@ jobs:
       COUNTRY: ${{ matrix.region.country }}
       ATLAS_BOX: ${{ matrix.region.atlas }}
       WINDOWS: ${{ matrix.region.windows }}
+      SHARDS: ${{ matrix.region.shards }}
       TAG: ${{ needs.plan.outputs.tag }}
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -230,15 +235,33 @@ jobs:
       - name: Windows' data
         if: env.WINDOWS == 'true'
         env:
-          # the Netherlands' node positions alone take some 2 GB, its ways' nodes and tags the most of the rest
+          # the Netherlands' node positions alone take some 2 GB, its ways' nodes and tags the most of the rest (5.7 GB
+          # held, the heap's pools at 11 GB at their peaks, 4 November); a larger country cuts its windows in shards of
+          # frame cells' columns (regions.json's shards, ENGINE.md step 11), each holding every node's position but only
+          # its own cells' tagged nodes and ways
           JAVA_OPTS: -Xmx12g
         run: |
           set -euo pipefail
+          PACKER=app/android/packer/build/install/packer/bin/packer
           ARGS=(--poly "$WORK/$ID.poly" --core "$ATLAS_STAGEP" --id "$ID")
           # a region cut from a bigger extract: the windows that meet its box
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
-          app/android/packer/build/install/packer/bin/packer windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
-          { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SHARDS" -gt 1 ]; then
+            # one shard after another, each a process and heap of its own, in folders beside out/ (which the upload
+            # takes whole), then joined into the files the run whole writes, each shard's deleted as it is joined
+            : > "$RUNNER_TEMP/windows.txt"
+            DIRS=()
+            for i in $(seq 1 "$SHARDS"); do
+              "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/shards/$i" "${ARGS[@]}" --shard "$i/$SHARDS" | tee -a "$RUNNER_TEMP/windows.txt"
+              DIRS+=("$WORK/shards/$i")
+              df -h "$WORK" | tail -1
+            done
+            "$PACKER" windows-join "$WORK/out" "${DIRS[@]}" --id "$ID" --remove | tee -a "$RUNNER_TEMP/windows.txt"
+            { echo "- $ID: the windows' data in $SHARDS shards"; grep -E '^(shard [0-9]+ of [0-9]+: |the extract: |time: )' "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; tail -2 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
+            { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
           rm -f "$WORK/$ID.osm.pbf"
           df -h "$WORK"
       - name: Country tiles
@@ -340,7 +363,7 @@ jobs:
     # teaches the format what the region holds, this job builds it with no change here. Builds are deterministic: only
     # render packs whose bytes changed go up, then packs.json if it changed. A region that loses its render pack drops out
     # of packs.json (the app reads only what the list names); its old file stays in the release, unused.
-    if: ${{ github.event.inputs.renders != 'skip' }}
+    if: ${{ github.event_name != 'schedule' && github.event.inputs.renders != 'skip' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:

@@ -18,8 +18,9 @@ import java.time.Instant
  * A window's pack from its country's tiles, on GitHub releases faked by MockWebServer: the index downloaded once and
  * kept beside the windows' data indexes, each window by a range of its own bytes (two where it spans two parts), held
  * to the index, its style written back whole from the country's; a window with nothing to draw answered without
- * bytes; the newest country that holds a window; each phone its own core's tiles where a country publishes two cores';
- * and no answer where no country holds it, or where another core built the tiles.
+ * bytes; the newest country that holds a window, and the next where its index or bytes do not come; each phone its own
+ * core's tiles where a country publishes two cores'; and no answer where no country holds it, or where another core
+ * built the tiles.
  */
 class WindowTilesTest {
     private val gh = FakeGitHub()
@@ -280,6 +281,49 @@ class WindowTilesTest {
         assertNull(WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, "core-p6 s1.1-fedcba9876543210"))
     }
 
+    /** The middle of window 14/[x]/[y]: its latitude and longitude. */
+    private fun middle(x: Int, y: Int): Pair<Double, Double> {
+        val n = Math.PI * (1.0 - 2.0 * (y + 0.5) / (1 shl 14))
+        return Math.toDegrees(Math.atan(Math.sinh(n))) to (x + 0.5) / (1 shl 14) * 360.0 - 180.0
+    }
+
+    @Test
+    fun theIndexSaysWhichPlacesOfItsBoxACountrysTilesHold() {
+        val list = listOf(publish("netherlands", country(), date))
+        val tiles = WindowTiles({ list }, dir)
+        val (lat, lon) = middle(westerkerk.first, westerkerk.second)
+        // nothing is known before the index is read, and asking reads nothing
+        assertNull(tiles.holds("netherlands", version, lat, lon))
+        assertEquals(0, gh.storageRequests.size)
+        // read once (here downloaded), it answers from memory
+        assertEquals(cells.size, tiles.index("netherlands", version))
+        assertEquals(1, gh.storageRequests.size)
+        assertEquals(true, tiles.holds("netherlands", version, lat, lon))
+        // a window listed with nothing to draw is the country's too: its data reaches it
+        assertEquals(true, middle(water.first, water.second).let { (a, o) -> tiles.holds("netherlands", version, a, o) })
+        // in the box, not in the index: beyond the country's border
+        assertEquals(false, middle(8414, 5386).let { (a, o) -> tiles.holds("netherlands", version, a, o) })
+        assertEquals(false, tiles.holds("netherlands", version, 51.2194, 4.4025))
+        assertEquals(1, gh.storageRequests.size)
+        // another core's tiles say nothing of this one's, and a pack not published has no index
+        assertNull(tiles.holds("netherlands", "core-p0 s0", lat, lon))
+        assertNull(tiles.index("netherlands", "core-p0 s0"))
+        assertNull(tiles.holds("belgium", version, lat, lon))
+        assertNull(tiles.index("belgium", version))
+        // a level's tile over the place holds it too: a frame cell's levels reach a little beyond its windows
+        val levelled = listOf(publish("levelled", country(levels = listOf(Triple(13, 4207, 2693))), date))
+        val withLevels = WindowTiles({ levelled }, tempDir("levels"))
+        assertEquals(cells.size + 1, withLevels.index("levelled", version))
+        assertEquals(true, middle(8414, 5386).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
+        assertEquals(true, middle(8415, 5387).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
+        assertEquals(false, middle(8416, 5386).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
+        // a window taken reads the index as well
+        val other = WindowTiles({ list }, tempDir("other"))
+        assertNull(other.holds("netherlands", version, lat, lon))
+        other.window(14, westerkerk.first, westerkerk.second, version)
+        assertEquals(true, other.holds("netherlands", version, lat, lon))
+    }
+
     @Test
     fun aWindowNoCountryHoldsGetsNoAnswer() {
         val list = listOf(publish("netherlands", country(), date))
@@ -321,6 +365,35 @@ class WindowTilesTest {
         assertEquals("new", tiles.window(14, westerkerk.first, westerkerk.second, version)!!.pack)
         assertEquals("old", tiles.window(14, water.first, water.second, version)!!.pack)
         assertEquals(older, tiles.window(14, water.first, water.second, version)!!.date)
+    }
+
+    @Test
+    fun aCountryWhoseIndexOrBytesDoNotComeIsPassedOverForTheNextThatHoldsTheWindow() {
+        val older = date.minusSeconds(30 * 86_400L)
+        val old = country(older)
+        val new = country(date)
+        val list = listOf(publish("old", old, older), publish("new", new, date))
+        // the newer country's index is not the one packs.json names: the older country's tiles give the window
+        gh.assets["new.tiles.idx"] = country(date, of = cells.take(1)).index
+        val tiles = WindowTiles({ list }, dir)
+        val got = tiles.window(14, westerkerk.first, westerkerk.second, version)!!
+        assertEquals("old", got.pack)
+        assertEquals(older, got.date)
+        assertArrayEquals(old.packs[westerkerk], got.bytes)
+        // its index whole again but its window's bytes changed: the older country's still
+        gh.assets["new.tiles.idx"] = new.index
+        gh.assets["new.tiles"] = new.tiles.copyOf().also { for (i in it.indices) it[i] = (it[i] + 1).toByte() }
+        assertEquals("old", WindowTiles({ list }, tempDir("bytes")).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
+        // neither gives it: the failure of the first asked (the newest), the other's with it
+        gh.assets["old.tiles"] = old.tiles.copyOf().also { for (i in it.indices) it[i] = (it[i] + 1).toByte() }
+        val e = assertThrows(IOException::class.java) { WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, version) }
+        assertTrue(e.message, e.message!!.contains("pack new"))
+        assertEquals(1, e.suppressed.size)
+        assertTrue(e.suppressed[0].message, e.suppressed[0].message!!.contains("pack old"))
+        // both whole again: the newest
+        gh.assets["new.tiles"] = new.tiles
+        gh.assets["old.tiles"] = old.tiles
+        assertEquals("new", WindowTiles({ list }, tempDir("whole")).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
     }
 
     @Test

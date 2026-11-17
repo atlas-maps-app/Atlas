@@ -10,6 +10,7 @@
 #include "gen/spirv/overlay/marker_loc1.hpp"
 #include "gpu/Descriptors.hpp"
 #include "markers/Markers.hpp"
+#include "passes/PlacePoint.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -64,7 +65,7 @@ void Markers::update(const frame::FrameState& state) {
     s.count = 0;
     draws_.clear();
     const markers::MarkerSet* set = state.markers;
-    if (set == nullptr || set->markers().empty() || !state.view.has_value() || !state.ground_frame.has_value() ||
+    if (set == nullptr || set->markers().empty() || !state.view.has_value() || place_frame(state) == nullptr ||
         state.camera.leaves_out(style::camera_part::markers)) {
         xs_.clear();
         ys_.clear();
@@ -72,10 +73,10 @@ void Markers::update(const frame::FrameState& state) {
         layout_.place({}, xs_, ys_, visible_, {}, 0.0F, 0.0F);
         return;
     }
-    // Each marker's place on the view's device pixels (OverlayPainter.layoutMarkers' GroundView: the street), placed
-    // where it stands within 60 dp of the view.
+    // Each marker's place on the view's device pixels (OverlayPainter.layoutMarkers' GroundView: the street; from
+    // 150 km the world's bent ground, passes/PlacePoint.hpp), placed where it stands within 60 dp of the view.
     const view::View& view = *state.view;
-    const view::GroundFrame& ground = *state.ground_frame;
+    const view::GroundFrame& ground = *place_frame(state);
     const markers::Metrics metrics{.density = set->density()};
     const auto width = static_cast<float>(state.camera.width_px);
     const auto height = static_cast<float>(state.camera.height_px);
@@ -86,7 +87,7 @@ void Markers::update(const frame::FrameState& state) {
     visible_.resize(all.size());
     for (std::size_t i = 0; i < all.size(); ++i) {
         const markers::Marker& m = all[i];
-        const auto p = view.device_proj({ground.x(m.latitude, m.longitude), 0.0, ground.z(m.latitude, m.longitude)});
+        const auto p = place_point(state, view, ground, m.latitude, m.longitude);
         if (!p) {
             xs_[i] = no_point;
             ys_[i] = no_point;

@@ -31,6 +31,7 @@ import app.atlas.mapview.MapState
 import app.atlas.mapview.MapStyle
 import app.atlas.mapview.ShownMap
 import app.atlas.mapview.StageMap
+import app.atlas.model.Place
 import app.atlas.nav.LocalServices
 import app.atlas.ui.home.HomeViewModel
 import app.atlas.ui.home.mapStyleOf
@@ -86,13 +87,14 @@ internal fun OverStageMap(
     background: Color = Color.Unspecified,
     hostModifier: Modifier = Modifier,
     onTap: (MapHit) -> Unit = {},
+    featureOf: (suspend (MapPick) -> Place?)? = null,
 ) {
     val shown = over.shown
     if (shown != null) {
         StageMap(
             state = shown.state, modifier = modifier, style = shown.style, overlays = overlays,
             contentPadding = shown.contentPadding, onTap = onTap, onLongPress = onLongPress,
-            onLongPressBuilding = onLongPressBuilding, onCameraMove = shown::cameraMoved, debug = shown.debug,
+            onLongPressBuilding = onLongPressBuilding, featureOf = featureOf, onCameraMove = shown::cameraMoved, debug = shown.debug,
             units = shown.units, labelTypeface = shown.labelTypeface, background = background, hostModifier = hostModifier,
         )
         return
@@ -101,7 +103,8 @@ internal fun OverStageMap(
     val face = remember { runCatching { ResourcesCompat.getFont(context, R.font.instrument_serif_italic) }.getOrNull() }
     StageMap(
         state = over.state, modifier = modifier, style = userLook(), overlays = overlays, contentPadding = ownPadding,
-        onTap = onTap, onLongPress = onLongPress, onLongPressBuilding = onLongPressBuilding, labelTypeface = face,
+        onTap = onTap, onLongPress = onLongPress, onLongPressBuilding = onLongPressBuilding, featureOf = featureOf,
+        labelTypeface = face,
         background = background, hostModifier = hostModifier,
     )
 }

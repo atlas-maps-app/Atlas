@@ -3,6 +3,9 @@
 // pack: its block (the L6 tile of a fine pack, the L3 tile of a coarse one), its tiles' levels, its part and the range
 // of it the pack is, how many tiles it holds, the box it was built for and its SHA-256. The store holds each such pack
 // as a `world_mid` pack, a range of its part, and the globe (`world-globe.atlas`, beside the index) as `world_base`.
+//
+// A country's terrain has an index of the same format (the packer's `packer heights`): its packs the height rasters
+// of an L9 tile each, L12 to L14, which the store holds as `terrain_country` packs.
 #pragma once
 
 #include "tiles/Checksums.hpp"
@@ -73,5 +76,14 @@ struct WorldAdded {
 /// `world_base`. A host's and a test's way; the app lists the same packs through MapCore.packs. An index that cannot be
 /// read, a part that is not there or is shorter than its range, or a pack the store refuses, is an error.
 [[nodiscard]] Result<WorldAdded> add_world(Store& store, const std::string& dir);
+
+/// A country's terrain (ENGINE.md part 6) added to `store`: `index` is its index's path (`<region>-terrain.idx`, the
+/// world's index format: each pack the height rasters of an L9 tile, L12 to L14), its parts beside it; each pack a
+/// `terrain_country` range of its part, its id `terrain/<the index's file name without its ending>/<z>/<x>/<y>`. A
+/// host's and a test's way, as add_world is the world's.
+[[nodiscard]] Result<WorldAdded> add_terrain(Store& store, const std::string& index);
+
+/// The store's id of a terrain pack of the index named `name`: `terrain/<name>/<z>/<x>/<y>`.
+[[nodiscard]] std::string terrain_pack_id(std::string_view name, const WorldEntry& entry);
 
 } // namespace atlas::tiles

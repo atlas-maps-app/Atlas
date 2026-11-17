@@ -401,7 +401,7 @@ class MineScreenshotTest {
         chargingRoute("mine_charging_route_nocar", app.atlas.ui.mine.charge.Car(null, 0.8, emptySet())) { app.atlas.ui.mine.charge.TripState.NoCar }
     }
 
-    /** The Map look board: today's look, the Tone at 100 %, Canal evening saved. */
+    /** The Map look board: the default look (Alpha 22's, the Tone off), Canal evening saved. */
     @Test
     fun mapLook() {
         show(Dest.MapLook(), MineFixtures.withPalettes(phone(), drawn = false))

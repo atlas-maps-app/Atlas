@@ -15,6 +15,7 @@ import app.atlas.Services
 import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
+import app.atlas.mapcore.MapCore
 import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.CoreState
 import app.atlas.mapview.HomeView
@@ -96,13 +97,13 @@ class HomeViewModel(
     ).apply { time = clock() }
 
     /**
-     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): where the core draws the maps, a window on the
-     * phone holds the place (else the first look is the Main board's view of the canal ring, whose windows the
-     * Netherlands' tiles give); today's map alone counts every place, as it always has (it fetches what it needs). The
-     * list is read as the core starts (MapEngine.warmPacks); only if that has not finished is it read here.
+     * Whether the map has data at [p] on the phone (Q5, plan-vector §8): a window on the phone holds the place (else the
+     * first look is the Main board's view of the canal ring, whose windows the Netherlands' tiles give); with no core in
+     * this process (the JVM's tests) every place counts. The list is read as the core starts (MapEngine.warmPacks); only
+     * if that has not finished is it read here.
      */
     private fun coveredByMap(p: LatLon): Boolean {
-        if (MapEngine.core is CoreState.Canvas) return true
+        if (MapEngine.core is CoreState.None) return true
         val list = runCatching { MapEngine.packs() }.getOrNull() ?: return true
         if (!list.loaded) runCatching { list.load() }
         return list.packs.any { p in it.box }
@@ -229,27 +230,32 @@ class HomeViewModel(
         }
         // The light and shadows follow the app's clock (a test's fixed one too), a minute at a time.
         viewModelScope.launch { minutes.collect { map.time = it } }
-        // CI's scripted runs of the core (MainActivity's atlas.vk.script; debug and bench builds): the transitional rule,
-        // and the world beyond the countries
+        // CI's scripted runs of the core (MainActivity's atlas.vk.script; debug and bench builds): away from its tiles and
+        // back, and the world beyond the countries
         when (MapEngine.script) {
-            TRANSITION_SCRIPT -> {
+            AWAY_SCRIPT -> {
                 MapEngine.script = null
-                viewModelScope.launch { transitionScript() }
+                viewModelScope.launch { awayScript() }
             }
             WORLD_SCRIPT -> {
                 MapEngine.script = null
                 viewModelScope.launch { worldScript() }
             }
+            NAMES_SCRIPT -> {
+                MapEngine.script = null
+                viewModelScope.launch { namesScript() }
+            }
         }
     }
 
     /**
-     * CI's scripted switch of the transitional rule (plan-vector K11): once the core's first picture is final, the camera
-     * jumps to a place the core has no tiles for ([AWAY]: today's map there, or its own honest state offline), and
-     * once today's map has its picture there and the cross-fade is done, back to the start; `vk script …` lines mark
-     * each step for smoke.sh, which reads the rule's own `vk transition` lines between them.
+     * CI's scripted jump away from the core's tiles (plan-vector K11, ENGINE.md step 3): once the core's first picture is
+     * final, the camera jumps to a place no pack on the phone holds ([AWAY]), where the core draws its own cover and the
+     * map says why (CI's runs build no windows: no map data there), and back to the start, where its picture is complete
+     * again; `vk script …` lines mark each step with the map's status for smoke.sh. Until 5 November the script switched
+     * the transitional rule to today's map and back.
      */
-    private suspend fun transitionScript() {
+    private suspend fun awayScript() {
         val log = { line: String -> android.util.Log.i("AtlasMap", line) }
         val start = map.camera
         awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
@@ -258,13 +264,23 @@ class HomeViewModel(
         map.camera = start.copy(target = AWAY)
         delay(SCRIPT_SETTLE_MS)
         awaitStatus(SCRIPT_WAIT_MS) { it !is MapStatus.Loading }
+        log("vk script: away ${said(map.status)}")
         delay(SCRIPT_SETTLE_MS)
         log("vk script: back")
         map.camera = start
         delay(SCRIPT_SETTLE_MS)
         awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        log("vk script: back ${said(map.status)}")
         delay(SCRIPT_SETTLE_MS)
         log("vk script done")
+    }
+
+    /** What the map says of its picture, for a script's line. */
+    private fun said(s: MapStatus): String = when (s) {
+        is MapStatus.Ready -> "ready"
+        is MapStatus.Loading -> "loading"
+        is MapStatus.Downloading -> "downloading ${s.region}"
+        is MapStatus.NoData -> "no map data: ${s.reason}"
     }
 
     /**
@@ -273,8 +289,11 @@ class HomeViewModel(
      * [WORLD_VIEWS] in turn, waits there for the world's packs of the start's block (the first start's index and globe,
      * then those packs' heads, which the view's first frames there ask for) and then for the map's picture to be final
      * (the chunks of the tiles in view, which its frames ask for by ranges),
-     * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then back. `vk script …` lines mark each step for smoke.sh,
-     * which reads the world's fetch (`vk world` lines) and the core's rests (`vk tiles … world` lines) between them.
+     * and holds it [WORLD_HOLD_MS] for smoke.sh's screenshot; then, the same way, [WORLD_UNDER_KM] km over [AWAY],
+     * where no country's levels are and the world draws under the core's cover (ENGINE.md step 3), and over [BEYOND],
+     * within a country's box beyond its border, where none are either; then back. `vk
+     * script …` lines mark each step for smoke.sh, which reads the world's fetch (`vk world` lines) and the core's rests
+     * (`vk tiles … world` lines) between them.
      */
     private suspend fun worldScript() {
         val log = { line: String -> android.util.Log.i("AtlasMap", line) }
@@ -294,10 +313,100 @@ class HomeViewModel(
             log("vk script: world at $km km ${if (final) "final" else "not final: ${map.status}"}")
             delay(WORLD_HOLD_MS)
         }
+        log("vk script: world under out to $WORLD_UNDER_KM km")
+        map.camera = start.copy(
+            target = AWAY, zoom = HomeView.zoomForDistance(WORLD_UNDER_KM * 1_000.0, HomeView.HEIGHT_DP, AWAY.lat), pitch = WORLD_UNDER_PITCH,
+        )
+        val there = kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+            while (!worldHere(AWAY)) delay(1_000)
+        } != null
+        log("vk script: world's packs under ${if (there) "on the phone" else "not on the phone within ${WORLD_WAIT_MS / 1_000} s"}")
+        delay(WORLD_SETTLE_MS)
+        val under = awaitStatus(WORLD_WAIT_MS) { it is MapStatus.Ready }
+        log("vk script: world under at $WORLD_UNDER_KM km ${if (under) "final" else "not final: ${map.status}"}")
+        delay(WORLD_HOLD_MS)
+        // within a country's box beyond its border: no levels there either, once the country's tiles' index is on the
+        // phone (MapEngine.countryHolds), which the first camera within the box had read
+        log("vk script: world beyond the border out to $WORLD_UNDER_KM km")
+        map.camera = start.copy(
+            target = BEYOND, zoom = HomeView.zoomForDistance(WORLD_UNDER_KM * 1_000.0, HomeView.HEIGHT_DP, BEYOND.lat), pitch = WORLD_UNDER_PITCH,
+        )
+        kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+            while (!MapEngine.worldUnder(BEYOND.lat, BEYOND.lon)) delay(1_000)
+        }
+        log(
+            "vk script: beyond the border: levels at the start ${MapEngine.levelsAt(start.target.lat, start.target.lon)?.id ?: "none"}, " +
+                "at ${BEYOND.lat},${BEYOND.lon} in the box of ${MapEngine.countryAt(BEYOND.lat, BEYOND.lon)?.id ?: "none"} " +
+                (MapEngine.levelsAt(BEYOND.lat, BEYOND.lon)?.id ?: "none"),
+        )
+        val across = kotlinx.coroutines.withTimeoutOrNull(WORLD_WAIT_MS) {
+            while (!worldHere(BEYOND)) delay(1_000)
+        } != null
+        log("vk script: world's packs beyond the border ${if (across) "on the phone" else "not on the phone within ${WORLD_WAIT_MS / 1_000} s"}")
+        delay(WORLD_SETTLE_MS)
+        val beyond = awaitStatus(WORLD_WAIT_MS) { it is MapStatus.Ready }
+        log("vk script: world beyond the border at $WORLD_UNDER_KM km ${if (beyond) "final" else "not final: ${map.status}"}")
+        delay(WORLD_HOLD_MS)
         log("vk script: back")
         map.camera = start
         delay(SCRIPT_SETTLE_MS)
         awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        log("vk script done")
+    }
+
+    /**
+     * CI's scripted look at the world's names in eight scripts (ENGINE.md step 5, "Names"; smoke.sh's map phase): once
+     * the core's first picture is final, the camera looks straight down from [NAMES_KM] km and the core is given eight
+     * names no tile holds, one a script, in a column through the target ([NAMES]: `MapCore.testNames`). The core picks
+     * them, asks the app for their sprites, which Android's text stack draws, and places and draws them; the script
+     * says of each whether the device's fonts hold its letters (`vk script: names <script> glyphs|no glyphs`), holds
+     * the view [NAMES_HOLD_MS] for the core's `vk names` lines and [NAMES_SHOWN_MS] more for smoke.sh's screenshot,
+     * then takes the names away.
+     */
+    private suspend fun namesScript() {
+        val log = { line: String -> android.util.Log.i("AtlasMap", line) }
+        val start = map.camera
+        awaitStatus(SCRIPT_WAIT_MS) { it is MapStatus.Ready }
+        delay(SCRIPT_SETTLE_MS)
+        val core = (MapEngine.core as? CoreState.Ready)?.core
+        if (core == null) {
+            log("vk script: names: the core does not draw")
+            log("vk script done")
+            return
+        }
+        map.camera = start.copy(zoom = HomeView.zoomForDistance(NAMES_KM * 1_000.0, HomeView.HEIGHT_DP, start.target.lat), pitch = 0.0, bearing = 0.0)
+        delay(SCRIPT_SETTLE_MS)
+        // a column through the target, north to south, 4 % of the camera's distance apart
+        val step = NAMES_KM * 1_000.0 * 0.04 / 111_320.0
+        val names = NAMES.mapIndexed { i, (_, text) ->
+            MapCore.TestName(MapCore.TestName.CITY, start.target.lat + (3.5 - i) * step, start.target.lon, 1e6 - i, text)
+        }
+        val why = withContext(Dispatchers.Default) { core.testNames(names) }
+        log("vk script: names ${names.size} given${if (why.isEmpty()) "" else ", refused: $why"}")
+        val paint = android.graphics.Paint().apply { MapEngine.nameTypeface?.let { typeface = it } }
+        for ((script, text) in NAMES) {
+            // each character drawn by itself (all but spaces, the marks on the letter before them and the format characters)
+            var all = true
+            var i = 0
+            while (i < text.length) {
+                val cp = text.codePointAt(i)
+                val n = Character.charCount(cp)
+                val alone = !Character.isWhitespace(cp) && when (Character.getType(cp).toByte()) {
+                    Character.NON_SPACING_MARK, Character.COMBINING_SPACING_MARK, Character.ENCLOSING_MARK, Character.FORMAT, Character.CONTROL -> false
+                    else -> true
+                }
+                if (alone && !paint.hasGlyph(text.substring(i, i + n))) all = false
+                i += n
+            }
+            log("vk script: names $script ${if (all) "glyphs" else "no glyphs"}")
+        }
+        delay(NAMES_HOLD_MS)
+        log("vk script: names shown")
+        delay(NAMES_SHOWN_MS)
+        withContext(Dispatchers.Default) { core.testNames(emptyList()) }
+        log("vk script: back")
+        map.camera = start
         delay(SCRIPT_SETTLE_MS)
         log("vk script done")
     }
@@ -440,13 +549,12 @@ class HomeViewModel(
         private const val WEATHER_MAX_AGE_MS = 30 * 60_000L
         private const val WEATHER_RETRY_MS = 2 * 60_000L
 
-        /** CI's script of the core's transitional rule (MainActivity's `atlas.vk.script transition`). */
-        const val TRANSITION_SCRIPT = "transition"
+        /** CI's script away from the core's tiles and back (MainActivity's `atlas.vk.script away`). */
+        const val AWAY_SCRIPT = "away"
 
         /**
-         * Where the script goes: Lille's centre, which no pack of the core holds and no country's tiles the core draws
-         * (within the Netherlands' the core keeps the place while its window comes: Transition.pathOf), so today's map
-         * takes it over (its honest state there: no region covers it).
+         * Where the script goes: Lille's centre, which no pack on the phone holds and no country's tiles the core draws, so
+         * the core draws its own cover there (the canal ring's pack, the nearest) and the map says it has no data.
          */
         val AWAY = LatLon(50.6292, 3.0573)
         private const val SCRIPT_WAIT_MS = 180_000L
@@ -455,11 +563,42 @@ class HomeViewModel(
         /** CI's script of the world beyond the countries (MainActivity's `atlas.vk.script world`, with `atlas.ci.world`). */
         const val WORLD_SCRIPT = "world"
 
+        /** CI's script of the world's names in eight scripts (MainActivity's `atlas.vk.script names`). */
+        const val NAMES_SCRIPT = "names"
+        private const val NAMES_KM = 2.0
+        private const val NAMES_HOLD_MS = 12_000L
+        private const val NAMES_SHOWN_MS = 6_000L
+
+        /** A city's own name in each of the eight scripts ENGINE.md names: OpenStreetMap's `name` of each place. */
+        private val NAMES = listOf(
+            "Latin" to "Amsterdam",
+            "Cyrillic" to "Москва",
+            "Greek" to "Αθήνα",
+            "Arabic" to "القاهرة",
+            "Hebrew" to "ירושלים",
+            "Devanagari" to "दिल्ली",
+            "Thai" to "กรุงเทพมหานคร",
+            "CJK" to "東京",
+        )
+
         /**
          * Where the world script looks from, km from the start's target and pitch: the countries' cover beside the world
          * (the canal ring's tiles at 25 km pitched 60°, ENGINE.md step 5's seam), and the world alone at 100 km pitched 30°.
          */
         private val WORLD_VIEWS = listOf(25 to 60.0, 100 to 30.0)
+
+        /**
+         * Where it looks at the world under the core's cover: [AWAY] from 12 km pitched 30°, within the countries' levels'
+         * reach (18 km) at a place that has none.
+         */
+        private const val WORLD_UNDER_KM = 12
+        private const val WORLD_UNDER_PITCH = 30.0
+
+        /**
+         * Where it looks at the world under the cover within a country's box beyond its border: Antwerp's centre, which
+         * the Netherlands' box holds and its tiles do not (their index lists no window there).
+         */
+        private val BEYOND = LatLon(51.2194, 4.4025)
 
         /** How long the script waits for the world's packs' heads, then for the picture: the index, the globe's 9.7 MB and the chunks over the emulator's network. */
         private const val WORLD_WAIT_MS = 300_000L
