@@ -178,11 +178,12 @@ object Licences {
         return out
     }
 
+    // a line that ends a sentence runs on only when it is nearly the text's width (a heading after it starts anew)
     private fun wraps(prev: String, next: String, wide: Int): Boolean =
-        prev.length >= wide * 0.6 && prev.any { it.isLetter() } && next.any { it.isLetter() } && !ITEM.containsMatchIn(next)
+        prev.length >= wide * (if (prev.last() in ".:;") 0.85 else 0.6) && prev.any { it.isLetter() } && next.any { it.isLetter() } && !ITEM.containsMatchIn(next)
 
-    /** A line that starts an item or a heading: "- ", "1. ", "2.1. ", "(a) ", "a. ", "ii. ", "1) ", "# ". */
-    private val ITEM = Regex("""^([-*•]|\d+(\.\d+)*[.)]|\([a-zA-Z0-9]{1,4}\)|[a-zA-Z][.)]|[ivxlc]+\.|#+)\s""")
+    /** A line that starts an item, a footnote or a heading: "- ", "1. ", "2.1. ", "(a) ", "a. ", "ii. ", "1) ", "¹ ", "# ". */
+    private val ITEM = Regex("""^([-*•]|\d+(\.\d+)*[.)]|\([a-zA-Z0-9]{1,4}\)|[a-zA-Z][.)]|[ivxlc]+\.|[¹²³⁴⁵⁶⁷⁸⁹]+|#+)\s""")
 }
 
 /**
