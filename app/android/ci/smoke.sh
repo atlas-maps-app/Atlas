@@ -619,17 +619,19 @@ vk_phase() {
       grep -q "^vkbench map $p: p50 " "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for the map's $p"; FAIL=1; }
     done
     # The real map (vk/MapBench.kt: the phone's numbers over the map the app draws for the user, the table the phone
-    # sends back): its lap in each of the three setups (full, without the sun and effects, flat through the core's pass
-    # switch), each at rest and split by pass at the street, and its table, so that an alpha never ships one that does
+    # sends back): its lap in each of the four setups (full, full with the Fast refresh off, without the sun and effects,
+    # flat through the core's pass switch), each at rest and split by pass at the street, and its table, so that an alpha never ships one that does
     # not run. The emulator draws the canal ring alone and fetches nothing; its numbers prove nothing else.
     grep -e '^vkbench real' -e '^vkbench table: ' "$OUT/vkbench.txt" || true
-    for s in full nosun flat; do
+    for s in full full60 nosun flat; do
       grep -q "^vkbench real $s lap: p50 " "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for the real map's $s lap"; FAIL=1; }
       grep -q "^vkbench real $s rest: frames " "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no line for the real map's $s setup at rest"; FAIL=1; }
+    done
+    for s in full nosun flat; do # full60's frames are full's: no split of its own
       grep -q "^vkbench real $s passes at street: every " "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no split by pass for the real map's $s setup"; FAIL=1; }
     done
     # each setup's lap drew frames, and the core took every setup's passes
-    awk '/^vkbench real (full|nosun|flat) lap: p50 / { for (i = 1; i < NF; i++) if ($i == "frames" && $(i + 1) + 0 == 0) { print; bad = 1 } }
+    awk '/^vkbench real (full|full60|nosun|flat) lap: p50 / { for (i = 1; i < NF; i++) if ($i == "frames" && $(i + 1) + 0 == 0) { print; bad = 1 } }
          END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: a setup's lap of the real map drew no frame"; FAIL=1; }
     grep -q '^vkbench real [a-z]*: the passes not set' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: the core refused a setup's passes"; FAIL=1; }
     grep -q '^vkbench table: Atlas real-map bench · ' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no table of the real map"; FAIL=1; }
