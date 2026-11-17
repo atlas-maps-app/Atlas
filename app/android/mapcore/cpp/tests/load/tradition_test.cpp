@@ -23,8 +23,7 @@ std::expected<std::shared_ptr<const load::Tradition>, load::TraditionError> read
 
 /// mapcore/traditions/<id>.json read, or null (the test case failed) where it cannot be.
 std::shared_ptr<const load::Tradition> file(std::string_view id) {
-    std::ifstream in(std::string(ATLAS_TESTS_DIR) + "/../../traditions/" + std::string(id) + ".json",
-                     std::ios::binary);
+    std::ifstream in(std::string(ATLAS_TESTS_DIR) + "/../../traditions/" + std::string(id) + ".json", std::ios::binary);
     ATLAS_REQUIRE_OR_RETURN(nullptr, in.good(), "mapcore/traditions is not in the repository");
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     auto t = read(text);
