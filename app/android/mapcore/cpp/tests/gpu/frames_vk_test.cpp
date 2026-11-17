@@ -1,6 +1,8 @@
 // The frame loop's waits on the GPU are bounded (gpu/Frames.hpp's wait_ns): a frame whose slot's earlier frame the GPU
 // never finishes (a hang the driver does not report as a lost device) fails within the bound, the render thread free,
-// and once the GPU goes on the next frame waits for the same slot and draws.
+// and once the GPU goes on the next frame waits for the same slot and draws. The hang is a slot held by the test
+// (Frames::hold_next: its fence unsignalled, nothing submitted to signal it), not a frame held on the GPU: lavapipe
+// runs a submission in the thread that submits it, where a frame held on a host event held the thread to set it.
 #include "gpu/Frames.hpp"
 #include "gpu/Offscreen.hpp"
 #include "tests/base/require.hpp"
@@ -8,105 +10,65 @@
 
 #include <doctest/doctest.h>
 
-#include <atomic>
 #include <chrono>
-#include <cstdlib>
+#include <cstdint>
 #include <memory>
 #include <string>
-#include <thread>
 #include <tuple>
 
 using namespace atlas;
 
 namespace {
 
-/// Draws nothing; while `hold` is set, each frame's commands wait for `event`, which the host sets.
-class Held final : public gpu::Content {
+/// Draws nothing.
+class Blank final : public gpu::Content {
 public:
-    explicit Held(const vk::raii::Event& event) noexcept : event_(event) {}
-
-    std::atomic<bool> hold{false};
-
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& /*pass*/, const gpu::Output& /*output*/) override {
         return {};
     }
     void release() override {}
-    void record(const gpu::FrameContext& frame) override {
-        if (!hold) return;
-        frame.cmd.waitEvents({*event_}, vk::PipelineStageFlagBits::eHost, vk::PipelineStageFlagBits::eAllCommands, {},
-                             {}, {});
-    }
-
-private:
-    const vk::raii::Event& event_;
+    void record(const gpu::FrameContext& /*frame*/) override {}
 };
 
 } // namespace
 
 #if !defined(__ANDROID__)
 TEST_CASE("frames: a slot the GPU does not finish fails its next frame within the bound, then draws once it does") {
-    // lavapipe runs a submission in the thread that submits it, and a command's wait on a host event there spins that
-    // thread, the one to set the event: Mesa's submit thread runs submissions apart, as a GPU does (read as the device
-    // opens, before its threads; other drivers leave it alone)
-    ::setenv("MESA_VK_ENABLE_SUBMIT_THREAD", "1", 0); // NOLINT(concurrency-mt-unsafe)
     auto s = test::open_session();
     if (!s) return;
     auto output = gpu::Offscreen::create(*s->device, {.width = 64, .height = 64}, 2);
     ATLAS_REQUIRE(output.has_value(), output.error().text());
-    auto event = s->device->handle().createEvent({});
-    ATLAS_REQUIRE(event.has_value(), vk::to_string(event.error()));
-    Held content(*event);
+    Blank content;
     auto renderer = gpu::Renderer::create(*s->device, **output, content, s->device->facts().choice);
     ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
-    // a phone GPU's bound, though the device be CI's lavapipe (whose bound is longer): this content draws nothing
-    (*renderer)->frames().limit_slot_wait(2'000'000'000);
-    const std::uint64_t bound = (*renderer)->frames().slot_wait_ns();
-    // whatever the checks find, the GPU is let go and drained before the event and the renderer go
+    gpu::Frames& frames = (*renderer)->frames();
+    // a phone GPU's bound, though the device be CI's lavapipe (whose bound is longer)
+    frames.limit_slot_wait(2'000'000'000);
+    const std::uint64_t bound = frames.slot_wait_ns();
+    // whatever the checks find, the held slot is let go and the GPU drained before the renderer goes
     class Release {
     public:
-        Release(const vk::raii::Event& event, gpu::Renderer& renderer) noexcept : event_(event), renderer_(renderer) {}
+        explicit Release(gpu::Renderer& renderer) noexcept : renderer_(renderer) {}
         Release(const Release&) = delete;
         Release& operator=(const Release&) = delete;
         Release(Release&&) = delete;
         Release& operator=(Release&&) = delete;
         ~Release() {
-            std::ignore = event_.set(); // a lost device has nothing left to wait on it
+            std::ignore = renderer_.frames().let_go(); // a lost device has nothing left to wait for
             renderer_.drain();
         }
 
     private:
-        const vk::raii::Event& event_;
         gpu::Renderer& renderer_;
     };
-    const Release release(*event, **renderer);
+    const Release release(**renderer);
 
-    auto first = (*renderer)->draw(0);
-    ATLAS_REQUIRE(first.has_value(), first.error().text());
-    // the second frame's commands wait for the host; the third's, on the first's slot, behind them in the queue
-    content.hold = true;
-    // a driver that runs the held frame in this thread all the same would hold the run: a watchdog lets the GPU go
-    // after 30 s, and the test fails saying so
-    std::atomic<bool> submitted{false};
-    std::atomic<bool> let_go{false};
-    std::thread watchdog([&] {
-        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-        while (!submitted && std::chrono::steady_clock::now() < until) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        if (!submitted) {
-            let_go = true;
-            std::ignore = event->set();
-        }
-    });
-    auto held = (*renderer)->draw(0);
-    submitted = true;
-    watchdog.join();
-    ATLAS_REQUIRE(held.has_value(), held.error().text());
-    if (let_go) FAIL("the device ran the held frame in the thread that submitted it: its wait was let go after 30 s");
-    content.hold = false;
-    auto queued = (*renderer)->draw(0);
-    ATLAS_REQUIRE(queued.has_value(), queued.error().text());
-    // the next frame's slot is the held frame's: its wait ends at the bound, the frame failing
+    for (std::uint32_t i = 0; i < gpu::Frames::in_flight; ++i) {
+        auto drawn = (*renderer)->draw(0);
+        ATLAS_REQUIRE(drawn.has_value(), drawn.error().text());
+    }
+    // the next frame's slot holds a frame the GPU never finishes: its wait ends at the bound, the frame failing
+    ATLAS_REQUIRE(frames.hold_next().has_value());
     const auto waiting = std::chrono::steady_clock::now();
     auto timed_out = (*renderer)->draw(0);
     const auto waited = std::chrono::steady_clock::now() - waiting;
@@ -114,13 +76,12 @@ TEST_CASE("frames: a slot the GPU does not finish fails its next frame within th
     CHECK(timed_out.error().code == vk::Result::eTimeout);
     CHECK(waited >= std::chrono::nanoseconds(bound));
     CHECK(waited < std::chrono::nanoseconds(4 * bound));
-    // let go: the same slot is waited for again, and the frames draw on
-    ATLAS_REQUIRE(event->set().has_value());
+    // once the GPU goes on, the same slot is waited for again, and the frames draw on
+    ATLAS_REQUIRE(frames.let_go().has_value());
     for (int i = 0; i < 3; ++i) {
         auto drawn = (*renderer)->draw(0);
         ATLAS_REQUIRE(drawn.has_value(), drawn.error().text());
     }
-    // what the validation layer says of a host's event held so (said, not checked: its event tracking is the layer's)
     for (const std::string& m : s->take_messages()) MESSAGE(m);
 }
 #endif

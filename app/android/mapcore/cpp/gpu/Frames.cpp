@@ -149,6 +149,27 @@ Result<void> Frames::submit(FrameSlot& slot, bool acquired, vk::Semaphore render
     return {};
 }
 
+Result<void> Frames::hold_next() {
+    FrameSlot& slot = slots_[next_];
+    const vk::raii::Device& d = device_->handle();
+    if (slot.pending) {
+        const vk::Result waited = d.waitForFences(*slot.done, vk::True, UINT64_MAX);
+        if (waited != vk::Result::eSuccess) return fail(waited, "a frame before its slot is held");
+        read_back(slot);
+    }
+    ATLAS_VK_CHECK(d.resetFences(*slot.done), "resetting a held slot's fence");
+    slot.pending = true;
+    held_ = next_;
+    return {};
+}
+
+Result<void> Frames::let_go() {
+    if (held_ == in_flight) return {};
+    ATLAS_VK_CHECK(device_->queue().submit(nullptr, *slots_[held_].done), "letting a held slot go");
+    held_ = in_flight;
+    return {};
+}
+
 void Frames::drain() {
     for (std::uint32_t i = 0; i < in_flight; ++i) {
         FrameSlot& slot = slots_[(next_ + i) % in_flight];

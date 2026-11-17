@@ -126,6 +126,11 @@ public:
     [[nodiscard]] std::uint64_t slot_wait_ns() const noexcept { return slot_wait_ns_; }
     /// A test's: a begin waits `most` ns at most, when that is shorter.
     void limit_slot_wait(std::uint64_t most) noexcept { slot_wait_ns_ = std::min(most, slot_wait_ns_); }
+    /// A test's: the next begin's slot is taken as holding a frame the GPU never finishes (its fence unsignalled and
+    /// nothing submitted to signal it), so that begin waits its bound out, as on a hung GPU; let_go() submits the fence
+    /// alone, which the GPU then signals. A held slot's earlier frame is waited for first.
+    [[nodiscard]] Result<void> hold_next();
+    [[nodiscard]] Result<void> let_go();
     /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests): without a
     /// bound, since what follows destroys or remakes what those frames use.
     void drain();
@@ -140,6 +145,7 @@ private:
     vk::raii::QueryPool statistics_{nullptr}; // empty without pipelineStatisticsQuery
     std::uint32_t next_ = 0;
     std::uint64_t slot_wait_ns_ = 0;
+    std::uint32_t held_ = in_flight; // the slot hold_next() holds, else in_flight
     double period_ns_ = 1.0;
     std::uint64_t mask_ = 0;
     GpuTimes last_;
