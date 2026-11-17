@@ -1168,6 +1168,7 @@ private class BenchRun(
         source.lap = setup
         val why = withContext(Dispatchers.Default) {
             core.screenEffects(setup.screen(MapEngine.haze), setup.screen(MapEngine.vignette), setup.screen(MapEngine.grain))
+            core.setFastRefresh(setup.fastRefresh)
             core.passes(setup.passes)
         }
         if (why.isNotEmpty()) emit("vkbench real ${setup.key}: the passes not set ($why)")
@@ -1177,7 +1178,7 @@ private class BenchRun(
      * The battery's power over [block] into [power]: the current and the voltage four times a second (MapBench.watts),
      * or why there is none (plugged in: the battery is then charged, not drawn on).
      */
-    private suspend fun <T> metered(power: MapBench.Power, block: suspend () -> T): T = coroutineScope {
+    private suspend fun <T> metered(power: MapBench.Power, hz: MutableList<Double>? = null, block: suspend () -> T): T = coroutineScope {
         val battery = context.getSystemService(BatteryManager::class.java)
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
         val sticky = context.registerReceiver(null, filter)
@@ -1188,6 +1189,8 @@ private class BenchRun(
             while (isActive) {
                 if (n++ % 8 == 7) voltage = context.registerReceiver(null, filter)?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, voltage) ?: voltage
                 power.add(MapBench.watts(battery?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) ?: Int.MIN_VALUE, voltage))
+                // the display's rate as it says it now (the mode the frame rate votes and the panel settled on)
+                if (hz != null) display()?.refreshRate?.takeIf { it > 0f }?.let { r -> synchronized(hz) { hz += r.toDouble() } }
                 delay(250)
             }
         }
@@ -1196,6 +1199,21 @@ private class BenchRun(
         } finally {
             sampler.cancelAndJoin()
         }
+    }
+
+    /** The phone's own display (the default one: VK bench's window is on it). */
+    private fun display(): android.view.Display? =
+        context.getSystemService(android.hardware.display.DisplayManager::class.java)?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+
+    /** What the head says of the refresh: the Look setting, what each setup ran with, the display's modes and its mode now. */
+    private fun refreshWords(): String {
+        val d = display()
+        val modes = d?.supportedModes?.map { it.refreshRate.roundToInt() }?.distinct()?.sorted()?.joinToString(", ") ?: "?"
+        val now = d?.mode?.refreshRate?.roundToInt()?.toString() ?: "?"
+        val ran = MapBench.Setup.entries.joinToString(", ") { "${it.key} ${if (it.fastRefresh) "on" else "off"}" }
+        return "the Look setting's Fast refresh ${if (MapEngine.fastRefreshOn) "on" else "off"}; ran with it $ran; " +
+            "the display's modes $modes Hz, its mode at the end $now Hz" +
+            if (!MapEngine.fastRefreshSwitch(d)) " (no mode above 60 Hz here: the Fast refresh changes nothing)" else ""
     }
 
     /**
@@ -1300,6 +1318,7 @@ private class BenchRun(
                         r.rest = rest
                         emit(MapBench.restLine(r.setup, rest))
                         for (stop in timing.stops) {
+                            if (!r.setup.split) continue
                             val split = split(r.setup, stop, timing)
                             r.splits += split
                             emit(MapBench.splitLine(r.setup, split))
@@ -1328,6 +1347,7 @@ private class BenchRun(
                         look = "The sunny moment; the app's palette and Look settings (haze ${if (MapEngine.haze) "on" else "off"}, " +
                             "vignette ${if (MapEngine.vignette) "on" else "off"}, grain ${if (MapEngine.grain) "on" else "off"}, " +
                             "${java.lang.Long.bitCount(MapParts.cameraBits(MapEngine.leftOut))} parts left out); the world's names; pills on",
+                        refresh = refreshWords(),
                     )
                     val text = MapBench.table(head, results)
                     for (l in MapBench.tableLines(text)) emit(l)
@@ -1346,6 +1366,8 @@ private class BenchRun(
             names.close()
             withContext(NonCancellable + Dispatchers.Default) {
                 core.passes("")
+                core.stageF(false)
+                core.setFastRefresh(MapEngine.fastRefreshOn)
                 core.screenEffects(MapEngine.haze, MapEngine.vignette, MapEngine.grain)
                 core.map(false)
             }
@@ -1361,7 +1383,8 @@ private class BenchRun(
 
     /** A lap line's words after VK bench's numbers: its complete frames, its power, the native heap and the core's GPU memory. */
     private fun lapExtra(laps: MapBench.Laps): String =
-        "complete ${laps.complete} of ${laps.presented} power ${laps.power.said()} heap ${VkBench.ms(laps.heapMb)} MB gpu memory ${VkBench.ms(laps.gpuMemMb)} MB"
+        "complete ${laps.complete} of ${laps.presented} shown ${VkBench.ms(laps.shownPerSecond)}/s display ${laps.hzSaid()} Hz " +
+            "power ${laps.power.said()} heap ${VkBench.ms(laps.heapMb)} MB gpu memory ${VkBench.ms(laps.gpuMemMb)} MB"
 
     /**
      * The lap's camera standing at [at] (swaying slightly) until a complete picture of it is presented, or until the map
@@ -1440,7 +1463,8 @@ private class BenchRun(
         source.lapAt = -1.0
         val got = ArrayList<FrameRecords.Record>()
         val endAt = from + (timing.lapSeconds * 1e9).toLong()
-        metered(laps.power) {
+        withContext(Dispatchers.Default) { core.stageF(true) } // the frames' stage F by part kept from now
+        metered(laps.power, laps.hz) {
             while (System.nanoTime() < endAt) {
                 delay(100)
                 got += drain().filter { it.startNs >= from }
@@ -1448,6 +1472,8 @@ private class BenchRun(
                 if (!paused) core.requestFrame()
             }
         }
+        laps.stageF.add(withContext(Dispatchers.Default) { core.stageF(false) })
+        laps.seconds = timing.lapSeconds
         // held at the lap's end (the home's look) while its last frames come in
         source.lapAt = 1.0
         source.startNs = System.nanoTime()
@@ -1519,7 +1545,9 @@ private class BenchRun(
      */
     private suspend fun split(setup: MapBench.Setup, stop: MapBench.Stop, timing: MapBench.Timing): MapBench.Split {
         awaitLapPicture(stop.t, timing.waitCapSeconds ?: VkBench.MAP_WAIT_SECONDS.toDouble())
+        withContext(Dispatchers.Default) { core.stageF(true) }
         val every = gpuMedian(timing)
+        val stageF = MapBench.StageF().apply { add(withContext(Dispatchers.Default) { core.stageF(false) }) }.medians()
         val drew = MapBench.split(setup, withContext(Dispatchers.Default) { core.passCounts() })
         val saves = ArrayList<Pair<String, Double>>()
         try {
@@ -1531,7 +1559,7 @@ private class BenchRun(
         } finally {
             withContext(NonCancellable + Dispatchers.Default) { core.passes(setup.passes) }
         }
-        return MapBench.Split(stop, every, saves)
+        return MapBench.Split(stop, every, saves, stageF)
     }
 
     /**

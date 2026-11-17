@@ -64,10 +64,24 @@ object MapBench {
 
     /** One way of drawing the lap. [key] names its lines (`vkbench real <key> …`). */
     enum class Setup(val key: String, val label: String) {
-        FULL("full", "full: as the app draws the map"),
+        FULL("full", "full: as the app draws the map, Fast refresh on"),
+
+        /** Full with the Look settings' Fast refresh off: 60 a second throughout, what the 120 Hz vote costs beside [FULL]. */
+        FULL_60("full60", "full, Fast refresh off: 60 a second throughout"),
         NO_SUN("nosun", "without the sun and effects"),
         FLAT("flat", "flat: pitch 0, the ground, world, labels, routes and markers"),
         ;
+
+        /**
+         * The Fast refresh it runs with (MapCore.setFastRefresh): on, the app's default, but in [FULL_60]. On, the window
+         * says its frames come at 120 a second while the map moves and 60 at rest; off, 60 throughout.
+         */
+        val fastRefresh: Boolean get() = this != FULL_60
+
+        /** Whether the split by pass and stage F's parts are measured at the stops: not for [FULL_60], whose frames are [FULL]'s. */
+        val split: Boolean get() = this != FULL_60
+
+        private val full: Boolean get() = this == FULL || this == FULL_60
 
         /** The core's passes it records ([app.atlas.mapcore.MapCore.passes]: "" for every one). */
         val passes: String get() = if (this == FLAT) FLAT_PASSES.joinToString(",") else ""
@@ -76,10 +90,10 @@ object MapBench {
         val passList: List<String> get() = if (this == FLAT) FLAT_PASSES else PASSES
 
         /** The camera state's parts it leaves out, besides the app's own ([appOff], MapEngine.leftOut's camera bits). */
-        fun parts(appOff: Long): Long = MapParts.cameraBits(appOff) or if (this == FULL) 0L else SUN_AND_EFFECTS
+        fun parts(appOff: Long): Long = MapParts.cameraBits(appOff) or if (full) 0L else SUN_AND_EFFECTS
 
         /** Whether the screen's haze, vignette and grain are drawn, as the Look settings have them ([look]) in full. */
-        fun screen(look: Boolean): Boolean = this == FULL && look
+        fun screen(look: Boolean): Boolean = full && look
 
         /** The map's pitch it draws a lap's camera at: flat at 0, the others as the lap has it. */
         fun pitch(lap: Double): Double = if (this == FLAT) 0.0 else lap
@@ -192,7 +206,8 @@ object MapBench {
         val waitCapSeconds: Double?,
     ) {
         /** About how long it takes, minutes, besides the waits for tiles. */
-        val minutes: Double get() = (3 * rounds * (lapSeconds + 1.0) + 3 * (settleSeconds + restSeconds + 2.0) +
+        val minutes: Double get() = ((Setup.entries.size * rounds + 1) * (lapSeconds + 1.0) +
+            Setup.entries.size * (settleSeconds + restSeconds + 2.0) +
             stops.size * (PASSES.size * 2 + FLAT_PASSES.size) * maxOf(splitSeconds, 0.2)) / 60.0
     }
 
@@ -253,6 +268,39 @@ object MapBench {
         }
     }
 
+    /** Stage F's parts as the core gives them (MapCore.stageF): the scene's update, the globals, the ranks, each pass's select and update. */
+    val STAGE_F_PARTS: List<String> = listOf("scene", "globals", "ranks") + PASSES
+
+    /** Frames' stage F by part ([STAGE_F_PARTS]), from the core's readings ([add]). */
+    class StageF {
+        val rows = ArrayList<DoubleArray>()
+
+        /** A reading: the parts a frame, then each frame's (MapCore.stageF); one of another width than [STAGE_F_PARTS] is skipped. */
+        fun add(raw: DoubleArray) {
+            if (raw.isEmpty()) return
+            val width = raw[0].toInt()
+            if (width != STAGE_F_PARTS.size) return
+            var at = 1
+            while (at + width <= raw.size) {
+                rows += raw.copyOfRange(at, at + width)
+                at += width
+            }
+        }
+
+        fun add(other: StageF) {
+            rows += other.rows
+        }
+
+        /** Each part's median over the frames, ms, in [STAGE_F_PARTS]' order; null for none. */
+        fun medians(): DoubleArray? {
+            if (rows.isEmpty()) return null
+            return DoubleArray(STAGE_F_PARTS.size) { k ->
+                val v = DoubleArray(rows.size) { rows[it][k] }
+                VkBench.percentile(v, v.size, 50.0)
+            }
+        }
+    }
+
     /** A setup's laps, every round's together. */
     class Laps {
         val intervals = ArrayList<Double>()
@@ -272,6 +320,22 @@ object MapBench {
 
         /** Where the intervals came from: the display's own times, or the vsyncs where it gives none (CI's emulator). */
         var presentedBy = "display-timing"
+
+        /** The seconds lapped, the display's refresh rate as it said it during them (Hz, four times a second), stage F by part. */
+        var seconds = 0.0
+        val hz = ArrayList<Double>()
+        val stageF = StageF()
+
+        /** Frames presented a second over the laps. */
+        val shownPerSecond: Double get() = if (seconds <= 0.0) Double.NaN else presented / seconds
+
+        /** The display's least, median and most refresh rate during the laps, Hz: `60/120/120`, or `—`. */
+        fun hzSaid(): String {
+            if (hz.isEmpty()) return "—"
+            val v = hz.toDoubleArray()
+            fun f(x: Double) = "%.0f".format(Locale.ROOT, x)
+            return "${f(v.min())}/${f(VkBench.percentile(v, v.size, 50.0))}/${f(v.max())}"
+        }
 
         /** A presented interval of [ms] ending with a frame at [t] of the lap. */
         fun interval(t: Double, ms: Double) {
@@ -293,6 +357,9 @@ object MapBench {
             draws = o.draws
             trianglesK = o.trianglesK
             if (o.presentedBy != "display-timing") presentedBy = o.presentedBy
+            seconds += o.seconds
+            hz += o.hz
+            stageF.add(o.stageF)
             memory(o.heapMb, o.gpuMemMb)
             power.add(o.power)
         }
@@ -324,7 +391,7 @@ object MapBench {
     class Rest(val frames: Long, val seconds: Double, val power: Power, val complete: Boolean)
 
     /** The split at a stop: the GPU's median with the setup's every pass, and what leaving each one out saves. */
-    class Split(val stop: Stop, val every: Double, val saves: List<Pair<String, Double>>)
+    class Split(val stop: Stop, val every: Double, val saves: List<Pair<String, Double>>, val stageF: DoubleArray? = null)
 
     /** What a setup measured. */
     class Result(val setup: Setup) {
@@ -375,6 +442,8 @@ object MapBench {
         val battery: String,
         val thermal: String,
         val look: String,
+        /** The Fast refresh: the user's Look setting, what each setup ran with, the display's modes. */
+        val refresh: String,
     )
 
     /** A setup's line of a lap's numbers, as CI keeps it: `vkbench real <key> lap: <VkBench.line's numbers> …`. */
@@ -411,22 +480,24 @@ object MapBench {
             "Lap of ${"%.0f".format(Locale.ROOT, t.lapSeconds)} s, ${t.rounds} a setup (the rounds take turns), the same every run: $LAP_WORDS.",
         )
         appendLine("Tiles: ${head.tiles}. ${head.look}. Battery ${head.battery}. Thermal headroom ${head.thermal}.")
+        appendLine("Refresh: ${head.refresh}.")
         appendLine("Budgets: p50 ≤ $BUDGET_P50 ms, p95 ≤ $BUDGET_P95 ms (presented intervals), 0 frames at rest.")
         appendLine()
-        appendLine(pad("setup", 6) + left("p50", 7) + left("p95", 7) + left("drop", 6) + left("gpu50", 7) + left("gpu95", 7) +
-            left("cpu50", 7) + left("power", 9) + left("heap", 6) + left("gpuMB", 6) + left("complete", 10) + "  budget")
+        appendLine(pad("setup", 7) + left("p50", 7) + left("p95", 7) + left("drop", 6) + left("shown/s", 8) + left("gpu50", 7) +
+            left("gpu95", 7) + left("cpu50", 7) + left("power", 9) + left("heap", 6) + left("gpuMB", 6) + left("complete", 10) + "  budget")
         for (r in results) {
             val s = r.laps.summary()
             val complete = if (r.laps.presented == 0L) "—" else "${r.laps.complete * 100 / r.laps.presented} %"
             appendLine(
-                pad(r.setup.key, 6) + left(VkBench.ms(s.presentedP50), 7) + left(VkBench.ms(s.presentedP95), 7) + left("${s.dropped}", 6) +
-                    left(VkBench.ms(s.gpuP50), 7) + left(VkBench.ms(s.gpuP95), 7) + left(VkBench.ms(s.cpuP50), 7) +
+                pad(r.setup.key, 7) + left(VkBench.ms(s.presentedP50), 7) + left(VkBench.ms(s.presentedP95), 7) + left("${s.dropped}", 6) +
+                    left(r.laps.shownPerSecond.let { if (it.isNaN()) "—" else "%.1f".format(Locale.ROOT, it) }, 8) + left(VkBench.ms(s.gpuP50), 7) + left(VkBench.ms(s.gpuP95), 7) + left(VkBench.ms(s.cpuP50), 7) +
                     left(r.laps.power.said().substringBefore(" ("), 9) + left(mb(r.laps.heapMb), 6) + left(mb(r.laps.gpuMemMb), 6) +
                     left(complete, 10) + "  " + verdict(s.presentedP50, s.presentedP95),
             )
         }
         val why = results.firstNotNullOfOrNull { it.laps.power.why }
         if (why != null) appendLine("(power: $why)")
+        appendLine("Display Hz during the laps, least/median/most: " + results.joinToString(" · ") { "${it.setup.key} ${it.laps.hzSaid()}" })
         appendLine()
         val rests = results.mapNotNull { r -> r.rest?.let { r.setup to it } }
         if (rests.isNotEmpty()) {
@@ -437,7 +508,7 @@ object MapBench {
         }
         appendLine("p50/p95 ms by part of the lap (" + PARTS.joinToString(" · ") + "):")
         for (r in results) {
-            appendLine(pad(r.setup.key, 6) + PARTS.joinToString(" · ") { p ->
+            appendLine(pad(r.setup.key, 7) + PARTS.joinToString(" · ") { p ->
                 val (a, b) = r.laps.part(p)
                 "${VkBench.ms(a)}/${VkBench.ms(b)}"
             })
@@ -454,7 +525,20 @@ object MapBench {
                 for (p in passes) {
                     cells += "$p " + byStop.joinToString(" · ") { sp -> signed(sp?.saves?.firstOrNull { it.first == p }?.second ?: Double.NaN) }
                 }
-                appendLine(pad(r.setup.key, 6) + cells.joinToString("; "))
+                appendLine(pad(r.setup.key, 7) + cells.joinToString("; "))
+            }
+        }
+        val stageF = results.filter { it.laps.stageF.rows.isNotEmpty() || it.splits.any { s -> s.stageF != null } }
+        if (stageF.isNotEmpty()) {
+            appendLine()
+            appendLine("Stage F ms by part, the median a frame (lap" + stops.joinToString("") { " · ${it.key}" } +
+                "; a pass left out still selects and updates):")
+            for (r in stageF) {
+                val columns = listOf(r.laps.stageF.medians()) + stops.map { s -> r.splits.firstOrNull { it.stop == s }?.stageF }
+                val cells = STAGE_F_PARTS.indices.filter { k ->
+                    k < 3 || columns.any { c -> c != null && c[k] >= STAGE_F_SHOWN_MS }
+                }.map { k -> "${STAGE_F_PARTS[k]} " + columns.joinToString(" · ") { c -> VkBench.ms(c?.get(k) ?: Double.NaN) } }
+                appendLine(pad(r.setup.key, 7) + cells.joinToString("; "))
             }
         }
     }.trimEnd()
@@ -472,6 +556,9 @@ object MapBench {
 
     /** How many of the tiles not there the table names. */
     const val MISSING_NAMED = 8
+
+    /** The least median a pass's stage F part has, at a stop or over the lap, for the table to name it, ms. */
+    const val STAGE_F_SHOWN_MS = 0.05
 
     /** The table's lines as VK bench logs them (`vkbench table: …`), so that CI keeps them with the rest. */
     fun tableLines(table: String): List<String> = table.lines().map { "vkbench table: $it" }

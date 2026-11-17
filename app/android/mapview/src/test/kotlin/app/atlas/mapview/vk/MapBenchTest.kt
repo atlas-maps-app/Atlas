@@ -232,11 +232,32 @@ class MapBenchTest {
         for (i in 0 until 200) r.laps.gpu += gpu
         for (i in 0 until 200) r.laps.cpu += 5.0
         r.laps.presented = 200
+        r.laps.seconds = 45.0
+        for (i in 0 until 10) r.laps.hz += if (i == 0) 60.0 else 120.0
+        // the lap's stage F: two frames, the parts a frame first (3 + the 16 passes)
+        val width = MapBench.STAGE_F_PARTS.size
+        val f = DoubleArray(1 + 2 * width)
+        f[0] = width.toDouble()
+        for (k in 0 until 2) {
+            f[1 + k * width] = 3.0
+            f[2 + k * width] = 0.2
+            f[3 + k * width] = 0.4
+            f[1 + k * width + 3 + MapBench.PASSES.indexOf("buildings")] = 1.5
+            f[1 + k * width + 3 + MapBench.PASSES.indexOf("trees")] = 0.01
+        }
+        r.laps.stageF.add(f)
+        r.laps.stageF.add(doubleArrayOf(5.0, 1.0, 1.0, 1.0, 1.0, 1.0)) // of another width: skipped
         r.laps.complete = 190
         r.laps.memory(412.0, 305.0)
         r.laps.power.add(3.21)
         r.rest = MapBench.Rest(restFrames, 10.0, MapBench.Power().apply { add(1.12) }, true)
-        r.splits += MapBench.Split(MapBench.Stop.STREET, gpu, listOf("ground" to 2.1, "buildings" to 4.2))
+        val street = DoubleArray(MapBench.STAGE_F_PARTS.size).also {
+            it[0] = 2.5
+            it[1] = 0.2
+            it[2] = 0.4
+            it[3 + MapBench.PASSES.indexOf("buildings")] = 1.2
+        }
+        r.splits += MapBench.Split(MapBench.Stop.STREET, gpu, listOf("ground" to 2.1, "buildings" to 4.2), street)
         r.splits += MapBench.Split(MapBench.Stop.FAR, gpu / 2, listOf("world" to 1.5))
         return r
     }
@@ -247,6 +268,7 @@ class MapBenchTest {
             date = "2026-11-17 09:12 CET", device = "Google Pixel 10", android = "17 (API 37)", gpu = "PowerVR DXT-48-1536, driver 25.3, config C",
             build = "build 0.1.0-alpha.42", timing = MapBench.timing(VkBench.Length.MAP), tiles = "212 windows and packs, 14 of the world",
             battery = "78 %, unplugged, 31.5 °C", thermal = "0.42 at the first lap, 0.71 at the end (1 is throttling)", look = "The sunny moment",
+            refresh = "the Look setting's Fast refresh on; ran with it full on, full60 off, nosun on, flat on; the display's modes 60, 120 Hz",
         )
         val results = listOf(
             result(MapBench.Setup.FULL, 16.6, 9.1, 0),
@@ -269,7 +291,14 @@ class MapBenchTest {
         assertTrue(text, text.contains("p50/p95 ms by part of the lap (in · along · turn · out · back):"))
         assertTrue(text, text.contains("GPU ms by pass, what leaving it out saves (street: the Westerkerk at 430 m · far: 120 km over the Netherlands):"))
         val split = lines.first { it.startsWith("full ") && it.contains("every") }
-        assertEquals("full  every 9.10 · 4.55; ground 2.10 · —; buildings 4.20 · —; world — · 1.50", split)
+        assertEquals("full   every 9.10 · 4.55; ground 2.10 · —; buildings 4.20 · —; world — · 1.50", split)
+        assertTrue(text, text.contains("Refresh: the Look setting's Fast refresh on; ran with it full on, full60 off, nosun on, flat on;"))
+        assertTrue(text, text.contains("Display Hz during the laps, least/median/most: full 60/120/120 · nosun 60/120/120 · flat 60/120/120"))
+        // shown a second: 200 frames over a 45 s lap
+        assertTrue(row, row.contains(" 4.4 "))
+        // stage F by part: the scene, the globals and the ranks always, a pass where it takes 0.05 ms or more
+        val stageF = lines.first { it.startsWith("full ") && it.contains("scene") }
+        assertEquals("full   scene 3.00 · 2.50 · —; globals 0.20 · 0.20 · —; ranks 0.40 · 0.40 · —; buildings 1.50 · 1.20 · —", stageF)
         // sent from the phone as text: no line longer than a message can take whole, every line logged for CI
         assertTrue(lines.all { it.length < 400 })
         assertEquals(lines.size, MapBench.tableLines(text).size)
@@ -284,7 +313,14 @@ class MapBenchTest {
             assertTrue(VkBench.line(MapBench.lapLabel(setup), s, 100.0, 50.0, "complete 1 of 1").startsWith("vkbench real ${setup.key} lap: p50 16.00 "))
             assertTrue(MapBench.restLine(setup, MapBench.Rest(0, 3.0, MapBench.Power(), true)).startsWith("vkbench real ${setup.key} rest: frames 0 in 3 s (ok; "))
         }
-        assertEquals(listOf("full", "nosun", "flat"), MapBench.Setup.entries.map { it.key })
+        assertEquals(listOf("full", "full60", "nosun", "flat"), MapBench.Setup.entries.map { it.key })
+        // full60 is full with the Fast refresh off: the same passes, parts and screen, no split of its own
+        assertEquals(listOf(true, false, true, true), MapBench.Setup.entries.map { it.fastRefresh })
+        assertEquals(listOf(true, false, true, true), MapBench.Setup.entries.map { it.split })
+        val app = MapParts.bits(MapParts.byDefault)
+        assertEquals(MapBench.Setup.FULL.parts(app), MapBench.Setup.FULL_60.parts(app))
+        assertEquals("", MapBench.Setup.FULL_60.passes)
+        assertTrue(MapBench.Setup.FULL_60.screen(true))
         assertEquals(305.0, MapBench.gpuMemory("vk frame 12 cpu 4.00 ms gpu 3.00 ms record 1.00 ms draws 40 triangles 900k graphics 305.0 MB; vk tiles 3"), 0.0)
         assertTrue(MapBench.gpuMemory("vk no frames").isNaN())
         // the table says whether the lap's map was all there, and names what was not
