@@ -52,3 +52,6 @@ Instructions.rtf
 # Boards drawn by boardgen.py (cache/claude-session/boards), for building screens from: the boards stay out of the public repo
 /app/android/app/src/test/kotlin/app/atlas/boards/
 /app/android/app/src/test/resources/atlas/places/board_art.json
+
+# cargo builds the buildings cleaning into the build folder (cmake/Rust.cmake); by hand, beside its crate
+app/android/mapcore/rust/clean/target/
