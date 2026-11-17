@@ -1576,7 +1576,9 @@ TEST_CASE(
                 CHECK_MESSAGE(after[k] == want, world->land_kinds[k - wp::kinds]);
                 if (after[k] != before[k] && !night) ++moved_kinds;
                 const std::optional<std::size_t> of = atlas::style::land_slot(world->land_kinds[k - wp::kinds]);
-                if (!of) CHECK_MESSAGE(after[k] == before[k], world->land_kinds[k - wp::kinds]);
+                // by day a kind without a slot stays; at night the darkened colours of two kinds may meet (scree's
+                // with another's), and the fills' table moves them alike, as the ground draws them
+                if (!of && !night) CHECK_MESSAGE(after[k] == before[k], world->land_kinds[k - wp::kinds]);
             }
             // the theme's own entries are the app's to move (PaletteTheme), the rails and runways no slot's
             for (const std::size_t e :
