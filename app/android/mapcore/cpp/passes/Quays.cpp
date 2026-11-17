@@ -156,7 +156,7 @@ Ground::QuaysMoment Ground::quays_moment(const frame::FrameState& state) const {
 void Ground::decide_quays(const frame::FrameState& state) {
     // the bands of a tall wall in sun are TONE's: the user's Tone switched off (a strength of 0, which lights every
     // pack without TONE: frame::with_profile) leaves them out with it
-    const bool toned = !(state.theme.has(style::theme_flag::tone_strength) && state.theme.tone <= 0.0F);
+    const bool toned = !state.theme.has(style::theme_flag::tone_strength) || state.theme.tone > 0.0F;
     GroundFrame& f = frame_;
     quays_made_ = quays_moment(state);
     f.quays.clear();
