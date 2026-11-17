@@ -797,8 +797,9 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             bl.v = it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
             bl.id = l->integer(tl::building::id, i);
             ring_at(l->ring(tl::building::ring, i), in.level, frame, kept, bl.poly);
-            // BuildingSamples::all: an outline drawn by its parts, or one without a height, is never drawn
-            if (bl.v.hidden && source == Source::building) continue;
+            // BuildingSamples::all: an outline drawn by its parts, what is below the ground (a part too), or one
+            // without a height, is never drawn
+            if (bl.v.hidden) continue;
             if (!bl.v.has_h || bl.poly.empty()) continue;
             bl.seam = seams(bl.poly);
             bl.source = source;

@@ -18,7 +18,7 @@ namespace atlas::load {
 
 // the sizes src/lib.rs's structs have on a 64-bit target (it asserts the same of them)
 static_assert(sizeof(atlas_clean_point) == 8 && sizeof(atlas_clean_footprint) == 32);
-static_assert(sizeof(atlas_clean_input) == 64 && sizeof(atlas_clean_counts) == 64 && sizeof(atlas_clean_output) == 104);
+static_assert(sizeof(atlas_clean_input) == 64 && sizeof(atlas_clean_counts) == 80 && sizeof(atlas_clean_output) == 120);
 
 namespace {
 
@@ -49,7 +49,8 @@ bool add_ring(Input& in, std::span<const V2> ring, const tiles::Frame& frame) {
 void add(Input& in, const Building& b, bool part, const tiles::Frame& frame) {
     const auto first = static_cast<std::uint32_t>(in.sizes.size());
     const std::size_t points = in.points.size();
-    bool ok = add_ring(in, b.poly, frame);
+    // below the ground: cleaned with nothing, left as it is (hidden)
+    bool ok = !b.underground && add_ring(in, b.poly, frame);
     for (const std::vector<V2>& h : b.holes) {
         if (!ok) break;
         ok = add_ring(in, h, frame);
@@ -175,6 +176,7 @@ void clean_buildings(Scene& s, const tiles::Frame& frame) {
                     ring.emplace_back(frame.x(o.points[v].lon), frame.z(o.points[v].lat));
                 }
                 if (geometry::signed_area(ring) < 0) std::ranges::reverse(ring);
+                if (!b.at) b.at = geometry::centroid(b.poly); // filed where it was mapped
                 b.poly = std::move(ring);
                 b.bb = box_of(b.poly);
             }
@@ -200,9 +202,11 @@ void clean_buildings(Scene& s, const tiles::Frame& frame) {
     c.vanished = o.counts.vanished;
     c.seamed = o.counts.seamed;
     c.unsettled = o.counts.unsettled;
-    c.unjoined = o.counts.unjoined;
+    c.unmeasured = o.counts.unmeasured;
     c.uncovered_m2 = o.counts.uncovered_m2;
     c.sliver_m2 = o.counts.sliver_m2;
+    c.dropped_m2 = o.counts.dropped_m2;
+    c.pairs_before = o.counts.pairs_before;
 }
 
 } // namespace atlas::load

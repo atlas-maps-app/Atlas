@@ -68,14 +68,15 @@ struct BuildingBound {
     bool lo_open = false;
 };
 
-/// What a building can be, where its numbers enter: the tallest building stands 828 m and the most storeys built are
-/// 163, so a height past 1000 m or more than 200 storeys is a mistake; a height of 0 or below is none.
+/// What a building can be, where its numbers enter: the tallest building stands 828 m (one of 1,008 m is being built)
+/// and the most storeys built are 163, so a height past 1,200 m or more than 200 storeys is a mistake, and so is a
+/// number below 0. A height of 0 stays what it was, a building of no height, which nothing draws.
 inline constexpr std::array<BuildingBound, 5> building_bounds = {{
-    {.key = "height", .lo = 0.0, .hi = 1000.0, .lo_open = true},
-    {.key = "min_height", .lo = 0.0, .hi = 1000.0, .lo_open = false},
+    {.key = "height", .lo = 0.0, .hi = 1200.0, .lo_open = false},
+    {.key = "min_height", .lo = 0.0, .hi = 1200.0, .lo_open = false},
     {.key = "building:levels", .lo = 0.0, .hi = 200.0, .lo_open = false},
     {.key = "roof:levels", .lo = 0.0, .hi = 100.0, .lo_open = false},
-    {.key = "roof:height", .lo = 0.0, .hi = 1000.0, .lo_open = false},
+    {.key = "roof:height", .lo = 0.0, .hi = 1200.0, .lo_open = false},
 }};
 
 /// The most storeys a building holds (building_bounds' building:levels).
@@ -104,8 +105,9 @@ inline constexpr std::int64_t max_levels = 200;
 [[nodiscard]] std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame,
                                                           const Palette& palette, const Looks* looks = nullptr);
 
-/// Counts the roofs mapped pitched (roof:shape, but flat) that stage T draws flat (Scene::counts' flat_roofs): a shape
-/// it does not draw, no height, or a ring with seams (geometry::drawn_pitched).
+/// Counts the roofs with a shape, as drawn (after the closest shapes and the looks: mapped or a tradition's or the
+/// guesses'), that stage T draws flat (Scene::counts' flat_roofs): a shape it does not draw, no height, or a ring with
+/// seams (geometry::drawn_pitched); and of them those only a seam makes flat (flat_by_seam).
 void count_flat_roofs(Scene& s);
 
 } // namespace atlas::load

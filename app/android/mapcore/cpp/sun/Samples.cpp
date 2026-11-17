@@ -518,9 +518,9 @@ using Variants = std::unordered_map<std::uint64_t, std::uint32_t>;
     return v;
 }
 
-/// Whether a record is a solid: a building not hidden with a height, a part with a height (render's `solids`).
-[[nodiscard]] bool is_solid(Source source, const Values& v, const std::vector<V2>& poly) noexcept {
-    return (source == Source::part || !v.hidden) && v.h != 0.0 && !poly.empty();
+/// Whether a record is a solid: a building or a part not hidden, with a height (render's `solids`).
+[[nodiscard]] bool is_solid(Source /*source*/, const Values& v, const std::vector<V2>& poly) noexcept {
+    return !v.hidden && v.h != 0.0 && !poly.empty(); // a part below the ground is hidden too (core-p14)
 }
 
 /// Whether the water mirrors a record (Amsterdam.reflections): within 16 m of a quay edge, not hidden, with a height
@@ -555,7 +555,7 @@ public:
 
     /// Everything the renders can draw of the building with `v` over footprint `poly`.
     void all(const Values& v, std::span<const V2> poly) {
-        if (v.hidden && source_ == Source::building) return; // an outline drawn by its parts: never drawn
+        if (v.hidden) return;                 // an outline drawn by its parts, or what is below the ground: never drawn
         if (!v.has_h || poly.empty()) return; // draw_building reads h: a building without one is not drawn
         if ((v.flags & tl::building::flag_houseboat) != 0) houseboat(v, poly);
         building(v, poly);
@@ -1478,7 +1478,7 @@ Tallest tile_tallest(const tiles::Tile& tile, std::uint8_t level) {
             const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
             const Values v =
                 it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
-            if ((layer_id == tl::LayerId::part || !v.hidden) && v.h != 0.0) {
+            if (!v.hidden && v.h != 0.0) {
                 if (!out.any) out.first = v.h;
                 out.any = true;
                 if (!std::isnan(v.h)) {

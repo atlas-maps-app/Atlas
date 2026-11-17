@@ -171,13 +171,27 @@ private:
     return storeys(std::max<std::int64_t>(1, *rounded));
 }
 
-/// Below the ground: `location=underground`, or a layer below 0 where its location does not say it stands on the
-/// ground or above it (`surface`, `overground`, `roof`, `rooftop`: a building under a bridge is mapped so).
-[[nodiscard]] bool underground(const Tags& t) {
+/// Below the ground, and by which rule: `location=underground`; or a layer below 0 where its location does not say it
+/// stands on the ground or above it (`surface`, `overground`, `roof`, `rooftop`: a building under a bridge is mapped
+/// so).
+enum class Below : std::uint8_t { no, location, layer };
+
+[[nodiscard]] Below underground(const Tags& t) {
     const auto location = t.get("location");
-    if (location && *location == "underground") return true;
+    if (location && *location == "underground") return Below::location;
     const auto layer = num(t.get("layer"));
-    return layer && *layer < 0 && !one_of(location, {"surface", "overground", "roof", "rooftop"});
+    if (layer && *layer < 0 && !one_of(location, {"surface", "overground", "roof", "rooftop"})) return Below::layer;
+    return Below::no;
+}
+
+/// Whether a building's way and its relation map a key both carry otherwise (the relation's type aside).
+[[nodiscard]] bool disagree(const osm::TagList& way, const osm::TagList& relation) {
+    for (const osm::Tag tag : relation) {
+        if (tag.key == "type") continue;
+        const auto mine = way.find(tag.key);
+        if (mine && *mine != tag.value) return true;
+    }
+    return false;
 }
 
 /// Whether the ring `outer` holds the ring `inner`: most of inner's points inside it.
@@ -323,6 +337,7 @@ void place(Scene& s) {
         const std::vector<std::uint32_t>& near = it != grid.end() ? it->second : none;
         std::size_t a = 0;
         std::size_t w = 0;
+        std::optional<std::uint32_t> found;
         while (a < near.size() || w < wide.size()) {
             std::uint32_t i = 0;
             if (w == wide.size() || (a < near.size() && near[a] < wide[w].first)) {
@@ -332,12 +347,20 @@ void place(Scene& s) {
                 if (key.gx < c.gx0 || key.gx > c.gx1 || key.gz < c.gz0 || key.gz > c.gz1) continue;
                 i = index;
             }
-            Building& b = s.buildings[i];
+            const Building& b = s.buildings[i];
             if (b.bb.x0 <= n.x && n.x <= b.bb.x1 && b.bb.z0 <= n.z && n.z <= b.bb.z1 && pip(n.x, n.z, b.poly)) {
-                b.places.push_back(k);
-                n.building = i;
-                break;
+                // a building on the ground before one below it (a shop in the house over a metro station is the
+                // house's), else the first below
+                if (!b.underground) {
+                    found = i;
+                    break;
+                }
+                if (!found) found = i;
             }
+        }
+        if (found) {
+            s.buildings[*found].places.push_back(k);
+            n.building = *found;
         }
     }
 }
@@ -374,6 +397,44 @@ tiles::Frame westerkerk_frame() noexcept {
 
 Palette amsterdam_palette() noexcept { return {.brick_old = brick_old, .plaster = plaster, .brick_new = brick_new}; }
 
+namespace {
+
+/// A building's or part's record of its cleaned ring `poly` and its tags: its numbers bounded where they enter (past
+/// what a building can be, as unmapped; `bounded` where one was), guess_tags's values, its box.
+Building make_building(std::vector<V2> poly, std::int64_t id, const Tags& t, bool relation, const Palette& palette,
+                       bool& bounded) {
+    const std::optional<double> h = building_num(t, "height");
+    const std::optional<double> lv = building_num(t, "building:levels");
+    const std::optional<double> min = building_num(t, "min_height");
+    bounded = bounded || beyond_bounds(t);
+    Building b;
+    b.poly = std::move(poly);
+    b.id = id;
+    b.tags = t;
+    b.src = h ? HeightSource::height : (lv ? HeightSource::levels : HeightSource::none);
+    std::optional<double> h0 = h;
+    if (!h0 && lv) h0 = *lv * 3.0 + building_num(t, "roof:levels").value_or(0.0) * 2.0;
+    b.year = leading_year(t.get("start_date").value_or(""));
+    b.min = min.value_or(0.0);
+    b.roof = t.get("roof:shape");
+    b.roof_h = building_num(t, "roof:height");
+    b.orient = t.get("roof:orientation");
+    b.mat = t.get("building:material");
+    b.rmat = t.get("roof:material");
+    b.col = t.get("building:colour");
+    b.rcol = t.get("roof:colour");
+    b.relation = relation;
+    guess_tags(b, h0, palette);
+    if (b.min > b.h) {
+        b.min = b.h; // a base over its top cannot be: it stands nowhere, as at its top
+        bounded = true;
+    }
+    b.bb = box_of(b.poly);
+    return b;
+}
+
+} // namespace
+
 std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame, const Palette& palette,
                                             const Looks* looks) {
     Scene s;
@@ -408,7 +469,7 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
     for (const osm::Element& e : doc.elements()) {
         if (e.kind != osm::Kind::way || !e.has_tags || e.tags.count == 0 || !e.has_geometry) continue;
         const Tags t(doc.tags(e));
-        if (!(t.has("building") || t.has("building:part")) || t.is("building", "no") || underground(t)) continue;
+        if (!(t.has("building") || t.has("building:part")) || t.is("building", "no")) continue;
         const auto g = doc.geometry(e);
         if (g.size() > 3 && g.front().lat == g.back().lat && g.front().lon == g.back().lon) own_ways.insert(e.id);
     }
@@ -419,48 +480,37 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
         const Tags t(doc.tags(e));
         const bool node = e.kind == osm::Kind::node;
         if ((t.has("building") || t.has("building:part")) && !node && !t.is("building", "no")) {
-            if (underground(t)) {
-                ++s.counts.underground; // Nieuwmarkt's metro station, w267104000, stood as a 10 m block
-                continue;
-            }
+            // below the ground (Nieuwmarkt's metro station, w267104000, stood as a 10 m block): hidden, as an outline
+            // its parts cover is, kept for its places, for picking and for the floors below the ground
+            const Below below = underground(t);
+            if (below != Below::no) ++(below == Below::location ? s.counts.underground : s.counts.underground_layer);
             const bool part = t.has("building:part");
             Positions::BuildingRings rings = at.building_rings(doc, e, own_ways);
             s.counts.doubles += static_cast<std::uint32_t>(rings.own.size());
             // the records its courtyards may lie in: its own ways', then its rings'
             std::vector<std::pair<bool, std::size_t>> holders;
+            bool bounded = false;
+            // a doubled way's record made again: the way, with what it lacks from its relation (height, storeys, roof,
+            // name)
             for (const std::int64_t w : rings.own) {
-                if (const auto it = way_at.find(w); it != way_at.end()) holders.push_back(it->second);
+                const auto it = way_at.find(w);
+                if (it == way_at.end()) continue;
+                holders.push_back(it->second);
+                Building& old = (it->second.first ? s.parts : s.buildings)[it->second.second];
+                if (disagree(old.tags.all(), doc.tags(e))) ++s.counts.doubles_disagree;
+                Building again =
+                    make_building(old.poly, old.id, Tags(old.tags.all(), doc.tags(e)), false, palette, bounded);
+                again.holes = std::move(old.holes);
+                again.underground = old.underground;
+                again.hidden = old.hidden;
+                old = std::move(again);
             }
-            // its numbers, bounded where they enter: past what a building can be, as unmapped
-            const std::optional<double> h = building_num(t, "height");
-            const std::optional<double> lv = building_num(t, "building:levels");
-            const std::optional<double> min = building_num(t, "min_height");
-            bool bounded = beyond_bounds(t);
             for (std::vector<V2>& r : rings.outer) {
                 if (!closed(r) || std::fabs(signed_area(r)) < 3) continue;
-                Building b;
-                b.poly = clean(std::move(r));
-                b.id = e.id;
-                b.tags = t;
-                b.src = h ? HeightSource::height : (lv ? HeightSource::levels : HeightSource::none);
-                std::optional<double> h0 = h;
-                if (!h0 && lv) h0 = *lv * 3.0 + building_num(t, "roof:levels").value_or(0.0) * 2.0;
-                b.year = leading_year(t.get("start_date").value_or(""));
-                b.min = min.value_or(0.0);
-                b.roof = t.get("roof:shape");
-                b.roof_h = building_num(t, "roof:height");
-                b.orient = t.get("roof:orientation");
-                b.mat = t.get("building:material");
-                b.rmat = t.get("roof:material");
-                b.col = t.get("building:colour");
-                b.rcol = t.get("roof:colour");
-                b.relation = e.kind == osm::Kind::relation;
-                guess_tags(b, h0, palette);
-                if (b.min > b.h) {
-                    b.min = b.h; // a base over its top cannot be: it stands nowhere, as at its top
-                    bounded = true;
-                }
-                b.bb = box_of(b.poly);
+                Building b =
+                    make_building(clean(std::move(r)), e.id, t, e.kind == osm::Kind::relation, palette, bounded);
+                b.underground = below != Below::no;
+                b.hidden = b.underground;
                 std::vector<Building>& list = part ? s.parts : s.buildings;
                 if (e.kind == osm::Kind::way) way_at[e.id] = {part, list.size()};
                 holders.emplace_back(part, list.size());
@@ -574,13 +624,19 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
 
 void count_flat_roofs(Scene& s) {
     std::uint32_t flat = 0;
+    std::uint32_t by_seam = 0;
     for (const auto* list : {&s.buildings, &s.parts}) {
         for (const Building& b : *list) {
-            if (b.hidden || !b.tags.truthy("roof:shape") || b.tags.is("roof:shape", "flat")) continue;
-            if (!geometry::drawn_pitched(b.roof, b.roof_h.value_or(0.0), !geometry::seams(b.poly).empty())) ++flat;
+            if (b.hidden || !truthy(b.roof) || *b.roof == "flat") continue;
+            const double rh = b.roof_h.value_or(0.0);
+            const bool seamed = !geometry::seams(b.poly).empty();
+            if (geometry::drawn_pitched(b.roof, rh, seamed)) continue;
+            ++flat;
+            if (seamed && geometry::drawn_pitched(b.roof, rh, false)) ++by_seam;
         }
     }
     s.counts.flat_roofs = flat;
+    s.counts.flat_by_seam = by_seam;
 }
 
 std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,

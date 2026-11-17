@@ -54,9 +54,12 @@ typedef struct atlas_clean_counts {
     uint32_t vanished;           /* footprints others cover whole */
     uint32_t seamed;             /* rings that carry seams */
     uint32_t unsettled;          /* operations whose arrangement did not settle (their footprints left as they were) */
-    uint32_t unjoined;           /* footprints with a courtyard or piece no seam could join (left out) */
+    uint32_t unmeasured;         /* outlines whose uncovered area could not be measured */
     double uncovered_m2;         /* the area of the outlines nothing draws, but slivers and crumbs */
-    double sliver_m2; /* the outlines' slivers (narrower than 0.5 m) and crumbs (under 3 m^2) nothing draws */
+    double sliver_m2;      /* the outlines' slivers (narrower than 0.5 m) and crumbs (under 3 m^2) nothing draws */
+    double dropped_m2;     /* what the cuts left that went as slivers or crumbs, of every footprint */
+    uint32_t pairs_before; /* drawn pairs overlapping in plan and in height before any was clipped */
+    uint32_t pad;
 } atlas_clean_counts;
 
 /* Per footprint: its state (ATLAS_CLEAN_DRAWN, ATLAS_CLEAN_RING: its new ring is points[ring_first[k]] up to
@@ -83,6 +86,24 @@ void atlas_clean_free(atlas_clean_output* out);
 /* For a closed ring of `count` points (x, z pairs, compared bit for bit): out[i] is 1 where the edge from point i to
  * point i + 1 is a seam (its reverse is an edge of the ring too), else 0. Returns how many are. */
 size_t atlas_clean_seams(const double* xz, size_t count, uint8_t* out);
+
+/* A seamed ring's rings again (the cleaning's inverse): every ring's points one after another, each ring's first point
+ * (ring_count + 1 offsets), and its piece (a piece's first ring its outer ring, then its courtyards), each as the tiles
+ * hold them: an outer ring clockwise as latitude and longitude are read, a courtyard the other way. */
+typedef struct atlas_clean_rings_output {
+    const atlas_clean_point* points;
+    const size_t* ring_first;
+    const uint32_t* piece;
+    size_t ring_count;
+    void* owner;
+} atlas_clean_rings_output;
+
+/* The rings of a building's ring of `count` points as the tiles hold it into `out`: 0 done, 1 a ring the cleaning did
+ * not make (`out` then holds nothing). */
+int32_t atlas_clean_rings(const atlas_clean_point* ring, size_t count, atlas_clean_rings_output* out);
+
+/* Frees what atlas_clean_rings made. */
+void atlas_clean_rings_free(atlas_clean_rings_output* out);
 
 #ifdef __cplusplus
 }

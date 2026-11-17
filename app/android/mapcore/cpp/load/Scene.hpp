@@ -30,9 +30,24 @@ class Tags {
 public:
     Tags() = default;
     explicit Tags(osm::TagList tags) noexcept : tags_(tags) {}
+    /// A building's own tags, and where it lacks one of a building's keys (fills) its relation's: the way of a
+    /// relation's outer ring that is a building of its own is that building, with the relation's height, storeys,
+    /// roof and name where it maps none (load/Amsterdam.cpp).
+    Tags(osm::TagList tags, osm::TagList fill) noexcept : tags_(tags), fill_(fill), filled_(true) {}
+
+    /// The keys a relation fills in its outer way's building: its name, start date and heights, and the building's and
+    /// roof's keys (but building:part, which would make it another kind).
+    [[nodiscard]] static bool fills(std::string_view key) noexcept {
+        return key == "name" || key == "height" || key == "min_height" || key == "start_date" ||
+               key.starts_with("roof:") || (key.starts_with("building:") && key != "building:part");
+    }
 
     /// `t.get(key)`.
-    [[nodiscard]] std::optional<std::string_view> get(std::string_view key) const noexcept { return tags_.find(key); }
+    [[nodiscard]] std::optional<std::string_view> get(std::string_view key) const noexcept {
+        if (const auto v = tags_.find(key)) return v;
+        if (filled_ && fills(key)) return fill_.find(key);
+        return std::nullopt;
+    }
     /// `key in t`.
     [[nodiscard]] bool has(std::string_view key) const noexcept { return get(key).has_value(); }
     /// `t.get(key) == value`.
@@ -45,10 +60,13 @@ public:
         const auto v = get(key);
         return v.has_value() && !v->empty();
     }
+    /// Its own tags (not those filled).
     [[nodiscard]] const osm::TagList& all() const noexcept { return tags_; }
 
 private:
     osm::TagList tags_;
+    osm::TagList fill_;
+    bool filled_ = false;
 };
 
 /// Python's truth of an optional string: there, and not empty.
@@ -139,6 +157,13 @@ struct Building {
     std::vector<V2> poly;
     /// The inner rings mapped in it (a relation's courtyards), until the cleaning cuts them out of `poly`.
     std::vector<std::vector<V2>> holes;
+    /// Below the ground (load/Amsterdam.cpp's underground): hidden, kept for its places and for picking, cleaned with
+    /// nothing.
+    bool underground = false;
+    /// The mapped outline's centroid, where the cleaning changed its ring: the cut files it in that point's tile and
+    /// cell, so that the window a building belongs to does not depend on what the cleaning made of it (else its
+    /// ring's centroid).
+    std::optional<V2> at;
     std::int64_t id = 0;
     Tags tags;
     double h = 0.0;   ///< metres: height, or from building:levels and roof:levels, or guessed
@@ -376,9 +401,12 @@ struct ParkEdge {
 struct BuildingCounts {
     std::uint32_t overlapping_pairs = 0;  ///< drawn footprints overlapping in plan (over 1 m²) and in height (0.1 m)
     std::uint32_t uncovered_outlines = 0; ///< outlines more than 5 m² of which nothing draws
-    std::uint32_t flat_roofs = 0;         ///< pitched roofs mapped that stage T draws flat
-    std::uint32_t underground = 0;        ///< buildings and parts below the ground, not loaded
+    std::uint32_t flat_roofs = 0;         ///< roofs with a shape, as drawn, that stage T draws flat
+    std::uint32_t flat_by_seam = 0;       ///< of them, those only a seam makes flat (a courtyard, a piece)
+    std::uint32_t underground = 0;        ///< below the ground by location=underground: hidden (a part: left out)
+    std::uint32_t underground_layer = 0;  ///< below the ground by a layer under 0 alone: hidden (a part: left out)
     std::uint32_t doubles = 0;            ///< a relation's outer ring that is a building's own way, loaded once
+    std::uint32_t doubles_disagree = 0;   ///< of them, the way and its relation mapping a key both carry otherwise
     std::uint32_t bounded = 0;            ///< building numbers past what a building can be, taken as unmapped
     std::uint32_t courtyards = 0;         ///< footprints with inner rings
     std::uint32_t covered = 0;            ///< outlines cut by their parts
@@ -388,9 +416,13 @@ struct BuildingCounts {
     std::uint32_t vanished = 0;           ///< footprints others cover whole (a part then gone)
     std::uint32_t seamed = 0;             ///< rings that carry seams
     std::uint32_t unsettled = 0;          ///< cleanings whose arrangement did not settle (their footprints as mapped)
-    std::uint32_t unjoined = 0;           ///< footprints with a courtyard or piece no seam could join (left out)
+    std::uint32_t unmeasured = 0;         ///< outlines whose uncovered area could not be measured
     double uncovered_m2 = 0.0;            ///< the outlines' area nothing draws, but slivers and crumbs
     double sliver_m2 = 0.0;               ///< the outlines' slivers (under 0.5 m wide) and crumbs (under 3 m²) undrawn
+    double dropped_m2 = 0.0;              ///< what the cuts left that went as slivers or crumbs, of every footprint
+    /// Drawn pairs overlapping in plan and in height before any was clipped (after coverage): what the clipping had to
+    /// do, and none for footprints already cleaned.
+    std::uint32_t pairs_before = 0;
     friend bool operator==(const BuildingCounts&, const BuildingCounts&) = default;
 };
 

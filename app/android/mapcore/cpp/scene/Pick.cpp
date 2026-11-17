@@ -4,6 +4,7 @@
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "style/Palette.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/layers/Buildings.hpp"
@@ -66,7 +67,13 @@ struct Met {
         const double t = (top - eye.y) / dir.y;
         if (t > 0.0 && inside(ring, eye.x + (t * dir.x), eye.z + (t * dir.z))) best = {.t = t, .lid = true, .y = top};
     }
+    // a seam (geometry/Seams.hpp: a courtyard's or a piece's join) is no wall
+    static_assert(sizeof(P2) == 2 * sizeof(double), "P2 is x then z, two doubles");
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): P2 is two doubles, x then z
+    const std::vector<std::uint8_t> seam =
+        geometry::seams_xz({reinterpret_cast<const double*>(ring.data()), 2 * ring.size()});
     for (std::size_t i = 0; i < ring.size(); ++i) {
+        if (!seam.empty() && seam[i] != 0) continue;
         const P2& a = ring[i];
         const P2& b = ring[(i + 1) % ring.size()];
         // eye.xz + t dir.xz = a + s (b - a), by the cross products of the street's vectors
@@ -204,8 +211,9 @@ std::optional<Picked> pick_building(const tiles::Store& store, std::span<const P
                 const tl::Layer* l = tile->layer(layer);
                 if (l == nullptr) continue;
                 for (std::uint32_t i = 0; i < l->count; ++i) {
-                    // an outline drawn by its parts is met through them; one without a height is not drawn
-                    if (layer == tl::LayerId::building && l->boolean(tl::building::hidden, i).value_or(false)) continue;
+                    // an outline drawn by its parts is met through them; what is below the ground, or without a
+                    // height, is not drawn
+                    if (l->boolean(tl::building::hidden, i).value_or(false)) continue;
                     const std::optional<double> top = l->decimal(tl::building::h, i);
                     if (!top) continue;
                     const double base = l->decimal(tl::building::min, i).value_or(0.0);

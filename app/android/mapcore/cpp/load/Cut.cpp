@@ -334,7 +334,7 @@ class Walls {
 public:
     explicit Walls(const Scene& s) {
         for (const Building& b : s.buildings) {
-            if (b.tags.is("building", "houseboat")) continue;
+            if (b.underground || b.tags.is("building", "houseboat")) continue; // what is below lines no quay
             const std::size_t n = b.poly.size();
             const std::vector<std::uint8_t> seam = geometry::seams(b.poly); // a seam is no wall
             for (std::size_t i = 0; i < n; ++i) {
@@ -889,7 +889,7 @@ struct CutPlan {
         a.kind = b.kind;
     }
     a.relation = b.relation;
-    if (!part) a.hidden = b.hidden;
+    if (!part || b.hidden) a.hidden = b.hidden; // a part says so only where it is (one below the ground)
     if (b.look == LookPath::generic || b.look == LookPath::tradition) a.no_win = b.no_win;
     a.in_church = b.in_church;
     for (const Guess g : b.guessed.keys()) a.guessed.push_back(key_of(g));
@@ -1098,7 +1098,7 @@ private:
         refs.assign(list.size(), {});
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             const Building& b = list[i];
-            const V2 c = geometry::centroid(b.poly);
+            const V2 c = b.at ? *b.at : geometry::centroid(b.poly); // where it was mapped (load/Clean.hpp)
             refs[i] = tl::nearest_grid(f_, c.x, c.z);
             put({.layer = layer,
                  .source = source,

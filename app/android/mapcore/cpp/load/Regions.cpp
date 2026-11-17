@@ -648,6 +648,7 @@ void outlines(Scene& s) {
     for (Building& p : s.parts) {
         const V2 c = centroid(p.poly);
         for (const Building& b : s.buildings) {
+            if (b.underground != p.underground) continue; // what is below the ground is no outline of what stands on it
             if (b.bb.x0 <= c.x && c.x <= b.bb.x1 && b.bb.z0 <= c.z && c.z <= b.bb.z1 && pip(c.x, c.z, b.poly)) {
                 p.parent_id = b.id;
                 if (one_of(b.tags.get("building"), {"church", "cathedral", "chapel"}) ||
@@ -726,7 +727,6 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
     // same, before any is simplified
     outlines(s);
     clean_buildings(s, region.frame);
-    count_flat_roofs(s);
     // the areas' own rings: the lawns kept as areas are the same at every tolerance (drop_lawns)
     std::vector<std::vector<V2>> area_rings;
     if (tolerance != 0.0) {
@@ -759,6 +759,7 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
                     .tradition = region.tradition,
                     .landuse = LandUseFrom::land,
                     .keep_homes = region.keep_homes});
+    count_flat_roofs(s); // as drawn: after the looks (a tradition gives a mansard where no shape is mapped)
     if (frame.error()) return std::unexpected(*frame.error());
     if (region.park != nullptr) {
         // a theme park: its coaster tracks standing up, each ride's top height from its published profile
