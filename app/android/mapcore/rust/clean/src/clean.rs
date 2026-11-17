@@ -4,11 +4,13 @@
 //!   3. Stacking: a footprint standing on others that overlap it in height, on most of its area, starts at their top.
 //!   4. Clipping: of two footprints that still overlap, in plan and in height, the one whose heights lie within the
 //!      other's gives way where they overlap; where neither holds the other, the one that loses less volume.
-//! Then what is left of each is one ring (crate::bridge), and the counts of what still cannot be there.
+//!   5. What is left over: an outline takes back the ground of its own that nothing draws once every cut is made.
+//! A cut's pieces lose their hairs (Params::hair_m); a piece too small, or with no body wider than Params::thin_m,
+//! goes. Then what is left of each is one ring (crate::bridge), and the counts of what still cannot be there.
 
 use crate::arrange::{area2_of, boolean, rings_of, Op, Poly};
 use crate::bridge::bridge;
-use crate::geom::{area2, cross, interiors_overlap, Box2, P};
+use crate::geom::{area2, cross, interiors_overlap, proper_cross, Box2, P};
 use alloc::collections::BinaryHeap;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -36,6 +38,9 @@ pub struct Params {
     pub thin_m: f64,
     /// A piece smaller than this goes (the loaders' own least footprint).
     pub small_m2: f64,
+    /// What a cut leaves narrower than this is a hair, and is cut from its piece: a part mapped a centimetre off its
+    /// outline's edge leaves one along that edge, and a wall would stand on it.
+    pub hair_m: f64,
     /// A courtyard smaller than this is filled.
     pub hole_m2: f64,
     /// An outline counts as left uncovered where more of it than this is drawn by nothing.
@@ -51,6 +56,7 @@ impl Params {
             height_m: 0.1,
             thin_m: 0.5,
             small_m2: 3.0,
+            hair_m: 0.03,
             hole_m2: 0.5,
             uncovered_m2: 5.0,
         }
@@ -196,6 +202,9 @@ struct Run {
     spent: bool,
     p: Params,
     orig: Vec<Vec<Vec<P>>>,
+    /// A ring mapped crossing itself, as the operations take it: its lobes, each counterclockwise. As mapped one of
+    /// them runs the other way, and where it lies over another footprint the two would count as no ground at all.
+    lobes: Vec<Option<Vec<Vec<P>>>>,
     cur: Vec<Option<Vec<Poly>>>,
     /// The vertices as mapped, sorted: a cut keeps them.
     keep: Vec<P>,
@@ -209,17 +218,47 @@ impl Run {
 
     /// A footprint's rings as they stand.
     fn shape(&self, k: usize) -> Vec<Vec<P>> {
-        match &self.cur[k] {
-            Some(polys) => rings_of(polys),
-            None => self.orig[k].clone(),
+        match (&self.cur[k], &self.lobes[k]) {
+            (Some(polys), _) => rings_of(polys),
+            (None, Some(rings)) => rings.clone(),
+            (None, None) => self.orig[k].clone(),
         }
     }
 
     fn area_m2(&self, k: usize) -> f64 {
         match &self.cur[k] {
             Some(polys) => self.m2(area2_of(polys)),
-            None => self.m2(self.orig[k].iter().map(|r| area2(r)).sum()),
+            None => self.m2(self.shape(k).iter().map(|r| area2(r)).sum()),
         }
+    }
+
+    /// Whether a footprint's ring as mapped crosses itself (false where the work is spent: it then stands as mapped).
+    fn crosses_itself(&mut self, k: usize) -> bool {
+        let r = &self.orig[k][0];
+        let n = r.len();
+        if n < 4 {
+            return false;
+        }
+        let cost = (n as u64).saturating_mul(n as u64) / 2;
+        if cost > self.work {
+            self.spent = true;
+            return false;
+        }
+        self.work -= cost;
+        for i in 0..n {
+            let (a, b) = (r[i], r[(i + 1) % n]);
+            let (lo, hi) = (a.x.min(b.x), a.x.max(b.x));
+            for j in i + 2..n {
+                let (c, d) = (r[j], r[(j + 1) % n]);
+                if c.x.max(d.x) < lo || c.x.min(d.x) > hi {
+                    continue;
+                }
+                if proper_cross(a, b, c, d) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// An arrangement within the work left, or none.
@@ -267,7 +306,7 @@ impl Run {
         let b: Vec<Vec<P>> = by.iter().flat_map(|&j| self.shape(j)).collect();
         let a = self.shape(k);
         match self.arrange(&a, &b, Op::Diff) {
-            Some(r) => Some(self.tidy(r, true)),
+            Some(r) => Some(self.tidy(r, true, &[])),
             None => {
                 self.failed[k] = true;
                 None
@@ -296,18 +335,37 @@ impl Run {
         r
     }
 
-    /// The pieces of a result as they may stand: straightened, courtyards too small to be one filled, and pieces too
-    /// small (or, for what a cut left, too thin) left out.
-    fn tidy(&mut self, polys: Vec<Poly>, cut: bool) -> Vec<Poly> {
-        let mut out = Vec::with_capacity(polys.len());
+    /// The pieces of a result as they may stand: straightened, what a cut left without its hairs (and crossing none
+    /// of the result's other rings for it, nor those of `beside`, which it is to stand next to), courtyards too small
+    /// to be one filled, and pieces too small (or, for what a cut left, too thin) left out.
+    fn tidy(&mut self, polys: Vec<Poly>, cut: bool, beside: &[Vec<P>]) -> Vec<Poly> {
+        let mut all: Vec<Vec<Vec<P>>> = Vec::with_capacity(polys.len());
         for p in polys {
-            let outer = self.straighten(p.outer);
-            let holes: Vec<Vec<P>> = p
-                .holes
-                .into_iter()
-                .map(|h| self.straighten(h))
-                .filter(|h| -self.m2(area2(h)) >= self.p.hole_m2)
-                .collect();
+            let mut rings: Vec<Vec<P>> = Vec::with_capacity(1 + p.holes.len());
+            rings.push(self.straighten(p.outer));
+            for h in p.holes {
+                rings.push(self.straighten(h));
+            }
+            all.push(rings);
+        }
+        if cut {
+            for i in 0..all.len() {
+                for k in 0..all[i].len() {
+                    let ring = core::mem::take(&mut all[i][k]);
+                    let folded = self.fold(ring, self.p.hair_m, true, &all, beside);
+                    all[i][k] = folded;
+                }
+            }
+        }
+        let mut out = Vec::with_capacity(all.len());
+        for rings in all {
+            let mut rings = rings.into_iter();
+            let outer = rings.next().unwrap_or_default();
+            if outer.len() < 3 {
+                continue; // a hair and no more
+            }
+            let holes: Vec<Vec<P>> =
+                rings.filter(|h| h.len() >= 3 && -self.m2(area2(h)) >= self.p.hole_m2).collect();
             let poly = Poly { outer, holes };
             let a = self.m2(poly.area2());
             if a < self.p.small_m2 {
@@ -317,15 +375,8 @@ impl Run {
                 continue;
             }
             if cut {
-                let n = poly.outer.len();
-                let mut len = 0.0;
-                for i in 0..n {
-                    let (u, v) = (poly.outer[i], poly.outer[(i + 1) % n]);
-                    let dx = (v.x - u.x) as f64 * self.p.ux;
-                    let dy = (v.y - u.y) as f64 * self.p.uy;
-                    len += sqrt(dx * dx + dy * dy);
-                }
-                if len > 0.0 && 2.0 * a / len < self.p.thin_m {
+                let len = self.around(&poly.outer);
+                if len > 0.0 && 2.0 * a / len < self.p.thin_m && self.thin(&poly.outer) {
                     self.counts.dropped_m2 += a;
                     continue;
                 }
@@ -333,6 +384,77 @@ impl Run {
             out.push(poly);
         }
         out
+    }
+
+    /// The length of a ring (m).
+    fn around(&self, ring: &[P]) -> f64 {
+        let n = ring.len();
+        let mut len = 0.0;
+        for i in 0..n {
+            let (u, v) = (ring[i], ring[(i + 1) % n]);
+            let dx = (v.x - u.x) as f64 * self.p.ux;
+            let dy = (v.y - u.y) as f64 * self.p.uy;
+            len += sqrt(dx * dx + dy * dy);
+        }
+        len
+    }
+
+    /// A ring with its corners folded away whose triangle with their two neighbours is flatter than `limit` (the
+    /// triangle's least height, m), again and again until none is. With `tips`, only where the ring turns back on
+    /// itself there or steps by less than `limit`: a hair's tip, sharp or blunt, goes and the hair with it, and a
+    /// corner on a wall that runs on stays where it was mapped. Without, every such corner: the ring's body, to
+    /// measure it. A corner stays where the edge in its place would cross the ring, a ring of `others` (its result's
+    /// other rings) or one of `beside`: what did not cross does not come to.
+    fn fold(&self, ring: Vec<P>, limit: f64, tips: bool, others: &[Vec<Vec<P>>], beside: &[Vec<P>]) -> Vec<P> {
+        let (ux, uy) = (self.p.ux, self.p.uy);
+        let side = |a: P, b: P| {
+            let (dx, dy) = ((b.x - a.x) as f64 * ux, (b.y - a.y) as f64 * uy);
+            sqrt(dx * dx + dy * dy)
+        };
+        let mut r = ring;
+        let mut from = 0;
+        loop {
+            let n = r.len();
+            if n < 3 {
+                break;
+            }
+            let found = (from..n).find(|&i| {
+                let (u, v, w) = (r[(i + n - 1) % n], r[i], r[(i + 1) % n]);
+                let (a, b, c) = (side(u, v), side(v, w), side(u, w));
+                let longest = a.max(b).max(c);
+                if longest <= 0.0 {
+                    return true;
+                }
+                // the triangle's least height: twice its area over its longest side
+                let twice = (cross(u, v, w) as f64).abs() * ux * uy;
+                if twice / longest >= limit || (tips && c >= longest && a.min(b) >= limit) {
+                    return false;
+                }
+                let crosses = |q: &[P]| (0..q.len()).any(|k| proper_cross(u, w, q[k], q[(k + 1) % q.len()]));
+                !crosses(&r) && !others.iter().flatten().any(|q| crosses(q)) && !beside.iter().any(|q| crosses(q))
+            });
+            match found {
+                Some(i) => {
+                    r.remove(i);
+                    from = i.saturating_sub(1);
+                }
+                None if from > 0 => from = 0, // the ring closes: its first corners have new neighbours
+                None => break,
+            }
+        }
+        r
+    }
+
+    /// Whether a ring a cut left has no body. Twice its area over its perimeter says so of a strip, but not of a
+    /// piece with a strip hanging on it, whose perimeter is long whatever its body. So the ring is measured with all
+    /// that is narrower than Params::thin_m folded away: what is left is nothing, or is measured as a strip is.
+    fn thin(&self, ring: &[P]) -> bool {
+        let body = self.fold(ring.to_vec(), self.p.thin_m, false, &[], &[]);
+        if body.len() < 3 {
+            return true;
+        }
+        let len = self.around(&body);
+        len <= 0.0 || 2.0 * self.m2(area2(&body)).abs() / len < self.p.thin_m
     }
 }
 
@@ -384,6 +506,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     let mut run = Run {
         p,
         orig,
+        lobes: vec![None; n],
         cur: vec![None; n],
         keep,
         counts: Counts::default(),
@@ -403,7 +526,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
             let (outer, inner) = (run.orig[k][..1].to_vec(), run.orig[k][1..].to_vec());
             match run.arrange(&outer, &inner, Op::Diff) {
                 Some(r) => {
-                    let r = run.tidy(r, false);
+                    let r = run.tidy(r, false, &[]);
                     if r.is_empty() {
                         drawn[k] = false;
                     }
@@ -419,6 +542,12 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     }
     let whole: Vec<Option<Vec<Poly>>> = run.cur.clone();
     let drawn_whole = drawn.clone();
+    for k in 0..n {
+        if run.cur[k].is_none() && run.orig[k].len() == 1 && run.crosses_itself(k) {
+            let ring = run.orig[k].clone();
+            run.lobes[k] = run.arrange(&ring, &[], Op::Norm).map(|polys| rings_of(&polys));
+        }
+    }
 
     // the pairs whose interiors meet: the cleaning only takes from a footprint, so no other pair can come to overlap
     let (near_boxes, whole_sweep) = pairs(&boxes, &mut run.work);
@@ -563,6 +692,45 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         }
     }
 
+    // 5. what the cuts left between them: a strip of an outline beside the crumb of a part is ground with a body
+    // again, and nothing draws it. An outline takes back all of its mapped ground that stands so once every cut is
+    // made, in the scene's order (what one takes the next finds drawn). Its ring is then made anew, of what it drew
+    // and what it takes back in one arrangement: two results side by side may cross by a snapped corner.
+    for o in 0..n {
+        if fps[o].part || what[o] & (COVERED | HIDDEN | CLIPPED | VANISHED) == 0 || run.failed[o] {
+            continue;
+        }
+        let full: Vec<Vec<P>> = match &whole[o] {
+            Some(polys) => rings_of(polys),
+            None => run.orig[o].clone(),
+        };
+        let by: Vec<Vec<P>> =
+            (0..n).filter(|&k| drawn[k] && boxes[k].meets(&boxes[o])).flat_map(|k| run.shape(k)).collect();
+        let Some(rest) = run.arrange(&full, &by, Op::Diff) else { continue };
+        let dropped = run.counts.dropped_m2;
+        let rest = run.tidy(rest, true, &[]);
+        if rest.is_empty() {
+            run.counts.dropped_m2 = dropped; // counted where it was cut
+            continue;
+        }
+        let mut both = if drawn[o] { run.shape(o) } else { Vec::new() };
+        both.extend(rings_of(&rest));
+        let joined = run.arrange(&full, &both, Op::Inter).map(|r| run.tidy(r, true, &[]));
+        run.counts.dropped_m2 = dropped;
+        let Some(joined) = joined else { continue };
+        if joined.is_empty() {
+            continue;
+        }
+        run.cur[o] = Some(joined);
+        drawn[o] = true;
+        if what[o] & HIDDEN != 0 {
+            what[o] = (what[o] & !HIDDEN) | COVERED;
+        }
+        if what[o] & VANISHED != 0 {
+            what[o] = (what[o] & !VANISHED) | CLIPPED;
+        }
+    }
+
     // one ring each: what is drawn, or for an outline not drawn its courtyards as mapped
     let changed = |k: usize, what: &[u8]| what[k] != 0 || courtyards[k];
     let mut ring: Vec<Option<Vec<P>>> = vec![None; n];
@@ -641,7 +809,7 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
                 // slivers (an outline mapped a little wider than its parts) and crumbs count apart
                 run.counts.sliver_m2 += run.m2(area2_of(&r));
                 let dropped = run.counts.dropped_m2;
-                let kept = run.tidy(r, true);
+                let kept = run.tidy(r, true, &[]);
                 let a = run.m2(area2_of(&kept));
                 run.counts.dropped_m2 = dropped;
                 run.counts.sliver_m2 -= a;
@@ -722,6 +890,62 @@ mod tests {
         assert!(!c.drawn[0]);
         assert_eq!(c.counts.hidden, 1);
         assert_eq!(c.counts.uncovered_outlines, 0);
+    }
+
+    #[test]
+    fn a_ring_mapped_crossing_itself_hides_no_ground_another_draws() {
+        // a bow tie high up: as mapped its lower lobe (10 m wide, 10 m deep) runs the other way. Under that lobe a
+        // hall stands, and in the hall a shed that gives way to it: the shed's ground is the hall's, not ground that
+        // the lobe and the hall leave between them
+        let tie = fp(vec![vec![P::new(0, 0), P::new(1000, 0), P::new(-500, 3000), P::new(1500, 3000)]], 30.0, 40.0, false);
+        let hall = fp(vec![sq(-2000, -2000, 3000, 4000)], 0.0, 20.0, false);
+        let shed = fp(vec![sq(300, 100, 700, 400)], 3.0, 14.0, false);
+        let c = clean(&[tie, hall, shed], params());
+        assert!(c.drawn[0] && c.drawn[1] && !c.drawn[2]);
+        assert!(c.ring[0].is_none() && c.ring[1].is_none());
+        assert_eq!(c.counts.vanished, 1);
+        assert_eq!(c.counts.overlapping_pairs, 0);
+        assert_eq!(c.counts.unsettled, 0);
+    }
+
+    #[test]
+    fn a_part_a_step_off_its_outlines_edge_leaves_no_hair_and_the_rest_its_body() {
+        // a 28 x 10 m outline; its part covers the west 26 m, mapped a centimetre inside the outline's north and
+        // south edges: what is left is the east 2 m, and a hair of 26 m along each of the two edges
+        let outline = fp(vec![sq(0, 0, 2800, 1000)], 0.0, 20.0, false);
+        let part = fp(vec![vec![P::new(0, 1), P::new(2600, 1), P::new(2600, 999), P::new(0, 999)]], 0.0, 12.0, true);
+        let c = clean(&[outline, part], params());
+        // drawn: by its perimeter with the hairs it was a strip of 0.3 m and went
+        assert!(c.drawn[0]);
+        assert_eq!(c.counts.covered, 1);
+        assert_eq!(c.counts.hidden, 0);
+        let ring = c.ring[0].as_ref().unwrap();
+        // and without its hairs: the block's four corners, each one mapped
+        assert_eq!(ring.len(), 4);
+        for q in [P::new(2800, 0), P::new(2800, 1000), P::new(2600, 999), P::new(2600, 1)] {
+            assert!(ring.contains(&q));
+        }
+        assert_eq!(c.counts.uncovered_outlines, 0);
+    }
+
+    #[test]
+    fn a_strip_a_cut_leaves_goes_and_a_body_with_a_strip_on_it_stays_whole() {
+        // 0.4 m of the outline east of its part: a strip, not drawn
+        let outline = fp(vec![sq(0, 0, 2040, 1000)], 0.0, 20.0, false);
+        let part = fp(vec![sq(0, 0, 2000, 1000)], 0.0, 12.0, true);
+        let c = clean(&[outline, part], params());
+        assert!(!c.drawn[0]);
+        assert_eq!(c.counts.hidden, 1);
+        // the east 1 m, and 0.2 m along the south edge that the part leaves: by its perimeter a strip of 0.4 m, but
+        // its body is 1 m wide. It stays, as it was cut: 0.2 m is no hair
+        let outline = fp(vec![sq(0, 0, 2700, 1000)], 0.0, 20.0, false);
+        let part = fp(vec![sq(0, 20, 2600, 1000)], 0.0, 12.0, true);
+        let c = clean(&[outline, part], params());
+        assert!(c.drawn[0]);
+        assert_eq!(c.counts.covered, 1);
+        let ring = c.ring[0].as_ref().unwrap();
+        assert_eq!(ring.len(), 6);
+        assert_eq!(area2(ring).abs(), 2 * (100 * 1000 + 2600 * 20));
     }
 
     #[test]

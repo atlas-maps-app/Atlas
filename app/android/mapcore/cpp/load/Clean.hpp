@@ -7,7 +7,9 @@
 //   4. Clipping: of two drawn footprints that still overlap (over 1 m² in plan and 0.1 m in height), the one whose
 //      heights lie within the other's gives way where they overlap; where neither holds the other, the one that loses
 //      less volume. A part cut to nothing goes; an outline cut to nothing is hidden. What a cut leaves under 3 m², or
-//      narrower than 0.5 m, goes.
+//      with no body wider than 0.5 m, goes; a hair on a piece (under 3 cm) is cut from it.
+//   5. What is left over: an outline takes back the ground of its own that nothing draws once every cut is made (a
+//      strip of it beside the crumb of a part), at its own height.
 // What is left of each footprint is its one ring: its pieces and courtyards joined by seams, an edge run there and
 // back, that draw nothing (geometry/Seams.hpp finds them again). A footprint nothing touches keeps its ring as it was.
 // The validity counts come with it (Scene::counts): the pairs still overlapping, the outlines left uncovered.
