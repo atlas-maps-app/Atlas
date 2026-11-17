@@ -352,6 +352,37 @@ TEST_CASE("load: nothing that cannot be there") {
     CHECK(s.counts.uncovered_outlines == 0);
 }
 
+// A document's order is free: the canal ring's raw.json is four answers in a row, and five of its ways that are a
+// relation's ring come after the relation. The way takes its relation's courtyard and roof all the same.
+TEST_CASE("load: a relation before the way that is its ring") {
+    const auto doc = read(R"({"version": 0.6, "elements": [
+{"type": "relation", "id": 14, "tags": {"type": "multipolygon", "building": "yes", "roof:shape": "hipped"},
+ "members": [{"type": "way", "ref": 13, "role": "outer", "geometry": [{"lat": 52.3770, "lon": 4.8840},
+              {"lat": 52.3770, "lon": 4.8846}, {"lat": 52.3774, "lon": 4.8846}, {"lat": 52.3774, "lon": 4.8840},
+              {"lat": 52.3770, "lon": 4.8840}]},
+             {"type": "way", "ref": 15, "role": "inner", "geometry": [{"lat": 52.3771, "lon": 4.8842},
+              {"lat": 52.3771, "lon": 4.8844}, {"lat": 52.3773, "lon": 4.8844}, {"lat": 52.3773, "lon": 4.8842},
+              {"lat": 52.3771, "lon": 4.8842}]}]},
+{"type": "way", "id": 13, "tags": {"building": "yes", "name": "Plancius"},
+ "geometry": [{"lat": 52.3770, "lon": 4.8840}, {"lat": 52.3770, "lon": 4.8846}, {"lat": 52.3774, "lon": 4.8846},
+              {"lat": 52.3774, "lon": 4.8840}, {"lat": 52.3770, "lon": 4.8840}]}
+]})");
+    ATLAS_REQUIRE(doc.has_value());
+    const auto loaded = load::load_amsterdam(*doc, load::westerkerk_frame(), load::amsterdam_palette());
+    ATLAS_REQUIRE(loaded.has_value());
+    ATLAS_REQUIRE(loaded->buildings.size() == 1);
+    const load::Building& b = loaded->buildings[0];
+    CHECK(b.id == 13);
+    CHECK(!b.relation);
+    CHECK(b.tags.is("name", "Plancius"));
+    CHECK(b.roof == "hipped");
+    CHECK(loaded->counts.doubles == 1);
+    CHECK(loaded->counts.doubles_disagree == 0);
+    CHECK(loaded->counts.courtyards == 1);
+    CHECK(b.poly.size() == 10); // its courtyard cut out of it and joined by a seam
+    CHECK(std::ranges::count(atlas::geometry::seams(b.poly), std::uint8_t{1}) == 2);
+}
+
 TEST_CASE("load: the canal ring's raw.json loaded whole (ATLAS_REGIONS_DIR)") {
     const std::string dir = atlas::test::environment("ATLAS_REGIONS_DIR");
     if (dir.empty()) {
@@ -380,8 +411,10 @@ TEST_CASE("load: the canal ring's raw.json loaded whole (ATLAS_REGIONS_DIR)") {
     MESSAGE("grachten: ", loaded->buildings.size(), " buildings, ", loaded->parts.size(), " parts, ",
             loaded->nodes.size(), " nodes, ", places, " places in buildings, ", hidden, " outlines hidden, in ", ms,
             " ms");
-    CHECK(loaded->buildings.size() == 25959); // AmsterdamParityTest's count, as the port loads it
-    CHECK(loaded->parts.size() == 696);
+    // the port loads 25,959 and 696 (AmsterdamParityTest's counts): a way that is its relation's ring too loads once,
+    // and a part others cover whole is gone (load/Clean.hpp), recorded 17 Nov 2026
+    CHECK(loaded->buildings.size() == 25953);
+    CHECK(loaded->parts.size() == 648);
     CHECK(places > 0);
     CHECK(hidden > 0);
 }

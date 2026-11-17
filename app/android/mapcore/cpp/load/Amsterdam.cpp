@@ -475,6 +475,18 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
     }
     // where each way's building or part went, for the courtyards its relation maps in it
     std::unordered_map<std::int64_t, std::pair<bool, std::size_t>> way_at;
+    // the ways counted for a number past the bounds: a doubled way counts once, by itself or with its relation
+    std::unordered_set<std::int64_t> bounded_ways;
+    // what a relation gives the ways that are buildings of their own, and its courtyards: done once every way is
+    // loaded, so the document's order is free (the canal ring's raw.json is four answers in a row, and five of its
+    // doubled ways come after their relation)
+    struct Late {
+        const osm::Element* relation = nullptr;
+        std::vector<std::int64_t> own;
+        std::vector<std::vector<V2>> inner;
+        std::vector<std::pair<bool, std::size_t>> holders; ///< its own rings' records
+    };
+    std::vector<Late> late;
     for (const osm::Element& e : doc.elements()) {
         if (!e.has_tags || e.tags.count == 0) continue;
         const Tags t(doc.tags(e));
@@ -487,24 +499,8 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
             const bool part = t.has("building:part");
             Positions::BuildingRings rings = at.building_rings(doc, e, own_ways);
             s.counts.doubles += static_cast<std::uint32_t>(rings.own.size());
-            // the records its courtyards may lie in: its own ways', then its rings'
-            std::vector<std::pair<bool, std::size_t>> holders;
+            std::vector<std::pair<bool, std::size_t>> holders; // its rings' records
             bool bounded = false;
-            // a doubled way's record made again: the way, with what it lacks from its relation (height, storeys, roof,
-            // name)
-            for (const std::int64_t w : rings.own) {
-                const auto it = way_at.find(w);
-                if (it == way_at.end()) continue;
-                holders.push_back(it->second);
-                Building& old = (it->second.first ? s.parts : s.buildings)[it->second.second];
-                if (disagree(old.tags.all(), doc.tags(e))) ++s.counts.doubles_disagree;
-                Building again =
-                    make_building(old.poly, old.id, Tags(old.tags.all(), doc.tags(e)), false, palette, bounded);
-                again.holes = std::move(old.holes);
-                again.underground = old.underground;
-                again.hidden = old.hidden;
-                old = std::move(again);
-            }
             for (std::vector<V2>& r : rings.outer) {
                 if (!closed(r) || std::fabs(signed_area(r)) < 3) continue;
                 Building b =
@@ -516,18 +512,15 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
                 holders.emplace_back(part, list.size());
                 list.push_back(std::move(b));
             }
-            if (bounded) ++s.counts.bounded;
-            // its courtyards, each in the first of its records that holds it
-            for (std::vector<V2>& r : rings.inner) {
-                if (!closed(r) || std::fabs(signed_area(r)) < 0.5) continue;
-                std::vector<V2> hole = clean(std::move(r));
-                for (const auto& [in_parts, k] : holders) {
-                    Building& b = (in_parts ? s.parts : s.buildings)[k];
-                    if (holds(b.poly, hole)) {
-                        b.holes.push_back(std::move(hole));
-                        break;
-                    }
-                }
+            if (bounded) {
+                ++s.counts.bounded;
+                if (e.kind == osm::Kind::way) bounded_ways.insert(e.id);
+            }
+            if (!rings.own.empty() || !rings.inner.empty()) {
+                late.push_back({.relation = &e,
+                                .own = std::move(rings.own),
+                                .inner = std::move(rings.inner),
+                                .holders = std::move(holders)});
             }
             continue;
         }
@@ -613,6 +606,41 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
                 one_of(t.get("amenity"), {"restaurant", "cafe", "bar", "pub", "fast_food", "ice_cream", "pharmacy"}) ||
                 one_of(t.get("tourism"), {"museum", "hotel", "gallery"})) {
                 s.pois.push_back(index);
+            }
+        }
+    }
+    for (Late& l : late) {
+        const osm::Element& e = *l.relation;
+        // the records its courtyards may lie in: its own ways', then its rings'
+        std::vector<std::pair<bool, std::size_t>> holders;
+        // a doubled way's record made again: the way, with what it lacks from its relation (height, storeys, roof,
+        // name)
+        for (const std::int64_t w : l.own) {
+            const auto it = way_at.find(w);
+            if (it == way_at.end()) continue;
+            holders.push_back(it->second);
+            Building& old = (it->second.first ? s.parts : s.buildings)[it->second.second];
+            if (disagree(old.tags.all(), doc.tags(e))) ++s.counts.doubles_disagree;
+            bool bounded_again = false;
+            Building again =
+                make_building(old.poly, old.id, Tags(old.tags.all(), doc.tags(e)), false, palette, bounded_again);
+            if (bounded_again && bounded_ways.insert(w).second) ++s.counts.bounded;
+            again.holes = std::move(old.holes);
+            again.underground = old.underground;
+            again.hidden = old.hidden;
+            old = std::move(again);
+        }
+        holders.insert(holders.end(), l.holders.begin(), l.holders.end());
+        // its courtyards, each in the first of its records that holds it
+        for (std::vector<V2>& r : l.inner) {
+            if (!closed(r) || std::fabs(signed_area(r)) < 0.5) continue;
+            std::vector<V2> hole = clean(std::move(r));
+            for (const auto& [in_parts, k] : holders) {
+                Building& b = (in_parts ? s.parts : s.buildings)[k];
+                if (holds(b.poly, hole)) {
+                    b.holes.push_back(std::move(hole));
+                    break;
+                }
             }
         }
     }
