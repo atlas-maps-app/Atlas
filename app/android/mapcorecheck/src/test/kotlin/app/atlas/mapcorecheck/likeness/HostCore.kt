@@ -135,7 +135,6 @@ class HostCore private constructor(val library: File, val passes: String) {
             -4 -> "out of memory"
             else -> "error $code"
         }
-
     }
 }
 
