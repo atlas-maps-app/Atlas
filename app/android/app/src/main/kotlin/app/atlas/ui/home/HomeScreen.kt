@@ -58,7 +58,6 @@ import app.atlas.mapview.Marker
 import app.atlas.mapview.MarkerStyle
 import app.atlas.mapview.Theme
 import app.atlas.mapview.UserLocation
-import app.atlas.mapview.vk.ChromeFade
 import app.atlas.model.Place
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalBottomBarInset
@@ -67,6 +66,7 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Categories
 import app.atlas.services.SettingsKeys
+import app.atlas.ui.kit.GlassFade
 import app.atlas.ui.kit.LocalBackdrop
 import app.atlas.ui.kit.LocalFrostedGlass
 import app.atlas.ui.kit.SheetStop
@@ -120,12 +120,15 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val context = androidx.compose.ui.platform.LocalContext.current
     // The Main board's map labels in its Instrument Serif italic.
     val labelFace = remember { runCatching { androidx.core.content.res.ResourcesCompat.getFont(context, R.font.instrument_serif_italic) }.getOrNull() }
-    // Where the chrome stands as laid out (dp): no map label goes under it.
+    // Where the chrome stands as laid out (dp): no map label goes under it. A box lifted by [lift] (px, as its offset
+    // lifts it now) is kept as it lies unlifted: the column over the search's sheet moves with the sheet each frame, and
+    // a box kept each frame would run this whole screen again each frame. The screen lifts it where the sheet rests.
     val chromeBoxes = remember { androidx.compose.runtime.mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
     val dpPerPx = 1f / LocalDensity.current.density
-    fun Modifier.keepsLabelsOff(key: String): Modifier = onGloballyPositioned { c ->
+    fun Modifier.keepsLabelsOff(key: String, lift: () -> Int = { 0 }): Modifier = onGloballyPositioned { c ->
         val b = c.boundsInRoot()
-        val r = androidx.compose.ui.geometry.Rect(b.left * dpPerPx, b.top * dpPerPx, b.right * dpPerPx, b.bottom * dpPerPx)
+        val l = lift()
+        val r = androidx.compose.ui.geometry.Rect(b.left * dpPerPx, (b.top + l) * dpPerPx, b.right * dpPerPx, (b.bottom + l) * dpPerPx)
         if (chromeBoxes[key] != r) chromeBoxes[key] = r
     }
     val online by services.connectivity.online.collectAsStateWithLifecycle()
@@ -278,7 +281,10 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
         markers = markers,
         labels = labels,
         // the chrome as laid out, and the status bar's band (the board's top 40 px)
-        labelKeepOut = chromeBoxes.values.toList() + androidx.compose.ui.geometry.Rect(0f, 0f, Float.MAX_VALUE, WindowInsets.statusBars.asPaddingValues().calculateTopPadding().value.coerceAtLeast(40f)),
+        labelKeepOut = chromeBoxes.map { (key, box) ->
+            // the column over the search's sheet where the sheet rests (its stop changes once a drag or a glide ends)
+            if (key == "bottom" && showingResults) box.translate(0f, -sheet.restingHeightPx.roundToInt() * dpPerPx) else box
+        } + androidx.compose.ui.geometry.Rect(0f, 0f, Float.MAX_VALUE, WindowInsets.statusBars.asPaddingValues().calculateTopPadding().value.coerceAtLeast(40f)),
         routes = if (findOpen) walkLines(found) else emptyList(),
         location = fix?.let { UserLocation(it.location, it.accuracy, it.bearing, it.speed) },
     )
@@ -399,14 +405,16 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
         // Bottom: attribution, the category row and the search bar, 90 dp up on the board (which steps aside for
         // results).
         val rowAlpha = if (showingResults && sheet.stop == SheetStop.FULL) 0f else 1f
+        // how far the sheet lifts the column now, px
+        val lift = { if (showingResults) sheet.visibleHeightPx.roundToInt() else 0 }
         if (opened == null) Column(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 // Read in the layout phase only: dragging the sheet moves the row without recomposing the screen.
-                .offset { IntOffset(0, if (showingResults) -sheet.visibleHeightPx.roundToInt() else 0) }
+                .offset { IntOffset(0, -lift()) }
                 .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 12.dp)
-                .keepsLabelsOff("bottom"),
+                .keepsLabelsOff("bottom", lift),
         ) {
             Text(
                 stringResource(R.string.home_attribution),
@@ -426,7 +434,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 )
             }
             AnimatedVisibility(rowAlpha > 0f, enter = fadeIn(), exit = fadeOut()) {
-                ChromeFade(this) {
+                GlassFade(this) {
                     val r = row
                     // its room kept till it is read
                     if (r == null) Spacer(Modifier.height(44.dp)) else {

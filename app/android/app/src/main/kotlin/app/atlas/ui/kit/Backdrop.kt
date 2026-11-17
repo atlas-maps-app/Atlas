@@ -3,6 +3,7 @@ package app.atlas.ui.kit
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Shader
 import android.os.Build
+import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -35,7 +36,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.toSize
+import app.atlas.mapview.vk.ChromeFade
 import app.atlas.mapview.vk.ChromeShapes
+import app.atlas.mapview.vk.LocalChromeAlpha
 import app.atlas.mapview.vk.LocalChromeShapes
 import app.atlas.mapview.vk.chromeShape
 import kotlin.math.ceil
@@ -76,6 +79,22 @@ val LocalBackdrop = staticCompositionLocalOf<Backdrop?> { null }
  * "For now turn the frosted glass off by default. It costs performance isnt done right").
  */
 val LocalFrostedGlass = staticCompositionLocalOf { true }
+
+/**
+ * [content] faded by [scope]'s enter and exit, its chrome's shapes giving the map's core the fade's alpha ([ChromeFade])
+ * where the glass is on ([glass]), so that the core's glass under them fades with their tint. With the glass off the
+ * core draws nothing a fade's alpha changes (its labels keep clear of a shape whatever its alpha), so the shapes keep
+ * the alpha of the fades around this one: a frame of the fade wakes no frame of the map. The content is composed the
+ * same way either way, so turning the glass on or off keeps its state.
+ */
+@Composable
+fun GlassFade(scope: AnimatedVisibilityScope, glass: Boolean = LocalFrostedGlass.current, content: @Composable () -> Unit) {
+    val around = LocalChromeAlpha.current
+    ChromeFade(scope) {
+        val faded = LocalChromeAlpha.current
+        CompositionLocalProvider(LocalChromeAlpha provides if (glass) faded else around, content = content)
+    }
+}
 
 @Composable
 fun rememberBackdrop(): Backdrop {

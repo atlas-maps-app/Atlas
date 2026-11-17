@@ -6,12 +6,11 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,9 +23,9 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Constraints
 import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
 import java.util.Locale
@@ -72,6 +71,9 @@ class ShownMap internal constructor(private val args: StageArgs) {
     val labelTypeface: android.graphics.Typeface? get() = args.labelTypeface
     val debug: Boolean get() = args.debug
     val units: UnitSystem get() = args.units
+
+    /** What the screen draws over the map: its markers, labels and where they keep clear of its chrome. */
+    val overlays: MapOverlays get() = args.overlays
 
     /** The camera moved: told to the screen the map is (the Map home's model keeps its view and forecast). */
     fun cameraMoved(camera: CameraPosition, byUser: Boolean) = args.onCameraMove(camera, byUser)
@@ -169,20 +171,26 @@ fun StageMap(
  */
 @Composable
 fun MapStageHost(stage: MapStage, cover: Color, modifier: Modifier = Modifier) {
-    val active = stage.active
-    SideEffect { if (active != null) stage.kept = active }
+    // Read through derived states: a window that only moves (a page scrolling its map, a screen sliding in over the
+    // map) changes its request's bounds each frame, which the host reads where it lays the map out, not here.
+    val active by remember(stage) { derivedStateOf { stage.active } }
+    SideEffect { active?.let { stage.kept = it } }
     val request = active ?: stage.kept ?: return
     val args = request.args ?: return
-    val bounds = request.bounds ?: return
+    val placed by remember(request) { derivedStateOf { request.bounds != null } }
+    if (!placed) return
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val density = LocalDensity.current
-        val full = bounds.width >= constraints.maxWidth - 1f && bounds.height >= constraints.maxHeight - 1f
-        val place = if (full) {
-            Modifier.fillMaxSize()
-        } else {
-            Modifier
-                .offset { IntOffset(bounds.left.roundToInt(), bounds.top.roundToInt()) }
-                .size(with(density) { bounds.width.toDp() }, with(density) { bounds.height.toDp() })
+        val w = constraints.maxWidth
+        val h = constraints.maxHeight
+        val full by remember(request, w, h) {
+            derivedStateOf { request.bounds?.let { it.width >= w - 1f && it.height >= h - 1f } == true }
+        }
+        val place = if (full) Modifier.fillMaxSize() else Modifier.layout { measurable, _ ->
+            val b = request.bounds ?: Rect.Zero
+            val bw = b.width.roundToInt().coerceAtLeast(0)
+            val bh = b.height.roundToInt().coerceAtLeast(0)
+            val p = measurable.measure(Constraints.fixed(bw, bh))
+            layout(bw, bh) { p.place(b.left.roundToInt(), b.top.roundToInt()) }
         }
         Box(place.under(args.background).then(args.hostModifier)) {
             AtlasMap(
