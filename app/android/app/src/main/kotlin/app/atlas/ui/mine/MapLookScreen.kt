@@ -174,7 +174,7 @@ fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
         if (shown != null) {
             val index = sharing!!
             PaletteSheet(
-                shown.name, shown.code,
+                shown.name, shown.code, saved.filterIndexed { i, _ -> i != index }.map { it.name },
                 onClose = { sharing = null },
                 onRename = { name -> edit { MapLookWrites.rename(it, index, name) } },
                 onDelete = {

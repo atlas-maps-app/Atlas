@@ -1,10 +1,14 @@
 package app.atlas.ui.mine
 
+import app.atlas.geo.LatLon
+import app.atlas.mapview.CameraPosition
 import app.atlas.mapview.palette.Family
 import app.atlas.mapview.palette.Oklab
 import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.PaletteFace
 import app.atlas.mapview.palette.PaletteTheme
 import app.atlas.mapview.palette.Slot
+import app.atlas.services.SavedCamera
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
@@ -20,10 +24,17 @@ internal object ColourMapModel {
     /** A colour as the board's sliders hold it: lightness (0 to 1), chroma and hue (degrees). */
     data class Lch(val l: Float, val c: Float, val h: Float)
 
-    /** The sliders' reaches, as the board's: lightness 0.15 to 0.97, chroma 0 to 0.25, hue all round. */
-    const val L_MIN = 0.15f
-    const val L_MAX = 0.97f
+    /** The sliders' reaches: lightness black to white, chroma 0 to 0.25, hue all round. */
+    const val L_MIN = 0f
+    const val L_MAX = 1f
     const val C_MAX = 0.25f
+
+    /** [x] as the sliders say it, each from 0 to 100: its lightness, its saturation (of the sliders' reach) and its hue. */
+    fun shown(x: Lch): Triple<Int, Int, Int> = Triple(
+        ((x.l - L_MIN) / (L_MAX - L_MIN) * 100f).roundToInt().coerceIn(0, 100),
+        (x.c / C_MAX * 100f).roundToInt().coerceIn(0, 100),
+        (x.h / 360f * 100f).roundToInt().coerceIn(0, 100),
+    )
 
     /** The colours of [family] in the board's order. */
     fun slots(family: Family): List<Slot> = Slot.entries.filter { it.family == family }
@@ -88,17 +99,35 @@ internal object ColourMapModel {
 
     /**
      * [p] with [slot] in [colour] and every other colour of its group moved with it, as the palette moves what goes with
-     * a colour (PaletteTheme.move): each from its preset's colour as [slot]'s preset colour becomes [colour].
+     * a colour (PaletteTheme.move): each from where it is as [slot]'s colour goes from where it is to [colour], so an
+     * earlier change of one of them is moved too, not undone.
      */
     fun withGroup(p: Palette, slot: Slot, colour: Int): Palette {
-        val from = p.base.colour(slot)
+        val from = p.colour(slot)
+        if (from == colour) return p
         return slots(slot.family).fold(p) { q, s ->
-            withColour(q, s, if (s == slot) colour else PaletteTheme.move(p.base.colour(s), from, colour))
+            withColour(q, s, if (s == slot) colour else PaletteTheme.move(p.colour(s), from, colour))
         }
     }
 
-    /** [p] with [slot] back to its preset's colour. */
-    fun reset(p: Palette, slot: Slot): Palette = p.copy(colours = p.colours - slot)
+    /** [p] with [slot] back to its colour in [opened] (the palette the editor opened with). */
+    fun reset(p: Palette, slot: Slot, opened: Palette): Palette = withColour(p, slot, opened.colour(slot))
+
+    /** The first colour [a] draws other than [b] does (what an undo brings back into view), or null where none does. */
+    fun differing(a: Palette, b: Palette): Slot? = Slot.entries.firstOrNull { a.colour(it) != b.colour(it) }
+
+    /**
+     * The colour a tap on a building's [face] picks: the slot that paints it, where one does and the map shows it so:
+     * not a guessed face drawn plain while Atlas's guesses are off, a mapped colour kept as mapped, or one no slot paints.
+     */
+    fun picks(face: PaletteFace): Slot? = face.slot?.takeIf { face.colour == PaletteFace.How.GUESSED || face.colour == PaletteFace.How.MAPPED }
+
+    /**
+     * Where the editor's map opens: where the map last was ([saved]), close enough to see the buildings, else [here];
+     * tilted, as the board draws it.
+     */
+    fun start(saved: SavedCamera?, here: LatLon): CameraPosition =
+        if (saved == null) CameraPosition(here, 16.4, 0.0, 45.0) else CameraPosition(saved.target, saved.zoom.coerceIn(15.0, 18.5), saved.bearing, 45.0)
 
     /** True when [p] draws [slot] other than its preset does (the board's dot). */
     fun changed(p: Palette, slot: Slot): Boolean = p.colours[slot]?.let { it != p.base.colour(slot) } ?: false
