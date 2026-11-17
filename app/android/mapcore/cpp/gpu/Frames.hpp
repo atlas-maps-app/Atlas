@@ -98,11 +98,16 @@ struct FrameSlot {
 class Frames {
 public:
     static constexpr std::uint32_t in_flight = 2;
+    /// The longest the frame loop waits on the GPU at once (a slot's previous frame, an image to draw into, a present's
+    /// fence), ns: a GPU that never finishes (a hang the driver does not report as a lost device) fails the frame there
+    /// and leaves the render thread free, where a wait without end would hold it, and the app with it.
+    static constexpr std::uint64_t wait_ns = 2'000'000'000;
 
     [[nodiscard]] static Result<Frames> create(const Device& device);
 
     /// Waits for the next slot's previous frame (it has had a whole frame to finish), reads its GPU times, resets its
-    /// command pool and begins its command buffer for frame `number`.
+    /// command pool and begins its command buffer for frame `number`. A previous frame not finished within wait_ns
+    /// fails the frame (vk::Result::eTimeout) and leaves the slot as it was: the next begin waits for it again.
     [[nodiscard]] Result<FrameSlot*> begin(std::uint64_t number);
     /// Writes a timestamp mark.
     void mark(const FrameSlot& slot, Mark mark) const;
@@ -113,7 +118,8 @@ public:
     [[nodiscard]] const GpuTimes& last_times() const noexcept { return last_; }
     /// How long the last begin waited for its slot's previous frame, ms (0 where it had finished or none was there).
     [[nodiscard]] double waited_ms() const noexcept { return waited_ms_; }
-    /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests).
+    /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests): without a
+    /// bound, since what follows destroys or remakes what those frames use.
     void drain();
 
 private:

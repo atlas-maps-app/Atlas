@@ -90,16 +90,16 @@ void Frames::read_back(FrameSlot& slot) {
 
 Result<FrameSlot*> Frames::begin(std::uint64_t number) {
     FrameSlot& slot = slots_[next_];
-    next_ = (next_ + 1) % in_flight;
     const vk::raii::Device& d = device_->handle();
     waited_ms_ = 0;
     if (slot.pending) {
         const auto waiting = std::chrono::steady_clock::now();
-        const vk::Result waited = d.waitForFences(*slot.done, vk::True, UINT64_MAX);
+        const vk::Result waited = d.waitForFences(*slot.done, vk::True, wait_ns);
         waited_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waiting).count();
-        if (waited != vk::Result::eSuccess) return fail(waited, "a frame's fence");
+        if (waited != vk::Result::eSuccess) return fail(waited, "a frame's fence"); // the slot kept for the next begin
         read_back(slot);
     }
+    next_ = (next_ + 1) % in_flight;
     ATLAS_VK_CHECK(d.resetFences(*slot.done), "resetting a frame's fence");
     ATLAS_VK_CHECK(slot.pool.reset({}), "resetting a frame's command pool");
     ATLAS_VK_CHECK(slot.cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}),
