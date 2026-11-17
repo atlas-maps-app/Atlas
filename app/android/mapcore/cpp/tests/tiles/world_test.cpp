@@ -44,7 +44,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <format>
@@ -1530,7 +1529,12 @@ TEST_CASE(
     namespace slot = atlas::style::palette_slot;
     const atlas::tiles::Style* world = atlas::load::world_style();
     REQUIRE(world != nullptr);
-    REQUIRE(world->ladder.has_value());
+    const std::optional<atlas::tiles::WorldLadder>& ladder = world->ladder;
+    if (!ladder) {
+        FAIL("the world's style has no ladder");
+        return;
+    }
+    const atlas::tiles::WorldLadder& l = *ladder;
     atlas::style::ThemeBlock theme{};
     theme.ground = {.r = 0xD6, .g = 0xCF, .b = 0xC2, .a = 255};
     theme.water = {.r = 0x4F, .g = 0x75, .b = 0x90, .a = 255};
@@ -1541,10 +1545,10 @@ TEST_CASE(
         CHECK(atlas::passes::World::palette_of(theme, night, world, &today) ==
               atlas::passes::World::palette_of(theme, night, world));
     }
-    const atlas::tiles::WorldLadder same = atlas::passes::World::painted_ladder(*world->ladder, *world, &today);
-    CHECK(std::memcmp(&same.day_ground, &world->ladder->day_ground, sizeof same.day_ground) == 0);
-    CHECK(same.sea.at(0).colour == world->ladder->sea.at(0).colour);
-    CHECK(same.lights.at(0).colour == world->ladder->lights.at(0).colour);
+    const atlas::tiles::WorldLadder same = atlas::passes::World::painted_ladder(l, *world, &today);
+    CHECK(same.day_ground == l.day_ground);
+    CHECK(same.sea.at(0).colour == l.sea.at(0).colour);
+    CHECK(same.lights.at(0).colour == l.lights.at(0).colour);
 
     // each land kind with a slot moves with it, by day and at night, exactly as the ground's fills of its colour do; a
     // kind without one (sand, rock) stays
@@ -1599,7 +1603,6 @@ TEST_CASE(
     p.colours.at(slot::lawn) = 0x01A0B0C0U;
     p.colours.at(slot::night_ground) = 0x01302010U;
     p.colours.at(slot::lit_windows) = 0x0100FFFFU;
-    const atlas::tiles::WorldLadder& l = *world->ladder;
     const atlas::tiles::WorldLadder m = atlas::passes::World::painted_ladder(l, *world, &p);
     CHECK(m.day_ground == 0x102030U);
     CHECK(m.day_water == 0x405060U);
