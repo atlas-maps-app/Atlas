@@ -77,13 +77,7 @@ internal class ShopFinder(
             emit(answer)
             return@flow
         }
-        val packed = try {
-            local()?.inPacks(centre, radiusM, filter, limit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            null
-        }
+        val packed = inPacks(filter, centre, radiusM, limit)
         var sketch = packed?.value.orEmpty()
         val op = overpass()
         // packs and windows around the whole circle answer fully, with every tag
@@ -117,13 +111,30 @@ internal class ShopFinder(
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
-            AreaPlaces(sketch, PlaceOrigin.PACK, error = e.message ?: "offline")
+            failed(sketch, filter, centre, radiusM, limit, e.message ?: "offline")
         } catch (e: Exception) {
-            AreaPlaces(sketch, PlaceOrigin.PACK, error = e.message ?: e.toString())
+            failed(sketch, filter, centre, radiusM, limit, e.message ?: e.toString())
         }
         if (answer.error == null) remember(cacheKey, answer)
         emit(answer)
     }.flowOn(Dispatchers.IO)
+
+    /** What the map's packs and windows on the phone hold of [filter] around [centre] ([LocalData.inPacks]); null where none holds any. */
+    private fun inPacks(filter: TagFilter, centre: LatLon, radiusM: Double, limit: Int) = try {
+        local()?.inPacks(centre, radiusM, filter, limit)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * Where Overpass failed with [why]: what the packs and windows on the phone hold by now, with the windows the packs
+     * were asked for that came meanwhile (the app maintainer, 18 November 2026: the answer kept only [sketch], from
+     * before they came), else [sketch].
+     */
+    private fun failed(sketch: List<Place>, filter: TagFilter, centre: LatLon, radiusM: Double, limit: Int, why: String) =
+        AreaPlaces(inPacks(filter, centre, radiusM, limit)?.value?.takeIf { it.isNotEmpty() } ?: sketch, PlaceOrigin.PACK, error = why)
 
     private fun remember(key: String, value: AreaPlaces) = synchronized(kept) { kept[key] = Kept(nowMillis(), value) }
 

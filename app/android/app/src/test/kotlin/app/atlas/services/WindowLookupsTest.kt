@@ -275,41 +275,194 @@ class WindowLookupsTest {
 
     /**
      * Where more windows are missing than the packs are asked for at once, the packs cannot make the circle whole:
-     * Overpass is asked at once, and no window is waited for; where few enough are missing, the packs make it whole and
-     * Overpass is not asked (the reviewer, 17 November 2026: nine windows were waited for, up to 10 s, before Overpass,
-     * for a circle of any size).
+     * Overpass is asked at once, and the nine nearest windows the packs are asked for are not waited for; once they have
+     * come the circle lacks three, which complete it, and Overpass is not asked (the reviewer, 17 November 2026: nine
+     * windows were waited for, up to 10 s, before Overpass, for a circle of any size; the app maintainer, 18 November
+     * 2026: and then none was read).
      */
     @Test
     fun overpassIsAskedAtOnceWhereThePacksCannotMakeTheCircleWhole() = runBlocking {
+        // the packs send nothing before Overpass is asked: a lookup that waited for them would wait its 10 s
+        val overpassAsked = CountDownLatch(1)
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 asked.incrementAndGet()
+                overpassAsked.countDown()
                 return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
             }
         }
         server.start()
         val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
-        val sent = AtomicInteger()
+        val sent = java.util.Collections.synchronizedList(ArrayList<String>())
         val empty = tmp.newFolder("none")
-        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
+        val windows = WindowPlaces({ empty }, packed = { x, y -> overpassAsked.await(20, TimeUnit.SECONDS); sent += "$x/$y"; cafeAt(x, y) })
         val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
-        // 2 km around the window's east edge: four windows by three, twelve missing
-        val edge = LatLon(here.lat, tile.bbox.east)
-        assertEquals(12, Mercator.tilesIn(BBox.around(edge, 2_000.0), WindowPlaces.LEVEL).size)
-        val wide = local.placesAsFound(edge, 2_000.0, cafe).toList()
-        assertEquals("the packs sent no window", 0, sent.get())
-        assertEquals(listOf(PlaceOrigin.ONLINE), wide.map { it.origin })
+        // 2 km around [off]: four windows by three, twelve missing
+        val box = BBox.around(off, 2_000.0)
+        assertEquals(12, Mercator.tilesIn(box, WindowPlaces.LEVEL).size)
+        val started = System.nanoTime()
+        val wide = local.placesAsFound(off, 2_000.0, cafe).toList()
+        assertTrue("Overpass was not held up by the packs", System.nanoTime() - started < 5_000_000_000L)
+        assertEquals(PlaceOrigin.ONLINE, wide.last().origin)
         assertEquals(1, asked.get())
-        // a kilometre around the window: nine missing, from the packs, whole
-        assertFalse(local.places(here, 1_000.0, cafe).partial)
-        assertEquals(9, sent.get())
-        // now the circle at the edge lacks three: they complete it, and Overpass is not asked
-        val whole = local.placesAsFound(edge, 2_000.0, cafe).toList()
+        // the nine nearest come from the packs all the same
+        assertEquals(9, heldIn(windows, box, off, 9))
+        assertEquals(nineNearest, sent.toSet())
+        assertEquals(9, sent.size)
+        // now the circle lacks three: they complete it, and Overpass is not asked
+        val whole = local.placesAsFound(off, 2_000.0, cafe).toList()
         assertEquals(listOf(PlaceOrigin.PACK, PlaceOrigin.PACK), whole.map { it.origin })
         assertEquals(listOf(true, false), whole.map { it.partial })
-        assertEquals(12, sent.get())
+        assertEquals(12, sent.size)
         assertEquals(1, asked.get())
     }
+
+    /**
+     * Where the packs cannot make a box whole, the nearest of its windows they can give are read all the same, at most
+     * nine, nearest its middle first, and not waited for: where more than nine are missing, where the box has more
+     * windows than are held at once, and where one of them is known to be in no pack, as every box that crosses a border
+     * has (the app maintainer, 18 November 2026: none was read, so where Overpass then failed the answer was empty where
+     * it had held the nine nearest windows). A widening search around one middle reads the same nearest windows once.
+     */
+    @Test
+    fun theNearestWindowsAreReadWhereThePacksCannotMakeTheBoxWhole() = runBlocking {
+        // more than nine missing: twelve, the nine nearest read; widened past what is held at once, the same nine, once
+        val gate = CountDownLatch(1)
+        val sent = java.util.Collections.synchronizedList(ArrayList<String>())
+        val first = tmp.newFolder("twelve")
+        val windows = WindowPlaces({ first }, packed = { x, y -> gate.await(20, TimeUnit.SECONDS); sent += "$x/$y"; cafeAt(x, y) })
+        val twelve = BBox.around(off, 2_000.0)
+        val wider = BBox.around(off, 3_500.0)
+        assertTrue(Mercator.tilesIn(wider, WindowPlaces.LEVEL).size > WindowPlaces.HELD)
+        val started = System.nanoTime()
+        windows.fetched(twelve, off, 10_000L)
+        windows.fetched(wider, off, 10_000L)
+        assertTrue("not waited for", System.nanoTime() - started < 5_000_000_000L)
+        gate.countDown()
+        assertEquals(9, heldIn(windows, twelve, off, 9))
+        assertEquals(nineNearest, sent.toSet())
+        assertEquals("each once", 9, sent.size)
+
+        // a box of more windows than are held at once, alone: the nine around its middle
+        val alone = java.util.Collections.synchronizedList(ArrayList<String>())
+        val second = tmp.newFolder("wide")
+        val wide = WindowPlaces({ second }, packed = { x, y -> alone += "$x/$y"; cafeAt(x, y) })
+        val box = BBox.around(here, 3_500.0)
+        wide.fetched(box, here, 10_000L)
+        assertEquals(9, heldIn(wide, box, here, 9))
+        assertEquals(block, alone.toSet())
+
+        // a border: east of it no pack holds a window; a box across it still reads the windows west of it
+        val border = tile.x + 2
+        val across = java.util.Collections.synchronizedList(ArrayList<String>())
+        val third = tmp.newFolder("border")
+        val east = WindowPlaces({ third }, packed = { x, y -> across += "$x/$y"; if (x >= border) null else cafeAt(x, y) })
+        val past = TileId(WindowPlaces.LEVEL, border, tile.y).bbox.center
+        east.fetched(BBox.around(past, 1_000.0), past, 10_000L)
+        assertEquals("the column before the border is held, those past it are in no pack", 3, east.held(BBox.around(past, 1_000.0), past)!!.places.size)
+        across.clear()
+        val before = TileId(WindowPlaces.LEVEL, border - 1, tile.y).bbox.center
+        val box3 = BBox.around(before, 1_000.0)
+        east.fetched(box3, before, 10_000L)
+        assertEquals(6, heldIn(east, box3, before, 6))
+        assertEquals((-1..1).map { dy -> "${border - 2}/${tile.y + dy}" }.toSet(), across.toSet())
+    }
+
+    /**
+     * Where Overpass fails for a circle the packs could not make whole, the answer holds what the packs sent by then
+     * for its nearest windows: the places' lookups, the category row and the Where wheel, the shop screens (the app
+     * maintainer, 18 November 2026: it was empty where it had held the nine nearest windows).
+     */
+    @Test
+    fun whereOverpassFailsTheAnswerHoldsWhatThePacksSent() = runBlocking {
+        val box = BBox.around(off, 2_000.0)
+        // Overpass fails once the nine windows the packs were asked for have come, at most 5 s on
+        val held = java.util.concurrent.atomic.AtomicReference<() -> Int> { 0 }
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                val until = System.nanoTime() + 5_000_000_000L
+                while (held.get()() < 9 && System.nanoTime() < until) Thread.sleep(20)
+                return MockResponse.Builder().code(504).body("busy").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        fun fresh(): LocalData {
+            val dir = tmp.newFolder()
+            val windows = WindowPlaces({ dir }, packed = { x, y -> cafeAt(x, y) })
+            held.set { windows.held(box, off)?.places?.size ?: 0 }
+            return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        }
+        val within = nearOff
+
+        val places = fresh().placesAsFound(off, 2_000.0, cafe).toList().last()
+        assertNotNull(places.error)
+        assertEquals(PlaceOrigin.PACK, places.origin)
+        assertTrue(places.partial)
+        assertEquals(within, places.value.map { it.name() }.toSet())
+
+        var local = fresh()
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val alone = finder.nearby("eat", off, 2_000.0, 20).toList().last()
+        assertNotNull(alone.error)
+        assertEquals(within, alone.places.map { it.name() }.toSet())
+        local = fresh()
+        val wheel = finder.nearbyMany(listOf("eat"), off, 2_000.0, 20).getValue("eat")
+        assertNotNull(wheel.error)
+        assertEquals(within, wheel.places.map { it.name() }.toSet())
+
+        local = fresh()
+        val shop = app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+            .around("cafes", cafe, off, 2_000.0).toList().last()
+        assertNotNull(shop.error)
+        assertEquals(within, shop.places.map { it.name() }.toSet())
+        assertEquals(4, asked.get())
+    }
+
+    /**
+     * The search's pool asks nothing after the packs ([LocalData.inWindowPacks] with `waitForPart`): it waits for the
+     * nearest windows however much of the circle they make, as it did before the packs were waited for only where they
+     * make a box whole (the app maintainer, 18 November 2026).
+     */
+    @Test
+    fun aLookupThatAsksNothingAfterWaitsForTheNearestWindows() = runBlocking {
+        val dir = tmp.newFolder("pool")
+        val windows = WindowPlaces({ dir }, packed = { x, y -> Thread.sleep(50); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val pool = local.inWindowPacks(off, 2_000.0, cafe, waitForPart = true)!!
+        assertTrue(pool.partial)
+        assertEquals(nearOff, pool.value.map { it.name() }.toSet())
+    }
+
+    /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
+    private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
+        val until = System.nanoTime() + 5_000_000_000L
+        while (true) {
+            val have = windows.held(box, centre)?.places?.size ?: 0
+            if (have >= n || System.nanoTime() > until) return have
+            Thread.sleep(20)
+        }
+    }
+
+    /** The point [east] of the way east and [south] of the way south across window [t]. */
+    private fun inside(t: TileId, east: Double, south: Double): LatLon =
+        t.bbox.let { b -> LatLon(b.north - south * (b.north - b.south), b.west + east * (b.east - b.west)) }
+
+    /** A point near [tile]'s east edge, a little north of its middle: 2 km around it meet four windows by three. */
+    private val off: LatLon get() = inside(tile, 0.9, 0.4)
+
+    /**
+     * The nine windows nearest [off], by the names [cafeAt] gives their cafés: [tile]'s column and the next east, the
+     * windows west and east of [tile], and the one north-west of it; of the twelve 2 km around [off], not the windows
+     * south-west, north-east and south-east.
+     */
+    private val nineNearest: Set<String>
+        get() = nearOff + setOf("${tile.x - 1}/${tile.y}", "${tile.x + 2}/${tile.y}", "${tile.x - 1}/${tile.y - 1}")
+
+    /** Of [nineNearest], the cafés within 2 km of [off]: those of [tile]'s column and the next east. */
+    private val nearOff: Set<String>
+        get() = (0..1).flatMap { dx -> (-1..1).map { dy -> "${tile.x + dx}/${tile.y + dy}" } }.toSet()
 
     /** The window at [tile]'s middle and the eight around it, by the names [cafeAt] gives their cafés. */
     private val block: Set<String>

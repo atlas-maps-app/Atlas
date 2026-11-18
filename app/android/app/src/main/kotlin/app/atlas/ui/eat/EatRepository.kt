@@ -100,9 +100,11 @@ class EatRepository internal constructor(private val services: Services) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // A network failure, or an answer that does not parse (a captive portal's page).
+                // A network failure, or an answer that does not parse (a captive portal's page): what the packs and windows
+                // hold by now, with the windows the packs were asked for that came meanwhile, else what was shown
                 val why = (e as? IOException)?.message ?: e.message ?: e.javaClass.simpleName
-                sketch?.let { it.copyWith(loading = false, error = why) } ?: EatArea(centre, r, emptyList(), null, loading = false, local = local, error = why)
+                val now = fromPacks(centre, r, more = false, local).first
+                (now ?: sketch)?.copyWith(loading = false, error = why) ?: EatArea(centre, r, emptyList(), null, loading = false, local = local, error = why)
             }
         } catch (e: CancellationException) {
             throw e

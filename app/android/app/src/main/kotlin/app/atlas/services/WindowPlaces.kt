@@ -40,9 +40,10 @@ import java.util.zip.GZIPInputStream
  * of them: those nearest the last lookup's middle, never one that lookup used or waits for. So a lookup beside the last
  * reads no file again, and a kept window is read again only once its file changes. A lookup reads at most [READ_MAX]
  * windows it does not hold yet, nearest its middle first, and none past the [HELD] nearest, which it could not hold
- * beside them; it asks the packs only for windows that make its box whole ([fetched]). A wide circle is held in part,
- * and its answer says so. (The reviewer, 17 November 2026: held by when they were last read, the windows of a wide
- * circle pushed out those nearest the user, and a wide circle kept on the phone was read again at every lookup.)
+ * beside them; it asks the packs for at most [FETCH_MAX], as near, and waits for them only where they make its box
+ * whole ([fetched]). A wide circle is held in part, and its answer says so. (The reviewer, 17 November 2026: held by
+ * when they were last read, the windows of a wide circle pushed out those nearest the user, and a wide circle kept on
+ * the phone was read again at every lookup.)
  */
 class WindowPlaces(
     private val dir: () -> File?,
@@ -85,28 +86,34 @@ class WindowPlaces(
      * [held], once the windows meeting [box] the phone keeps no data for have come from Atlas's packs, where what they
      * send makes the box whole: a box of at most [HELD] windows, of which at most [FETCH_MAX] are missing, none of them
      * known to be in no pack, and at most [READ_MAX] kept unread. Waited for at most [withinMs] (a read that takes longer
-     * goes on alone, and the next lookup holds it). Where the packs cannot make the box whole they are not asked, and
-     * this is [held] at once, for the caller to ask Overpass for the whole (the reviewer, 17 November 2026: nine windows
-     * were waited for, up to 10 s, for a circle of any size).
+     * goes on alone, and the next lookup holds it). Where they cannot make it whole the packs are asked all the same for
+     * the nearest they can give, at most [FETCH_MAX], nearest [centre] first and none past the [HELD] nearest, but not
+     * waited for, unless [waitForPart] (a caller that asks nothing after them): this is [held] at once, for the caller to
+     * ask Overpass for the whole, and where that fails [held] holds what they brought by then. A widening search around
+     * one middle asks for the same nearest windows once. (The reviewer, 17 November 2026: nine windows were waited for, up
+     * to 10 s, for a circle of any size; the app maintainer, 18 November 2026: and then, where the packs could not make a
+     * box whole, none was read, so where Overpass failed the answer was empty where it had held the nine nearest.)
      */
-    suspend fun fetched(box: BBox, centre: LatLon, withinMs: Long): Held? {
+    suspend fun fetched(box: BBox, centre: LatLon, withinMs: Long, waitForPart: Boolean = false): Held? {
         val range = Range.of(box)
-        if (range.size > HELD) return held(box, centre)
         val kept = keptIn(range)
         val now = clock()
-        val windows = range.keys()
+        // the windows this lookup can hold, nearest its middle first: none past them is read or asked for
+        val windows = range.closest(centre, HELD)
         val unread = windows.count { k -> kept[k]?.let { cached(k, stampOf(it)) == null } == true }
         val missing = windows.filter { k -> k !in kept && cached(k, PACKED) == null }
-        val inNoPack = synchronized(none) { missing.any { k -> none[k]?.let { now - it < NONE_MS } == true } }
-        if (missing.isEmpty() || missing.size > FETCH_MAX || unread > READ_MAX || inNoPack) return held(box, centre)
+        val inNoPack = synchronized(none) { missing.filter { k -> none[k]?.let { now - it < NONE_MS } == true }.toSet() }
+        val asked = missing.filter { it !in inNoPack }.take(FETCH_MAX)
+        if (asked.isEmpty()) return held(box, centre)
+        val whole = range.size <= HELD && inNoPack.isEmpty() && missing.size <= FETCH_MAX && unread <= READ_MAX
         // this lookup's windows, those still to come among them, are held when they come
         synchronized(cache) {
             middle = centre
             mine = windows.toSet()
         }
-        val reads = missing.map(::read)
-        withTimeoutOrNull(withinMs) { reads.awaitAll() }
-        return look(box, centre, waiting = missing.toSet())
+        val reads = asked.map(::read)
+        if (whole || waitForPart) withTimeoutOrNull(withinMs) { reads.awaitAll() }
+        return look(box, centre, waiting = asked.toSet())
     }
 
     /** [held], [waiting] (windows of [box] asked of the packs) held as this lookup's own when they come. */
@@ -203,8 +210,17 @@ class WindowPlaces(
         /** How many windows the range holds. */
         val size: Long get() = (x1 - x0 + 1).toLong() * (y1 - y0 + 1)
 
-        /** Its windows, by key. */
-        fun keys(): List<Long> = (x0..x1).flatMap { x -> (y0..y1).map { y -> key(x, y) } }
+        /**
+         * Its [n] windows nearest [centre], nearest first: of those within [NEAR] windows of the one holding [centre] (or
+         * of its window nearest it), never every window of a wide range.
+         */
+        fun closest(centre: LatLon, n: Int): List<Long> {
+            val t = Mercator.tileAt(centre, LEVEL)
+            val cx = t.x.coerceIn(x0, x1)
+            val cy = t.y.coerceIn(y0, y1)
+            val near = (maxOf(x0, cx - NEAR)..minOf(x1, cx + NEAR)).flatMap { x -> (maxOf(y0, cy - NEAR)..minOf(y1, cy + NEAR)).map { y -> key(x, y) } }
+            return near.sortedWith(nearest(centre)).take(n)
+        }
 
         companion object {
             fun of(box: BBox): Range {
@@ -235,6 +251,9 @@ class WindowPlaces(
         const val HELD = READ_MAX + FETCH_MAX
 
         private const val PARALLEL = 3
+
+        /** How far from a lookup's middle, in windows, its [HELD] nearest can lie: 13 by 13 hold them from any corner. */
+        private const val NEAR = 6
         private const val NONE_MS = 10 * 60_000L
         private const val PACKED = "packed"
         private val NAME = Regex("^$LEVEL-(\\d+)-(\\d+)\\.json\\.gz$")

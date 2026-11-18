@@ -1013,10 +1013,11 @@ class SearchSheetModel(
             }
             holiday = withContext(Dispatchers.IO) { runCatching { holidayAt(c) }.getOrDefault(false) }
             showPool(c, found, origin)
-            // online, where the phone holds part of the circle: the map's windows it keeps no data for, from Atlas's packs
+            // online, where the phone holds part of the circle: the map's windows it keeps no data for, from Atlas's packs,
+            // waited for however much of it they make, as nothing is asked after them
             if (origin != PlaceOrigin.STORE && !services.config.offline && services.connectivity.online.value) {
                 val more = try {
-                    services.localData.inWindowPacks(c, POOL_RADIUS_M, ANY_PLACE, POOL_LIMIT)
+                    services.localData.inWindowPacks(c, POOL_RADIUS_M, ANY_PLACE, POOL_LIMIT, waitForPart = true)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

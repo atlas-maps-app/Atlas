@@ -312,10 +312,11 @@ class LocalData(
     /**
      * The places in [box] as they are found: what the phone holds ([onPhone]) at once; where that is only part of
      * the box (or nothing), online, the packs and the map's windows again once the windows the phone keeps no data for
-     * came from Atlas's packs ([WindowPlaces.fetched]: only where they make the box whole), where that holds more; then,
-     * where the box is still not held whole, [ask]'s (Overpass's) for the whole of it, at once where the packs could
-     * not make it whole, kept by [keep] and sorted by [order], or the last answer again with [ask]'s error where it
-     * failed. Nothing on the phone and offline: [ask]'s answer alone (none, no origin).
+     * came from Atlas's packs ([WindowPlaces.fetched]: waited for only where they make the box whole), where that holds
+     * more; then, where the box is still not held whole, [ask]'s (Overpass's) for the whole of it, at once where the
+     * packs could not make it whole, kept by [keep] and sorted by [order]; where it failed, what the phone holds by then
+     * (with the windows the packs sent meanwhile) and [ask]'s error. Nothing on the phone and offline: [ask]'s answer
+     * alone (none, no origin).
      */
     private fun asFound(
         at: LatLon,
@@ -338,7 +339,13 @@ class LocalData(
         val phone = best
         if (phone != null && (!phone.partial || !online.available())) return@flow
         val got = ask()
-        emit(if (got.error != null && phone != null) phone.copy(error = got.error) else got.copy(value = order(got.value.filter(keep))))
+        // where it failed, what the phone holds by now: the windows the packs were asked for that came meanwhile too
+        val now = when {
+            got.error == null -> null
+            phone?.origin == PlaceOrigin.STORE -> phone
+            else -> onPhone(at, box, fromStore, accept, keep, order) ?: phone
+        }
+        emit(now?.copy(error = got.error) ?: got.copy(value = order(got.value.filter(keep))))
     }.flowOn(Dispatchers.IO)
 
     /**
@@ -388,16 +395,22 @@ class LocalData(
 
     /**
      * [packsAndWindows] again, online, once the windows meeting [box] that the phone keeps no data for came from Atlas's
-     * packs ([WindowPlaces.fetched], waited for at most [WINDOW_PACKS_MS], and asked only where they make the box whole:
-     * else at once); null offline, or where no pack and no window holds any of the box.
+     * packs ([WindowPlaces.fetched], waited for at most [WINDOW_PACKS_MS] where they make the box whole, or with
+     * [waitForPart]; else the nearest asked for and not waited for); null offline, or where no pack and no window holds
+     * any of the box.
      */
-    private suspend fun fetchedWindows(at: LatLon, box: BBox, accept: (Map<String, String>) -> Boolean): Pair<List<Place>, Boolean>? {
+    private suspend fun fetchedWindows(
+        at: LatLon,
+        box: BBox,
+        accept: (Map<String, String>) -> Boolean,
+        waitForPart: Boolean = false,
+    ): Pair<List<Place>, Boolean>? {
         val w = windowPlaces ?: return null
         if (!isOnline() || storeCovering(at) != null) return null
         val pack = packsCovering(at)
         if (pack?.covers(box) == true) return null
         val held = try {
-            w.fetched(box, at, WINDOW_PACKS_MS)
+            w.fetched(box, at, WINDOW_PACKS_MS, waitForPart)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -429,13 +442,22 @@ class LocalData(
     /**
      * [inPacks] once, online, the map's windows in the circle the phone keeps no data for came from Atlas's packs (not
      * Overpass), waited for at most [WINDOW_PACKS_MS], where they make the circle's box whole ([WindowPlaces.fetched]);
-     * at once where they cannot: for the screens that show [inPacks]' part of a circle, before they ask Overpass for the
-     * whole. Null offline, where a region's store covers [centre], or where nothing holds any of the circle.
+     * at once where they cannot, the nearest asked for all the same: for the screens that show [inPacks]' part of a
+     * circle before they ask Overpass for the whole, and where that fails take [inPacks] again, which holds those that
+     * came by then. [waitForPart] for a screen that asks nothing after (the search's pool): they are waited for however
+     * much of the circle they make. Null offline, where a region's store covers [centre], or where nothing holds any of
+     * the circle.
      */
-    suspend fun inWindowPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<Place>>? =
+    suspend fun inWindowPacks(
+        centre: LatLon,
+        radiusM: Double,
+        filter: TagFilter,
+        limit: Int = DEFAULT_LIMIT,
+        waitForPart: Boolean = false,
+    ): LocalAnswer<List<Place>>? =
         withContext(Dispatchers.IO) {
             val box = BBox.around(centre, radiusM)
-            val (found, whole) = fetchedWindows(centre, box) { filter.matches(it) } ?: return@withContext null
+            val (found, whole) = fetchedWindows(centre, box, { filter.matches(it) }, waitForPart) ?: return@withContext null
             LocalAnswer(nearest(found.filter { Geo.distance(centre, it.location) <= radiusM }, centre, limit), PlaceOrigin.PACK, partial = !whole)
         }
 

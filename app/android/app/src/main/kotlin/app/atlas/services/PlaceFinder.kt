@@ -102,10 +102,10 @@ class LayeredPlaceFinder(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: IOException) {
-                    NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, e.message ?: "offline")
+                    failed(centre, radiusM, filter, limit, e.message ?: "offline")
                 } catch (e: Exception) {
                     // An answer that does not parse (a captive portal's page, a broken proxy) is a failure to report too.
-                    NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, e.message ?: e.toString())
+                    failed(centre, radiusM, filter, limit, e.message ?: e.toString())
                 }
                 emit(result)
             }
@@ -158,14 +158,23 @@ class LayeredPlaceFinder(
                 out[id] = answer.fold(
                     { all -> NearbyPlaces(nearest(all.filter { f.first.matches(it.tags) }, centre, limit), PlaceOrigin.ONLINE) },
                     { e ->
-                        // where Overpass fails, the part the phone had stays, with what went wrong
-                        val why = e.message ?: if (e is IOException) "offline" else e.toString()
-                        out[id]?.copy(error = why) ?: NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, why)
+                        // where Overpass fails, the part the phone has by now stays, with what went wrong
+                        failed(centre, radiusM, f.first, limit, e.message ?: if (e is IOException) "offline" else e.toString(), out[id])
                     },
                 )
             }
             out
         }
+
+    /**
+     * Where Overpass failed with [why]: what the map's packs and windows on the phone hold by now ([inPacks]), with the
+     * windows the packs were asked for that came meanwhile (the app maintainer, 18 November 2026: the answer was empty
+     * where it had held them), else what was [had], else none.
+     */
+    private fun failed(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int, why: String, had: NearbyPlaces? = null): NearbyPlaces =
+        inPacks(centre, radiusM, filter, limit)?.takeIf { it.value.isNotEmpty() }?.let { NearbyPlaces(it.value, PlaceOrigin.PACK, why) }
+            ?: had?.copy(error = why)
+            ?: NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, why)
 
     /** What a region's store holds of [category] within [radiusM] of [centre]; null where it holds none, or there is none. */
     private fun inStore(category: Category, centre: LatLon, radiusM: Double): List<Place>? {

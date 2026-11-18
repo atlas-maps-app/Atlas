@@ -56,7 +56,8 @@ fun NearbyList(
         runCatching {
             services.places.nearby(categoryId, centre, radiusM, limit).collect { r ->
                 val prev = state
-                state = if (r.error != null && prev != null && prev.places.isNotEmpty()) prev.copy(error = r.error) else r
+                // a failure that holds no place keeps what was shown, with what went wrong
+                state = if (r.error != null && r.places.isEmpty() && prev != null && prev.places.isNotEmpty()) prev.copy(error = r.error) else r
             }
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it else failed = it.message ?: it.toString() }
         if (state == null && failed == null) state = NearbyPlaces(emptyList(), PlaceOrigin.PACK)
