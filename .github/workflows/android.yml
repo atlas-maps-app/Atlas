@@ -47,6 +47,10 @@ on:
         description: Keep this run's caches (ccache's, Gradle's, the emulator's SDK archives) for its branch, to measure warm runs of a change to CI (delete them after)
         type: boolean
         default: false
+      terrain_packs:
+        description: "Put the terrain under VK bench's map from these terrain runs' artifacts (terrain.yml's artifact ids, comma-separated)"
+        type: string
+        default: ''
 
 # A push to `app` never cancels a run in progress: each push's run has a group of its own and goes to its end beside
 # the others, so an agent pushes when its change is ready, not when CI is idle, and every commit of `app` gets its word
@@ -670,6 +674,9 @@ jobs:
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # a terrain run's artifact, on a dispatch that names one (terrain_packs)
     env:
       # The SDK's archives (below) are kept as the apk job's caches are.
       KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
@@ -698,6 +705,29 @@ jobs:
         with:
           name: atlas-bench-packs
           path: bench-packs
+      # The terrain under VK bench's map (ENGINE.md part 6, terrain, step 2), on a dispatch that names terrain runs'
+      # artifacts (terrain_packs): the terrain pack of the Westerkerk's L9 tile cut out of them
+      # (app/android/mapcore/cpp/tools/relief/cut.py) beside the canal ring, which the debug and bench builds list as the
+      # terrain's (PackList.terrainFileId), so VK bench's comparison of the relief on and off draws it. Every other run
+      # is as before: the step is skipped.
+      - name: The terrain under the map
+        if: github.event_name == 'workflow_dispatch' && inputs.terrain_packs != '' && (matrix.part == 'vk' || matrix.part == 'all')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS: ${{ inputs.terrain_packs }}
+        run: |
+          work="$RUNNER_TEMP/terrain"
+          mkdir -p "$work" bench-packs
+          for id in ${ARTIFACTS//,/ }; do
+            curl -fsSL --retry 5 -H "Authorization: Bearer $GH_TOKEN" -o "$work/terrain-$id.zip" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip"
+            unzip -q -o "$work/terrain-$id.zip" -d "$work/terrain-$id"
+            rm "$work/terrain-$id.zip"
+            run=$(dirname "$(find "$work/terrain-$id" -name '*-terrain.idx' | head -1)")
+            python3 -I app/android/mapcore/cpp/tools/relief/cut.py "$run" bench-packs 9/262/168 --around 0
+            rm -rf "$work/terrain-$id"
+          done
+          ls -l bench-packs
       - name: The part's switches
         env:
           PART: ${{ matrix.part }}

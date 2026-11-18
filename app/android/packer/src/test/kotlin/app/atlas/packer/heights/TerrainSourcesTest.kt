@@ -42,6 +42,8 @@ class TerrainSourcesTest {
         // every source says how it is read, under which licence, and how it is credited; Copernicus's carry its notice and liability sentence
         for (s in r.sources) {
             assertTrue(s.id, s.credit.isNotBlank() && s.licence.isNotBlank() && s.hosts.all { it.startsWith("https://") } && Regex("\\d{4}-\\d{2}-\\d{2}").matches(s.date))
+            // and where the licence's text is (About & licences links it)
+            assertTrue(s.id, s.licenceUrl?.startsWith("https://") == true)
         }
         for ((id, product) in listOf("glo30" to "WorldDEM-30", "glo90" to "WorldDEM-90")) {
             val s = r.source(id)
@@ -51,6 +53,8 @@ class TerrainSourcesTest {
         }
         assertTrue(r.source("tinitaly").credit.contains("https://doi.org/10.13127/tinitaly/1.1"))
         assertTrue(r.source("kartverket-dtm1").credit.contains("© Kartverket"))
+        // the map's credit line names each source by its short name (terrain.json's, packer heights-list)
+        assertEquals(listOf("Copernicus", "Copernicus", "AHN", "TINITALY", "Kartverket"), r.sources.map { it.short })
         // the Netherlands whole, Tuscany's L12 and L13 whole, Norway round Bergen
         assertTrue(r.region("netherlands").levels.single().let { it.whole && it.levels == listOf(12, 13, 14) })
         assertTrue(r.region("tuscany").levels.single().let { it.whole && it.levels == listOf(12, 13) })

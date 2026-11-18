@@ -48,8 +48,11 @@ namespace atlas::jni {
 /// (a new world's keep is whole before the old world's goes). 33: Native.passes (the passes the map's frames record,
 /// by name: VK bench's configurations and its split of the GPU's time by pass), Native.passCounts and
 /// Native.publishRecords (every frame record handed on as a measurement ends) and Native.stageF (the map's stage F by
-/// part, kept while VK bench asks).
-inline constexpr jint abi = 33;
+/// part, kept while VK bench asks). 34: the terrain's relief (ENGINE.md part 6, step 2): Native.terrainWants,
+/// terrainBlocks and terrainKeep (a country's terrain packs fetched by range, as the world's), Native.terrain (the
+/// relief on or off) and Native.terrainSources (the sources of the relief drawn, for the credit line); Native.packs and
+/// Native.worldHead take a terrain pack's kind (5).
+inline constexpr jint abi = 34;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";
