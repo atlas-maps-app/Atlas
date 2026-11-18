@@ -245,8 +245,9 @@ class StoreBehaviourTest {
 
     @Test
     fun aStoreOfAnotherSchemaIsRefused() {
-        // 3, of the packs published until 17 November 2026 and of the Atlas before alpha 32, and 5, of an Atlas after this
-        for (schema in listOf(3, 5)) {
+        // 4, of the packs published from 17 November 2026 and of the Atlas before batch 4's brands, and 6, of an Atlas
+        // after this
+        for (schema in listOf(4, 6)) {
             assertFalse(PlaceStore.reads(schema))
             val pack = File(tmp.root, "old-$schema.places.db")
             val region = File(tmp.root, "old-region-$schema.db")
