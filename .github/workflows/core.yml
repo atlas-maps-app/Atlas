@@ -1014,6 +1014,15 @@ jobs:
           python3 -I "$CP/tools/ctest/shards.py" costs --junit ctest --costs "$CP/tools/ctest/costs.tsv" \
             --into measured/costs.tsv --summary measured/summary.md
           { echo "### The host jobs' shards"; echo; cat measured/summary.md; } >> "$GITHUB_STEP_SUMMARY"
+      # The cases that skipped for a data folder CI does not set (tools/ctest/skips.py): they count as passed, so the
+      # run's summary names each, once for all the host jobs, as each job's own summary names the cases that skipped
+      # their Vulkan work.
+      - name: The cases that skipped for data
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p measured
+          python3 -I "$CP/tools/ctest/skips.py" --junit ctest --summary measured/skips.md
+          { echo "### The cases that skipped for data CI does not set"; echo; cat measured/skips.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
