@@ -293,6 +293,11 @@ jobs:
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | sed -n 1p
 
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with
+      # the Android ABIs' targets where the NDK builds
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ${{ (matrix.task == 'android' || matrix.task == 'tidy-android') && 'android' || '' }}
       - name: CMake ${{ env.CMAKE_VERSION }} and Ninja ${{ env.NINJA_VERSION }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"

@@ -7,9 +7,13 @@
 // a unit, Unicode 13.0 as CPython 3.9's within the plane: text/Digits.inc); a code point beyond the plane is neither.
 #pragma once
 
+#include "osm/Overpass.hpp"
+
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 namespace atlas::load {
 
@@ -31,5 +35,9 @@ namespace atlas::load {
 
 /// `re.match(r'\s*(\d{4})', text)` read as an int: the year a start_date begins with, or nothing.
 [[nodiscard]] std::optional<std::int64_t> leading_year(std::string_view text) noexcept;
+
+/// regions.py's `join_rings(ways)`: a relation's member ways joined end to end into closed rings of (lat, lon), each
+/// more than three points, its first repeated last; what does not close is left out.
+[[nodiscard]] std::vector<std::vector<osm::LatLon>> join_rings(const std::vector<std::span<const osm::LatLon>>& ways);
 
 } // namespace atlas::load

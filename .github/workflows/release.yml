@@ -45,6 +45,11 @@ jobs:
           fi
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "${native[@]}" > /dev/null
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         # The APK's tiles (the Westerkerk's living pack, for VK facts' hash lines alone: it carries no map) are cut by
         # the core's stage P (mapcore/cpp/stagep), as android.yml's apk job cuts them: built alone (the host-stagep
