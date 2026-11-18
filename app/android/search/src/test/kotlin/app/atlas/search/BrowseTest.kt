@@ -112,6 +112,21 @@ class BrowseTest {
         assertEquals(LocalTime.of(22, 30), pulse(listOf(early)).closes!!.toLocalTime())
     }
 
+    /**
+     * A place open on only through its guessed tails counts as open with an open end, never as open day and night (the
+     * app maintainer, 18 November 2026, batch 4 B9): `Mo-Su 02:00-24:00+` changes nowhere within a year.
+     */
+    @Test
+    fun aGuessedTailIsNoOpenDayAndNight() {
+        val drinks = CategoryTree.category("drinks")!!
+        val late = PlaceRecord.of(Place(OsmId(OsmType.NODE, 920_001L), LatLon(here.lat + 0.001, here.lon),
+            mapOf("amenity" to "bar", "name" to "Nachtbar", "opening_hours" to "Mo-Su 02:00-24:00+")), country = null)
+        val pulse = Browse.pulses(listOf(drinks), listOf(late), here, Moment(Fixtures.saturday.withHour(21).withMinute(0), hours = Nowhere), HoursBook(listOf(late))).single()
+        assertEquals(1 to 1, pulse.open to pulse.openEnded)
+        assertEquals(0, pulse.endless)
+        assertNull(pulse.closes)
+    }
+
     /** The time picker's curve: how many are open each hour of the day asked about, over what the other filters keep. */
     @Test
     fun theFiltersCountWhatIsOpenEachHour() {

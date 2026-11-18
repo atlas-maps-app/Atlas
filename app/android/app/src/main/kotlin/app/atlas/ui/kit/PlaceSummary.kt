@@ -154,7 +154,9 @@ sealed interface OpenWords {
             if (st.unknown) return null
             val at = st.changesAt
             if (st.isOpen) {
-                if (at == null) return Always
+                // no change within the year: open day and night, unless it runs on only through guessed tails
+                // (`Mo-Su 02:00-24:00+`; the app maintainer, 18 November 2026, batch 4 B9): open, and no end named
+                if (at == null) return if (st.openEnd) Open else Always
                 // Only a stated closing time is said; an open end's is a guess, and a change to "unknown" is no closing.
                 if (st.nextChangeKind != ChangeKind.CLOSES || st.openEnd) return Open
                 val left = Duration.between(now, at).toMinutes()

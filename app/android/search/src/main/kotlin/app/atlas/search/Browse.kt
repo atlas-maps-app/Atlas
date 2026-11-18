@@ -70,7 +70,7 @@ data class CategoryPulse(
      * own where any of them says, else by guessed ones ([untilGuessed]); null when none of them closes.
      */
     val until: LocalDateTime? = null,
-    /** Of [open], those with no closing ahead: open day and night, or open without hours as such places are. */
+    /** Of [open], those with no closing ahead: open day and night, or open without hours as such places are; never one open to an open end. */
     val endless: Int = 0,
     /** With none open, when the first of them opens, by hours of their own where any says ([opensGuessed]); null when one is open or none says. */
     val opensAt: LocalDateTime? = null,
@@ -281,7 +281,8 @@ object Browse {
         }
         val latest = pick(changes(open, ChangeKind.CLOSES), last = true)
         val openEnded = open.count { r -> statuses[r]?.first?.openEnd == true }
-        val endless = open.count { r -> statuses[r]?.first?.let { it.nextChangeKind != ChangeKind.CLOSES || it.changesAt == null } == true }
+        // a guessed tail is no closing nor endless: open to an open end (the app maintainer, 18 November 2026, batch 4 B9)
+        val endless = open.count { r -> statuses[r]?.first?.let { !it.openEnd && (it.nextChangeKind != ChangeKind.CLOSES || it.changesAt == null) } == true }
         val opens = if (open.isNotEmpty()) null else pick(changes(places, ChangeKind.OPENS), last = false)
 
         fun tell(kind: TellKind, value: String?) = CategoryPulse(

@@ -123,6 +123,22 @@ class KitLogicTest {
         assertEquals(0, ProfileShape.of(DoubleArray(3) { Double.NaN }, null, 0.05).size)
     }
 
+    /**
+     * A guessed tail never makes a place read "open 24/7" (the app maintainer, 18 November 2026, batch 4 B9):
+     * `Mo-Su 02:00-24:00+` runs on unbroken only through each night's guessed tail, so no change comes within a year;
+     * it is open, as far as the hours say, and names no end. Its tail is marked: the status says it runs into an open end.
+     */
+    @Test
+    fun aGuessedTailNeverReadsOpenAroundTheClock() {
+        val now = LocalDateTime.of(2026, 10, 13, 19, 0)
+        val place = Place(null, LatLon(52.0, 4.0), mapOf("name" to "Nachtcafé", "amenity" to "cafe", "opening_hours" to "Mo-Su 02:00-24:00+"))
+        val s = PlaceSummary.of(place, null, "en", now, hours = Nowhere)
+        assertEquals(OpenWords.Open, OpenWords.of(s, now))
+        // stated around the clock, it says so as before
+        val always = Place(null, LatLon(52.0, 4.0), mapOf("name" to "Shop", "shop" to "convenience", "opening_hours" to "Mo-Su 00:00-24:00"))
+        assertEquals(OpenWords.Always, OpenWords.of(PlaceSummary.of(always, null, "en", now, hours = Nowhere), now))
+    }
+
     private fun summary(open: OpenStatus?, always: Boolean = false) =
         PlaceSummary(Place(null, LatLon(52.0, 4.0), mapOf("name" to "X")), "X", null, "maki-marker", 0, open, always, null)
 
