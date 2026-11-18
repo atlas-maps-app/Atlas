@@ -47,6 +47,18 @@ on:
         description: Keep this run's caches (ccache's, Gradle's, the emulator's SDK archives) for its branch, to measure warm runs of a change to CI (delete them after)
         type: boolean
         default: false
+      terrain_packs:
+        description: "Put the terrain under VK bench's map from these terrain runs' artifacts (terrain.yml's artifact ids, comma-separated)"
+        type: string
+        default: ''
+      look:
+        description: "The look alone: the phone look tool's views to draw (PhoneLook: name=lat,lon,distance,bearing,pitch;...), over windows the core builds from the canal ring's data; no other job runs (empty = none)"
+        type: string
+        default: ''
+      look_ref:
+        description: The commit or branch the look is built from and drawn with, its own stage P and stage T (empty = this run's)
+        type: string
+        default: ''
 
 # A push to `app` never cancels a run in progress: each push's run has a group of its own and goes to its end beside
 # the others, so an agent pushes when its change is ready, not when CI is idle, and every commit of `app` gets its word
@@ -60,6 +72,7 @@ jobs:
   # The APKs the emulator jobs open and the artifacts keep: the debug build and the bench build, their map core built
   # with NDK r30 for both ABIs through ccache.
   apk:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.look != '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -143,14 +156,19 @@ jobs:
       # emulator's runs draw (:app's benchTiles, in the New looks), both reading ATLAS_STAGEP, so they come from the code
       # the phone builds its windows with. Built alone (the host-stagep preset: no slangc, Vulkan or HarfBuzz) with LLVM's
       # clang and libc++ (above) and the SDK's CMake and Ninja, through a ccache folder and entry of its own (unit-app
-      # restores it), the compiler known by its file's time and size. The Westerkerk's tiles are the port's cut's byte
-      # for byte: :mapcorecheck's bundled tiles stay the port's, the reference its StagePPackerTest and CutParityTest hold
-      # the core to, as do core.yml's.
+      # restores it), the compiler known by its file's time and size. Since core-p14 the Westerkerk's tiles are the
+      # core's own (its buildings cleaned), no longer the port's: :mapcorecheck's bundled tiles stay the port's until
+      # cut 2, and the host's checks VK facts is held to (ci/hashes.env) run over the core's Westerkerk.
       - uses: actions/cache/restore@v6
         with:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -238,7 +256,7 @@ jobs:
   # The app's unit tests (Robolectric's screenshots among them), with the tiles the APK carries (the Westerkerk's living
   # pack, for VK facts): the core's stage P cuts them, as in apk (whose ccache entry for the tool this job takes).
   unit-app:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.tests == false || inputs.look != '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -297,6 +315,11 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -353,7 +376,7 @@ jobs:
   # Every other module's unit tests: the JVM modules' test and the Android libraries' testDebugUnitTest, without the
   # app's (unit-app) and :mapcorecheck's (mapcorecheck).
   unit-rest:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.tests == false || inputs.look != '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -416,6 +439,11 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # Android ABIs' targets for the NDK's build
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
         run: |
           cmake_bin="$ANDROID_HOME/cmake/$(grep '^cmake.version=' mapcore/tools.properties | cut -d= -f2-)/bin"
@@ -481,7 +509,7 @@ jobs:
   # globe check) must every one be drawn, each the hash its version stored on lavapipe-x86_64 (artifact `likeness`:
   # every frame as a PNG, and the hashes of a version that has none on this platform yet).
   mapcorecheck:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.tests == false) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.tests == false || inputs.look != '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -514,6 +542,10 @@ jobs:
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "Map core host build: LLVM's clang and libc++, and ccache"
         run: |
           LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
@@ -657,6 +689,134 @@ jobs:
           path: likeness/
           if-no-files-found: ignore
 
+  # The look, by hand (inputs look and look_ref; no other job runs then): the phone look tool's views (PhoneLook) drawn
+  # on lavapipe by the core of one commit, look_ref's, with its own stage P and stage T, over the windows it builds from
+  # the canal ring's element pack (-Datlas.phonelook.elements), kept as the artifact `look`. Two runs, one of a change's
+  # base and one of its tip, give its before and after: the same cameras, moment and data, so the pictures differ by the
+  # change alone. Its steps are mapcorecheck's, of the commit drawn (which has no Rust to install before core-p14).
+  look:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.look != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      GRADLE_BUILD_ACTION_CACHE_KEY_JOB: apk
+    defaults:
+      run:
+        working-directory: app/android
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.look_ref || github.sha }}
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+      - name: Android SDK 37
+        run: |
+          pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
+            "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
+      - name: Rust, where the commit pins one
+        run: |
+          [ ! -f "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ] || "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
+      - name: "Map core host build: LLVM's clang and libc++, and ccache"
+        run: |
+          LLVM=$(grep -m1 "^  LLVM: '" ../../.github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major
+          [ -n "$LLVM" ] || { echo "::error::core.yml names no LLVM version"; exit 1; }
+          codename=$(lsb_release -cs)
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL --retry 20 --retry-delay 30 --retry-all-errors https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/keyrings/apt.llvm.org.asc > /dev/null
+          echo "deb [signed-by=/etc/apt/keyrings/apt.llvm.org.asc] http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$LLVM main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          for try in $(seq 20); do
+            sudo apt-get update -q && apt-cache show "clang-$LLVM" > /dev/null 2>&1 && break
+            echo "::warning::apt.llvm.org's clang-$LLVM is not there (try $try of 20); again in 30 s"
+            sleep 30
+          done
+          sudo apt-get install -y -q --no-install-recommends clang-$LLVM lld-$LLVM libc++-$LLVM-dev libc++abi-$LLVM-dev \
+            libclang-rt-$LLVM-dev ccache
+          {
+            echo "ATLAS_HOST_CC=clang-$LLVM"
+            echo "ATLAS_HOST_CXX=clang++-$LLVM"
+            echo "ATLAS_HOST_CXXFLAGS=-stdlib=libc++"
+            echo "ATLAS_HOST_LDFLAGS=-stdlib=libc++"
+            echo "ATLAS_CCACHE=1"
+            echo "CCACHE_DIR=$HOME/.cache/ccache-host"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo "CCACHE_MAXSIZE=2G"
+            echo "CCACHE_COMPILERCHECK=mtime"
+            echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime"
+          } >> "$GITHUB_ENV"
+          clang++-$LLVM --version | head -1
+      - uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ccache-host
+          key: ccache-android-host-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-android-host-
+      - name: "Map core host build: the emulator package's pin"
+        run: echo "EMULATOR_SHA1=$(grep '^emulator.linux-x86_64.sha1=' mapcore/tools.properties | cut -d= -f2-)" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/emulator-vulkan
+          key: emulator-vulkan-${{ env.EMULATOR_SHA1 }}
+      - name: "Map core host build: lavapipe from the pinned emulator package"
+        run: |
+          dir="$RUNNER_TEMP/emulator-vulkan"
+          if [ ! -e "$dir/lvp_icd.json" ]; then
+            file=$(grep '^emulator.linux-x86_64.file=' mapcore/tools.properties | cut -d= -f2-)
+            python3 -I ci/sdkpkg.py fetch "https://dl.google.com/android/repository/$file" - "$EMULATOR_SHA1" "$RUNNER_TEMP/$file"
+            unzip -q "$RUNNER_TEMP/$file" 'emulator/lib64/vulkan/*' -d "$RUNNER_TEMP/emulator"
+            rm "$RUNNER_TEMP/$file"
+            mv "$RUNNER_TEMP/emulator/emulator/lib64/vulkan" "$dir"
+            rm -f "$dir"/*swiftshader* "$dir"/*MoltenVK* "$dir"/*kosmickrisp* "$dir"/glslangValidator
+          fi
+          echo "ATLAS_LAVAPIPE_DIR=$dir" >> "$GITHUB_ENV"
+          if [ ! -e "$dir/libvulkan.so.1" ] && [ ! -e "$dir/libvulkan.so" ]; then
+            sudo apt-get install -y -q libvulkan1 > /dev/null
+            echo "ATLAS_VULKAN_LOADER=/usr/lib/x86_64-linux-gnu/libvulkan.so.1" >> "$GITHUB_ENV"
+          fi
+      - name: The canal ring's pack
+        uses: actions/cache@v6
+        with:
+          path: cache/packs/regions/grachten.atlas
+          key: likeness-pack-grachten-3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec
+      - name: Fetch the canal ring's pack
+        working-directory: .
+        run: |
+          f=cache/packs/regions/grachten.atlas
+          if [ ! -f "$f" ]; then
+            mkdir -p cache/packs/regions
+            curl -fsSL --retry 3 -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
+          fi
+          echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
+      - name: The core's host build
+        run: ./gradlew :mapcorecheck:coreHost --stacktrace
+      - name: The look
+        env:
+          VIEWS: ${{ inputs.look }}
+        run: >-
+          ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.phonelook.out="$GITHUB_WORKSPACE/look"
+          -Datlas.phonelook.views="$VIEWS" -Datlas.phonelook.elements="$GITHUB_WORKSPACE/cache/packs/regions/grachten.atlas"
+          --stacktrace
+      - name: What was drawn
+        working-directory: .
+        run: |
+          git rev-parse HEAD | tee look/commit.txt
+          rm -rf look/core-work
+          ls -la look
+      - name: Keep the look
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: look
+          path: look/
+          if-no-files-found: error
+
   emulator:
     # The real thing: the APK on an Android emulator, opened on each screen, with screenshots and frame timings, in
     # parts on emulators of their own (smoke.sh's ATLAS_PHASES and ATLAS_SCREENS_*): bench, the home
@@ -670,6 +830,9 @@ jobs:
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read # a terrain run's artifact, on a dispatch that names one (terrain_packs)
     env:
       # The SDK's archives (below) are kept as the apk job's caches are.
       KEEP_CACHES: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/app') || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.keep_caches) }}
@@ -698,6 +861,29 @@ jobs:
         with:
           name: atlas-bench-packs
           path: bench-packs
+      # The terrain under VK bench's map (ENGINE.md part 6, terrain, step 2), on a dispatch that names terrain runs'
+      # artifacts (terrain_packs): the terrain pack of the Westerkerk's L9 tile cut out of them
+      # (app/android/mapcore/cpp/tools/relief/cut.py) beside the canal ring, which the debug and bench builds list as the
+      # terrain's (PackList.terrainFileId), so VK bench's comparison of the relief on and off draws it. Every other run
+      # is as before: the step is skipped.
+      - name: The terrain under the map
+        if: github.event_name == 'workflow_dispatch' && inputs.terrain_packs != '' && (matrix.part == 'vk' || matrix.part == 'all')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS: ${{ inputs.terrain_packs }}
+        run: |
+          work="$RUNNER_TEMP/terrain"
+          mkdir -p "$work" bench-packs
+          for id in ${ARTIFACTS//,/ }; do
+            curl -fsSL --retry 5 -H "Authorization: Bearer $GH_TOKEN" -o "$work/terrain-$id.zip" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip"
+            unzip -q -o "$work/terrain-$id.zip" -d "$work/terrain-$id"
+            rm "$work/terrain-$id.zip"
+            run=$(dirname "$(find "$work/terrain-$id" -name '*-terrain.idx' | head -1)")
+            python3 -I app/android/mapcore/cpp/tools/relief/cut.py "$run" bench-packs 9/262/168 --around 0
+            rm -rf "$work/terrain-$id"
+          done
+          ls -l bench-packs
       - name: The part's switches
         env:
           PART: ${{ matrix.part }}

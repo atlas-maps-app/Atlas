@@ -49,6 +49,13 @@ class MapState(initial: CameraPosition) {
         internal set
 
     /**
+     * The short names of the sources of the relief the map draws ("Copernicus", "AHN": ENGINE.md part 6, step 2), which
+     * the map's credit line adds while it draws them; empty where it draws none. Read again once a second at most.
+     */
+    var credits: List<String> by mutableStateOf(emptyList())
+        internal set
+
+    /**
      * The tilt the user last left the map at with their fingers (two or three dragged up or down), from
      * [MapController.MIN_CHOSEN_TILT]° up; null until they have. The 3D button brings it back; the app may keep it for
      * the next launch and set it again.

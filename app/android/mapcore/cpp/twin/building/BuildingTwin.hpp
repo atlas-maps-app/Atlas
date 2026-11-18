@@ -200,6 +200,10 @@ public:
         answers_ = answers;
     }
 
+    /// The user's palette the next tiles' darkened colours (a kit roof's courses, a metal wall's ribs, a kit wall's
+    /// lines) follow, as the jobs take it (passes::repainted; null: today's).
+    void palette(const style::PaletteBlock* palette) noexcept { palette_ = palette; }
+
     /// The paths of the tile's windowed walls the frame draws over its visible cells (the rest as `tile`'s).
     void windows(const passes::BuildingTile& b, std::span<const std::uint32_t> rows, std::span<const std::byte> words,
                  const shaders::TilePlace& place, std::uint64_t cells, const SunTexels& sun);
@@ -244,6 +248,7 @@ private:
     Stream& out_;
     std::int32_t group_;
     passes::ShopGlass glass_;
+    const style::PaletteBlock* palette_ = nullptr;
     std::span<const std::int8_t> answers_;
     std::size_t elements_ = 0;
     std::size_t sunlit_ = 0;

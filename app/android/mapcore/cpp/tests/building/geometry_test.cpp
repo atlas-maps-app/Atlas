@@ -8,6 +8,7 @@
 #include "frame/FrameBlock.hpp"
 #include "geometry/Ground.hpp"
 #include "geometry/Houseboats.hpp"
+#include "geometry/Seams.hpp"
 #include "geometry/Walls.hpp"
 #include "load/Window.hpp"
 #include "osm/Overpass.hpp"
@@ -27,7 +28,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -37,8 +37,10 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -57,6 +59,11 @@ struct Fixture {
 
     Fixture() { head.frame = tl::Frame{.lat0 = 52.374, .lon0 = 4.884, .kx = 67'908.9, .kz = 111'318.8}; }
 };
+
+/// A colour as 0xRRGGBB.
+[[nodiscard]] std::uint32_t hex_of(gm::Rgba c) {
+    return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
+}
 
 /// The kind of sun sample a primitive reads: a cell drawn as the wall's one cell reads the wall's.
 [[nodiscard]] atlas::sun::Kind sample_kind(const gm::Prim& p) {
@@ -427,6 +434,164 @@ TEST_CASE("buildings: stage T of a synthetic tile, every roof shape and a houseb
     }
 }
 
+TEST_CASE("buildings: a courtyard's seams draw nothing, and a pitched roof over them is drawn flat, held to K8's "
+          "samples") {
+    namespace col = atlas::test::columns;
+    using atlas::test::building::s0;
+    using atlas::test::building::w0;
+    // a 30 x 30 m gabled block around a 10 x 10 m courtyard, as stage P joins them (load/Clean.hpp): the outer ring
+    // clockwise on the map, a seam from its first corner to the courtyard's, the courtyard the other way round, the
+    // seam back
+    // (its south-west corner, the seam to the courtyard's south-west, round the courtyard and back along the seam,
+    // then the block's north-west, north-east and south-east corners)
+    const std::int32_t cs = s0 + 900;
+    const std::int32_t cw = w0 + 1470;
+    const atlas::test::Ring block{.lat = {s0, cs, cs, cs + 900, cs + 900, cs, s0, s0 + 2700, s0 + 2700, s0},
+                                  .lon = {w0, cw, cw + 1470, cw + 1470, cw, cw, w0, w0, w0 + 4410, w0 + 4410},
+                                  .keep = {}};
+    atlas::test::TileBytes t;
+    atlas::test::LayerBytes b;
+    b.id = static_cast<std::uint8_t>(tl::LayerId::building);
+    b.cells = {0};
+    b.columns = {
+        {"index", tl::Codec::delta, col::delta({0})},
+        {"id", tl::Codec::delta, col::delta({400})},
+        {"ring", tl::Codec::geom, col::geom({block})},
+        {"h", tl::Codec::centi, col::centi({15.0})},
+        {"min", tl::Codec::centi, col::centi({0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({5.0})},
+        {"levels", tl::Codec::nvarz, col::nvarz({4})},
+        {"roof", tl::Codec::str, col::str(t, {"gabled"})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x8E5A46})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x56585C})},
+        {"flags", tl::Codec::varu, col::varu({0})},
+        {"tag:building", tl::Codec::str, col::str(t, {"apartments"})},
+    };
+    t.layers = {b};
+    Fixture f;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, a courtyard");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &f.head, .level = 0, .region = {}});
+    const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
+    const Checked c = check_tile(g, st);
+    CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+    // the ring's seams, as stage T finds them: the two edges between the block and its courtyard
+    std::vector<gm::V2> ring;
+    ring.reserve(block.lat.size());
+    for (std::size_t k = 0; k < block.lat.size(); ++k)
+        ring.emplace_back(f.head.frame.x(block.lon[k]), f.head.frame.z(block.lat[k]));
+    const std::vector<std::uint8_t> seams = gm::seams(ring);
+    ATLAS_REQUIRE(seams.size() == ring.size());
+    CHECK(std::ranges::count(seams, std::uint8_t{1}) == 2);
+    // walls on every edge but the seams, each its one far cell; a flat top, no gable or slope
+    std::set<std::uint32_t> walled;
+    std::map<gm::PrimKind, int> kinds;
+    for (const gm::Prim& p : g.edged) {
+        ++kinds[p.kind];
+        if (p.kind == gm::PrimKind::cell && (p.flags & gm::prim_flag::far) != 0) walled.insert(p.edge);
+    }
+    for (const gm::Prim& p : g.plain) ++kinds[p.kind];
+    for (const std::uint32_t e : walled) CHECK_MESSAGE(seams[e] == 0, "a wall on seam ", e);
+    CHECK(walled.size() == ring.size() - 2);
+    CHECK(kinds[gm::PrimKind::top] > 0);
+    CHECK(kinds[gm::PrimKind::gable] == 0);
+    CHECK(kinds[gm::PrimKind::slope] == 0);
+    // the top's outline leaves the seam out: no outlined edge of a piece runs from the block's corner to the
+    // courtyard's
+    const gm::V2 sw = ring[0];
+    const gm::V2 csw = ring[1];
+    const auto at = [](const gm::V3& v, const gm::V2& q) { return v.x == q.x && v.z == q.z; };
+    for (const gm::Prim& p : g.plain) {
+        if (p.kind != gm::PrimKind::top) continue;
+        const std::uint32_t m = (p.flags & gm::prim_flag::triangle) != 0 ? 3 : 4;
+        for (std::uint32_t e = 0; e < m; ++e) {
+            const std::uint32_t bit =
+                e == 3 ? std::uint32_t{gm::prim_flag::outline_last} : std::uint32_t{gm::prim_flag::outline} << e;
+            if ((p.flags & bit) == 0) continue;
+            const gm::V3& u = p.p.at(e);
+            const gm::V3& v = p.p.at((e + 1) % m);
+            CHECK_FALSE(((at(u, sw) && at(v, csw)) || (at(u, csw) && at(v, sw))));
+        }
+    }
+}
+
+TEST_CASE("buildings: a ring of two pieces is roofed piece by piece, the house gabled and the block round its "
+          "courtyard flat, held to K8's samples") {
+    // tests/building/fixture.hpp's pieces_ring: a gabled block round a courtyard and, joined to it by a seam, a house
+    atlas::test::TileBytes t = atlas::test::building::pieces_tile();
+    const atlas::test::Ring both = atlas::test::building::pieces_ring();
+    Fixture f;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, two pieces");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &f.head, .level = 0, .region = {}});
+    const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
+    // every primitive's sample is K8's: its kind, its record, and its edge's number on the ring, whichever piece's
+    const Checked c = check_tile(g, st);
+    CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+    std::vector<gm::V2> ring;
+    ring.reserve(both.lat.size());
+    for (std::size_t k = 0; k < both.lat.size(); ++k)
+        ring.emplace_back(f.head.frame.x(both.lon[k]), f.head.frame.z(both.lat[k]));
+    const std::vector<std::uint8_t> seams = gm::seams(ring);
+    CHECK(seams == std::vector<std::uint8_t>{1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
+    const std::vector<std::vector<std::uint32_t>> pieces = gm::pieces_of(ring, seams);
+    ATLAS_REQUIRE(pieces.size() == 2);
+    CHECK(pieces[0] == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 6, 7, 14, 15});
+    CHECK(pieces[1] == std::vector<std::uint32_t>{9, 10, 11, 12});
+    CHECK(gm::has_courtyard(pieces[0], seams));
+    CHECK_FALSE(gm::has_courtyard(pieces[1], seams));
+    // walls on every edge but the four seams; the house's reach its eaves at 10 m, the block's its top at 15 m
+    std::map<std::uint32_t, double> wall_top;
+    std::map<gm::PrimKind, std::set<std::uint32_t>> edges;
+    for (const gm::Prim& p : g.edged) {
+        edges[p.kind].insert(p.edge);
+        if (p.kind != gm::PrimKind::cell || (p.flags & gm::prim_flag::far) == 0) continue;
+        double top = p.p[0].y;
+        for (const gm::V3& v : p.p) top = std::max(top, v.y);
+        wall_top[p.edge] = top;
+    }
+    for (const gm::Prim& p : g.plain) edges[p.kind].insert(p.edge);
+    CHECK(wall_top.size() == 12);
+    for (const auto& [edge, top] : wall_top) {
+        CHECK_MESSAGE(seams[edge] == 0, "a wall on seam ", edge);
+        CHECK_MESSAGE(top == (edge >= 9 && edge <= 12 ? 10.0 : 15.0), "the wall of edge ", edge);
+    }
+    // the house's roof on its own four edges: a gable over each short wall, a slope over each long one; the block's
+    // flat top (an n-gon's primitives carry its piece's first edge)
+    CHECK(edges[gm::PrimKind::gable] == std::set<std::uint32_t>{9, 11});
+    CHECK(edges[gm::PrimKind::slope] == std::set<std::uint32_t>{10, 12});
+    CHECK(edges[gm::PrimKind::top] == std::set<std::uint32_t>{0});
+    // every other shape stage T draws pitched, the house's alone: each primitive's sample K8's
+    for (const std::string_view shape : {"hipped", "pyramidal", "skillion", "mansard", "quadruple_saltbox"}) {
+        CAPTURE(shape);
+        atlas::test::TileBytes other = atlas::test::building::pieces_tile(shape);
+        atlas::Arena memory(1U << 20U, atlas::Growth::grows, "buildings test, two pieces, a shape");
+        tl::TileDecoder reader;
+        const std::vector<std::byte> bytes = other.encode();
+        auto decoded = reader.decode(bytes, memory);
+        ATLAS_REQUIRE(decoded.has_value(), tl::describe(decoded.error()));
+        const gm::TileBuildings made =
+            gm::build_buildings({.tile = &*decoded, .head = &f.head, .level = 0, .region = {}});
+        const atlas::sun::SunTile sun = atlas::sun::make_tile(*decoded, f.head, atlas::sun::Region{}, 0, {});
+        const Checked held = check_tile(made, sun);
+        CHECK_MESSAGE(held.wrong == 0, held.first_wrong);
+        std::set<std::uint32_t> pitched; // the edges of what stands over the eaves, but a flat top
+        for (const auto* list : {&made.edged, &made.plain}) {
+            for (const gm::Prim& p : *list) {
+                if (p.kind != gm::PrimKind::cell && p.kind != gm::PrimKind::top) pitched.insert(p.edge);
+            }
+        }
+        CHECK(!pitched.empty());
+        for (const std::uint32_t e : pitched) CHECK_MESSAGE((e >= 9 && e <= 12), "a roof on edge ", e);
+    }
+}
+
 TEST_CASE("buildings: a guessed roof's shape, drawn while Atlas's guesses are on, and the plain box in its place, "
           "held to K8's samples") {
     namespace fx = atlas::test::building;
@@ -752,6 +917,14 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
         CHECK(rd.near_slot < g.items[rd.item].near_slots);
     }
     CHECK(ridges == std::array<int, 5>{1, 1, 0, 1, 1});
+    // each slope's courses a darker tone of its slope's colour, so the user's palette repaints them with it (repainted)
+    atlas::passes::BuildingTile layout;
+    CHECK_FALSE(atlas::passes::heap_words(g, 0.0, 0.0, layout).empty());
+    REQUIRE(layout.courses.size() == g.courses.size());
+    for (const atlas::passes::BuildingTile::Courses& cs : layout.courses) {
+        REQUIRE(cs.light < layout.lights.size());
+        CHECK(cs.rgb == hex_of(gm::darken(gm::rgba(layout.lights[cs.light].base), 0.55)));
+    }
     MESSAGE("a kit's roofs: ", g.beams.size(), " hoist beams, ", g.courses.size(), " slopes of courses, ",
             g.ridges.size(), " lit ridges; ", st.samples.crowns_first, " samples");
 }
@@ -899,6 +1072,23 @@ TEST_CASE("buildings: a tradition's kit's walls, its stucco ground floor, its ti
     }
     CHECK(kit_walls == std::array<int, 5>{2, 4, 0, 2, 4});
     CHECK(shadows == kit_walls);
+    // a kit wall's boards' lines a darker tone of its wall's colour, so the user's palette repaints them with it
+    // (repainted); a wall not drawn in its own colour has them in the kit's neutral grey, which goes with no face
+    atlas::passes::BuildingTile layout;
+    CHECK_FALSE(atlas::passes::heap_words(g, 0.0, 0.0, layout).empty());
+    REQUIRE(layout.kit_walls.size() == g.kit_walls.size());
+    int own_lines = 0;
+    for (const atlas::passes::BuildingTile::KitWall& kw : layout.kit_walls) {
+        if (kw.boards == 0) continue; // no lines: a shadow alone
+        if (kw.light == atlas::passes::no_light) {
+            CHECK(kw.rgb == hex_of(gm::darken(gm::rgba(0x888888U), 0.62)));
+            continue;
+        }
+        REQUIRE(kw.light < layout.lights.size());
+        CHECK(kw.rgb == hex_of(gm::darken(gm::rgba(layout.lights[kw.light].base), 0.62)));
+        ++own_lines;
+    }
+    CHECK(own_lines > 0);
     // the cornice: the kit's on the banded house (its walls over 5 m), none on the first kit house
     bool cornice3 = false;
     bool cornice0 = false;
@@ -1466,6 +1656,54 @@ TEST_CASE("buildings: the flat greys give a guessed flat roof its mid grey, the 
     for (const BuildingLight& l : {bitumen, grey, gable, wall, boat}) CHECK(painted(&plain, l) == st::plain_building);
     CHECK(painted(&plain, mapped) == mapped.base);
     CHECK(painted(&plain, clay) == clay.base);
+}
+
+TEST_CASE(
+    "buildings: every wall's and roof's slot paints the faces drawn in it, and the darker tones built from them") {
+    using atlas::passes::BuildingLight;
+    using atlas::passes::painted;
+    using atlas::passes::repainted;
+    namespace st = atlas::style;
+    constexpr std::uint32_t magenta = 0xFF00FFU; // far from every slot's colour today
+    const st::PaletteBlock today{};
+    std::vector<st::SlotColour> slots(st::wall_slots.begin(), st::wall_slots.end());
+    slots.insert(slots.end(), st::roof_slots.begin(), st::roof_slots.end());
+    for (const st::SlotColour& s : slots) {
+        CAPTURE(s.code);
+        const auto slot = static_cast<std::uint16_t>(s.code);
+        st::PaletteBlock user{};
+        user.colours.at(s.code) = 0x01000000U | magenta;
+        const BuildingLight own{.base = s.today, .slot = slot};
+        const BuildingLight jittered{.base = s.today ^ 0x030303U, .slot = slot};
+        CHECK(painted(&today, own) == own.base);
+        CHECK(painted(&user, own) == magenta); // the user's colour exactly
+        CHECK(painted(&user, jittered) != jittered.base);
+        // a roof's courses, a metal wall's ribs, a kit wall's lines: darker tones of the face, moved with it
+        const std::uint32_t darker = hex_of(gm::darken(gm::rgba(s.today), 0.55));
+        CHECK(repainted(nullptr, &own, darker) == darker);
+        CHECK(repainted(&today, &own, darker) == darker);
+        CHECK(repainted(&user, nullptr, darker) == darker);
+        CHECK(repainted(&user, &own, darker) == st::palette_move(darker, s.today, magenta));
+        CHECK(repainted(&user, &own, darker) != darker);
+        // another slot's colour leaves it as it is
+        st::PaletteBlock other{};
+        other.colours.at(s.code == 48U ? 49U : 48U) = 0x01000000U | magenta;
+        CHECK(painted(&other, own) == own.base);
+        CHECK(repainted(&other, &own, darker) == darker);
+    }
+    // the three mid greys paint a guessed flat roof where the flat greys are on, its id picking which
+    for (std::uint32_t k = 0; k < 3; ++k) {
+        const std::size_t code = st::palette_slot::flat_grey_1 + k;
+        CAPTURE(code);
+        st::PaletteBlock user{};
+        user.flags = st::palette_flag::flat_greys;
+        user.colours.at(code) = 0x01000000U | magenta;
+        const BuildingLight bitumen{.base = 0x56585CU,
+                                    .slot = static_cast<std::uint16_t>(st::flat_roof_slot(87, 30 + k))};
+        CHECK(painted(&user, bitumen) == magenta);
+        user.flags = 0;
+        CHECK(painted(&user, bitumen) == bitumen.base); // without the switch, its own slot's (the bitumen's)
+    }
 }
 
 TEST_CASE(

@@ -52,6 +52,10 @@ on:
         description: Keep this run's ccache and tidy entries for its branch, to measure warm runs of a change to CI (delete them after)
         type: boolean
         default: false
+      relief_pictures:
+        description: "Draw the relief's pictures over these terrain runs' artifacts (terrain.yml's artifact ids, comma-separated)"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -289,6 +293,11 @@ jobs:
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | sed -n 1p
 
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with
+      # the Android ABIs' targets where the NDK builds
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ${{ (matrix.task == 'android' || matrix.task == 'tidy-android') && 'android' || '' }}
       - name: CMake ${{ env.CMAKE_VERSION }} and Ninja ${{ env.NINJA_VERSION }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
@@ -563,6 +572,47 @@ jobs:
             ${{ env.CP }}/build/feature-probe-*.txt
             ${{ env.CP }}/build/bench-*.txt
           if-no-files-found: ignore
+      # ---- The relief's pictures (ENGINE.md part 6, terrain, step 2), on a dispatch that names terrain runs' artifacts
+      # (relief_pictures): the terrain packs around the boards' views are cut out of them (tools/relief/cut.py: the
+      # dunes' L9 tile and San Gimignano's, each with its neighbours), relief_vk_test's last case draws the dunes and San
+      # Gimignano over them on lavapipe (the terrain off, on, and on without its sky-view; sunny and overcast), and the
+      # frames are kept as PNGs (tools/relief/montage.py) in the run's artifact relief-pictures. Nothing is published.
+      - name: The relief's pictures
+        if: github.event_name == 'workflow_dispatch' && inputs.relief_pictures != '' && matrix.task == 'host-release' && matrix.arch == 'x86_64' && env.SHARD == '1' && steps.build.outcome == 'success'
+        working-directory: ${{ env.CP }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS: ${{ inputs.relief_pictures }}
+        run: |
+          work="$RUNNER_TEMP/relief"
+          packs="$work/packs"
+          out="$work/pictures"
+          mkdir -p "$packs" "$out"
+          for id in ${ARTIFACTS//,/ }; do
+            curl -fsSL --retry 5 -H "Authorization: Bearer $GH_TOKEN" -o "$work/terrain-$id.zip" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip"
+            unzip -q -o "$work/terrain-$id.zip" -d "$work/terrain-$id"
+            rm "$work/terrain-$id.zip"
+            run=$(dirname "$(find "$work/terrain-$id" -name '*-terrain.idx' | head -1)")
+            python3 -I tools/relief/cut.py "$run" "$packs" 9/262/168 9/271/187 --around 1
+            rm -rf "$work/terrain-$id"
+          done
+          status=0
+          (set -a; . "$RUNNER_TEMP/vulkan.env"; set +a; export LP_NUM_THREADS=4 ATLAS_RELIEF_PACKS="$packs" ATLAS_RELIEF_OUT="$out"
+            "build/$TASK/atlas_tests" "--source-file=*tests/frame/relief_vk_test.cpp" "--test-case=the boards' views*" \
+              --duration=true > "$out/views.log" 2>&1) || status=$?
+          grep -E 'MESSAGE|ERROR|FAILED|test cases|assertions' "$out/views.log" || true
+          python3 -I tools/relief/montage.py "$out"
+          rm -f "$out"/*.ppm
+          exit "$status"
+      - name: Keep the relief's pictures
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.relief_pictures != '' && matrix.task == 'host-release' && matrix.arch == 'x86_64' && env.SHARD == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: relief-pictures
+          path: ${{ runner.temp }}/relief/pictures/
+          retention-days: 14
+          if-no-files-found: warn
       # A module that missed its spirv.lock (cmake/Shaders.cmake keeps it, as embedded and as slangc wrote it, with its
       # reflection): with spirv-dis's text beside it, so it can be diffed with another host's instead of guessed at.
       - name: The SPIR-V that missed its lock, disassembled

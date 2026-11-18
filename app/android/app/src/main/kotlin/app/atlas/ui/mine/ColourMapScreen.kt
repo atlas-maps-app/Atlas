@@ -1,6 +1,20 @@
 package app.atlas.ui.mine
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.stateDescription
+import app.atlas.mapview.palette.PaletteCode
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -86,16 +100,19 @@ import kotlin.math.roundToInt
 
 /**
  * Colour the map (the Colour the map board, `Colour.dc.html`): the live map in the palette as it changes, under the
- * board's row (leave without saving, the title with where the palette comes from, undo, save) and over its sheet: the
- * groups of colours as tabs, the colour picked with how the light draws it, its lightness, colour and hue, its hex and
- * OKLCH, whether its whole group follows, and the group's colours, each changed one dotted. Holding "before" shows the
- * preset's colours. Saving keeps the palette as the user's (MapLookWrites.save); leaving gives the map back its own.
+ * board's row (close, the title with where the palette comes from, undo, save) and over its sheet: the groups of
+ * colours as tabs, the colour picked with how the light draws it, its lightness, colour and hue, its hex, whether its
+ * whole group follows, and the group's colours, each changed one dotted. Holding "before" shows the map as it was when
+ * the editor opened. The draft (what the editor opened on, the palette as it is, the undo steps, the colour picked) is
+ * kept with the screen's saved state, so it outlives the app being killed. Leaving with a change asks: save, discard or
+ * keep editing. Save asks the name, keeping the palette's own replaces it (MapLookWrites.save), and saves once.
  */
 @Composable
 fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     val services = LocalServices.current
     val settings = services.settings
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val here = rememberHere()
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
     val savedLayers by settings.flow(SettingsKeys.MAP_LAYERS).collectAsStateWithLifecycle(null)
@@ -105,44 +122,93 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     val style = MapStyle(theme = theme, layers = LayersModel.layers(savedLayers, threeD, MapStyle().layers), language = language, calm = true)
     val map = remember(here) { MapState(CameraPosition(here, 16.4, 0.0, 45.0)) }
     val names = presetNames()
-    // what the map drew as the screen opened, and the saved palette it was (its code), read once
-    var original by remember { mutableStateOf<Palette?>(null) }
-    var from by remember { mutableStateOf<String?>(null) }
-    var working by remember { mutableStateOf(DEFAULT_PALETTE) }
-    val undo = remember { mutableStateListOf<Palette>() }
-    var family by remember { mutableStateOf(Family.GROUND) }
-    var slot by remember { mutableStateOf(Slot.PAPER) }
-    var group by remember { mutableStateOf(false) }
+    // the draft, as codes in the saved state: what the map drew as the editor opened (read once), the palette as it is,
+    // the undo steps, and the saved palette it came from (its code and name)
+    var originalCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var workingCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var fromCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var fromName by rememberSaveable { mutableStateOf<String?>(null) }
+    var takenNames by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val undo = rememberSaveable(saver = listSaver<SnapshotStateList<String>, String>(save = { it.toList() }, restore = { it.toMutableStateList() })) { mutableStateListOf<String>() }
+    val original = remember(originalCode) { originalCode?.let(MapLookModel::read) }
+    val working = remember(workingCode) { workingCode?.let(MapLookModel::read) ?: original ?: DEFAULT_PALETTE }
+    var family by rememberSaveable { mutableStateOf(Family.GROUND) }
+    var slot by rememberSaveable { mutableStateOf(Slot.PAPER) }
+    var group by rememberSaveable { mutableStateOf(false) }
     var before by remember { mutableStateOf(false) }
-    var saved by remember { mutableStateOf(false) }
+    // the questions over the editor: leaving with a change, and the name to save as
+    var asking by rememberSaveable { mutableStateOf(false) }
+    var naming by rememberSaveable { mutableStateOf(false) }
+    var name by rememberSaveable { mutableStateOf("") }
+    var saving by rememberSaveable { mutableStateOf(false) }
+    var saved by rememberSaveable { mutableStateOf(false) }
     // what a tap met and where, a building's face or the ground: its colour picked, its callout over the map until the
     // map moves or the sheet picks another
     var tapped by remember { mutableStateOf<Tapped?>(null) }
     LaunchedEffect(Unit) {
+        if (originalCode != null) return@LaunchedEffect
         val prefs = settings.data.first()
         val now = MapLookModel.current(prefs[SettingsKeys.MAP_PALETTE])
         val list = MapLookModel.savedOf(prefs[SettingsKeys.MAP_PALETTES])
-        from = list.getOrNull(MapLookModel.savedIndex(list, now))?.code
-        original = now
-        working = now
+        // the saved palette the map draws, else the one its look came from where that is still saved
+        val came = list.getOrNull(MapLookModel.savedIndex(list, MapLookModel.drawn(prefs)))
+            ?: list.firstOrNull { it.code == prefs[SettingsKeys.MAP_LOOK_FROM] }
+        fromCode = came?.code
+        fromName = came?.name
+        takenNames = list.map { it.name }
+        workingCode = PaletteCode.write(now)
+        originalCode = PaletteCode.write(now)
     }
-    // the map draws the palette as it changes, or the preset's colours while "before" is held
+    val ready = original != null
+    val dirty = original != null && MapLookModel.look(working, 0f) != MapLookModel.look(original, 0f)
+    // the map draws the palette as it changes, or what it drew as the editor opened while "before" is held
     LaunchedEffect(working, before, original) {
-        if (original != null) MapEngine.palette(if (before) working.copy(colours = emptyMap()) else working)
+        if (original != null) MapEngine.palette(if (before) original else working)
     }
     val restore by rememberUpdatedState(original)
+    val keptAway by rememberUpdatedState(saved)
     DisposableEffect(Unit) {
-        onDispose { if (!saved) restore?.let { MapEngine.palette(it) } }
+        onDispose { if (!keptAway) restore?.let { MapEngine.palette(it) } }
     }
-    fun leave() {
+    fun discard() {
         original?.let { MapEngine.palette(it) }
         nav.back()
     }
-    BackHandler { leave() }
+    fun close() {
+        if (dirty) asking = true else discard()
+    }
+    fun startSaving() {
+        if (!ready) return
+        asking = false
+        name = fromName ?: MapLookModel.newName(names.getValue(working.base), takenNames)
+        naming = true
+    }
+    val savedAs = stringResource(R.string.mine_colour_saved)
+    fun save() {
+        val clean = MapLookModel.clean(name)
+        if (saving || !ready || clean.isEmpty()) return
+        saving = true
+        val kept = working
+        val replace = fromCode?.takeIf { clean == fromName }
+        scope.launch {
+            var as_ = clean
+            settings.edit { as_ = MapLookWrites.save(it, kept, clean, replace) }
+            saved = true
+            toast(context, savedAs.format(as_))
+            nav.back()
+        }
+    }
+    BackHandler {
+        when {
+            naming -> naming = false
+            asking -> asking = false
+            else -> close()
+        }
+    }
     fun change(next: Palette, keep: Boolean = true) {
         if (next == working) return
-        if (keep) undo += working
-        working = next
+        if (keep) undo += PaletteCode.write(working)
+        workingCode = PaletteCode.write(next)
     }
     fun paint(colour: Int, keep: Boolean = true) =
         change(if (group) ColourMapModel.withGroup(working, slot, colour) else ColourMapModel.withColour(working, slot, colour), keep)
@@ -183,36 +249,33 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val leaveCd = stringResource(R.string.mine_colour_leave)
+            val closeCd = stringResource(R.string.mine_colour_leave)
             Box(
-                Modifier.size(44.dp).bbox(WHITE, cr(22f), chrome).clickable(role = Role.Button) { leave() }.semantics { contentDescription = leaveCd },
+                Modifier.size(44.dp).bbox(WHITE, cr(22f), chrome).clickable(role = Role.Button) { close() }.semantics { contentDescription = closeCd },
                 contentAlignment = Alignment.Center,
             ) { PathIcon(LookIcons.CROSS, 18f, INK) }
             Column(Modifier.weight(1f).height(44.dp).bbox(WHITE, cr(22f), chrome).padding(horizontal = 14.dp), verticalArrangement = Arrangement.Center) {
                 BText(stringResource(R.string.mine_look_colour), bt(15f, 800, 16.5f), INK)
-                BText(changedLine(working, names), bt(11.5f, 600, 14f), SOFT)
+                BText(fromName?.let { if (dirty) stringResource(R.string.mine_look_changed_from, it) else it } ?: changedLine(working, names), bt(11.5f, 600, 14f), SOFT)
             }
             val undoCd = stringResource(R.string.mine_colour_undo)
             Box(
                 Modifier.size(44.dp).bbox(WHITE, cr(22f), chrome).alpha(if (undo.isEmpty()) 0.45f else 1f)
-                    .clickable(enabled = undo.isNotEmpty(), role = Role.Button) { working = undo.removeAt(undo.lastIndex) }
+                    .clickable(enabled = undo.isNotEmpty(), role = Role.Button) { workingCode = undo.removeAt(undo.lastIndex) }
                     .semantics { contentDescription = undoCd },
                 contentAlignment = Alignment.Center,
             ) { PathIcon(LookIcons.UNDO, 18f, INK) }
-            TextPill(stringResource(R.string.mine_colour_save), bt(14f, 800, 18f), BLUE, WHITE, h = 44f, padH = 16f) {
-                val base = names.getValue(working.base)
-                val kept = working
-                saved = true
-                scope.launch {
-                    settings.edit { MapLookWrites.save(it, kept, from, base) }
-                    nav.back()
-                }
-            }
+            TextPill(
+                stringResource(R.string.mine_colour_save), bt(14f, 800, 18f), BLUE, WHITE, Modifier.alpha(if (ready) 1f else 0.45f),
+                h = 44f, padH = 16f, onClick = { startSaving() },
+            )
         }
         tapped?.let { t -> TapCallout(t, t.colour(working)) }
         val sheetHeight = 412.dp
-        // Hold: before, 15 px over the sheet at the right
+        // Hold: before, 15 px over the sheet at the right; TalkBack's tap holds it until the next
         val beforeCd = stringResource(R.string.mine_colour_before_cd)
+        val beforeOn = stringResource(R.string.mine_colour_before_on)
+        val beforeOff = stringResource(R.string.mine_colour_before_off)
         Row(
             Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = foot(12f) + sheetHeight + 15.dp).height(40.dp)
                 .bbox(WHITE, cr(20f), listOf(CssShadow(0f, 1f, 6f, 0f, 0x26000000)))
@@ -223,7 +286,11 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                         before = false
                     })
                 }
-                .semantics { contentDescription = beforeCd }
+                .semantics {
+                    contentDescription = beforeCd
+                    stateDescription = if (before) beforeOn else beforeOff
+                    onClick { before = !before; true }
+                }
                 .padding(horizontal = 13.dp),
             horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -260,7 +327,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                     Entry(working, slot, onReset = { change(ColourMapModel.reset(working, slot)) })
                     LitRow(working, slot)
-                    Sliders(working.colour(slot), onDrag = { c -> paint(c, keep = false) }, onStart = { undo += working }, onSet = { c -> paint(c) })
+                    Sliders(working.colour(slot), onDrag = { c -> paint(c, keep = false) }, onStart = { undo += PaletteCode.write(working) }, onSet = { c -> paint(c) })
                     HexRow(working.colour(slot), family, group, onHex = { c -> paint(c) }, onGroup = { group = !group })
                     FamilyRow(working, family, slot) { s ->
                         slot = s
@@ -268,6 +335,61 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                     }
                 }
             }
+        }
+        if (asking) {
+            EditorSheet(stringResource(R.string.mine_colour_leave_title), stringResource(R.string.mine_colour_leave_sub), onDismiss = { asking = false }) {
+                SheetButton(stringResource(R.string.mine_colour_leave_save), BLUE, WHITE, Modifier.fillMaxWidth()) { startSaving() }
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SheetButton(stringResource(R.string.mine_colour_leave_discard), HAIR, 0xFFC8322A, Modifier.weight(1f)) {
+                        asking = false
+                        discard()
+                    }
+                    SheetButton(stringResource(R.string.mine_colour_keep), HAIR, INK, Modifier.weight(1f)) { asking = false }
+                }
+            }
+        }
+        if (naming) {
+            val clean = MapLookModel.clean(name)
+            val line = if (fromCode != null && clean == fromName) stringResource(R.string.mine_colour_save_replaces, clean) else stringResource(R.string.mine_colour_save_new)
+            EditorSheet(stringResource(R.string.mine_colour_save_title), line, onDismiss = { naming = false }) {
+                val focus = LocalFocusManager.current
+                val nameCd = stringResource(R.string.mine_look_name_cd)
+                Box(Modifier.fillMaxWidth().height(52.dp).bbox(PAGE, cr(14f)).padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
+                    BasicTextField(
+                        name, { name = it.replace("\n", " ").take(MapLookModel.NAME_MAX) },
+                        Modifier.fillMaxWidth().semantics { contentDescription = nameCd },
+                        textStyle = bt(18f, 800, 22f).copy(color = Color(INK)),
+                        singleLine = true,
+                        cursorBrush = SolidColor(Color(INK)),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); save() }),
+                    )
+                }
+                Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SheetButton(stringResource(R.string.mine_colour_keep), HAIR, INK, Modifier.weight(1f)) { naming = false }
+                    SheetButton(
+                        stringResource(R.string.mine_colour_save), BLUE, WHITE,
+                        Modifier.weight(1f).alpha(if (clean.isEmpty() || saving) 0.45f else 1f).testTag("save-sheet"),
+                    ) { save() }
+                }
+            }
+        }
+    }
+}
+
+/** A question over the editor, as the share sheet is drawn: its [title] (22, 900), its [line], then [content]. */
+@Composable
+private fun EditorSheet(title: String, line: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().background(Color(0x730E121A)).clickable(remember { MutableInteractionSource() }, null) { onDismiss() })
+        Column(
+            Modifier.align(Alignment.BottomCenter).imePadding().padding(start = 12.dp, end = 12.dp, bottom = foot(12f)).fillMaxWidth()
+                .bbox(WHITE, cr(30f)).clickable(remember { MutableInteractionSource() }, null) {}
+                .padding(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 16.dp),
+        ) {
+            BText(title, bt(22f, 900, 28f), INK, Modifier.semantics { heading() }, lines = 2)
+            BText(line, bt(13f, 600, 17f), SOFT, Modifier.padding(top = 2.dp, bottom = 14.dp), lines = 3)
+            content()
         }
     }
 }
@@ -479,12 +601,11 @@ private fun Track(
     }
 }
 
-/** The picked colour's hex (typed over to set it), its OKLCH, and whether its whole group follows it (dark when on). */
+/** The picked colour's hex (typed over to set it), and whether its whole group follows it (dark when on). */
 @Composable
 private fun HexRow(colour: Int, family: Family, group: Boolean, onHex: (Int) -> Unit, onGroup: () -> Unit) {
     val focus = LocalFocusManager.current
     var typed by remember(colour) { mutableStateOf(ColourMapModel.hex(colour)) }
-    val lch = ColourMapModel.lch(colour)
     val hexCd = stringResource(R.string.mine_colour_hex_cd)
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.height(30.dp).bbox(PAGE, cr(10f)).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
@@ -501,10 +622,7 @@ private fun HexRow(colour: Int, family: Family, group: Boolean, onHex: (Int) -> 
                 }),
             )
         }
-        BText(
-            "OKLCH %.2f %.3f %d°".format(java.util.Locale.ROOT, lch.l, lch.c, lch.h.roundToInt()), bt(12f, 600, 15f), SOFT,
-            Modifier.weight(1f),
-        )
+        Spacer(Modifier.weight(1f))
         TextPill(
             stringResource(allName(family)), bt(12f, 800, 15f), if (group) INK else HAIR, if (group) WHITE else INK,
             Modifier.selectable(selected = group, role = Role.Switch) { onGroup() }, h = 30f, padH = 11f,

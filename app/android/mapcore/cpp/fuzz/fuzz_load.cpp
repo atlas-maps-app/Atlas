@@ -78,7 +78,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     for (const atlas::load::Building& b : scene->buildings) check_building(b, nodes);
     for (const atlas::load::Building& b : scene->parts) {
         check_building(b, nodes);
-        ATLAS_ASSERT(b.places.empty() && !b.hidden, "a part with places or hidden");
+        ATLAS_ASSERT(b.places.empty() && (!b.hidden || b.underground),
+                     "a part with places, or hidden above the ground");
     }
     for (const atlas::load::Node& n : scene->nodes) {
         ATLAS_ASSERT(!n.building || *n.building < scene->buildings.size(), "a place in a building past the list");

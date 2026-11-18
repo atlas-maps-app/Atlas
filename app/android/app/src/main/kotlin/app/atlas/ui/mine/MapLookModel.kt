@@ -19,10 +19,25 @@ internal data class SavedPalette(val name: String, val code: String) {
 }
 
 /**
- * The Map look board's logic: the presets' glyphs, the palette the map draws and its switches, the Tone a palette
- * brings, and the palettes the user saved. The map's palette is kept as its code without the Tone (MAP_PALETTE), the
- * Tone as MAP_TONE and MAP_TONE_ON (the Map look's and the Layers sheet's), so a saved or shared palette's code carries
- * the Tone it was saved with and taking it sets the Tone.
+ * What a look draws, Atlas's guesses aside (they are the user's, never a look's): its [base] preset, the colours it
+ * changes from the preset's, its Tone in steps of 5 % (0 to 40, 0 off) and its switches. Two palettes that draw the same
+ * are the same look, whatever they keep of their own: this decides the ring, the line, and that a tap on what the map
+ * draws changes nothing.
+ */
+internal data class Look(val base: Preset, val colours: Map<Slot, Int>, val tone: Int, val switches: Int)
+
+/**
+ * The Tone as both its controls (the Map look's card, the Layers sheet's row) show and write it: [on], and the strength
+ * the switch brings back ([kept], 0 to 2). The map draws [drawn]: the kept strength while on, else nothing.
+ */
+internal data class Tone(val on: Boolean, val kept: Float) {
+    val drawn: Float get() = if (on) kept else 0f
+}
+
+/**
+ * The Map look board's logic: the presets' glyphs, the look the map draws (its palette, MAP_PALETTE, with the Tone,
+ * MAP_TONE and MAP_TONE_ON), the saved palettes and what the page says of them. A saved or shared palette's code
+ * carries the Tone it was saved with, so taking it sets the Tone.
  */
 internal object MapLookModel {
     /** The slots of the board's glyph in its order: bare ground, water, street, lawn, three roofs each over its wall, a tree. */
@@ -51,6 +66,26 @@ internal object MapLookModel {
         return if (bare == DEFAULT_PALETTE) null else PaletteCode.write(bare)
     }
 
+    /** The look [p] draws, at the Tone [tone] (its own unless given). */
+    fun look(p: Palette, tone: Float = p.toneStrength): Look = Look(
+        p.base,
+        p.colours.filter { (slot, c) -> c != p.base.colour(slot) },
+        Math.round(tone * 20f).coerceIn(0, 40),
+        p.switches and PaletteFlags.NO_GUESSES.inv(),
+    )
+
+    /** The look the map draws: its palette at its Tone. */
+    fun drawn(p: Preferences): Look = look(current(p[SettingsKeys.MAP_PALETTE]), tone(p).drawn)
+
+    /** The map's Tone. A strength of 0 kept while on (as the slider's off end once wrote it) is off. */
+    fun tone(p: Preferences): Tone = tone(p[SettingsKeys.MAP_TONE_ON], p[SettingsKeys.MAP_TONE])
+
+    /** The Tone of MAP_TONE_ON's [on] and MAP_TONE's [kept], as they are read (null for unset). */
+    fun tone(on: Boolean?, kept: Float?): Tone {
+        val k = kept ?: 1f
+        return Tone((on ?: DEFAULT_TONE_ON) && k > 0f, k)
+    }
+
     /** [p] with the switch [bit] (PaletteFlags) [on]: no switches of its own where they come out as its base's. */
     fun withSwitch(p: Palette, bit: Int, on: Boolean): Palette {
         val flags = if (on) p.switches or bit else p.switches and bit.inv()
@@ -60,23 +95,37 @@ internal object MapLookModel {
     /** True when [p]'s switch [bit] is on. */
     fun on(p: Palette, bit: Int): Boolean = p.switches and bit != 0
 
-    /** The Tone taking [p] sets: on where its strength is above 0, and the strength (today's 1 where it is off). */
-    fun toneOf(p: Palette): Pair<Boolean, Float> = p.toneStrength.let { s -> (s > 0f) to (if (s > 0f) s else 1f) }
+    /** [p] as a look keeps it, saved or shared: Atlas's guesses are none of it. */
+    fun lookPalette(p: Palette): Palette = withSwitch(p, PaletteFlags.NO_GUESSES, false)
 
-    /** [p] with the Tone the Map look has ([on], [strength]): none of its own where that is its base's. */
-    fun withTone(p: Palette, on: Boolean, strength: Float): Palette {
-        val s = if (on) strength else 0f
-        return p.copy(tone = s.takeIf { Math.round(it * 20f) != Math.round(p.base.tone * 20f) })
+    /** [p] at the Tone [strength]: none of its own where that is its base's. */
+    fun withTone(p: Palette, strength: Float): Palette =
+        p.copy(tone = strength.takeIf { Math.round(it * 20f) != Math.round(p.base.tone * 20f) })
+
+    /** The index of the saved palette that draws [target], or -1. */
+    fun savedIndex(saved: List<SavedPalette>, target: Look): Int = saved.indexOfFirst { s -> s.palette?.let { look(it) } == target }
+
+    /** The preset that draws exactly [target] (its glyph ringed), or none. */
+    fun ringed(target: Look): Preset? = Preset.entries.firstOrNull { look(Palette(it)) == target }
+
+    /** The default look, as the map draws it with nothing set. */
+    val DEFAULT_LOOK: Look get() = look(DEFAULT_PALETTE, if (DEFAULT_TONE_ON) 1f else 0f)
+
+    /** What the page says the map draws: a saved palette, a preset, or a look changed from one. */
+    sealed interface Line {
+        data class Saved(val name: String) : Line
+        data class Exact(val preset: Preset, val isDefault: Boolean) : Line
+
+        /** Changed from the saved palette [from] (its name, where still saved), else from [base] with [colours] changed. */
+        data class Changed(val from: String?, val base: Preset, val colours: Int) : Line
     }
 
-    /** The index of the saved palette the map draws ([current], the Tone aside), or -1. */
-    fun savedIndex(saved: List<SavedPalette>, current: Palette): Int {
-        val bare = current.copy(tone = null)
-        return saved.indexOfFirst { it.palette?.copy(tone = null) == bare }
+    /** The line for [drawn], with the user's [saved] palettes and the code of the one the look came from ([from]). */
+    fun line(drawn: Look, saved: List<SavedPalette>, from: String?): Line {
+        saved.getOrNull(savedIndex(saved, drawn))?.let { return Line.Saved(it.name) }
+        ringed(drawn)?.let { return Line.Exact(it, drawn == DEFAULT_LOOK) }
+        return Line.Changed(saved.firstOrNull { it.code == from }?.name, drawn.base, drawn.colours.size)
     }
-
-    /** The preset whose glyph is ringed: [current]'s base where it changes no colour, else none. */
-    fun ringed(current: Palette): Preset? = current.base.takeIf { current.changed == 0 }
 
     /** The palettes as the settings keep them (MAP_PALETTES): a line each, the code, a tab and the name. */
     fun savedOf(text: String?): List<SavedPalette> = text.orEmpty().lineSequence().mapNotNull { line ->
@@ -98,20 +147,44 @@ internal object MapLookModel {
     fun newName(base: String, taken: Collection<String>): String =
         generateSequence(1) { it + 1 }.map { "$base $it" }.first { it !in taken }
 
-    /** [saved] with the palette at [index] taking [p], as it keeps it (its code, the Tone with it). */
-    fun replaced(saved: List<SavedPalette>, index: Int, p: Palette): List<SavedPalette> =
-        saved.mapIndexed { i, s -> if (i == index) s.copy(code = PaletteCode.write(p)) else s }
-
     /** A palette's code found in [text] (a code alone, the QR's `app.atlas:` link, or a message holding one), or null. */
     fun codeIn(text: String?): String? = text?.let { CODE.find(it)?.value?.trimEnd('-') }
 
     /** The name a shared message gives before its code ([text]'s words before it on its first line), or null. */
     fun nameIn(text: String?): String? {
         val t = text ?: return null
-        val at = CODE.find(t)?.range?.first ?: return null
+        val at = ANY_CODE.find(t)?.range?.first ?: return null
         val before = t.substring(0, at).removeSuffix(LINK).lineSequence().map { it.trim().trimEnd(':', '·', '-').trim() }
             .firstOrNull { it.isNotEmpty() } ?: return null
         return clean(before).takeIf { it.isNotEmpty() }
+    }
+
+    /** What a text typed, pasted or handed to Atlas holds. */
+    sealed interface Found {
+        /** A palette this Atlas reads, and the name its message gave it. */
+        data class Ok(val palette: Palette, val name: String?) : Found
+        data object Empty : Found
+        data object NotCode : Found
+        data object Mistyped : Found
+        data object Newer : Found
+    }
+
+    /**
+     * What [text] holds: a palette; nothing; no code; a code with a letter wrong, missing or too many (or cut short);
+     * or one from a newer Atlas (a later AT number, a preset, colour or switch this Atlas does not know).
+     */
+    fun find(text: String?): Found {
+        val t = text?.trim().orEmpty()
+        if (t.isEmpty()) return Found.Empty
+        val m = ANY_CODE.find(t) ?: return if (STARTED.containsMatchIn(t)) Found.Mistyped else Found.NotCode
+        if (m.groupValues[1].trimStart('0') != "1") return Found.Newer
+        return when (val read = PaletteCode.read(m.value)) {
+            is PaletteCode.Read.Ok -> Found.Ok(read.palette, nameIn(t))
+            is PaletteCode.Read.Bad -> when (read.fault) {
+                PaletteCode.Fault.CHECK, PaletteCode.Fault.LETTER, PaletteCode.Fault.FORM -> Found.Mistyped
+                PaletteCode.Fault.PRESET, PaletteCode.Fault.SLOT, PaletteCode.Fault.SWITCH -> Found.Newer
+            }
+        }
     }
 
     /** The QR's text: the scheme Atlas opens (lower case, as Android matches it) and the code. */
@@ -123,70 +196,104 @@ internal object MapLookModel {
     const val LINK = "app.atlas:"
 
     private val CODE = Regex("""(?i)\bAT1-[0-9A-Z]+(?:-[0-9A-Z]+)+""")
+
+    /** A code of any AT number, its groups apart by dashes or spaces (as a person types them), the number its first group. */
+    private val ANY_CODE = Regex("""(?i)\bAT(\d+)[- ]+[0-9A-Z]+(?:[- ]+[0-9A-Z]{1,5}\b)*""")
+
+    /** The start of a code, typed without the rest. */
+    private val STARTED = Regex("""(?i)\bAT\d+\b""")
 }
 
 /**
- * The Map look's writes, each inside one edit of the settings (SettingsStore.edit), so the map's palette (MAP_PALETTE),
- * its Tone (MAP_TONE, MAP_TONE_ON) and the saved palettes (MAP_PALETTES) never disagree: a switch or the Tone changed
- * while the map draws a saved palette changes that palette too, as a palette carries its switches and its Tone.
+ * The Map look's writes, each inside one edit of the settings (SettingsStore.edit). The map draws its palette
+ * (MAP_PALETTE) at its Tone (MAP_TONE_ON, MAP_TONE); MAP_LOOK_FROM names the saved palette that look came from. A
+ * switch or the Tone changes the map's look and never a saved palette: that is Colour the map's Save.
  */
 internal object MapLookWrites {
-    /** The map takes [palette] and the Tone it brings (a preset's, a saved or a shared palette's). */
-    fun take(m: MutablePreferences, palette: Palette) {
-        m.put(SettingsKeys.MAP_PALETTE, MapLookModel.keep(palette))
-        val (on, strength) = MapLookModel.toneOf(palette)
-        m[SettingsKeys.MAP_TONE_ON] = on
-        m[SettingsKeys.MAP_TONE] = strength
+    /**
+     * The map takes the whole look [palette] (a preset's, a saved or a shared palette's): its colours, switches and Tone;
+     * Atlas's guesses stay as the user has them. [from] is the saved palette's code, null for a preset.
+     */
+    fun take(m: MutablePreferences, palette: Palette, from: String? = null) {
+        val guessesOff = MapLookModel.on(current(m), PaletteFlags.NO_GUESSES)
+        val next = MapLookModel.withSwitch(MapLookModel.lookPalette(palette), PaletteFlags.NO_GUESSES, guessesOff)
+        m.put(SettingsKeys.MAP_PALETTE, MapLookModel.keep(next))
+        toneTo(m, palette.toneStrength)
+        m.put(SettingsKeys.MAP_LOOK_FROM, from)
+    }
+
+    /** A tap on [palette]'s look: the map takes it, unless it draws it already. True where something changed. */
+    fun pick(m: MutablePreferences, palette: Palette, from: String? = null): Boolean {
+        if (MapLookModel.look(palette) == MapLookModel.drawn(m)) return false
+        take(m, palette, from)
+        return true
     }
 
     /** The switch [bit] (PaletteFlags) of the map's palette [on]. */
     fun switch(m: MutablePreferences, bit: Int, on: Boolean) {
-        change(m, MapLookModel.withSwitch(current(m), bit, on))
+        m.put(SettingsKeys.MAP_PALETTE, MapLookModel.keep(MapLookModel.withSwitch(current(m), bit, on)))
     }
 
-    /** The map's Tone: [on], at [strength] (kept for when it is on again while off). */
-    fun tone(m: MutablePreferences, on: Boolean, strength: Float) {
-        val at = savedAt(m)
-        m[SettingsKeys.MAP_TONE_ON] = on
-        m[SettingsKeys.MAP_TONE] = strength
-        if (at >= 0) keepSaved(m, at, current(m))
+    /** Atlas's guesses [on]. */
+    fun guesses(m: MutablePreferences, on: Boolean) = switch(m, PaletteFlags.NO_GUESSES, !on)
+
+    /** The Tone at [strength] (0 to 2, in steps of 5 %): 0 is off, and keeps the last strength for the switch. */
+    fun toneTo(m: MutablePreferences, strength: Float) {
+        val s = (Math.round(strength * 20f).coerceIn(0, 40)) / 20f
+        if (s <= 0f) {
+            m[SettingsKeys.MAP_TONE_ON] = false
+        } else {
+            m[SettingsKeys.MAP_TONE_ON] = true
+            m[SettingsKeys.MAP_TONE] = s
+        }
+    }
+
+    /** The Tone's switch [on]: on brings the last strength back (today's 1 where there is none). */
+    fun toneSwitch(m: MutablePreferences, on: Boolean) {
+        if (!on) {
+            m[SettingsKeys.MAP_TONE_ON] = false
+            return
+        }
+        m[SettingsKeys.MAP_TONE] = m[SettingsKeys.MAP_TONE]?.takeIf { it > 0f } ?: 1f
+        m[SettingsKeys.MAP_TONE_ON] = true
+    }
+
+    /** What adding a code did. */
+    sealed interface Added {
+        data class New(val name: String) : Added
+        data class Yours(val name: String) : Added
     }
 
     /**
-     * Adds [palette] to the saved palettes as [name] (or as the next "[base] n" without one; one saved alike is taken
-     * as it is) and the map takes it. Its name as saved.
+     * Adds [palette] to the saved palettes as [name] (or as the next "[base] n" without one) and the map takes it; one
+     * saved alike is the user's already, and nothing changes.
      */
-    fun add(m: MutablePreferences, palette: Palette, name: String?, base: String): String {
+    fun add(m: MutablePreferences, palette: Palette, name: String?, base: String): Added {
         val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
-        val alike = MapLookModel.savedIndex(saved, palette)
-        if (alike >= 0) {
-            take(m, saved[alike].palette ?: palette)
-            return saved[alike].name
-        }
+        val p = MapLookModel.lookPalette(palette)
+        val alike = MapLookModel.savedIndex(saved, MapLookModel.look(p))
+        if (alike >= 0) return Added.Yours(saved[alike].name)
         val kept = name?.let(MapLookModel::clean)?.takeIf { it.isNotEmpty() } ?: MapLookModel.newName(base, saved.map { it.name })
-        m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(saved + SavedPalette(kept, PaletteCode.write(palette))))
-        take(m, palette)
-        return kept
+        val code = PaletteCode.write(p)
+        m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(saved + SavedPalette(kept, code)))
+        take(m, p, code)
+        return Added.New(kept)
     }
 
     /**
-     * Colour the map's Save: the map's palette becomes [palette] with the map's Tone, and so does the saved palette it
-     * was opened on ([from], its code then) where that is still saved, else it is saved as the next "[base] n". Nothing
-     * is saved for a palette that changes no colour of its preset; the map takes it all the same.
+     * Colour the map's Save: the map draws [palette] (the editor's, its Tone the map's), kept as [name]: in place of the
+     * saved palette [replace] (its code) where that is still saved, else as a new one. The name as saved.
      */
-    fun save(m: MutablePreferences, palette: Palette, from: String?, base: String) {
+    fun save(m: MutablePreferences, palette: Palette, name: String, replace: String?): String {
         val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
-        val at = from?.let { code -> saved.indexOfFirst { it.code == code } } ?: -1
+        val kept = MapLookModel.clean(name).ifEmpty { MapLookModel.newName(palette.base.code, saved.map { it.name }) }
+        val code = PaletteCode.write(MapLookModel.withTone(MapLookModel.lookPalette(palette), MapLookModel.tone(m).drawn))
+        val at = replace?.let { c -> saved.indexOfFirst { it.code == c } } ?: -1
+        val next = if (at >= 0) saved.mapIndexed { i, s -> if (i == at) SavedPalette(kept, code) else s } else saved + SavedPalette(kept, code)
+        m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(next))
         m.put(SettingsKeys.MAP_PALETTE, MapLookModel.keep(palette))
-        val (on, strength) = tone(m)
-        val toned = MapLookModel.withTone(palette, on, strength)
-        when {
-            at >= 0 -> m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(MapLookModel.replaced(saved, at, toned)))
-            palette.changed > 0 -> {
-                val name = MapLookModel.newName(base, saved.map { it.name })
-                m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(saved + SavedPalette(name, PaletteCode.write(toned))))
-            }
-        }
+        m.put(SettingsKeys.MAP_LOOK_FROM, code)
+        return kept
     }
 
     /** The saved palette at [index] is no longer kept; the map draws what it drew. */
@@ -194,6 +301,7 @@ internal object MapLookWrites {
         val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
         if (index !in saved.indices) return
         m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(saved.filterIndexed { i, _ -> i != index }))
+        if (m[SettingsKeys.MAP_LOOK_FROM] == saved[index].code) m.remove(SettingsKeys.MAP_LOOK_FROM)
     }
 
     /** The saved palette at [index] is called [name] (left as it was for a blank one). */
@@ -205,25 +313,6 @@ internal object MapLookWrites {
     }
 
     private fun current(p: Preferences): Palette = MapLookModel.current(p[SettingsKeys.MAP_PALETTE])
-
-    private fun tone(p: Preferences): Pair<Boolean, Float> = (p[SettingsKeys.MAP_TONE_ON] ?: DEFAULT_TONE_ON) to (p[SettingsKeys.MAP_TONE] ?: 1f)
-
-    /** The saved palette the map draws, or -1. */
-    private fun savedAt(p: Preferences): Int = MapLookModel.savedIndex(MapLookModel.savedOf(p[SettingsKeys.MAP_PALETTES]), current(p))
-
-    /** The map's palette becomes [next], and the saved palette it was with it. */
-    private fun change(m: MutablePreferences, next: Palette) {
-        val at = savedAt(m)
-        m.put(SettingsKeys.MAP_PALETTE, MapLookModel.keep(next))
-        if (at >= 0) keepSaved(m, at, next)
-    }
-
-    /** The saved palette at [index] keeps [p] with the map's Tone. */
-    private fun keepSaved(m: MutablePreferences, index: Int, p: Palette) {
-        val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
-        val (on, strength) = tone(m)
-        m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(MapLookModel.replaced(saved, index, MapLookModel.withTone(p, on, strength))))
-    }
 
     private fun <T> MutablePreferences.put(key: Preferences.Key<T>, value: T?) {
         if (value == null) remove(key) else this[key] = value

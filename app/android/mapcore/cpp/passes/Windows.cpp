@@ -355,8 +355,12 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             if (!weather || (detail & shaders::BUILDING_DETAIL_MATERIALS) == 0U || wall >= b.window_materials.size()) {
                 return MaterialChoice{};
             }
-            const BuildingTile::MaterialWall& m = b.window_materials[wall];
+            BuildingTile::MaterialWall m = b.window_materials[wall];
             if (m.kind == geometry::Material::none) return MaterialChoice{};
+            // a metal wall's ribs a darker tone of its wall's colour as the palette paints it
+            if (wall < b.window_faces.size() && b.window_faces[wall] < b.lights.size()) {
+                m.ribs = repainted(state.palette, &b.lights[b.window_faces[wall]], m.ribs);
+            }
             const std::uint32_t row = row_of(wall);
             return material_choice(m, night, row < depths.size() ? depths[row] : 0.0, focal);
         };
@@ -558,7 +562,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             const auto offset = std::bit_cast<hlsl::uint4>(push.place.offset);
             const auto scale = std::bit_cast<hlsl::uint4>(push.place.scale);
             for (const BuildingTile::KitWall& k : d.tile->kit_walls) {
-                const hlsl::uint4 test = {bits(k.test[0]), bits(k.test[1]), bits(k.test[2]), k.rgb};
+                const std::uint32_t rgb = repainted(
+                    state.palette, k.light < d.tile->lights.size() ? &d.tile->lights[k.light] : nullptr, k.rgb);
+                const hlsl::uint4 test = {bits(k.test[0]), bits(k.test[1]), bits(k.test[2]), rgb};
                 if (shadows) {
                     if (!k.shadow) continue;
                     const auto at = placed_in(d, k.item, k.shadow_near, k.shadow_far);
@@ -611,7 +617,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
             const std::uint32_t width = courses_width(at->second, focal);
             const std::uint32_t flags = 30U << shaders::BUILDING_ROOF_LINE_OPACITY_SHIFT;
             const hlsl::uint4 normal = {bits(c.normal[0]), bits(c.normal[1]), bits(c.normal[2]), flags};
-            const hlsl::uint4 test = {bits(c.test[0]), bits(c.test[1]), bits(c.test[2]), c.rgb};
+            const std::uint32_t rgb =
+                repainted(state.palette, c.light < d.tile->lights.size() ? &d.tile->lights[c.light] : nullptr, c.rgb);
+            const hlsl::uint4 test = {bits(c.test[0]), bits(c.test[1]), bits(c.test[2]), rgb};
             for (std::uint32_t j = 1; j < c.k; ++j) {
                 const auto [a, b] = course_ends(c, j);
                 const hlsl::uint4 from = {bits(a[0]), bits(a[1]), bits(a[2]), at->first};

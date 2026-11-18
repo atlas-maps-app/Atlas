@@ -1018,6 +1018,11 @@ struct GlowLayer;   // below
 inline constexpr std::uint32_t palette_pairs = 256;
 [[nodiscard]] std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style::PaletteBlock* palette,
                                                         bool night);
+/// The same for the fills of every style of `styles` (the packs a frame draws: the active one's, the coarser one's
+/// around it and its neighbours'), each style's colours after those of the styles before it; a colour two styles move
+/// alike takes the first's move.
+[[nodiscard]] std::vector<std::uint32_t> ground_palette(std::span<const tiles::Style* const> styles,
+                                                        const style::PaletteBlock* palette, bool night);
 /// The pair a colour word's search starts at (ground.slang's repainted).
 [[nodiscard]] constexpr std::uint32_t palette_hash(std::uint32_t c) noexcept { return (c * 2654435761U) >> 24U; }
 
@@ -1599,7 +1604,7 @@ private:
     /// The last palette table (write_palette) and what it was made of.
     std::vector<std::uint32_t> palette_table_;
     style::PaletteBlock palette_of_{};
-    const tiles::Style* palette_style_ = nullptr;
+    std::vector<const tiles::Style*> palette_styles_;
     bool palette_night_ = false;
     // scratch, reused frame to frame
     std::vector<view::Vec3> cam_;
