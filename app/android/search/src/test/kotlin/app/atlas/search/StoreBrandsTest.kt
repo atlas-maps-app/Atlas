@@ -73,6 +73,58 @@ class StoreBrandsTest {
         store(street(amsterdam, "NL") + dutch).use { s -> assertEquals("etos-994f1e", s.get(dutch.id!!)!!.brand) }
     }
 
+    /**
+     * A chain also trades in a country where the store's own places name it by `brand:wikidata` or `brand` (the app
+     * maintainer, 18 November 2026, batch 4 D): Sandro's list names France alone, so its branches in Amsterdam named only
+     * "Sandro" were no chain's beside one its mapper tagged. Without such a branch, or with one the store names in
+     * Belgium, a name alone stays no chain's in the Netherlands.
+     */
+    @Test
+    fun aChainTradesWhereTheStoresOwnPlacesNameIt() {
+        val sandro = mapOf("shop" to "clothes", "name" to "Sandro")
+        val near = LatLon(amsterdam.lat + 0.002, amsterdam.lon)
+        val tagged = place(amsterdam, sandro + ("brand:wikidata" to "Q3472022"))
+        val named = place(near, sandro)
+        val namedNl = place(LatLon(near.lat, near.lon + 0.002), sandro + ("addr:country" to "NL"))
+        store(street(amsterdam, "NL") + tagged + named + namedNl).use { s ->
+            assertEquals("sandro-90f7b7", s.get(named.id!!)!!.brand)
+            assertEquals("sandro-90f7b7", s.get(namedNl.id!!)!!.brand)
+        }
+        val alone = place(near, sandro)
+        store(street(amsterdam, "NL") + alone).use { s -> assertNull(s.get(alone.id!!)!!.brand) }
+        val belgian = place(amsterdam, sandro + ("brand" to "Sandro") + ("addr:country" to "BE"))
+        val dutch = place(near, sandro)
+        store(street(amsterdam, "NL") + belgian + dutch).use { s -> assertNull(s.get(dutch.id!!)!!.brand) }
+    }
+
+    /**
+     * What the store's own places bring back or change over the fixtures written as one store, as a pack is: the
+     * places whose chain in the store is not the one their tags give in the Netherlands, a chain whose list leaves the
+     * Netherlands out matched by name alone. Printed for the report, by name; Hope, Pastini, MOS and Black, which their
+     * own sites show are not those chains', never.
+     */
+    @Test
+    fun whatTheStoresOwnPlacesBringBackOverTheFixtures() {
+        val back = sortedMapOf<String, Int>()
+        PlaceStore.open(File(tmp.root, "fixtures.db")).use { s ->
+            s.writer(regionName = "Amsterdam").use { w ->
+                for (f in listOf(Fixtures.ams, Fixtures.eat, Fixtures.errands)) f.bufferedReader(Charsets.UTF_8, 1 shl 16).use { OverpassImport.read(it, w) }
+                w.finish()
+            }
+            for (r in s.inBox(BBox.around(Fixtures.westerkerk, 30_000.0))) {
+                val listed = app.atlas.places.Brands.forTags(r.tags, "NL")?.id
+                if (r.brand == listed) continue
+                val site = r.tags["website"] ?: r.tags["contact:website"] ?: "-"
+                back.merge("${r.tags["name"]} (${r.brand ?: "none"}, by its tags ${listed ?: "none"}, ${r.tags["addr:street"] ?: "-"}, $site)", 1, Int::plus)
+            }
+        }
+        println("brought back or changed by the store's own places: ${back.size} names, ${back.values.sum()} places")
+        back.forEach { (k, n) -> println("  $n x $k") }
+        for (wrong in listOf("hope", "pastini", "mos", "black")) {
+            assertTrue(wrong, back.keys.none { it.substringBefore(" (").lowercase() == wrong })
+        }
+    }
+
     @Test
     fun whereNothingNamesACountryANameAloneIsAWorldwideChainsOnly() {
         val kiosk = place(amsterdam, mapOf("shop" to "kiosk", "name" to "Kiosk"))

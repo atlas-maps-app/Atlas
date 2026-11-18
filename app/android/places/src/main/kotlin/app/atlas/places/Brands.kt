@@ -175,26 +175,33 @@ object Brands {
      * ([PlaceCountry]): by `brand:wikidata`, else by its `brand` name with the same main key (amenity, shop…), else by
      * its `name` when the main tag matches exactly. Among several, the one whose main tag matches and that trades in the
      * country wins. A name alone is a chain's only where the chain trades (the reviewer, 17 November, finding 9):
-     * "Farmacia" is any pharmacy in Italy and a chain in Ukraine; where the country is not known, only a chain that
-     * trades everywhere.
+     * "Etos" is a chain in the Netherlands alone; where the country is not known, only a chain that trades
+     * everywhere. A chain also trades where [alsoTrades] says, given it and the country: a store's, where its own
+     * places name the chain by `brand:wikidata` or `brand` ([named]), since the lists lag behind the street.
      */
-    fun forTags(tags: Map<String, String>, country: String?): Brand? {
+    fun forTags(tags: Map<String, String>, country: String?, alsoTrades: (Brand, String) -> Boolean = { _, _ -> false }): Brand? {
         val c = PlaceCountry.of(tags, country)
         val m = candidates(tags) ?: return null
-        val list = if (m.byName) m.brands.filter { tradesIn(it, c) } else m.brands
+        val list = if (m.byName) m.brands.filter { tradesIn(it, c) || (c != null && alsoTrades(it, c)) } else m.brands
         return if (list.isEmpty()) null else best(list, tags, c)
     }
 
     /**
-     * True when [forTags] may answer otherwise in another country: the place names no country of its own, and its tags
-     * fit entries that trade apart, several of them or by its name alone. A store matches these once it knows the
-     * countries around them (`StoreWriter` in :search).
+     * True when [forTags] may answer otherwise in another country or another store: its tags fit entries that trade
+     * apart, by its name alone (where a chain trades, its list or the store's own places say: [forTags]'s alsoTrades),
+     * or several of them where the place names no country of its own. A store matches these once it knows the
+     * countries around them and the chains its places name (`StoreWriter` in :search).
      */
     fun dependsOnCountry(tags: Map<String, String>): Boolean {
-        if (PlaceCountry.tagged(tags) != null) return false
         val m = candidates(tags) ?: return false
         val apart = m.brands.any { it.countries.isNotEmpty() || it.excludedCountries.isNotEmpty() }
-        return apart && (m.byName || m.brands.size > 1)
+        return apart && (m.byName || (m.brands.size > 1 && PlaceCountry.tagged(tags) == null))
+    }
+
+    /** The entries [tags] name by `brand:wikidata` or `brand`, not by the name alone: the chain a place says it is of. */
+    fun named(tags: Map<String, String>): List<Brand> {
+        if (tags["brand:wikidata"].isNullOrBlank() && tags["brand"].isNullOrBlank()) return emptyList()
+        return candidates(tags)?.takeIf { !it.byName }?.brands.orEmpty()
     }
 
     /** The entries a place's tags fit, and whether by its name alone. */

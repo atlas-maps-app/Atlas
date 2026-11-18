@@ -30,6 +30,12 @@ internal class CountryTally {
         return commonest(around) ?: region ?: commonest(all)
     }
 
+    /** The cell of [lat], [lon] (E7), for [atCell]: the country at a point is its cell's. */
+    fun cellOf(lat: Int, lon: Int): Long = cell(Math.floorDiv(lat, CELL), Math.floorDiv(lon, CELL))
+
+    /** [at] a point of [cell] ([cellOf]). */
+    fun atCell(cell: Long, region: String? = null): String? = at((cell shr 32).toInt() * CELL, cell.toInt() * CELL, region)
+
     /** The country named most; of as many, the first by its code. */
     private fun commonest(counts: Map<String, Int>): String? =
         counts.entries.maxWithOrNull(compareBy<Map.Entry<String, Int>> { it.value }.thenByDescending { it.key })?.key

@@ -42,6 +42,14 @@ class StoreWriter internal constructor(
     /** The places whose brand depends on the country, matched again at [finish] ([rebrand]). */
     private val unsure = HashSet<Long>()
 
+    /**
+     * Where the store's own places name a chain by `brand:wikidata` or `brand` ([Brands.named]), by its id: the
+     * countries they name themselves, and the cells of the others ([CountryTally.cellOf]), whose countries [finish]
+     * knows. The chain trades there, whatever its list says ([rebrand]).
+     */
+    private val namedIn = HashMap<String, HashSet<String>>()
+    private val namedAt = HashMap<String, HashSet<Long>>()
+
     var elements = 0L
         private set
     var places = 0
@@ -119,7 +127,11 @@ class StoreWriter internal constructor(
         val key = p.id?.let(StoreSchema::pack) ?: StoreSchema.foreignKey(p.key)
         val lat = E7.of(p.location.lat)
         val lon = E7.of(p.location.lon)
-        PlaceCountry.tagged(tags)?.let { countries.add(lat, lon, it) }
+        val tagged = PlaceCountry.tagged(tags)
+        tagged?.let { countries.add(lat, lon, it) }
+        for (b in Brands.named(tags)) {
+            if (tagged != null) namedIn.getOrPut(b.id) { HashSet(2) } += tagged else namedAt.getOrPut(b.id) { HashSet(2) } += countries.cellOf(lat, lon)
+        }
         val box = p.bbox?.takeIf { it.west <= it.east && it.south <= it.north && (it.width > 0 || it.height > 0) }
         store.locked {
             remove(key)
@@ -418,8 +430,12 @@ class StoreWriter internal constructor(
     /**
      * Matches again the brands that depend on the country, now that the store's countries are known: the country of the
      * map at a place is the commonest its places and addresses name around it, else the store's own ([CountryTally]).
+     * A chain also trades in a country where the store's own places name it by `brand:wikidata` or `brand`, whatever
+     * its list says (the app maintainer, 18 November 2026, batch 4 D: the lists lag, and Sandro's, Kipling's and Hans
+     * im Glück's branches in Amsterdam named only by their names read as no chain's).
      */
     private fun rebrand() {
+        for ((id, cells) in namedAt) for (cell in cells) countries.atCell(cell, country)?.let { namedIn.getOrPut(id) { HashSet(2) } += it }
         for (key in unsure) {
             var lat = 0
             var lon = 0
@@ -435,13 +451,15 @@ class StoreWriter internal constructor(
                 }
             }
             val t = tags ?: continue
-            val brand = Brands.forTags(t, countries.at(lat, lon, country))?.id?.let(dict::internValue)
+            val brand = Brands.forTags(t, countries.at(lat, lon, country)) { b, c -> namedIn[b.id]?.contains(c) == true }?.id?.let(dict::internValue)
             if (brand == old) continue
             store.stmt("UPDATE place SET brand = ?2 WHERE id = ?1") { st -> st.bindLong(1, key); bindId(st, 2, brand); st.step() }
             old?.let { o -> store.stmt("DELETE FROM lookup WHERE k = ?1 AND v = ?2 AND place = ?3") { st -> lookupRow(st, StoreSchema.BRAND_KEY, o, key) } }
             brand?.let { b -> store.stmt("INSERT OR IGNORE INTO lookup(k, v, place) VALUES (?1, ?2, ?3)") { st -> lookupRow(st, StoreSchema.BRAND_KEY, b, key) } }
         }
         unsure.clear()
+        namedIn.clear()
+        namedAt.clear()
     }
 
     internal fun putMeta(key: String, value: String) {
