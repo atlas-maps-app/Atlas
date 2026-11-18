@@ -91,10 +91,36 @@ class FindReviewTest {
         // Zones that keep one clock (Detroit, New York) are as good as each other: compare what they read.
         val noon = java.time.Instant.parse("2026-10-13T12:00:00Z")
         fun offset(z: ZoneId) = z.rules.getOffset(noon)
-        assertEquals(offset(ZoneId.of("America/Los_Angeles")), offset(PlaceZone.guess("US", -122.4, noon)))
-        assertEquals(offset(ZoneId.of("America/New_York")), offset(PlaceZone.guess("US", -74.0, noon)))
-        assertEquals(offset(ZoneId.of("America/Chicago")), offset(PlaceZone.guess("US", -87.6, noon)))
-        assertEquals(ZoneId.of("Asia/Tokyo"), PlaceZone.guess("JP", 139.7, noon))
+        assertEquals(offset(ZoneId.of("America/Los_Angeles")), offset(PlaceZone.guess("US", LatLon(37.77, -122.4), noon)))
+        assertEquals(offset(ZoneId.of("America/New_York")), offset(PlaceZone.guess("US", LatLon(40.71, -74.0), noon)))
+        assertEquals(offset(ZoneId.of("America/Chicago")), offset(PlaceZone.guess("US", LatLon(41.88, -87.6), noon)))
+        assertEquals(ZoneId.of("Asia/Tokyo"), PlaceZone.guess("JP", LatLon(35.68, 139.7), noon))
+    }
+
+    /**
+     * A far place keeps its country's own clock (the app maintainer, 18 November 2026, batch 4 B15): the zone of its
+     * country nearest the sun's hour put Madrid on the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's. Near
+     * the phone, across a border, the phone's clock was taken: Porto from Vigo read Spain's, an hour off.
+     */
+    @Test
+    fun aPlaceKeepsItsCountrysOwnClock() {
+        val s = testServices()
+        val amsterdam = LatLon(52.37, 4.89)
+        val vigo = LatLon(42.2406, -8.7207)
+        var n = 9_100L
+        fun zoneOf(at: LatLon, country: String, phone: LatLon = amsterdam, phoneZone: ZoneId = ZoneId.of("Europe/Amsterdam")): ZoneId {
+            val place = Place(OsmId(OsmType.NODE, n++), at, mapOf("name" to "X", "addr:country" to country))
+            return HereContext.localeOf(s, place, phone, phoneZone).zone
+        }
+        assertEquals(ZoneId.of("Europe/Madrid"), zoneOf(LatLon(40.4168, -3.7038), "ES"))
+        assertEquals(ZoneId.of("Europe/Lisbon"), zoneOf(LatLon(41.1496, -8.6110), "PT"))
+        assertEquals(ZoneId.of("Asia/Shanghai"), zoneOf(LatLon(30.6586, 104.0647), "CN"))
+        // the islands keep theirs
+        assertEquals(ZoneId.of("Atlantic/Canary"), zoneOf(LatLon(28.1235, -15.4363), "ES"))
+        assertEquals(ZoneId.of("Atlantic/Azores"), zoneOf(LatLon(37.7412, -25.6756), "PT"))
+        // Porto from Vigo, 120 km off over the border: Portugal's clock, not the phone's; Santiago from Vigo: Spain's
+        assertEquals(ZoneId.of("Europe/Lisbon"), zoneOf(LatLon(41.1496, -8.6110), "PT", vigo, ZoneId.of("Europe/Madrid")))
+        assertEquals(ZoneId.of("Europe/Madrid"), zoneOf(LatLon(42.8782, -8.5448), "ES", vigo, ZoneId.of("Europe/Madrid")))
     }
 
     @Test

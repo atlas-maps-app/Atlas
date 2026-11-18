@@ -92,23 +92,26 @@ object HereContext {
 
     /**
      * The country and clock of [place], seen from a phone at [phone] whose own zone is [phoneZone]: its country its own
-     * `addr:country`, else [country] at its point ([PlaceCountry]); its clock the phone's near the phone, else its
-     * country's (the zone nearest the sun's hour there), else the sun's own hour. Asks the regions: off the main thread.
+     * `addr:country`, else [country] at its point ([PlaceCountry]); its clock the phone's near the phone in the phone's
+     * country, else its country's ([PlaceZone]), else the sun's own hour. Asks the regions: off the main thread.
      */
     fun localeOf(services: Services, place: Place, phone: LatLon, phoneZone: ZoneId): PlaceLocale {
         val around = region(services, place.location)
         val country = PlaceCountry.of(place.tags, around.country)
         val subdivision = PlaceCountry.subdivision(place.tags, country) ?: around.subdivision?.takeIf { country != null && it.startsWith("$country-") }
-        return locale(HereRegion(country, subdivision), place.location, phone, phoneZone)
+        return locale(HereRegion(country, subdivision), place.location, phone, phoneZone) { HereContext.country(services, phone) }
     }
 
     /** The same for a point and the places around it, as an area's screens read them all ([localeOf]). */
     fun localeAt(services: Services, at: LatLon, phone: LatLon, phoneZone: ZoneId): PlaceLocale =
-        locale(region(services, at), at, phone, phoneZone)
+        locale(region(services, at), at, phone, phoneZone) { HereContext.country(services, phone) }
 
-    private fun locale(region: HereRegion, at: LatLon, phone: LatLon, phoneZone: ZoneId): PlaceLocale {
-        val near = Geo.distance(phone, at) <= NEAR_PHONE_M
-        return PlaceLocale(region.country, if (near) phoneZone else PlaceZone.guess(region.country, at.lon), region.subdivision)
+    /** [region]'s clock at [at] from a phone at [phone] on [phoneZone], in [phoneCountry], asked only within [NEAR_PHONE_M]. */
+    private fun locale(region: HereRegion, at: LatLon, phone: LatLon, phoneZone: ZoneId, phoneCountry: () -> String?): PlaceLocale {
+        // the phone's clock near it only in its own country, or where the place's is unknown: a border between may be a
+        // clock between (the app maintainer, 18 November 2026, batch 4 B15: Porto from Vigo read Spain's)
+        val near = Geo.distance(phone, at) <= NEAR_PHONE_M && (region.country == null || region.country == phoneCountry())
+        return PlaceLocale(region.country, if (near) phoneZone else PlaceZone.guess(region.country, at), region.subdivision)
     }
 
     /**
@@ -162,13 +165,27 @@ object HereContext {
     private fun key(regions: Int, at: LatLon) = "$regions:${(at.lat * 100).roundToInt()}:${(at.lon * 100).roundToInt()}"
 }
 
-/** Which clock a far-away place keeps, worked out without a network: the country's zones, else the sun's hour. */
+/** Which clock a far-away place keeps, worked out without a network: its country's, else the sun's hour. */
 object PlaceZone {
-    /** The zone of [country] nearest to the sun's hour at [lon]; the sun's whole hour itself when the country is unknown. */
-    fun guess(country: String?, lon: Double, at: Instant = Instant.now()): ZoneId {
-        val sun = lon / 15.0
+    /**
+     * The clock at [p] in [country]: the country's own ([Countries.timezone], by longitude where it spans several), the
+     * Canaries' and the Azores' their own (the app maintainer, 18 November 2026, batch 4 B15: the zone nearest the sun's
+     * hour put Madrid on the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's); for a country it does not
+     * name, the country's zone nearest the sun's hour there; the sun's whole hour itself where the country is unknown.
+     */
+    fun guess(country: String?, p: LatLon, at: Instant = Instant.now()): ZoneId {
+        islands(country, p)?.let { return ZoneId.of(it) }
+        Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull()?.let { return it } }
+        val sun = p.lon / 15.0
         val best = zonesOf(country).minByOrNull { id -> abs(ZoneId.of(id).rules.getStandardOffset(at).totalSeconds / 3600.0 - sun) }
         return best?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.ofHours(sun.roundToInt().coerceIn(-12, 14))
+    }
+
+    /** The islands far off their country's own clock: the Canaries west of 12° W, the Azores west of 20° W. */
+    private fun islands(country: String?, p: LatLon): String? = when {
+        country == "ES" && p.lon < -12.0 -> "Atlantic/Canary"
+        country == "PT" && p.lon < -20.0 -> "Atlantic/Azores"
+        else -> null
     }
 
     /** The zone ids of [country] (ISO 3166 alpha-2), from the system's ICU data; none when unknown. */
