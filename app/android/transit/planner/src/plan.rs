@@ -2168,8 +2168,10 @@ impl<'s> Search<'s, '_> {
         false
     }
 
-    /// The one thing a rule says waits for the ride before a held label: its trip of this route, or the first trip
-    /// of its line, leaving once the ride before is in.
+    /// What a rule says waits for the ride before a held label: its trip of this route; or, where it names a line
+    /// and no trip, the first trip of that line leaving once the ride before is in. Whoever came by that ride is
+    /// at the stop from then on, so where trips differ in cost a few later and cheaper ones of the line are
+    /// boarded too, as in `board`.
     fn board_waiting(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, h: &Held, lab: &Label, cost_here: u32) {
         let rule = self.tt.rule(h.rule);
         let (_, to) = self.sides(&rule);
@@ -2177,12 +2179,15 @@ impl<'s> Search<'s, '_> {
             return;
         }
         let base = lab.cost.saturating_add(cost(&self.prefs.stop_cost, lab.stop)).saturating_add(cost_here);
-        let mut best: Option<(i32, Riding)> = None;
+        let trip_costs = to.1 == NONE && self.soft && self.prefs.trip_cost.is_some();
+        // the earliest of all the days, and with costly trips each one cheaper than those before it on its day
+        let mut found: Vec<(i32, Riding)> = Vec::new();
         for off in self.off_lo..=self.off_hi {
             // the rule's own trip if it names one, else the line's first of the day that can be caught
             let run = self.run(r, off);
             let mut rank = if to.1 == NONE { self.first_rank(&run, pos, off, lab.time) } else { 0 };
-            while to.1 != NONE || (rank as usize) < run.trips.len() {
+            let (mut cheapest, mut looked) = (u32::MAX, 0);
+            while (to.1 != NONE || (rank as usize) < run.trips.len()) && looked < 32 {
                 self.steps += 1;
                 let trip = if to.1 == NONE { self.trip_at(&run, rank).0 } else { to.1 };
                 rank += 1;
@@ -2192,17 +2197,24 @@ impl<'s> Search<'s, '_> {
                 let times = self.tt.trip_times(trip);
                 let time = self.board_time(times, pos, off);
                 if self.tt.runs(self.tt.trip(trip).service, self.day + off) && !bit(&self.prefs.trip_closed, trip) && time >= lab.time && time <= self.limit {
-                    if best.is_none_or(|b| time < b.0) {
-                        best = Some((time, Riding { trip, times, off, cost: base.saturating_add(cost(&self.prefs.trip_cost, trip)), from: h.label, pos }));
+                    let c = cost(&self.prefs.trip_cost, trip);
+                    if c < cheapest {
+                        cheapest = c;
+                        found.push((time, Riding { trip, times, off, cost: base.saturating_add(c), from: h.label, pos }));
                     }
-                    break;
+                    if !trip_costs || c == 0 {
+                        break;
+                    }
+                    looked += 1;
                 }
                 if to.1 != NONE {
                     break;
                 }
             }
         }
-        if let Some((_, new)) = best {
+        // (the earliest first: what is no sooner and no cheaper than one joined before it is left out there)
+        found.sort_by_key(|f| f.0);
+        for (_, new) in found {
             self.join(riding, new, pos);
         }
     }
