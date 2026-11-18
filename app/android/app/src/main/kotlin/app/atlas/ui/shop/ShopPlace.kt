@@ -12,6 +12,8 @@ import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.services.PlaceOrigin
+import app.atlas.ui.search.HereContext
+import app.atlas.ui.search.PlaceLocale
 import app.atlas.ui.kit.WalkTime
 import java.time.DayOfWeek
 import java.time.Duration
@@ -158,15 +160,15 @@ internal class ShopArea(
     val places: List<ShopPlace>,
     val origin: PlaceOrigin?,
     val loading: Boolean,
+    /** The area's country and clock, read the one way ([HereContext.localeAt]): never the phone's language. */
+    val local: PlaceLocale,
     val error: String? = null,
-    zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    /** The country most places give in `addr:country`: its holidays apply to opening hours. */
-    val country: String? = places.mapNotNull { it.tags["addr:country"]?.trim()?.uppercase()?.takeIf { c -> c.length == 2 } }
-        .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+    /** The country here: its holidays apply to opening hours. */
+    val country: String? get() = local.country
 
     /** Holidays of [country] and the real sun here, for every opening-hours question about this area. */
-    val hours: OpeningHoursContext = OpeningHoursContext.forPlace(country, zone, centre.lat, centre.lon)
+    val hours: OpeningHoursContext = local.hours(centre)
 
     val waiting: Boolean get() = places.isEmpty() && loading
 
@@ -184,7 +186,12 @@ internal class ShopArea(
     data class Count(val value: Int, val open: Boolean)
 
     companion object {
-        fun empty(centre: LatLon, radiusM: Double = DEFAULT_RADIUS_M) = ShopArea(centre, radiusM, emptyList(), null, loading = true)
+        /**
+         * An area with no places yet, as a screen shows it while asking: it reads no hours, so it knows no country (no
+         * holidays) and keeps the phone's [zone].
+         */
+        fun empty(centre: LatLon, radiusM: Double = DEFAULT_RADIUS_M, loading: Boolean = true, zone: ZoneId = ZoneId.systemDefault()) =
+            ShopArea(centre, radiusM, emptyList(), null, loading, PlaceLocale(null, zone))
 
         /** How far the shop screens look: about a quarter of an hour on foot. */
         const val DEFAULT_RADIUS_M = 1_200.0

@@ -2,7 +2,6 @@ package app.atlas.places
 
 import app.atlas.model.Place
 import java.time.LocalDateTime
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -83,22 +82,17 @@ data class Fact(
  */
 object Facts {
     /**
-     * The facts of [place] in [lang], most prominent first, mapped before unmapped. The hours are read at [now] in
-     * [context] (by default the holidays of `addr:country`, else of [country], and the sun at the place).
+     * The facts of [place] in [lang], most prominent first, mapped before unmapped. The hours are read at [now], on the
+     * place's own clock, in [context]: its country's holidays and its sun, which the caller works out the one way for
+     * every screen (`HereContext.localeOf` in the app).
      */
     fun of(
         place: Place,
-        lang: String? = "en",
-        now: LocalDateTime = LocalDateTime.now(),
-        context: OpeningHoursContext? = null,
-        country: String? = null,
+        lang: String?,
+        now: LocalDateTime,
+        context: OpeningHoursContext,
         geometry: Geometry = Geometry.POINT,
-    ): List<Fact> {
-        val ctx = context ?: OpeningHoursContext.forPlace(
-            place.tags["addr:country"] ?: country, ZoneId.systemDefault(), place.location.lat, place.location.lon,
-        )
-        return of(place.tags, lang, now, ctx, geometry)
-    }
+    ): List<Fact> = of(place.tags, lang, now, context, geometry)
 
     /** The facts of a bare tag map; see the overload for places. */
     fun of(

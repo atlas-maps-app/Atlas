@@ -156,10 +156,15 @@ class FactsTest {
         assertEquals("Veganistisch", nl.one(FactKind.DIET).label)
         assertEquals("Rolstoeltoegankelijkheid", nl.one(FactKind.WHEELCHAIR).label)
         assertNotNull(nl.one(FactKind.WHEELCHAIR).valueLabel)
-        // a place's own country gives the holidays: Christmas closes a "PH off" bakery
-        val bakery = Place(null, LatLon(52.37, 4.88), mapOf("shop" to "bakery", "addr:country" to "NL", "opening_hours" to "Mo-Sa 07:00-18:00; PH off"))
-        assertEquals(FactState.NO, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 25, 10, 0)).one(FactKind.OPENING_HOURS).state)
-        assertEquals(FactState.YES, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 24, 10, 0)).one(FactKind.OPENING_HOURS).state)
+        // a place's own country gives the holidays (PlaceCountry, before the country around): Christmas closes a "PH off" bakery
+        val bakery = Place(null, LatLon(52.37, 4.88), mapOf("shop" to "bakery", "addr:country" to "nl ", "opening_hours" to "Mo-Sa 07:00-18:00; PH off"))
+        val country = PlaceCountry.of(bakery.tags, around = "US")
+        assertEquals("NL", country)
+        val ctx = OpeningHoursContext.forPlace(country, java.time.ZoneId.of("Europe/Amsterdam"), 52.37, 4.88)
+        assertEquals(FactState.NO, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 25, 10, 0), ctx).one(FactKind.OPENING_HOURS).state)
+        assertEquals(FactState.YES, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 24, 10, 0), ctx).one(FactKind.OPENING_HOURS).state)
+        // a country that is not a code says nothing: the one around speaks
+        assertEquals("BE", PlaceCountry.of(mapOf("addr:country" to "Nederland"), around = "be"))
     }
 
     @Test

@@ -65,13 +65,24 @@ class FindReviewTest {
     }
 
     @Test
-    fun aFarPlaceWithoutACountryHasNoHolidaysOfTheirs() {
+    fun aFarPlaceWithoutACountryKeepsTheMapsOwn() {
+        // Sydney, tagged with no country and with no region on the phone: the map's own country there (finding 8).
         val s = testServices()
         val far = Place(OsmId.parse("n8")!!, LatLon(-33.87, 151.21), mapOf("name" to "Far"))
         val l = HereContext.localeOf(s, far, LatLon(52.37, 4.89), ZoneId.of("Europe/Amsterdam"))
+        assertEquals("AU", l.country)
+        // Australia's zone nearest the sun's hour there: +10 at 151 degrees east, before its summer time.
+        assertEquals(10 * 3600, l.zone.rules.getStandardOffset(java.time.Instant.parse("2026-10-13T00:00:00Z")).totalSeconds)
+    }
+
+    @Test
+    fun aPlaceFarFromEveryCountryHasNoHolidaysOfTheirs() {
+        val s = testServices()
+        val far = Place(OsmId.parse("n9")!!, LatLon(-25.07, -130.10), mapOf("name" to "Adamstown"))
+        val l = HereContext.localeOf(s, far, LatLon(52.37, 4.89), ZoneId.of("Europe/Amsterdam"))
         assertNull(l.country)
-        // The sun's own hour there: +10 at 151 degrees east.
-        assertEquals(10 * 3600, l.zone.rules.getOffset(java.time.Instant.parse("2026-10-13T00:00:00Z")).totalSeconds)
+        // The sun's own hour there: -9 at 130 degrees west.
+        assertEquals(-9 * 3600, l.zone.rules.getOffset(java.time.Instant.parse("2026-10-13T00:00:00Z")).totalSeconds)
     }
 
     @Test

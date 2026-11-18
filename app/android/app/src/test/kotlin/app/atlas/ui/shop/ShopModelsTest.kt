@@ -5,6 +5,7 @@ import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.services.PlaceOrigin
 import app.atlas.testing.Fixtures
+import app.atlas.ui.search.PlaceLocale
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,7 +29,7 @@ class ShopModelsTest {
     private val area: ShopArea by lazy {
         val found = ShopFixtures.store.inBox(BBox.around(here, 1_500.0)).map { it.place }
         val places = found.mapNotNull { ShopPlace.of(it, here, "en", nameless = true) }.sortedBy { it.distanceM }
-        ShopArea(here, 1_500.0, places, PlaceOrigin.STORE, loading = false, zone = Fixtures.evening.zone)
+        ShopArea(here, 1_500.0, places, PlaceOrigin.STORE, loading = false, local = PlaceLocale("NL", Fixtures.evening.zone))
     }
 
     @Test
@@ -137,7 +138,7 @@ class ShopModelsTest {
 
     @Test
     fun strollWalksOneStreetInOrder() {
-        val street = Stroll.street(ShopArea(here, 800.0, area.places.filter { it.tags["shop"] != null && it.distanceM <= 700 }, PlaceOrigin.STORE, false), here)
+        val street = Stroll.street(ShopArea(here, 800.0, area.places.filter { it.tags["shop"] != null && it.distanceM <= 700 }, PlaceOrigin.STORE, false, area.local), here)
         assertNotNull(street)
         assertTrue(street!!.shops.size >= 3)
         assertTrue(street.start in street.shops.indices)

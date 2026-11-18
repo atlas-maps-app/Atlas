@@ -70,7 +70,6 @@ import app.atlas.places.FactKind
 import app.atlas.places.FactState
 import app.atlas.places.Facts
 import app.atlas.places.Localise
-import app.atlas.places.OpeningHoursContext
 import app.atlas.search.PlaceRecord
 import app.atlas.services.HereGap
 import app.atlas.services.PlaceOrigin
@@ -91,7 +90,6 @@ import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.walkMinutes
 import app.atlas.ui.kit.markOf
-import java.time.LocalDateTime
 import java.time.ZonedDateTime
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
@@ -103,8 +101,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** What "What's here" knows: the facts once found, and where a note for mappers stands. */
-data class WhatsHereState(val facts: HereFacts? = null, val note: Sending = Sending.Idle)
+/**
+ * What "What's here" knows: the facts once found, the facts of the place the point is in (read on its own clock, in its
+ * country), and where a note for mappers stands.
+ */
+data class WhatsHereState(val facts: HereFacts? = null, val spotFacts: List<Fact> = emptyList(), val note: Sending = Sending.Idle)
 
 /**
  * Finds what is at [at] once (the building [spot] when the press named one), and leaves a note for mappers there when
@@ -135,7 +136,8 @@ class WhatsHereViewModel(private val services: Services, private val at: LatLon,
             } catch (e: Exception) {
                 HereFacts(null, null, emptyList(), null, HereGap.UNANSWERED)
             }
-            mutable.update { it.copy(facts = facts) }
+            val spot = facts.spot?.let { s -> withContext(Dispatchers.Default) { spotFacts(services, s, lang) } }.orEmpty()
+            mutable.update { it.copy(facts = facts, spotFacts = spot) }
         }
     }
 
@@ -153,6 +155,16 @@ class WhatsHereViewModel(private val services: Services, private val at: LatLon,
             mutable.update { it.copy(note = r) }
         }
     }
+}
+
+/**
+ * The facts of [place] as its card shows them, read the way its own page reads them (the reviewer, 17 November, finding
+ * 8): at the moment its own clock shows, with its country's holidays ([HereContext.localeOf]). Asks the regions: off the
+ * main thread.
+ */
+internal fun spotFacts(services: Services, place: Place, lang: String): List<Fact> {
+    val local = HereContext.localeOf(services, place, HereContext.phoneAt(services), ZonedDateTime.now(services.clock).zone)
+    return Facts.of(place, lang, local.now(services.clock), local.hours(place.location), geometry = PlaceRecord.geometryOf(place))
 }
 
 /**
@@ -234,7 +246,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                 when {
                     facts == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
                     else -> {
-                        facts.spot?.let { s -> SpotCard(s, lang) { services.remember(s); nav.go(Dest.Place.page(s)) } }
+                        facts.spot?.let { s -> SpotCard(s, state.spotFacts, lang) { services.remember(s); nav.go(Dest.Place.page(s)) } }
                         if (facts.nearby.isNotEmpty()) {
                             Kicker(stringResource(R.string.whatshere_nearby))
                             Card(padding = PaddingValues(horizontal = 16.dp, vertical = 2.dp), elevation = 0.dp, colour = c.cardMuted) {
@@ -323,15 +335,9 @@ private fun Header(title: String, facts: HereFacts?, p: LatLon, here: LatLon) {
 /** The place the point is in: its tile, name and kind, its facts as symbols, and its building's year, floors and height. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SpotCard(place: Place, lang: String, onOpen: () -> Unit) {
-    val services = LocalServices.current
+private fun SpotCard(place: Place, facts: List<Fact>, lang: String, onOpen: () -> Unit) {
     val c = Atlas.colors
     val (symbol, colour) = remember(place) { markOf(place) }
-    val facts = remember(place) {
-        val now = LocalDateTime.now(services.clock)
-        val ctx = OpeningHoursContext.forPlace(place.tags["addr:country"], ZonedDateTime.now(services.clock).zone, place.location.lat, place.location.lon)
-        Facts.of(place, lang, now, ctx, geometry = PlaceRecord.geometryOf(place))
-    }
     val building = remember(place) { buildingLines(place.tags) }
     Card(padding = PaddingValues(16.dp), elevation = 0.dp, colour = c.cardMuted, onClick = onOpen, onClickLabel = stringResource(R.string.whatshere_open_place)) {
         Kicker(stringResource(R.string.whatshere_at_spot))

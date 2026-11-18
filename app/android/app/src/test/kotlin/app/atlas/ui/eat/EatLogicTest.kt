@@ -5,6 +5,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.Place
 import app.atlas.providers.Trend
 import app.atlas.services.PlaceOrigin
+import app.atlas.ui.search.PlaceLocale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -36,7 +37,7 @@ class EatLogicTest {
     private fun eat(p: Place) = EatPlace.of(p, centre, "en")!!
 
     private fun area(vararg places: Place) =
-        EatArea(centre, EatArea.RADIUS_M, places.map { eat(it) }.sortedBy { it.distanceM }, PlaceOrigin.STORE, loading = false, country = "NL", zone = zone)
+        EatArea(centre, EatArea.RADIUS_M, places.map { eat(it) }.sortedBy { it.distanceM }, PlaceOrigin.STORE, loading = false, local = PlaceLocale("NL", zone))
 
     @Test
     fun theTableMeansTomorrowForATimeLongPast() {

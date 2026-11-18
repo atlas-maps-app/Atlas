@@ -194,7 +194,7 @@ class PlaceViewModel(
         val next = withContext(Dispatchers.Default) {
             val local = HereContext.localeOf(services, place, HereContext.phoneAt(services), ZonedDateTime.now(services.clock).zone)
             val now = local.now(services.clock)
-            val ctx = OpeningHoursContext.forPlace(local.country, local.zone, place.location.lat, place.location.lon)
+            val ctx = local.hours(place.location)
             val hours = OpeningHours.parseOrNull(place.tags["opening_hours"])
             val facts = Facts.of(place, lang, now, ctx, geometry = PlaceRecord.geometryOf(place))
             PlaceState(
