@@ -11,6 +11,7 @@ import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.stateDescription
@@ -85,6 +86,8 @@ import app.atlas.mapview.Theme
 import app.atlas.mapview.palette.Family
 import app.atlas.mapview.palette.Palette
 import app.atlas.mapview.palette.PaletteFace
+import app.atlas.mapview.palette.PaletteFlags
+import app.atlas.mapview.MapHit
 import app.atlas.mapview.palette.Slot
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
@@ -120,7 +123,8 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     val language by settings.flow(SettingsKeys.NAME_LANGUAGE).collectAsStateWithLifecycle(null)
     val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
     val style = MapStyle(theme = theme, layers = LayersModel.layers(savedLayers, threeD, MapStyle().layers), language = language, calm = true)
-    val map = remember(here) { MapState(CameraPosition(here, 16.4, 0.0, 45.0)) }
+    // where the map last was (else here), and moved there once the saved camera is read
+    val map = remember { MapState(ColourMapModel.start(services.startCameraNow(), here)) }
     val names = presetNames()
     // the draft, as codes in the saved state: what the map drew as the editor opened (read once), the palette as it is,
     // the undo steps, and the saved palette it came from (its code and name)
@@ -146,6 +150,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     // map moves or the sheet picks another
     var tapped by remember { mutableStateOf<Tapped?>(null) }
     LaunchedEffect(Unit) {
+        settings.camera.first()?.let { map.camera = ColourMapModel.start(it, here) }
         if (originalCode != null) return@LaunchedEffect
         val prefs = settings.data.first()
         val now = MapLookModel.current(prefs[SettingsKeys.MAP_PALETTE])
@@ -184,9 +189,11 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
         naming = true
     }
     val savedAs = stringResource(R.string.mine_colour_saved)
+    // the names of the other palettes: keeping the one the palette came from replaces it
+    fun others(): List<String> = if (fromCode != null) takenNames.filter { it != fromName } else takenNames
     fun save() {
         val clean = MapLookModel.clean(name)
-        if (saving || !ready || clean.isEmpty()) return
+        if (saving || !ready || MapLookModel.nameSays(clean, others()) != MapLookModel.NameSays.Fine) return
         saving = true
         val kept = working
         val replace = fromCode?.takeIf { clean == fromName }
@@ -212,6 +219,26 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
     }
     fun paint(colour: Int, keep: Boolean = true) =
         change(if (group) ColourMapModel.withGroup(working, slot, colour) else ColourMapModel.withColour(working, slot, colour), keep)
+    // a drag's palette as it began: an undo step once it ends, where it changed anything
+    var dragFrom by remember { mutableStateOf<String?>(null) }
+    fun dragEnd() {
+        val from = dragFrom ?: return
+        dragFrom = null
+        if (from != workingCode) undo += from
+    }
+    fun pick(s: Slot) {
+        if (s.family != family) group = false
+        family = s.family
+        slot = s
+    }
+    fun undoOne() {
+        if (undo.isEmpty()) return
+        val back = undo.removeAt(undo.lastIndex)
+        // the colour it brings back, into view
+        MapLookModel.read(back)?.let { b -> ColourMapModel.differing(working, b)?.let(::pick) }
+        tapped = null
+        workingCode = back
+    }
 
     Box(Modifier.fillMaxSize()) {
         app.atlas.mapview.StageMap(
@@ -220,23 +247,20 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
             background = opaque(working.colour(Slot.PAPER)),
             style = style,
             contentPadding = PaddingValues(top = 130.dp, bottom = 424.dp),
-            onTap = { tapped = null },
-            onTapBuilding = { pick, at ->
-                val face = PaletteFace.of(pick.slot, working.switches)
-                tapped = Tapped.Face(pick.roof, face, pick.rgb, at)
-                face.slot?.let {
-                    family = it.family
-                    slot = it
-                }
+            // a tap that met nothing the core draws: no map here to pick from (no pack, or the map not started)
+            onTap = { hit ->
+                tapped = (hit as? MapHit.Empty)?.let { e -> map.latLonToScreen(e.at)?.let { (x, y) -> Tapped.Empty(Offset(x, y)) } }
             },
-            onTapGround = { pick, at ->
+            onTapBuilding = { hit, at ->
+                val t = Tapped.Face(hit.roof, hit.slot, hit.rgb, at)
+                tapped = t
+                ColourMapModel.picks(t.face(working))?.let(::pick)
+            },
+            onTapGround = { hit, at ->
                 // the slot that paints the ground there; a colour no slot moves (sand, a cycleway's red) picks nothing
-                val painted = Slot.ofCode(pick.slot)
-                tapped = painted?.let { Tapped.Ground(it, at) }
-                painted?.let {
-                    family = it.family
-                    slot = it
-                }
+                val t = Tapped.Ground(Slot.ofCode(hit.slot), at)
+                tapped = t
+                t.slot?.let(::pick)
             },
             onCameraMove = { _, byUser -> if (byUser) tapped = null },
         )
@@ -261,7 +285,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
             val undoCd = stringResource(R.string.mine_colour_undo)
             Box(
                 Modifier.size(44.dp).bbox(WHITE, cr(22f), chrome).alpha(if (undo.isEmpty()) 0.45f else 1f)
-                    .clickable(enabled = undo.isNotEmpty(), role = Role.Button) { workingCode = undo.removeAt(undo.lastIndex) }
+                    .clickable(enabled = undo.isNotEmpty(), role = Role.Button) { undoOne() }
                     .semantics { contentDescription = undoCd },
                 contentAlignment = Alignment.Center,
             ) { PathIcon(LookIcons.UNDO, 18f, INK) }
@@ -270,7 +294,17 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                 h = 44f, padH = 16f, onClick = { startSaving() },
             )
         }
-        tapped?.let { t -> TapCallout(t, t.colour(working)) }
+        tapped?.let { t ->
+            // a mapped colour kept as mapped offers to let mapped colours follow, which picks it
+            val follow = (t as? Tapped.Face)?.face(working)?.colour == PaletteFace.How.MAPPED_OWN
+            TapCallout(t, t.colour(working), working, onFollow = if (!follow) null else {
+                {
+                    val next = MapLookModel.withSwitch(working, PaletteFlags.MAPPED_FOLLOW, true)
+                    change(next)
+                    ColourMapModel.picks((t as Tapped.Face).face(next))?.let(::pick)
+                }
+            })
+        }
         val sheetHeight = 412.dp
         // Hold: before, 15 px over the sheet at the right; TalkBack's tap holds it until the next
         val beforeCd = stringResource(R.string.mine_colour_before_cd)
@@ -315,6 +349,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                     TextPill(
                         stringResource(groupName(f)), bt(12.5f, 800, 16f), if (on) INK else HAIR, if (on) WHITE else INK,
                         Modifier.selectable(selected = on, role = Role.Tab) {
+                            if (f != family) group = false
                             family = f
                             slot = ColourMapModel.slots(f).first()
                             tapped = null
@@ -325,9 +360,15 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
             }
             if (original != null) {
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                    Entry(working, slot, onReset = { change(ColourMapModel.reset(working, slot)) })
+                    Entry(working, slot, resettable = working.colour(slot) != original.colour(slot), onReset = { change(ColourMapModel.reset(working, slot, original)) })
                     LitRow(working, slot)
-                    Sliders(working.colour(slot), onDrag = { c -> paint(c, keep = false) }, onStart = { undo += PaletteCode.write(working) }, onSet = { c -> paint(c) })
+                    Sliders(
+                        working.colour(slot),
+                        onStart = { dragFrom = workingCode ?: PaletteCode.write(working) },
+                        onDrag = { c -> paint(c, keep = false) },
+                        onEnd = { dragEnd() },
+                        onSet = { c -> paint(c) },
+                    )
                     HexRow(working.colour(slot), family, group, onHex = { c -> paint(c) }, onGroup = { group = !group })
                     FamilyRow(working, family, slot) { s ->
                         slot = s
@@ -350,8 +391,14 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
         }
         if (naming) {
             val clean = MapLookModel.clean(name)
-            val line = if (fromCode != null && clean == fromName) stringResource(R.string.mine_colour_save_replaces, clean) else stringResource(R.string.mine_colour_save_new)
-            EditorSheet(stringResource(R.string.mine_colour_save_title), line, onDismiss = { naming = false }) {
+            val says = MapLookModel.nameSays(clean, others())
+            val line = when {
+                says is MapLookModel.NameSays.Taken -> stringResource(R.string.mine_look_name_taken, says.name)
+                says == MapLookModel.NameSays.Blank -> stringResource(R.string.mine_look_name_blank)
+                fromCode != null && clean == fromName -> stringResource(R.string.mine_colour_save_replaces, clean)
+                else -> stringResource(R.string.mine_colour_save_new)
+            }
+            EditorSheet(stringResource(R.string.mine_colour_save_title), line, lineColour = if (says == MapLookModel.NameSays.Fine) SOFT else RED, onDismiss = { naming = false }) {
                 val focus = LocalFocusManager.current
                 val nameCd = stringResource(R.string.mine_look_name_cd)
                 Box(Modifier.fillMaxWidth().height(52.dp).bbox(PAGE, cr(14f)).padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
@@ -369,7 +416,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
                     SheetButton(stringResource(R.string.mine_colour_keep), HAIR, INK, Modifier.weight(1f)) { naming = false }
                     SheetButton(
                         stringResource(R.string.mine_colour_save), BLUE, WHITE,
-                        Modifier.weight(1f).alpha(if (clean.isEmpty() || saving) 0.45f else 1f).testTag("save-sheet"),
+                        Modifier.weight(1f).alpha(if (says != MapLookModel.NameSays.Fine || saving) 0.45f else 1f).testTag("save-sheet"),
                     ) { save() }
                 }
             }
@@ -379,7 +426,7 @@ fun ColourMapScreen(args: Dest.ColourMap, nav: Navigator) {
 
 /** A question over the editor, as the share sheet is drawn: its [title] (22, 900), its [line], then [content]. */
 @Composable
-private fun EditorSheet(title: String, line: String, onDismiss: () -> Unit, content: @Composable () -> Unit) {
+private fun EditorSheet(title: String, line: String, onDismiss: () -> Unit, lineColour: Long = SOFT, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(Color(0x730E121A)).clickable(remember { MutableInteractionSource() }, null) { onDismiss() })
         Column(
@@ -388,7 +435,7 @@ private fun EditorSheet(title: String, line: String, onDismiss: () -> Unit, cont
                 .padding(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 16.dp),
         ) {
             BText(title, bt(22f, 900, 28f), INK, Modifier.semantics { heading() }, lines = 2)
-            BText(line, bt(13f, 600, 17f), SOFT, Modifier.padding(top = 2.dp, bottom = 14.dp), lines = 3)
+            BText(line, bt(13f, 600, 17f), lineColour, Modifier.padding(top = 2.dp, bottom = 14.dp).semantics { liveRegion = LiveRegionMode.Polite }, lines = 3)
             content()
         }
     }
@@ -398,17 +445,25 @@ private fun EditorSheet(title: String, line: String, onDismiss: () -> Unit, cont
 private sealed interface Tapped {
     val at: Offset
 
-    /** The colour its callout shows in [p]. */
-    fun colour(p: Palette): Int
+    /** The colour its callout shows in [p], if any. */
+    fun colour(p: Palette): Int?
 
-    /** A building's face ([roof], else a wall), how the palette paints it, and its own colour. */
-    data class Face(val roof: Boolean, val face: PaletteFace, val rgb: Int, override val at: Offset) : Tapped {
-        override fun colour(p: Palette): Int = face.slot?.let { p.colour(it) } ?: rgb
+    /** A building's face ([roof], else a wall), its slot word (the core's) and its own colour. */
+    data class Face(val roof: Boolean, val word: Int, val rgb: Int, override val at: Offset) : Tapped {
+        /** How [p] paints it. */
+        fun face(p: Palette): PaletteFace = PaletteFace.of(word, p.switches)
+
+        override fun colour(p: Palette): Int = ColourMapModel.picks(face(p))?.let { p.colour(it) } ?: rgb
     }
 
-    /** The ground, and the slot that paints it there. */
-    data class Ground(val slot: Slot, override val at: Offset) : Tapped {
-        override fun colour(p: Palette): Int = p.colour(slot)
+    /** The ground, and the slot that paints it there (null: a colour of its own, sand or a cycleway's red). */
+    data class Ground(val slot: Slot?, override val at: Offset) : Tapped {
+        override fun colour(p: Palette): Int? = slot?.let { p.colour(it) }
+    }
+
+    /** Nothing the map draws: no map here to pick from. */
+    data class Empty(override val at: Offset) : Tapped {
+        override fun colour(p: Palette): Int? = null
     }
 }
 
@@ -428,20 +483,26 @@ private fun TapMarker(at: Offset) {
  * cover it), kept 12 px within the screen.
  */
 @Composable
-private fun TapCallout(t: Tapped, colour: Int) {
-    val line = tapLine(t)
+private fun TapCallout(t: Tapped, colour: Int?, p: Palette, onFollow: (() -> Unit)?) {
+    val line = tapLine(t, p)
     val top = shift()
     Layout(
         content = {
-            Row(
-                Modifier.height(32.dp).bbox(WHITE, cr(16f), listOf(CssShadow(0f, 2f, 8f, 0f, 0x2E000000)))
-                    .semantics { liveRegion = LiveRegionMode.Polite }
-                    .padding(start = 6.dp, end = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                Modifier.bbox(WHITE, cr(16f), listOf(CssShadow(0f, 2f, 8f, 0f, 0x2E000000)))
+                    .semantics(mergeDescendants = onFollow == null) { liveRegion = LiveRegionMode.Polite }
+                    .padding(start = if (colour == null) 12.dp else 6.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
             ) {
-                Box(Modifier.size(20.dp).bbox(0xFF000000 or colour.toLong(), cr(10f)))
-                BText(line, bt(12.5f, 800, 16f), INK, lines = 1)
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (colour != null) Box(Modifier.size(20.dp).bbox(0xFF000000 or colour.toLong(), cr(10f)))
+                    BText(line, bt(12.5f, 800, 16f), INK, Modifier.padding(vertical = 2.dp), lines = 2)
+                }
+                if (onFollow != null) {
+                    TextPill(
+                        stringResource(R.string.mine_colour_tap_follow), bt(12f, 800, 15f), BLUE, WHITE,
+                        Modifier.padding(top = 6.dp), h = 30f, padH = 11f, onClick = onFollow,
+                    )
+                }
             }
         },
         modifier = Modifier.fillMaxSize(),
@@ -457,18 +518,22 @@ private fun TapCallout(t: Tapped, colour: Int) {
     }
 }
 
-/** What a tap met, as the callout says it ("Red tiles · a guessed roof", "Water · canals, rivers and lakes in sun"). */
+/**
+ * What a tap met, as the callout says it ("Red tiles · a guessed roof", "Water · canals, rivers and lakes in sun"), and
+ * why it picks nothing where it doesn't.
+ */
 @Composable
-private fun tapLine(t: Tapped): String = when (t) {
-    is Tapped.Ground -> "${slotName(t.slot)} · ${stringResource(slotSub(t.slot))}"
-    is Tapped.Face -> faceLine(t)
+private fun tapLine(t: Tapped, p: Palette): String = when (t) {
+    is Tapped.Ground -> t.slot?.let { "${slotName(it)} · ${stringResource(slotSub(it))}" } ?: stringResource(R.string.mine_colour_tap_none_ground)
+    is Tapped.Face -> faceLine(t, t.face(p))
+    is Tapped.Empty -> stringResource(R.string.mine_colour_tap_nothing)
 }
 
 /** A building's face a tap met, as the callout says it ("Red tiles · a guessed roof"). */
 @Composable
-private fun faceLine(t: Tapped.Face): String {
-    val name = t.face.slot?.let { slotName(it) }.orEmpty()
-    return when (t.face.colour) {
+private fun faceLine(t: Tapped.Face, face: PaletteFace): String {
+    val name = face.slot?.let { slotName(it) }.orEmpty()
+    return when (face.colour) {
         PaletteFace.How.GUESSED -> stringResource(if (t.roof) R.string.mine_colour_tap_guessed_roof else R.string.mine_colour_tap_guessed_wall, name)
         PaletteFace.How.GUESSED_PLAIN -> stringResource(if (t.roof) R.string.mine_colour_tap_plain_roof else R.string.mine_colour_tap_plain_wall, name)
         PaletteFace.How.MAPPED -> stringResource(if (t.roof) R.string.mine_colour_tap_mapped_roof else R.string.mine_colour_tap_mapped_wall, name)
@@ -479,14 +544,17 @@ private fun faceLine(t: Tapped.Face): String {
 
 /** The picked colour (the board's entry, 12 px down, 16 in): its swatch (52, radius 14), name, what it paints, Reset. */
 @Composable
-private fun Entry(p: Palette, slot: Slot, onReset: () -> Unit) {
+private fun Entry(p: Palette, slot: Slot, resettable: Boolean, onReset: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.size(52.dp).bbox(opaque(p.colour(slot)).argbLong(), cr(14f), listOf(CssShadow(0f, 0f, 0f, 1f, 0x14000000, inset = true))))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             BText(slotName(slot), bt(18f, 900, 22f), INK)
             BText(stringResource(slotSub(slot)), bt(12f, 500, 15f), SOFT)
         }
-        TextPill(stringResource(R.string.mine_colour_reset), bt(12f, 800, 15f), HAIR, INK, h = 30f, padH = 11f, onClick = onReset)
+        TextPill(
+            stringResource(R.string.mine_colour_reset), bt(12f, 800, 15f), HAIR, INK, Modifier.alpha(if (resettable) 1f else 0.45f),
+            h = 30f, padH = 11f, onClick = { if (resettable) onReset() },
+        )
     }
 }
 
@@ -511,21 +579,22 @@ private fun LitRow(p: Palette, slot: Slot) {
 }
 
 /**
- * The board's sliders of the picked colour: its lightness (0.15 to 0.97), colour (chroma, 0 to 0.25) and hue, each on a
- * track of the colours it reaches, the knob in the colour with a white ring. A drag paints the map as it moves
- * ([onDrag], after [onStart]); a tap sets it ([onSet]). The hue and chroma are held while the lightness moves, so a grey
- * keeps the hue it was given.
+ * The board's sliders of the picked colour: its lightness (black to white), saturation (chroma, 0 to 0.25) and hue, each
+ * on a track of the colours it reaches, the knob in the colour with a white ring, each said from 0 to 100. A drag paints
+ * the map as it moves ([onDrag], between [onStart] and [onEnd]); a tap sets it ([onSet]). The hue and chroma are held
+ * while the lightness moves, so a grey keeps the hue it was given.
  */
 @Composable
-private fun Sliders(colour: Int, onDrag: (Int) -> Unit, onStart: () -> Unit, onSet: (Int) -> Unit) {
+private fun Sliders(colour: Int, onStart: () -> Unit, onDrag: (Int) -> Unit, onEnd: () -> Unit, onSet: (Int) -> Unit) {
     var held by remember { mutableStateOf<ColourMapModel.Lch?>(null) }
     // a colour from outside (another slot, undo, a hex) is read afresh; one the sliders made keeps their hue
     val lch = held?.takeIf { ColourMapModel.rgb(it) == colour } ?: ColourMapModel.lch(colour)
     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp)) {
+        val (l, c, h) = ColourMapModel.shown(lch)
         val rows = listOf(
-            Triple(R.string.mine_colour_lightness, (lch.l - ColourMapModel.L_MIN) / (ColourMapModel.L_MAX - ColourMapModel.L_MIN), (lch.l * 100).roundToInt().toString()),
-            Triple(R.string.mine_colour_chroma, lch.c / ColourMapModel.C_MAX, "%.2f".format(java.util.Locale.ROOT, lch.c)),
-            Triple(R.string.mine_colour_hue, lch.h / 360f, "${lch.h.roundToInt()}°"),
+            Triple(R.string.mine_colour_lightness, (lch.l - ColourMapModel.L_MIN) / (ColourMapModel.L_MAX - ColourMapModel.L_MIN), l.toString()),
+            Triple(R.string.mine_colour_chroma, lch.c / ColourMapModel.C_MAX, c.toString()),
+            Triple(R.string.mine_colour_hue, lch.h / 360f, h.toString()),
         )
         rows.forEachIndexed { i, (name, at, value) ->
             fun at(t: Float): ColourMapModel.Lch {
@@ -553,6 +622,7 @@ private fun Sliders(colour: Int, onDrag: (Int) -> Unit, onStart: () -> Unit, onS
                     stops, at.coerceIn(0f, 1f), opaque(colour), "$label $value", Modifier.weight(1f),
                     onStart = onStart,
                     onDrag = { t -> at(t).also { held = it }.let { onDrag(ColourMapModel.rgb(it)) } },
+                    onEnd = onEnd,
                     onSet = { t -> at(t).also { held = it }.let { onSet(ColourMapModel.rgb(it)) } },
                 )
                 BText(value, bt(12f, 700, 15f, MONO, align = TextAlign.End), INK, Modifier.width(44.dp))
@@ -571,6 +641,7 @@ private fun Track(
     modifier: Modifier,
     onStart: () -> Unit,
     onDrag: (Float) -> Unit,
+    onEnd: () -> Unit,
     onSet: (Float) -> Unit,
 ) {
     BoxWithConstraints(
@@ -582,7 +653,7 @@ private fun Track(
             }
             .pointerInput(Unit) { detectTapGestures { p -> onSet(p.x / size.width) } }
             .pointerInput(Unit) {
-                detectHorizontalDragGestures(onDragStart = { onStart() }) { change, _ -> onDrag(change.position.x / size.width) }
+                detectHorizontalDragGestures(onDragStart = { onStart() }, onDragEnd = onEnd, onDragCancel = onEnd) { change, _ -> onDrag(change.position.x / size.width) }
             },
     ) {
         val width = maxWidth
@@ -601,28 +672,50 @@ private fun Track(
     }
 }
 
-/** The picked colour's hex (typed over to set it), and whether its whole group follows it (dark when on). */
+/**
+ * The picked colour's hex (typed over to set it, on Done or as the field is left), and whether its whole group follows
+ * it (dark when on). What is no colour stays as typed, ringed red, and the row says so.
+ */
 @Composable
 private fun HexRow(colour: Int, family: Family, group: Boolean, onHex: (Int) -> Unit, onGroup: () -> Unit) {
     val focus = LocalFocusManager.current
     var typed by remember(colour) { mutableStateOf(ColourMapModel.hex(colour)) }
+    var bad by remember(colour) { mutableStateOf(false) }
+    fun apply() {
+        val c = ColourMapModel.hexOf(typed)
+        bad = c == null
+        if (c != null && c != colour) onHex(c)
+    }
     val hexCd = stringResource(R.string.mine_colour_hex_cd)
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.height(30.dp).bbox(PAGE, cr(10f)).padding(horizontal = 10.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.height(30.dp).bbox(PAGE, cr(10f), border = if (bad) ring(1.5f, RED) else null).padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            var focused by remember { mutableStateOf(false) }
             BasicTextField(
-                typed, { typed = it.take(7) },
-                Modifier.width(66.dp).semantics { contentDescription = hexCd },
+                typed, {
+                    typed = it.take(7)
+                    bad = false
+                },
+                Modifier.width(66.dp).semantics { contentDescription = hexCd }
+                    .onFocusChanged { f -> if (focused && !f.isFocused && typed != ColourMapModel.hex(colour)) apply(); focused = f.isFocused },
                 textStyle = bt(13f, 700, 16f, MONO).copy(color = Color(INK)),
                 singleLine = true,
                 cursorBrush = SolidColor(Color(INK)),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = {
-                    ColourMapModel.hexOf(typed)?.let(onHex) ?: run { typed = ColourMapModel.hex(colour) }
-                    focus.clearFocus()
+                    apply()
+                    if (!bad) focus.clearFocus()
                 }),
             )
         }
-        Spacer(Modifier.weight(1f))
+        if (bad) {
+            BText(
+                stringResource(R.string.mine_colour_hex_bad), bt(11.5f, 700, 14f), RED,
+                Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite }, lines = 2,
+            )
+        } else Spacer(Modifier.weight(1f))
         TextPill(
             stringResource(allName(family)), bt(12f, 800, 15f), if (group) INK else HAIR, if (group) WHITE else INK,
             Modifier.selectable(selected = group, role = Role.Switch) { onGroup() }, h = 30f, padH = 11f,
@@ -820,3 +913,6 @@ internal fun slotSub(s: Slot): Int = when (s) {
     Slot.SHADOWS -> R.string.mine_slot_shadows_sub
     Slot.HAZE -> R.string.mine_slot_haze_sub
 }
+
+/** The board's red, for what went wrong. */
+private const val RED: Long = 0xFFC8322A

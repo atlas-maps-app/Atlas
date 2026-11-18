@@ -5,9 +5,9 @@ One file holds one country's public transport timetable for the days its feed co
 ## What it is for, and what follows from that
 
 - **A search reads it as it lies.** On a phone the file is mapped into memory and never decoded: every number is a little-endian `u32` at a place that can be computed, so a search touches only the pages it needs and the system can drop them again. The layout is chosen for the search, not for size.
-- **It travels compressed as a whole.** How (gzip, zstd, xz) is the publishing step's choice, not the format's. The measured sizes are in the last section.
+- **It travels compressed as a whole,** as gzip: Android reads that with no library added. The compression is the publishing step's (`.github/workflows/timetable.yml`), not the format's. The measured sizes are in the last section.
 - **It holds the timetable's facts once,** and one index a round can't start without (the routes at each stop). Whatever else a reader needs, it derives.
-- **Nothing a person could be shown is dropped quietly.** The packer prints every table of a feed it does not read. What is left out by decision is named under "Left out".
+- **Nothing a person could be shown is dropped quietly.** The packer prints every table and every column of a feed that it does not read, with how much each holds; packing strictly (`--strict`, as the weekly workflow does) it refuses such a feed and writes nothing. What is left out by decision is named under "Left out".
 - **It is the same bytes for the same feed and options.** Every order is a sort with a full key, nothing in it is a build date, and walks are computed in integers.
 - **A reader trusts none of it.** Any bytes at all must open or be refused without a crash, and no file can make a search run without bound. "What a reader checks" says how.
 
@@ -111,7 +111,8 @@ A string reference that points outside `STRS`, or at bytes that are not UTF-8, r
 | `ticketing_identifiers.txt`, `ticketing_deep_links.txt` | CC BY-NC-ND in OVapi's feed (and empty there) |
 | the arrival time at a trip's first stop | nobody alights there |
 | `frequencies.txt` | trips by headway. OVapi has none. The packer refuses a feed that has rows there rather than drop them |
-| any other table (`fare_*`, `pathways.txt`, `levels.txt`, `translations.txt`, `attributions.txt`, …) | OVapi's feed has none. The packer prints each one it meets as NOT READ |
+| `shape_id` of `trips.txt` | it names a shape, and the shapes are left out |
+| any other table (`fare_*`, `pathways.txt`, `levels.txt`, `translations.txt`, `attributions.txt`, …) or column | OVapi's feed has none. The packer prints each one it meets as NOT READ with its rows or values, and strictly refuses the feed; an empty one loses nothing and is only said |
 
 Known to be missing for later feeds: a boarding and a leaving time a stop (an airport's check-in and baggage), and more than one timezone a file.
 
@@ -147,4 +148,24 @@ OVapi's feed of 16 November 2026 (version 9696): 28 days from 15 November, 65,22
 - That is 0.55 bytes a stop time as xz, and 1.1 as gzip. Beside the country's 1,372 MB of map tiles the file is 4.2 % at rest and under 1 % as it travels.
 - Nearly half of what travels is ids: the strings and the trips' references to them. They are what ties a trip to live data and to "a specific train".
 - The Architect's trial packed the same feed to 2.0 MB as xz. It kept less (no GTFS trip ids, no fare units, distances or stop headsigns, no walks, rules or route index), and wrote every column as differences in a variable-length code, which a search can't read in place.
-- **Measured and not built:** a filter before the compressor that keeps the format (each `u32` column as differences, its four bytes apart) brings xz to 5.0 MB and gzip to 7.9 MB. It would be a second coding to undo on the phone.
+- **Published as gzip:** 12.5 MB a week for the Netherlands (decided 17 November 2026: no new library on the phone).
+- **Measured and not built:** a filter before the compressor that keeps the format (each `u32` column as differences, its four bytes apart) brings gzip to 7.9 MB and xz to 5.0 MB. It would be a second coding to undo on the phone.
+
+## How it is published
+
+`.github/workflows/timetable.yml` runs once a week and by hand. It fetches the feed, packs it strictly, checks the file (`atlas-transit check`, and the fixed journeys against the connection scan), gzips it, and uploads it to a dated release `timetable-YYYYMMDD`. The list `timetable.json` goes there too and, last, onto the fixed release `timetable-latest`: a reader starts from that list. Nothing in the app reads it yet.
+
+`pack/ttlist.py` writes the list: `{"list": 1, "timetables": [entry, …]}`, entries by `id`. An entry:
+
+| Key | Holds |
+|---|---|
+| `id`, `name` | `nl`, `Netherlands` |
+| `release`, `url` | the dated release, and where the gzipped file is served |
+| `format` | the file's format version (this document's: 1) |
+| `feed` | `publisher`, `version`, `licence`, `url`; `last_modified` as the feed's server said it and `fetched` (when it was taken); the zip's `bytes` and `sha256` |
+| `first_day`, `days`, `last_day`, `timezone` | the days the file covers, as `META` has them |
+| `file` | `name`, `bytes` and `sha256` as it travels; `unpacked.bytes` and `unpacked.sha256` |
+| `holds` | how many stops, operators, lines, patterns, trips, walks and transfer rules |
+| `packer` | the `sha256` of `ttpack.py` and the commit it ran from |
+
+An unchanged feed is not published again: the workflow asks the feed's server with `If-Modified-Since`, unless the packer or the format is no longer the published file's.

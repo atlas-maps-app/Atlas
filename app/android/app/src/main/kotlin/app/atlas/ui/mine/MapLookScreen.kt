@@ -61,6 +61,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.mapview.MapEngine
@@ -174,7 +175,7 @@ fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
         if (shown != null) {
             val index = sharing!!
             PaletteSheet(
-                shown.name, shown.code,
+                shown.name, shown.code, saved.filterIndexed { i, _ -> i != index }.map { it.name },
                 onClose = { sharing = null },
                 onRename = { name -> edit { MapLookWrites.rename(it, index, name) } },
                 onDelete = {
@@ -367,11 +368,31 @@ internal fun lookLine(line: MapLookModel.Line, names: Map<Preset, String>): Stri
     }
 }
 
-/** What the map draws as the Map look's line says it, from the settings' keys as they are read. */
+/**
+ * The value of the rows that open the Map look (Settings', the Layers sheet's), from the settings as they are: the look's
+ * name ("Canal evening", "Classic", "Mine · changed"), then the theme where it isn't Auto ("Canal evening · Night").
+ */
 @Composable
-internal fun lookLine(code: String?, savedText: String?, from: String?, toneOn: Boolean?, toneKept: Float?): String {
+internal fun lookRowValue(settings: SettingsStore): String {
+    val code by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
+    val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
+    val from by settings.flow(SettingsKeys.MAP_LOOK_FROM).collectAsStateWithLifecycle(null)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON).collectAsStateWithLifecycle(null)
+    val toneKept by settings.flow(SettingsKeys.MAP_TONE).collectAsStateWithLifecycle(null)
+    val theme by settings.flow(SettingsKeys.MAP_THEME).collectAsStateWithLifecycle(null)
     val look = MapLookModel.look(MapLookModel.current(code), MapLookModel.tone(toneOn, toneKept).drawn)
-    return lookLine(MapLookModel.line(look, MapLookModel.savedOf(savedText), from), presetNames())
+    val names = presetNames()
+    val name = when (val line = MapLookModel.line(look, MapLookModel.savedOf(savedText), from)) {
+        is MapLookModel.Line.Saved -> line.name
+        is MapLookModel.Line.Exact -> names.getValue(line.preset)
+        is MapLookModel.Line.Changed -> stringResource(R.string.mine_look_changed_from, line.from ?: names.getValue(line.base))
+    }
+    val shown = when (theme) {
+        Theme.DAY.name -> stringResource(R.string.mine_theme_day)
+        Theme.NIGHT.name -> stringResource(R.string.mine_theme_night)
+        else -> null
+    }
+    return if (shown == null) name else "$name · $shown"
 }
 
 /** "from Sunlit · 6 colours changed", or "from Sunlit" for a palette that changes no colour. */
@@ -415,6 +436,13 @@ internal fun Glyph(colours: List<Int>, ring: Boolean, modifier: Modifier = Modif
 
 /** An opaque colour of 0xRRGGBB. */
 internal fun opaque(c: Int) = Color(0xFF000000.toInt() or c)
+
+/**
+ * How Map look's Tone card draws [toneValue]: a strength in the mono face, as the board's; the word Off in the page's,
+ * where the mono O would read as a zero ("0ff").
+ */
+internal fun toneValueStyle(shown: Float): TextStyle =
+    if ((shown * 100).roundToInt() == 0) bt(11f, 700, 14f) else bt(11f, 600, 14f, MONO)
 
 /**
  * The Tone's value as both its controls show it (the Map look's card, the Layers sheet's row): "Off" at nothing,
@@ -494,7 +522,7 @@ private fun ToneCard(tone: Tone, onSwitch: (Boolean) -> Unit, onStrength: (Float
         }
         Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             BText(stringResource(R.string.mine_look_tone_off), bt(11f, 600, 14f), LABEL)
-            BText(value, bt(11f, 600, 14f, MONO), INK)
+            BText(value, toneValueStyle(shown), INK)
             BText(stringResource(R.string.mine_look_tone_max), bt(11f, 600, 14f), LABEL)
         }
     }

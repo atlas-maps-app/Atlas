@@ -9,6 +9,11 @@ Options:
   --box S,W,N,E      keep only the stops inside the box (degrees); a trip keeps its stops inside, and needs two
   --agency A,B       keep only these agencies' lines (agency_id)
   --sizes            print each section's size, and the file's gzip -9 and xz sizes
+  --strict           refuse a feed with a table or a column that has values and that the packer does not read
+
+Every table and column of the feed that is not read is printed, with how much it holds. With --strict (as the weekly
+workflow packs) that ends the run with nothing written: a feed that grew is looked at by a person before any of it is
+published without what it gained.
 
 The output is the same bytes for the same feed and options: every order is a sort with a full key, and walks are
 computed in integers. Python 3's standard library only. Left out, as FORMAT.md says: shapes.txt (ODbL), the
@@ -169,11 +174,30 @@ class Strings:
         return [self(v) for v in values]
 
 
-# what the packer reads, and what it leaves out by name; any other table of a feed is printed, never dropped quietly
-READ = {"agency.txt", "calendar.txt", "calendar_dates.txt", "feed_info.txt", "licenses.txt", "routes.txt", "stop_times.txt",
-        "stops.txt", "transfers.txt", "trips.txt"}
+# What the packer reads, column by column, and what it leaves out by name. Any other table or column of a feed is
+# printed, never dropped quietly; --strict makes it a refusal.
+READ = {
+    "agency.txt": "agency_id agency_name agency_url agency_timezone agency_phone agency_lang",
+    "calendar.txt": "service_id monday tuesday wednesday thursday friday saturday sunday start_date end_date",
+    "calendar_dates.txt": "service_id date exception_type",
+    "feed_info.txt": "feed_publisher_name feed_publisher_url feed_lang feed_version feed_start_date feed_end_date feed_id "
+                     "feed_contact_email feed_contact_url",
+    "licenses.txt": "licensed_table_name license_spdx_id custom_license_url",
+    "routes.txt": "route_id agency_id route_short_name route_long_name route_desc route_type route_color route_text_color "
+                  "route_url route_sort_order",
+    "stop_times.txt": "trip_id stop_sequence stop_id stop_headsign arrival_time departure_time pickup_type drop_off_type "
+                      "timepoint shape_dist_traveled fare_units_traveled",
+    "stops.txt": "stop_id stop_code stop_name stop_lat stop_lon location_type parent_station stop_timezone "
+                 "wheelchair_boarding platform_code zone_id stop_ifopt stop_desc",
+    "transfers.txt": "from_stop_id to_stop_id from_route_id to_route_id from_trip_id to_trip_id transfer_type "
+                     "min_transfer_time",
+    "trips.txt": "route_id service_id trip_id realtime_trip_id trip_headsign trip_short_name trip_long_name direction_id "
+                 "block_id wheelchair_accessible bikes_allowed",
+}
+READ = {k: set(v.split()) for k, v in READ.items()}
 LEFT_OUT = {"shapes.txt": "ODbL in OVapi's feed; a ride is drawn on the map's own rails and roads",
             "ticketing_identifiers.txt": "CC BY-NC-ND in OVapi's feed", "ticketing_deep_links.txt": "CC BY-NC-ND in OVapi's feed"}
+LEFT_OUT_COLUMNS = {"trips.txt": {"shape_id": "the shapes are left out"}}
 
 
 def main():
@@ -185,15 +209,36 @@ def main():
     ap.add_argument("--box")
     ap.add_argument("--agency")
     ap.add_argument("--sizes", action="store_true")
+    ap.add_argument("--strict", action="store_true")
     a = ap.parse_args()
     feed = Feed(a.feed)
     S = Strings()
     count = {}
+    not_read = []            # what the feed holds that the packer has no place for
+
+    def unread(what, n):
+        if n:
+            not_read.append(what)
+            print("NOT READ: %s (%d %s): the packer has no place for it yet" % (what, n, "rows" if what.endswith(".txt") else "values"))
+        else:
+            print("empty, so nothing is lost: %s" % what)
+
     for name in feed.names():
         if name in LEFT_OUT:
             print("left out: %s (%s)" % (name, LEFT_OUT[name]))
         elif name not in READ:
-            print("NOT READ: %s (%d rows): the packer has no place for it yet" % (name, sum(1 for _ in feed.rows(name))))
+            if name.endswith(".txt"):
+                unread(name, sum(1 for _ in feed.rows(name)))
+            else:
+                print("not a table: %s" % name)
+        elif name != "stop_times.txt":       # (its columns are looked at while it is read, below)
+            with feed.open(name) as f:
+                head = [c.strip() for c in next(csv.reader(f), [])]
+            for c in head:
+                if c in LEFT_OUT_COLUMNS.get(name, {}):
+                    print("left out: %s column %s (%s)" % (name, c, LEFT_OUT_COLUMNS[name][c]))
+                elif c and c not in READ[name]:
+                    unread("%s column %s" % (name, c), sum(1 for r in feed.rows(name) if (r.get(c) or "").strip()))
     if any(True for _ in feed.rows("frequencies.txt")):
         sys.exit("frequencies.txt has rows: trips by headway are not packed yet")
 
@@ -345,6 +390,7 @@ def main():
         rd = csv.reader(f)
         head = next(rd)
         col = {k.strip(): i for i, k in enumerate(head)}
+        extra = {i: 0 for k, i in col.items() if k and k not in READ["stop_times.txt"]}
 
         def c(row, k):
             i = col.get(k)
@@ -353,6 +399,9 @@ def main():
         cur, buf = None, []
         for row in rd:
             nrows += 1
+            for i in extra:
+                if i < len(row) and row[i].strip():
+                    extra[i] += 1
             tid = row[col["trip_id"]]
             if tid != cur:
                 if cur is not None:
@@ -379,6 +428,10 @@ def main():
                 log("stop_times", nrows, "patterns", len(patterns), "profiles", len(profiles))
         if cur is not None:
             close(cur, buf)
+        for i, n in sorted(extra.items()):
+            unread("stop_times.txt column %s" % head[i].strip(), n)
+    if a.strict and not_read:
+        sys.exit("refused (--strict): the feed has what the packer does not read: %s. Nothing was written." % "; ".join(not_read))
     log("stop_times", nrows, "trips kept", len(kept), "patterns", len(patterns), "profiles", len(profiles))
 
     # ---- which stops are used: the ones trips call at, their stations, and the stations' other parts

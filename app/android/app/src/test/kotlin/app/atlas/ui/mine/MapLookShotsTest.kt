@@ -132,4 +132,31 @@ class MapLookShotsTest {
         show(Dest.MapLook(), phone())
         capture("maplook_nl_narrow")
     }
+
+    /** Settings' Map look row, the palette Canal evening drawn at night. */
+    @Test
+    fun settingsRow() {
+        val s = canalEveningAtNight()
+        show(Dest.Settings(), s)
+        compose.onNode(hasText("Map look")).performScrollTo()
+        capture("maplook_settings_row")
+    }
+
+    /** The Layers sheet's Map look row, the same state. */
+    @Test
+    fun layersRow() {
+        val s = canalEveningAtNight()
+        show(Dest.Layers, s)
+        capture("maplook_layers_row")
+    }
+
+    /** The saved palette Canal evening taken whole, as a tap takes it, at night. */
+    private fun canalEveningAtNight(): Services = MineFixtures.withPalettes(testServices(places = true).apply { keepFixtureForecast() }, drawn = false).also { s ->
+        runBlocking {
+            s.settings.edit { m ->
+                MapLookWrites.take(m, MineFixtures.CANAL_EVENING, MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().code)
+                m[SettingsKeys.MAP_THEME] = "NIGHT"
+            }
+        }
+    }
 }

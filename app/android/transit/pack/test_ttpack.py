@@ -3,7 +3,9 @@
 
 - the hand-written feed (planner/tests/data/tiny) packs to the very bytes kept beside it (tiny.tt), twice over: the
   planner's tests read that file, so it can't drift from the packer, and the same feed gives the same bytes;
-- the cosine table is the planner's (planner/src/geo.rs), number for number, so both measure alike.
+- the cosine table is the planner's (planner/src/geo.rs), number for number, so both measure alike;
+- a table or a column the packer does not read is said, and with --strict refused with nothing written;
+- ttlist.py writes the list of published files, and says when only a changed feed is wanted.
 
 Python 3's standard library only.
 """
@@ -39,6 +41,100 @@ class Packer(unittest.TestCase):
             src = f.read()
         body = re.search(r"COS_TABLE: \[u32; 901\] = \[(.*?)\];", src, re.S).group(1)
         self.assertEqual([int(v) for v in re.findall(r"\d+", body)], ttpack.COS_TABLE)
+
+    def test_what_is_not_read_is_said_and_strictly_refused(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            feed = os.path.join(tmp, "tiny")  # (the file names its feed by this)
+            shutil.copytree(os.path.join(DATA, "tiny"), feed)
+            out = os.path.join(tmp, "out.tt")
+            run = lambda *more: subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), feed, out, *more], capture_output=True, text=True)
+            # an empty table and an empty column lose nothing: said, and no refusal
+            with open(os.path.join(feed, "pathways.txt"), "w") as f:
+                f.write("pathway_id,from_stop_id,to_stop_id\n")
+            with open(os.path.join(feed, "routes.txt")) as f:
+                rows = f.read().splitlines()
+            with open(os.path.join(feed, "routes.txt"), "w") as f:
+                f.write("\n".join([rows[0] + ",network_id"] + [r + "," for r in rows[1:]]) + "\n")
+            r = run("--strict")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("empty, so nothing is lost: pathways.txt", r.stdout)
+            self.assertIn("empty, so nothing is lost: routes.txt column network_id", r.stdout)
+            with open(os.path.join(DATA, "tiny.tt"), "rb") as f, open(out, "rb") as g:
+                self.assertEqual(f.read(), g.read())
+            os.remove(out)
+            # a table with rows, a column with values, a column of stop_times with values: said; strictly, refused
+            with open(os.path.join(feed, "pathways.txt"), "a") as f:
+                f.write("P1,C1,C2\n")
+            with open(os.path.join(feed, "routes.txt"), "w") as f:
+                f.write("\n".join([rows[0] + ",network_id"] + [r + ",N" for r in rows[1:]]) + "\n")
+            with open(os.path.join(feed, "stop_times.txt")) as f:
+                rows = f.read().splitlines()
+            with open(os.path.join(feed, "stop_times.txt"), "w") as f:
+                f.write("\n".join([rows[0] + ",continuous_pickup"] + [r + ",1" for r in rows[1:3]] + [r + "," for r in rows[3:]]) + "\n")
+            r = run()
+            self.assertEqual(r.returncode, 0, r.stderr)
+            for said in ("NOT READ: pathways.txt (1 rows)", "NOT READ: routes.txt column network_id (3 values)", "NOT READ: stop_times.txt column continuous_pickup (2 values)"):
+                self.assertIn(said, r.stdout)
+            os.remove(out)
+            r = run("--strict")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("refused (--strict)", r.stderr)
+            self.assertIn("pathways.txt; routes.txt column network_id; stop_times.txt column continuous_pickup", r.stderr)
+            self.assertFalse(os.path.exists(out))
+            # trips by headway are refused whatever the mode
+            os.remove(os.path.join(feed, "pathways.txt"))
+            with open(os.path.join(feed, "frequencies.txt"), "w") as f:
+                f.write("trip_id,start_time,end_time,headway_secs\nT1,06:00:00,07:00:00,600\n")
+            r = run()
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("frequencies.txt has rows", r.stderr)
+
+    def test_the_list_of_published_files(self):
+        import gzip
+        import json
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tt, gz, out = os.path.join(DATA, "tiny.tt"), os.path.join(tmp, "tiny.tt.gz"), os.path.join(tmp, "timetable.json")
+            with open(tt, "rb") as f, open(gz, "wb") as g:
+                g.write(gzip.compress(f.read(), 9, mtime=0))
+            lister = [sys.executable, "-I", os.path.join(HERE, "ttlist.py")]
+            # nothing published yet: the feed is wanted whole
+            self.assertEqual(subprocess.run(lister + ["since", out, "tiny"], capture_output=True, text=True, check=True).stdout, "")
+            with open(os.path.join(tmp, "old.json"), "w") as f:
+                json.dump({"list": 1, "timetables": [{"id": "zz", "name": "Elsewhere"}, {"id": "tiny", "name": "to be replaced"}]}, f)
+            subprocess.run(lister + ["entry", "--id", "tiny", "--name", "Tiny", "--file", tt, "--gz", gz, "--url", "https://example.org/tiny.tt.gz",
+                                     "--release", "timetable-20260105", "--feed-url", "https://example.org/gtfs.zip", "--last-modified",
+                                     "Mon, 05 Jan 2026 03:00:00 GMT", "--fetched", "2026-01-05T04:00:00Z", "--commit", "abc", "--previous",
+                                     os.path.join(tmp, "old.json"), "--out", out], check=True, capture_output=True)
+            with open(out) as f:
+                data = json.load(f)
+            self.assertEqual([e["id"] for e in data["timetables"]], ["tiny", "zz"])
+            e = data["timetables"][0]
+            self.assertEqual((e["format"], e["first_day"], e["days"], e["last_day"], e["timezone"]), (ttpack.VERSION, "20260105", 7, "20260111", "Europe/Amsterdam"))
+            self.assertEqual((e["feed"]["publisher"], e["feed"]["version"], e["feed"]["last_modified"]), ("Atlas tests", "1", "Mon, 05 Jan 2026 03:00:00 GMT"))
+            self.assertEqual((e["file"]["name"], e["file"]["bytes"], e["file"]["unpacked"]["bytes"]), ("tiny.tt.gz", os.path.getsize(gz), os.path.getsize(tt)))
+            self.assertEqual(len(e["file"]["sha256"]), 64)
+            self.assertEqual((e["holds"]["stops"], e["holds"]["trips"], e["holds"]["transfer_rules"]), (10, 10, 2))
+            # published by this packer in this format: only a changed feed is wanted
+            ask = lambda: subprocess.run(lister + ["since", out, "tiny"], capture_output=True, text=True, check=True).stdout.strip()
+            self.assertEqual(ask(), "Mon, 05 Jan 2026 03:00:00 GMT")
+            self.assertEqual(subprocess.run(lister + ["since", out, "nl"], capture_output=True, text=True, check=True).stdout, "")
+            # by another packer, or with a moment no server would say: whole again
+            for change in (lambda e: e["packer"].update(sha256="0" * 64), lambda e: e.update(format=e["format"] + 1),
+                           lambda e: e["feed"].update(last_modified='x"; rm -rf /'), lambda e: e.update(packer="none")):
+                with open(out) as f:
+                    data = json.load(f)
+                change(data["timetables"][0])
+                with open(os.path.join(tmp, "changed.json"), "w") as f:
+                    json.dump(data, f)
+                got = subprocess.run(lister + ["since", os.path.join(tmp, "changed.json"), "tiny"], capture_output=True, text=True, check=True).stdout
+                self.assertEqual(got, "")
+            # a list that is no list: nothing, and no error
+            with open(os.path.join(tmp, "bad.json"), "w") as f:
+                f.write("<html>not found</html>")
+            self.assertEqual(subprocess.run(lister + ["since", os.path.join(tmp, "bad.json"), "tiny"], capture_output=True, text=True, check=True).stdout, "")
 
     def test_distances_and_walks(self):
         # a tenth of a degree of latitude; the same along the equator; nothing at all
