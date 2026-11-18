@@ -556,7 +556,7 @@ public:
     /// (fanned from a corner on their edge, it fills the same two triangles), each triangle in one piece.
     void polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind kind, std::uint16_t flags, std::uint32_t face,
                  std::uint32_t sun, std::uint16_t near, std::uint16_t far, double area);
-    /// A painter slot within an item, checked to fit the primitives' 16 bits.
+    /// A painter slot within an item, at most the primitives' 16 bits hold (past them, the last).
     [[nodiscard]] static std::uint16_t slot(std::uint32_t value) noexcept;
 
     TileBuildings& out;

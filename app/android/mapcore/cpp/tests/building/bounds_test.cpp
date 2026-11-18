@@ -3,9 +3,11 @@
 // tile, held at its grid's edge; a wall of more near cells than the cells' record holds (a byte each of its wall's
 // columns and rows), a shed 2.6 km long, whose long walls stage T cuts into 288 bays of 9 m, as a node mapped a degree
 // off makes one: its cells left out and the wall drawn as its one cell near too, never an end of the process, each
-// other wall keeping its cells; and the windows of a job's walls, whose sum passes 32 bits where the tile's running
-// count wraps.
+// other wall keeping its cells; the windows of a job's walls, whose sum passes 32 bits where the tile's running
+// count wraps; and a building past an item's 65,535 painter slots (a relation's joined ring of thousands of walls),
+// whose walls past them are drawn as one cell each.
 #include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "geometry/Walls.hpp"
 #include "tests/base/require.hpp"
 #include "tests/building/fixture.hpp"
@@ -16,7 +18,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -167,4 +171,86 @@ TEST_CASE("buildings: a job's windows are counted exactly though the tile's runn
     CHECK(layout.windows_of(0, 2) == 2 * each);
     // what the jobs' cap read before (the running count's difference in 32 bits): far below the frame's 2^20
     CHECK(layout.window_at[2] - layout.window_at[0] == 3'705'032'704U);
+}
+
+namespace {
+
+/// A round building of `edges` walls about 2.6 m long, 21 m high and of 3 levels (each wall three near cells, a row a
+/// storey, and its windows' five slots: eight painter slots a wall, past an item's 65,535 after 8,191 walls), as a
+/// relation's joined ring makes one; and the house of long_tile beside it.
+[[nodiscard]] TileBytes round_tile(std::size_t edges) {
+    TileBytes t;
+    constexpr double east = 147.26; // grid units a metre, here
+    constexpr double north = 89.83;
+    const double radius = 2.6 * static_cast<double>(edges) / atlas::pymath::tau;
+    Ring ring;
+    for (std::size_t i = 0; i < edges; ++i) {
+        // clockwise on the map, as the loader leaves a building's ring
+        const double a = atlas::pymath::pi - (atlas::pymath::tau * static_cast<double>(i) / static_cast<double>(edges));
+        ring.lat.push_back(atlas::test::building::s0 +
+                           static_cast<std::int32_t>(std::lround(radius * (1 + atlas::pymath::sin(a)) * north)));
+        ring.lon.push_back(atlas::test::building::w0 +
+                           static_cast<std::int32_t>(std::lround(radius * (1 + atlas::pymath::cos(a)) * east)));
+    }
+    const auto beside = static_cast<std::int32_t>(std::lround(2.2 * radius * north));
+    const std::vector<Ring> rings{ring, rect(0, beside, 147 * 30, 900)};
+    LayerBytes b;
+    b.id = static_cast<std::uint8_t>(tl::LayerId::building);
+    b.cells = {0, 0};
+    b.columns = {
+        {"index", tl::Codec::delta, col::delta({0, 1})},
+        {"id", tl::Codec::delta, col::delta({500, 501})},
+        {"ring", tl::Codec::geom, col::geom(rings)},
+        {"h", tl::Codec::centi, col::centi({21.0, 10.0})},
+        {"min", tl::Codec::centi, col::centi({0.0, 0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({std::nullopt, std::nullopt})},
+        {"levels", tl::Codec::nvarz, col::nvarz({3, 3})},
+        {"roof", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x9AA1A7, 0x8E5A46})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x737E88, 0x56585C})},
+        {"flags", tl::Codec::varu, col::varu({0, 0})},
+        {"tag:building", tl::Codec::str, col::str(t, {"yes", "house"})},
+        {"tag:roof:direction", tl::Codec::str, col::str(t, {std::nullopt, std::nullopt})},
+    };
+    t.layers = {b};
+    return t;
+}
+
+} // namespace
+
+TEST_CASE("buildings: a building past an item's painter slots draws its walls past them as one cell each") {
+    constexpr std::size_t edges = 9000;
+    tl::RenderHead head;
+    head.frame = tl::Frame{.lat0 = 52.374, .lon0 = 4.884, .kx = 67'908.9, .kz = 111'318.8};
+    atlas::Arena arena(1U << 22U, atlas::Growth::grows, "painter slots test");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = round_tile(edges).encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &head, .level = 0, .kind = 1});
+    // per building: its walls of cells (a far one cell, its near cells after it) and its walls drawn as one cell
+    std::array<std::size_t, 2> celled{};
+    std::array<std::size_t, 2> single{};
+    std::array<std::uint32_t, 2> last_cell_slot{};
+    for (const gm::Prim& p : g.edged) {
+        if (p.kind != gm::PrimKind::cell || p.item > 1) continue;
+        const bool near = (p.flags & gm::prim_flag::near) != 0;
+        const bool far = (p.flags & gm::prim_flag::far) != 0;
+        if (near && far) ++single.at(p.item);
+        if (far && !near) ++celled.at(p.item);
+        if (near && !far) last_cell_slot.at(p.item) = std::max<std::uint32_t>(last_cell_slot.at(p.item), p.near_slot);
+    }
+    // the round building's walls take their cells until their slots would pass the item's last, then one cell each;
+    // the house beside it keeps all its cells
+    CHECK(celled[0] + single[0] == edges);
+    CHECK(celled[0] > 8000);
+    CHECK(single[0] > 500);
+    CHECK(last_cell_slot[0] <= 0xFFFFU);
+    CHECK(celled[1] == 2); // the house's long walls, of three bays
+    CHECK(single[1] == 2); // its ends
+    // and the heap takes them: each wall's cells a whole run (heap_words' release asserts)
+    atlas::passes::BuildingTile layout;
+    const std::vector<std::array<std::uint32_t, 4>> words = atlas::passes::heap_words(g, 0.0, 0.0, layout);
+    CHECK(!words.empty());
+    CHECK(layout.cells > 3 * 8000);
 }

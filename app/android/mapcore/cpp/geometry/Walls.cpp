@@ -474,8 +474,10 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
 }
 
 std::uint16_t Builder::slot(std::uint32_t value) noexcept {
-    ATLAS_ASSERT(value <= 0xFFFFU, "a building with more painter slots than an item's 16 bits hold");
-    return static_cast<std::uint16_t>(value);
+    // past an item's 16 bits (a building of thousands of walls and their details: a relation's joined ring), its last
+    // slot: what follows draws in no painter's order among itself, but within the item's slots, which its spec counts
+    // in 32 bits; a wall's cells never cross it (walls(): such a wall is drawn as its one cell)
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(value, 0xFFFFU));
 }
 
 int window_cols(double elen, WindowStyle style) noexcept {
@@ -584,7 +586,10 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
             const double u1 = static_cast<double>(c + 1) / nc;
             return quad_at(a, bb, ya, yb, u0, u1);
         };
-        if (ncol == 1 && nrow == 1) {
+        // a wall whose cells' slots would run past the item's last (Builder::slot) is drawn as its one cell near and
+        // far, as a wall of one cell is, so that each wall's cells keep a whole run (BuildingTile.cpp's heap_words)
+        const bool past_slots = std::uint64_t{b.near_slot} + (std::uint64_t(ncol) * std::uint64_t(nrow)) > 0xFFFFU;
+        if ((ncol == 1 && nrow == 1) || past_slots) {
             b.edged(cell(0, 1, 0, 1), PrimKind::cell, static_cast<std::uint16_t>(variant | prim_flag::any | detailed),
                     face, one, Builder::slot(b.near_slot++), Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
         } else {
