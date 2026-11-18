@@ -2,6 +2,7 @@
 //!
 //!   atlas-transit info  <file>                       what the file holds
 //!   atlas-transit check <file>                       everything `open` leaves out (FORMAT.md, "What a reader checks")
+//!   atlas-transit days  <file>                       how the file's days are filled, week by week, and by whom
 //!   atlas-transit stops <file> <text>                stops and stations by a part of their name
 //!   atlas-transit trip  <file> <number> [--date D]   one train or bus by its number: its stops, times and ids
 //!   atlas-transit plan  <file> --from P --to P [--date YYYYMMDD] [--time HH:MM] [--window MIN] [--arrive-by]
@@ -37,7 +38,7 @@ fn main() -> ExitCode {
 
 fn run(args: &[String]) -> Result<ExitCode, String> {
     let (Some(cmd), Some(path)) = (args.first(), args.get(1)) else {
-        return Err("usage: atlas-transit <info|check|stops|trip|plan|fixed|bench|fuzz> <file> …  (the source's head has the rest)".into());
+        return Err("usage: atlas-transit <info|check|days|stops|trip|plan|fixed|bench|fuzz> <file> …  (the source's head has the rest)".into());
     };
     let t0 = Instant::now();
     let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
@@ -53,6 +54,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             tt.verify()?;
             println!("sound: routes sorted and never overtaking, profiles never going back, the routes at each stop the patterns' own, rules sorted ({:.0} ms)", ms(t0));
         }
+        "days" => days(&tt),
         "stops" => stops(&tt, rest.first().ok_or("stops: a part of a name")?),
         "trip" => trip(&tt, rest)?,
         "plan" => plan(&tt, rest)?,
@@ -160,6 +162,90 @@ fn info(tt: &Timetable, bytes: usize, read_ms: f64, open_ms: f64) {
     println!("stop times it stands for: {}", tt.stop_times());
     for (k, v) in tt.meta_lines() {
         println!("  {k} = {v}");
+    }
+}
+
+/// A count with its thousands apart.
+fn grouped(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// How the file's days are filled. A feed's days are not all as full: the operators hand in their timetables to
+/// different days, and around a change of timetable the old and the new are both in it. By week: the trips that run
+/// on its emptiest and its fullest day, the operators and lines with a trip in it, and what a file ending with that
+/// week would hold (the trips with a day up to there; a trip is in the file once, however many days it runs).
+fn days(tt: &Timetable) {
+    let n = tt.days() as usize;
+    let weeks = n.div_ceil(7);
+    // per service: its trips, their stop times, its first day
+    let services = tt.services() as usize;
+    let (mut trips_of, mut times_of) = (vec![0u64; services], vec![0u64; services]);
+    let first_of: Vec<usize> = (0..services).map(|s| (0..n).find(|d| tt.runs(s as u32, *d as i32)).unwrap_or(n)).collect();
+    let weeks_of: Vec<Vec<bool>> = (0..services).map(|s| (0..weeks).map(|w| (w * 7..(w * 7 + 7).min(n)).any(|d| tt.runs(s as u32, d as i32))).collect()).collect();
+    let mut line_weeks = vec![vec![false; weeks]; tt.lines() as usize];
+    let mut operator_days = vec![(n, 0usize, 0u64); tt.operators() as usize]; // first day, last day, trips
+    for r in 0..tt.routes() {
+        let route = tt.route(r);
+        let operator = tt.line_operator(route.line) as usize;
+        for t in route.first_trip..route.first_trip.saturating_add(route.trips).min(tt.trips()) {
+            let s = tt.trip(t).service as usize;
+            if s >= services {
+                continue;
+            }
+            trips_of[s] += 1;
+            times_of[s] += route.stops as u64;
+            if let Some(lw) = line_weeks.get_mut(route.line as usize) {
+                for (w, runs) in weeks_of[s].iter().enumerate() {
+                    lw[w] |= *runs;
+                }
+            }
+            if let Some(o) = operator_days.get_mut(operator) {
+                let last = (0..n).rev().find(|d| tt.runs(s as u32, *d as i32)).unwrap_or(0);
+                *o = (o.0.min(first_of[s]), o.1.max(last), o.2 + 1);
+            }
+        }
+    }
+    let running: Vec<u64> = (0..n).map(|d| (0..services).filter(|s| tt.runs(*s as u32, d as i32)).map(|s| trips_of[s]).sum()).collect();
+    let (all_trips, all_times): (u64, u64) = (trips_of.iter().sum(), times_of.iter().sum());
+    println!("{} days from {} to {}: {} trips, {} stop times", n, tt.first_day(), tt.date_of(n as i32 - 1), grouped(all_trips), grouped(all_times));
+    println!("week  from      days  trips a day, least to most   operators  lines   a file ending here would hold");
+    for w in 0..weeks {
+        let (from, to) = (w * 7, (w * 7 + 7).min(n));
+        let (least, most) = (running[from..to].iter().min().copied().unwrap_or(0), running[from..to].iter().max().copied().unwrap_or(0));
+        let lines = line_weeks.iter().filter(|lw| lw[w]).count();
+        let operators = (0..tt.operators() as usize).filter(|o| (0..tt.lines()).any(|l| tt.line_operator(l) as usize == *o && line_weeks[l as usize][w])).count();
+        let (kept_trips, kept_times): (u64, u64) = (0..services).filter(|s| first_of[*s] < to).fold((0, 0), |a, s| (a.0 + trips_of[s], a.1 + times_of[s]));
+        println!(
+            "{:>4}  {}  {:>4}  {:>11} to {:>11}   {:>9}  {:>5}   {:>9} trips ({:>3} %), {:>10} stop times ({:>3} %)",
+            w + 1,
+            tt.date_of(from as i32),
+            to - from,
+            grouped(least),
+            grouped(most),
+            operators,
+            lines,
+            grouped(kept_trips),
+            kept_trips * 100 / all_trips.max(1),
+            grouped(kept_times),
+            kept_times * 100 / all_times.max(1)
+        );
+    }
+    // the operators whose trips do not reach the file's last week, or begin after its first
+    let mut short: Vec<(usize, usize, u64, usize)> =
+        operator_days.iter().enumerate().filter(|(_, o)| o.2 > 0 && (o.1 + 7 < n || o.0 >= 7)).map(|(i, o)| (o.1, o.0, o.2, i)).collect();
+    short.sort();
+    let whole = operator_days.iter().filter(|o| o.2 > 0).count() - short.len();
+    println!("operators with trips from the first week to the last: {whole}; the others, by their last day:");
+    for (last, first, trips, i) in short {
+        println!("  {} to {}  {:>9} trips  {}", tt.date_of(first as i32), tt.date_of(last as i32), grouped(trips), tt.operator_text(i as u32, OperatorText::Name));
     }
 }
 
