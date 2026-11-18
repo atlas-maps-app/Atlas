@@ -91,6 +91,28 @@ class Packer(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("frequencies.txt has rows", r.stderr)
 
+    def test_a_feed_of_more_days_than_a_file_holds(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            feed = os.path.join(tmp, "tiny")
+            shutil.copytree(os.path.join(DATA, "tiny"), feed)
+            out = os.path.join(tmp, "out.tt")
+            run = lambda *more: subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), feed, out, *more], capture_output=True, text=True)
+            # the weekdays' service runs on to 1 March 2027: 421 days from the feed's first
+            with open(os.path.join(feed, "calendar.txt")) as f:
+                text = f.read()
+            with open(os.path.join(feed, "calendar.txt"), "w") as f:
+                f.write(text.replace("WK,1,1,1,1,1,0,0,20260105,20260111", "WK,1,1,1,1,1,0,0,20260105,20270301"))
+            r = run("--strict")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("left out: the feed's days after 2027-02-08 (it has 421 from 2026-01-05; a file holds 400)", r.stdout)
+            self.assertIn("kept: 400 days from 2026-01-05", r.stdout)
+            # asked for by hand, more days than a file holds is a mistake
+            r = run("--days", "401")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("1 to 400 are allowed", r.stderr)
+
     def test_the_list_of_published_files(self):
         import gzip
         import json

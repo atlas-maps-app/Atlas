@@ -37,6 +37,7 @@ import zipfile
 MAGIC = b"ATLASTT\0"
 VERSION = 1
 NONE = 0xFFFFFFFF
+MAX_DAYS = 400                  # a file's most (the planner's file.rs, MAX_DAYS)
 
 # walks between stops (FORMAT.md, "Walks"): a change at the same stop, between stops of one station, to any stop near
 WALK_SAME_STOP_S = 60
@@ -78,6 +79,16 @@ T0 = time.time()
 
 def log(*a):
     print("[%5.0fs]" % (time.time() - T0), *a, file=sys.stderr, flush=True)
+
+
+def peak_memory():
+    """The most memory this run has held so far, in bytes; None where the system does not say."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, kilobytes elsewhere
+    return peak if sys.platform == "darwin" else peak * 1024
 
 
 def secs(h):
@@ -268,8 +279,13 @@ def main():
     first = day(a.first) if a.first else alldays[0]
     last = alldays[-1] if a.days is None else first + datetime.timedelta(days=a.days - 1)
     ndays = (last - first).days + 1
-    if ndays < 1 or ndays > 400:
-        sys.exit("days: %d, from %s; 1 to 400 are allowed" % (ndays, first))
+    if a.days is None and ndays > MAX_DAYS:
+        # a feed of more days than a file holds (the new year's timetable handed in early): its far end is left out
+        print("left out: the feed's days after %s (it has %d from %s; a file holds %d)"
+              % (first + datetime.timedelta(days=MAX_DAYS - 1), ndays, first, MAX_DAYS))
+        last, ndays = first + datetime.timedelta(days=MAX_DAYS - 1), MAX_DAYS
+    if ndays < 1 or ndays > MAX_DAYS:
+        sys.exit("days: %d, from %s; 1 to %d are allowed" % (ndays, first, MAX_DAYS))
     svc_bits = {}
     for k, ds in services.items():
         b = 0
@@ -746,6 +762,8 @@ def main():
     for k, v in sorted(count.items()):
         print("  %s: %d" % (k, v))
     print("file: %d bytes" % len(out))
+    peak = peak_memory()
+    print("packed in %d s%s" % (time.time() - T0, "" if peak is None else ", with %d MB of memory at the most" % round(peak / 1e6)))
     if a.sizes:
         print("%-6s %10s %12s %12s %12s" % ("tag", "records", "bytes", "gzip -9", "xz -9"))
         for tag, off, ln, n in table:
