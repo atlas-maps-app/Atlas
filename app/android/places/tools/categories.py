@@ -205,11 +205,14 @@ CATEGORIES = [
     # property, is drawn: atlas-blue_shield)
     ('heritage', 'heritage', 'culture', 'maki-landmark', 'boundary=protected_area',
      ('Protected heritage', 'Beschermd erfgoed', 'Geschütztes Erbe', 'Patrimoine protégé'), None),
-    ('health', 'c15', 'health', 'maki-hospital', 'amenity~^(hospital|clinic|doctors|dentist|pharmacy)$ or healthcare',
+    # a shop whose other tags say it also sees to health, takes the post or is a craft's workshop is a shop of its kind
+    # first: rules are asked in order, and these come before the shops (the reviewer, 17 November, finding 11: a
+    # convenience store that takes parcels was Post, a shoemaker's shoe shop an office)
+    ('health', 'c15', 'health', 'maki-hospital', 'amenity~^(hospital|clinic|doctors|dentist|pharmacy)$ or (healthcare and !shop)',
      ('Health', 'Gezondheid', 'Gesundheit', 'Santé'), 'amenity/hospital'),
     ('money', 'c16', 'service', 'maki-bank', 'amenity~^(bank|atm|bureau_de_change|money_transfer)$',
      ('Banks & ATMs', 'Banken & geldautomaten', 'Banken & Geldautomaten', 'Banques & distributeurs'), 'amenity/bank'),
-    ('post', 'c17', 'service', 'maki-post', 'amenity~^(post_office|parcel_locker|post_box)$ or post_office',
+    ('post', 'c17', 'service', 'maki-post', 'amenity~^(post_office|parcel_locker|post_box)$ or (post_office and !shop)',
      ('Post & parcels', 'Post & pakketten', 'Post & Pakete', 'Poste & colis'), 'amenity/post_office'),
     ('laundry', 'c18', 'service', 'maki-laundry', 'shop~^(laundry|dry_cleaning)$',
      ('Laundry', 'Wasserette', 'Wäscherei', 'Laverie'), 'shop/laundry'),
@@ -275,7 +278,7 @@ CATEGORIES = [
     ('boating', None, 'water', 'maki-harbor',
      'leisure~^(marina|slipway)$ or amenity~^(boat_rental|boat_sharing)$ or waterway~^(fuel|boatyard|dock|sanitary_dump_station)$ or shop=boat',
      ('Boats & marinas', 'Boten & jachthavens', 'Boote & Häfen', 'Bateaux & ports'), 'leisure/marina'),
-    ('offices', 'c44', 'service', 'temaki-briefcase', 'office or craft',
+    ('offices', 'c44', 'service', 'temaki-briefcase', '(office or craft) and !shop',
      ('Offices & studios', 'Kantoren & ateliers', 'Büros & Werkstätten', 'Bureaux & ateliers'), 'office'),
     ('rentals', 'c45', 'transport', 'maki-bicycle-share',
      'amenity~^(bicycle_rental|taxi|car_sharing|car_rental|kick-scooter_rental|motorcycle_rental)$',
