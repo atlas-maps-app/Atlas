@@ -105,6 +105,21 @@ class BranchesTest {
         assertEquals("https://www.starbucks.co.uk", BrandSite.of(britain, "GB"))
     }
 
+    /**
+     * The country's domain is the brand's where it is the brand's own name under it, or what most of the branches that
+     * link a site link (the app maintainer, 18 November 2026, batch 4 B24): two branches on one shopping centre's .nl
+     * pages beat forty that link the brand's .com.
+     */
+    @Test
+    fun twoPagesOfOneCentreAreNotTheBrandsSite() {
+        val centre = listOf(mapOf("website" to "https://www.kalvertoren.nl/winkels/hunkemoller"), mapOf("website" to "https://www.kalvertoren.nl/winkels/hunkemoller-2")) +
+            (1..40).map { mapOf("website" to "https://www.hunkemoller.com/nl/store/$it") }
+        assertEquals("https://www.hunkemoller.com", BrandSite.of(centre, "NL"))
+        // most of them linking a site under the country's domain makes it the brand's there, its name or not
+        val local = (1..3).map { mapOf("website" to "https://www.hunkemollerwinkels.nl/$it") } + mapOf("website" to "https://www.hunkemoller.com/nl/store/1")
+        assertEquals("https://www.hunkemollerwinkels.nl", BrandSite.of(local, "NL"))
+    }
+
     @Test
     fun freshnessByCheckDates() {
         val today = LocalDate.of(2026, 11, 3)

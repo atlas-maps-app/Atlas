@@ -106,10 +106,12 @@ object BrandHours {
  * specific parameter for the location. If there is no website mapped the brands website without that parameter can
  * be displayed instead"), from the tags of the brand's other branches: a `brand:website` mapped on them, else the
  * site their own websites share, the page of one branch left out. The site of [country], the branches' country, comes
- * first ("starbucks.nl" in the Netherlands, where branches link .nl, .com and .co.uk pages; ".uk" Britain's), when two
- * branches link it or it is the brand's name under another of its domains: one branch's page under the country's
- * domain (a shopping centre's) is not the brand's (the reviewer, 17 November, finding 11). Else most of the branches
- * with a website must share one, two at least. Social pages and booking sites say nothing about the brand.
+ * first ("starbucks.nl" in the Netherlands, where branches link .nl, .com and .co.uk pages; ".uk" Britain's), when it
+ * is the brand's name under another of its domains, or what most of the branches that link a site link, two at least:
+ * a shopping centre's pages under the country's domain are not the brand's (the reviewer, 17 November, finding 11; the
+ * app maintainer, 18 November 2026, batch 4 B24: two branches on one centre's beat forty on the brand's .com). Else
+ * most of the branches with a website must share one, two at least. Social pages and booking sites say nothing about
+ * the brand.
  */
 object BrandSite {
     fun of(branches: List<Map<String, String>>, country: String?): String? {
@@ -121,7 +123,10 @@ object BrandSite {
         val tld = country?.lowercase()?.let { if (it == "gb") "uk" else it }
         val names = byDomain.keys.groupingBy { it.substringBefore('.') }.eachCount()
         val local = tld?.let { t ->
-            byDomain.keys.filter { d -> d.endsWith(".$t") && (byDomain.getValue(d).size >= 2 || names.getValue(d.substringBefore('.')) >= 2) }
+            byDomain.keys.filter { d ->
+                val n = byDomain.getValue(d).size
+                d.endsWith(".$t") && (names.getValue(d.substringBefore('.')) >= 2 || (n >= 2 && n * 2 > sites.size))
+            }
                 .maxByOrNull { byDomain.getValue(it).size }
         }
         val domain = local ?: byDomain.maxByOrNull { it.value.size }?.takeIf { it.value.size >= 2 && it.value.size * 2 >= sites.size }?.key ?: return null
