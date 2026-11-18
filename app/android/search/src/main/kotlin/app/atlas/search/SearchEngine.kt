@@ -43,7 +43,8 @@ data class SearchContext(
     /**
      * Holidays, the sun and the country of where the search is (the app's `HereContext`): for opening hours, for
      * addresses, and for brands, a typed name being the brand of that country's (the reviewer, 17 November, finding 9:
-     * the country of its own this held was never given, so "jumbo" in Amsterdam was the Jumbo of Chile).
+     * the country of its own this held was never given, so "jumbo" in Amsterdam was the widest spread of the Jumbos,
+     * the toy shops of Greece and its neighbours).
      */
     val hours: OpeningHoursContext,
     /** The town the searcher is in, when the app knows its bounds ("how many bins in this town"). */

@@ -13,8 +13,9 @@ import java.time.ZonedDateTime
 
 /**
  * A typed brand's name is the brand of the country searched in (the reviewer, 17 November, finding 9): the search
- * held a country of its own that no caller gave, so of the Jumbos the widest spread, Chile's, was the one asked for in
- * Amsterdam, and the Dutch one's branches went unnamed. The country is now the search's hours', where the search is.
+ * held a country of its own that no caller gave, so of the Jumbos the widest spread, the toy shops of Greece and its
+ * neighbours, was the one asked for in Amsterdam or Santiago, and the supermarkets' branches went unnamed. The country
+ * is now the search's hours', where the search is.
  */
 class TypedBrandTest {
     private val amsterdam = LatLon(52.3731, 4.8926)

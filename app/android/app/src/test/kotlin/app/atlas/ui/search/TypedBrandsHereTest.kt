@@ -20,7 +20,7 @@ import java.time.Duration
 /**
  * Where a name is typed, it is the brand of the country here (the reviewer, 17 November, finding 9): the search, the
  * query screen and the sheet's rewording gave the parser and the engine no country, so "jumbo" by the Westerkerk was
- * Chile's Jumbo, and the Dutch one's branch was no chain's. The store is a Dutch region's, which matched its places'
+ * the Jumbo of Greece's toy shops, the widest spread, and the Dutch one's branch was no chain's. The store is a Dutch region's, which matched its places'
  * brands in the Netherlands when it was written.
  */
 @RunWith(RobolectricTestRunner::class)
