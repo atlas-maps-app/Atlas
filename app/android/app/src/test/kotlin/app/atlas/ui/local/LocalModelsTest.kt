@@ -340,6 +340,22 @@ class LocalModelsTest {
         assertEquals("17:00+", Parkland.todaysSpan("Mo-Su 17:00+", day, context = Nowhere))
     }
 
+    /**
+     * A park's today is its own span, never last night's run past midnight (the app maintainer, 18 November 2026, batch 4
+     * B11): `Mo-Su 08:00-23:00+` read "0:00+", the night's guessed tail named as an opening and today's own span dropped;
+     * so a span stated past midnight read "0:00–1:00".
+     */
+    @Test
+    fun aParksTodayIsItsOwnSpanNotLastNights() {
+        val day = LocalDate.of(2026, 10, 13)
+        assertEquals("8:00–23:00+", Parkland.todaysSpan("Mo-Su 08:00-23:00+", day, context = Nowhere))
+        assertEquals("6:00–1:00", Parkland.todaysSpan("Mo-Su 06:00-01:00", day, context = Nowhere))
+        assertEquals("18:00–2:00+", Parkland.todaysSpan("Mo-Su 18:00-02:00+", day, context = Nowhere))
+        // a day of its own that opens at midnight says so; closed today, nothing
+        assertEquals("0:00–6:00", Parkland.todaysSpan("Mo-Su 00:00-06:00", day, context = Nowhere))
+        assertNull(Parkland.todaysSpan("Mo 08:00-23:00+", day, context = Nowhere))
+    }
+
     @Test
     fun theParkFitsItsDrawingKeepingItsShape() {
         val box = BBox(4.86, 52.38, 4.88, 52.39)
