@@ -1246,7 +1246,11 @@ class SearchSheetModel(
         val c = mutable.value.centre
         val now = ZonedDateTime.now(services.clock)
         val online = !services.config.offline && services.connectivity.online.value
-        return SearchContext(location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone))
+        return SearchContext(
+            location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone),
+            // each result's address as the country at it writes it (asked off the main thread, as the search is)
+            countryAt = { p -> HereContext.country(services, p) },
+        )
     }
 
     /** The official bathing waters around [c], asked online once per kind of water entered; the results rank again with them. */

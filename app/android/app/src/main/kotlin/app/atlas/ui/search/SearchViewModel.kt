@@ -174,6 +174,8 @@ class SearchViewModel(
             online = online(),
             limit = LIMIT,
             hours = HereContext.hours(services, at, now.zone),
+            // each result's address as the country at it writes it (asked off the main thread, as the search is)
+            countryAt = { p -> HereContext.country(services, p) },
         )
     }
 

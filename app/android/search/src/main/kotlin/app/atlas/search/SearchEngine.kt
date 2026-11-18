@@ -49,6 +49,13 @@ data class SearchContext(
     val hours: OpeningHoursContext,
     /** The town the searcher is in, when the app knows its bounds ("how many bins in this town"). */
     val town: BBox? = null,
+    /**
+     * The country of the map at a point (the app's `HereContext.country`: the downloaded regions', the pack that holds
+     * it, else the countries' boxes): a result's address is written as its own country writes it where the place names
+     * none (the app maintainer, 18 November 2026, batch 4 A7: it was written as the searcher's, "1 Pariser Platz" for a
+     * café in Berlin searched from Paris). Unknown where not given, and the address street first then.
+     */
+    val countryAt: (LatLon) -> String? = { null },
 )
 
 /** A search the user made before. */
@@ -720,8 +727,8 @@ class SearchEngine(
         val r = h.record
         val preset = r.preset?.let { Presets.byId(it) }
         val kindName = preset?.name(ctx.lang) ?: r.category?.let { Categories.byId(it)?.name(ctx.lang) }
-        // as the country searched in writes it, where the place names none of its own
-        val address = Localise.address(r.tags, ctx.hours.country)
+        // as its own country writes it: the one it names, else the country of the map at it, never the searcher's
+        val address = Localise.address(r.tags, r.tags["addr:country"]?.takeIf { it.isNotBlank() } ?: ctx.countryAt(r.location))
         // A place with no name nor address is titled by what it is ("Gift Shop"), and no line repeats it ("Gifts")
         val title = r.name(ctx.lang) ?: address ?: preset?.fullName(ctx.lang) ?: kindName ?: r.place.key
         val said = title == kindName || title == preset?.fullName(ctx.lang)
