@@ -484,4 +484,31 @@ class OpeningHoursTest {
         assertEquals(false, oh("dawn-dusk").isOpen(t("2026-10-13T03:00"), ams))
         assertEquals(true, oh("dawn-dusk").isOpen(t("2026-10-13T12:00"), ams))
     }
+
+    @Test
+    fun allDayAndTimesWithoutTheirColons() {
+        // the reviewer, 17 November, finding 11: "24h" read as the moment 24:00, "closed, opens 0:00"; "Mo-Fr 1900-2200"
+        // as the years 1900 to 2200, open around the clock
+        val allDay = oh("24h")
+        assertEquals(true, allDay.isOpen(t("2026-10-12T03:00"), context = Nowhere))
+        assertEquals(true, allDay.isOpen(t("2026-10-17T23:59"), context = Nowhere))
+        assertEquals(true, open("Mo-Fr 24h", "2026-10-14T02:00"))
+        assertEquals(false, open("Mo-Fr 24h", "2026-10-17T12:00"))
+        assertEquals(true, open("Mo-Fr: 24h; Sa 10:00-16:00", "2026-10-17T11:00"))
+        assertEquals(false, open("Mo-Fr 24h; PH off", "2026-12-25T12:00", nl))
+        // "18h-24h" stays a span to midnight
+        assertEquals(true, open("Mo-Su 18h-24h", "2026-10-12T23:00"))
+        assertEquals(false, open("Mo-Su 18h-24h", "2026-10-12T17:00"))
+        val evenings = oh("Mo-Fr 1900-2200")
+        assertEquals(true, evenings.isOpen(t("2026-10-13T20:00"), context = Nowhere))
+        assertEquals(false, evenings.isOpen(t("2026-10-13T12:00"), context = Nowhere))
+        assertEquals(false, evenings.isOpen(t("2026-10-17T20:00"), context = Nowhere))
+        assertEquals(t("2026-10-13T22:00"), evenings.status(t("2026-10-13T20:00"), context = Nowhere).changesAt)
+        assertEquals(true, open("Mo-Fr 0830-1200,1300-1730", "2026-10-12T13:30"))
+        assertEquals(false, open("Mo-Fr 0830-1200 1300-1730", "2026-10-12T12:30"))
+        assertEquals(true, open("Mo-Fr 0830-1200 1300-1730", "2026-10-12T17:00"))
+        // a year before the days is still a year
+        assertEquals(true, open("2026 Mo-Fr 08:00-12:00", "2026-10-12T09:00"))
+        assertEquals(false, open("2025 Mo-Fr 08:00-12:00", "2026-10-12T09:00"))
+    }
 }
