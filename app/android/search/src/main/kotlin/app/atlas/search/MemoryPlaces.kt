@@ -19,10 +19,6 @@ class MemoryPlaces(places: Collection<Place>, country: String?) : PlaceSource {
     private val keyIndex = HashMap<String, MutableList<Int>>()
     private val tree: PackedRTree?
 
-    /** Places whose country is known only where they name their own. */
-    @Deprecated("Their brands are matched in the country of the map where they are: pass it", ReplaceWith("MemoryPlaces(places, country)"))
-    constructor(places: Collection<Place>) : this(places, null)
-
     init {
         val seen = LinkedHashMap<String, Place>()
         for (p in places) if (p.tags.isNotEmpty()) seen[p.key] = p

@@ -185,10 +185,6 @@ object Brands {
         return if (list.isEmpty()) null else best(list, tags, c)
     }
 
-    /** [forTags] knowing nothing of where the place is but its own tags. */
-    @Deprecated("A brand is matched in the country of the map at the place: pass it", ReplaceWith("forTags(tags, country)"))
-    fun forTags(tags: Map<String, String>): Brand? = forTags(tags, null)
-
     /**
      * True when [forTags] may answer otherwise in another country: the place names no country of its own, and its tags
      * fit entries that trade apart, several of them or by its name alone. A store matches these once it knows the
