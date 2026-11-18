@@ -32,12 +32,19 @@ class BranchesTest {
 
     @Test
     fun theBranchesTakeTheClosingTheirHoursState() {
-        // "16:00-02:00+" closes at 2:00 as far as its hours say, never at the guess of its open end
-        assertEquals(List(7) { 16 * 60 to 26 * 60 }, BrandHours.weekOf(OpeningHours.parse("Mo-Su 16:00-02:00+")))
-        assertEquals("Mo-Su 16:00-02:00", BrandHours.infer(listOf("Mo-Su 16:00-02:00+"))!!.hours.raw)
+        // "16:00-02:00+" closes at 2:00 as far as its hours say, and then perhaps later: never at the guess of how long
+        assertEquals(List(7) { WeekDay(16 * 60, 26 * 60, openEnd = true) }, BrandHours.weekOf(OpeningHours.parse("Mo-Su 16:00-02:00+")))
+        assertEquals("Mo-Su 16:00-02:00+", BrandHours.infer(listOf("Mo-Su 16:00-02:00+"))!!.hours.raw)
+        // an open end where most of the branches give one, as a day is closed where most close it
+        assertEquals("Mo-Su 16:00-02:00+", BrandHours.infer(listOf("Mo-Su 16:00-02:00+", "Mo-Su 16:00-01:00", "Mo-Su 16:00-02:00+"))!!.hours.raw)
+        assertEquals("Mo-Su 16:00-02:00", BrandHours.infer(listOf("Mo-Su 16:00-02:00+", "Mo-Su 16:00-02:00", "Mo-Su 16:00-03:00"))!!.hours.raw)
         // "17:00+" states no closing: it says nothing of a branch's week
         assertNull(BrandHours.weekOf(OpeningHours.parse("Mo-Su 17:00+")))
         assertNull(BrandHours.infer(listOf("Mo-Su 17:00+")))
+        // borrowed, an open end reads as the branch's own: open after midnight, and no closing time said
+        val night = BrandHours.infer(listOf("Mo-Su 12:00-22:00+"))!!.hours.status(LocalDateTime.of(2026, 11, 17, 0, 30), OpeningHoursContext.Default)
+        assertTrue(night.isOpen && night.openEnd)
+        assertNull(night.statedChangeAt)
     }
 
     @Test
