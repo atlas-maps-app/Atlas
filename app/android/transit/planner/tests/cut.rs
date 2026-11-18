@@ -583,8 +583,9 @@ fn the_answers_are_the_same_everywhere() {
 fn nothing_panics_on_files_a_little_wrong_or_queries_at_their_edges() {
     let mut rng = fuzz::Rng(0x5EED_1234_ABCD_0001);
     let mut opened = 0;
-    // (edges.tt has what the others lack: a night the clock changes, a stop with its own time to change)
-    for (name, runs) in [("tiny.tt", 6000), ("edges.tt", 2000), ("utrecht-20261117.tt", 300)] {
+    // (edges.tt has what the others lack: a night the clock changes, a stop with its own time to change; autumn.tt
+    // the night it goes back and a stop where nobody changes)
+    for (name, runs) in [("tiny.tt", 6000), ("edges.tt", 2000), ("utrecht-20261117.tt", 300), ("autumn.tt", 2000)] {
         let b = bytes(name);
         for _ in 0..runs / 10 {
             fuzz::file(&b, &mut rng, 4);

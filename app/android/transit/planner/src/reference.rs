@@ -1,7 +1,11 @@
 //! The second opinion: a connection scan (Dibbelt, Pajor, Strasser and Wagner) over the same file, with the same
-//! places, walks, change time and closed stops and lines, and nothing else in common with the search by rounds. It
-//! answers two questions only (the earliest arrival, the latest departure) and holds a whole day's connections in
-//! memory, so it is the tests' and the tool's, not the phone's.
+//! places, walks and closed stops and lines, and nothing else in common with the search by rounds. It answers two
+//! questions only (the earliest arrival, the latest departure) and holds a whole day's connections in memory, so it
+//! is the tests' and the tool's, not the phone's.
+//!
+//! What a search could get wrong it reads from the file by itself, in its own way: when each service day begins
+//! (the days the clock changes, `day_start`), which days' trips reach into the seconds asked for, and what a
+//! change at one stop costs (the stop's own time where the feed gives one, `own_change`).
 //!
 //! It knows no cost of wishes and no cap on rides: a query it is compared on sets `max_rides` high. It keeps to the
 //! seconds the query follows ([`Query::followed`]): what ends past them is no answer to either. And it holds to the
@@ -51,6 +55,59 @@ pub struct Reference {
     /// may tell one from another: a rule's two stops and the stops a walk away.
     arrivals_kept: Vec<bool>,
     departures_kept: Vec<bool>,
+    /// By stop: what the feed says of changing there (`own_change`), read once.
+    own: Vec<Option<i32>>,
+}
+
+/// When the service day `off` days from day `day` begins, in seconds from the beginning of `day`: day by day, each
+/// as long as the file says (`odd_days` in its META: the days the clock changes are 82,800 or 90,000 s long, every
+/// other 86,400).
+pub fn day_start(tt: &Timetable, day: i32, off: i32) -> i32 {
+    let length = |d: i32| {
+        let said = tt.meta("odd_days").unwrap_or("").split_whitespace().find_map(|word| {
+            let (date, secs) = word.split_once(':')?;
+            (tt.day_of(date.parse().ok()?)? == d).then(|| secs.parse::<i32>().ok()).flatten()
+        });
+        said.filter(|secs| (79_200..=93_600).contains(secs)).unwrap_or(86_400)
+    };
+    let off = off.clamp(-64, 64);
+    if off >= 0 { (day..day + off).map(length).sum() } else { -(day + off..day).map(length).sum::<i32>() }
+}
+
+/// What the feed says of changing at one stop, for everyone: `Some(seconds)` where it gives the stop its own time
+/// (a rule of type 2 from the stop to itself that names no trip and no line; the longest of several), `None` where
+/// it says nothing, and `Some(i32::MAX / 4)` where it says nobody changes there (type 3).
+pub fn own_change(tt: &Timetable, stop: u32) -> Option<i32> {
+    // the rules are sorted by the stop they lead from
+    let (mut lo, mut hi) = (0u32, tt.rules());
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if tt.rule(mid).from_stop < stop { lo = mid + 1 } else { hi = mid }
+    }
+    let mut own = None;
+    for r in (lo..tt.rules()).map(|i| tt.rule(i)).take_while(|r| r.from_stop == stop) {
+        if r.to_stop != stop || named(&r) {
+            continue;
+        }
+        let says = match r.kind {
+            2 if r.min_time != NONE => r.min_time.min((1 << 20) - 1) as i32,
+            3 => i32::MAX / 4,
+            _ => continue,
+        };
+        own = Some(own.map_or(says, |o: i32| o.max(says)));
+    }
+    own
+}
+
+/// What a change at one stop costs for a query there: the stop's own time where the feed gives one, else the
+/// file's for every stop; the query's own in their place where it asks for one, but never less than the stop's.
+pub fn change_time(tt: &Timetable, q: &Query, stop: u32) -> i32 {
+    let general = q.change_s.unwrap_or(tt.change_seconds()).min((1 << 20) - 1) as i32;
+    match (own_change(tt, stop), q.change_s) {
+        (Some(own), Some(_)) => general.max(own),
+        (Some(own), None) => own,
+        (None, _) => general,
+    }
 }
 
 fn named(r: &Rule) -> bool {
@@ -65,7 +122,19 @@ impl Reference {
     /// The connections that leave at `earliest` or later and arrive by `latest`, in seconds of service day `day`.
     pub fn new(planner: &Planner, day: i32, earliest: i32, latest: i32) -> Reference {
         let tt = planner.timetable();
-        let (lo, hi) = planner.offsets(earliest, latest);
+        // The service days whose trips can reach into these seconds: from the day a trip as long as the file's
+        // longest would have had to begin, to the day the last second lies in; two hours more at either end,
+        // for the days that are not 86,400 s long.
+        let mut longest = 0i32;
+        for r in 0..tt.routes() {
+            let route = tt.route(r);
+            for trip in route.first_trip..route.first_trip + route.trips {
+                longest = longest.max(tt.time(tt.trip_times(trip), route.stops.saturating_sub(1)).0 as i32);
+            }
+        }
+        let lo = (earliest - 7200 - longest).div_euclid(86_400);
+        let hi = (latest + 7200).div_euclid(86_400).min(lo + 31);
+        let begins: Vec<i32> = (lo..=hi).map(|off| day_start(tt, day, off)).collect();
         let (mut connections, mut rides) = (Vec::new(), Vec::new());
         for r in 0..tt.routes() {
             let route = tt.route(r);
@@ -75,7 +144,7 @@ impl Reference {
                     if !tt.runs(tt.trip(trip).service, day + off) {
                         continue;
                     }
-                    let zero = planner.zero(day, off);
+                    let zero = begins[(off - lo) as usize];
                     let ride = rides.len() as u32;
                     let mut any = false;
                     for pos in 0..route.stops.saturating_sub(1) {
@@ -130,7 +199,18 @@ impl Reference {
                 }
             }
         }
-        Reference { day, connections, by_arrival, rides, into, into_first, out, out_first, arrivals_kept, departures_kept }
+        let own = (0..tt.stops()).map(|s| own_change(tt, s)).collect();
+        Reference { day, connections, by_arrival, rides, into, into_first, out, out_first, arrivals_kept, departures_kept, own }
+    }
+
+    /// What a change at one stop costs for a query (`change_time`, from what was read once).
+    fn change(&self, tt: &Timetable, q: &Query, stop: u32) -> i32 {
+        let general = q.change_s.unwrap_or(tt.change_seconds()).min((1 << 20) - 1) as i32;
+        match (self.own[stop as usize], q.change_s) {
+            (Some(own), Some(_)) => general.max(own),
+            (Some(own), None) => own,
+            (None, _) => general,
+        }
     }
 
     /// The named rules for a change that leads to a stop, and for one that comes from it.
@@ -187,7 +267,7 @@ impl Reference {
             }
             None
         };
-        let mut found = from_there(stop, Some(planner.change_at(q, stop)));
+        let mut found = from_there(stop, Some(self.change(tt, q, stop)));
         for &(y, secs) in planner.walks_into(stop) {
             found = found.or_else(|| from_there(y, Some(secs as i32)));
         }
@@ -221,7 +301,7 @@ impl Reference {
                 !barred && d >= arrive + needs
             })
         };
-        if to_there(stop, Some(planner.change_at(q, stop))) {
+        if to_there(stop, Some(self.change(tt, q, stop))) {
             return true;
         }
         let (lo, hi) = tt.walks_from(stop);
@@ -313,7 +393,7 @@ impl Reference {
                         (ready[stop as usize], via[stop as usize]) = (at, rides);
                     }
                 };
-                sooner(c.to, c.arrive + planner.change_at(q, c.to));
+                sooner(c.to, c.arrive.saturating_add(self.change(tt, q, c.to)));
                 let (lo, hi) = tt.walks_from(c.to);
                 for i in lo..hi {
                     let (y, secs) = tt.walk(i);
@@ -387,7 +467,7 @@ impl Reference {
             }
             if c.depart > left[c.from as usize] {
                 left[c.from as usize] = c.depart;
-                due[c.from as usize] = due[c.from as usize].max(c.depart - planner.change_at(q, c.from));
+                due[c.from as usize] = due[c.from as usize].max(c.depart.saturating_sub(self.change(tt, q, c.from)));
                 for &(y, secs) in planner.walks_into(c.from) {
                     if !bit(&prefs.closed, y) {
                         due[y as usize] = due[y as usize].max(c.depart - secs as i32);
@@ -557,7 +637,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                 }
                 let (a, b) = (tt.pattern_stop(r.first_stop + board), tt.pattern_stop(r.first_stop + alight));
                 let times = tt.trip_times(trip);
-                let base = planner.zero(q.day, day.saturating_sub(q.day));
+                let base = day_start(tt, q.day, day.saturating_sub(q.day));
                 if (a.stop, b.stop) != (from, to) || depart != base + tt.time(times, board).1 as i32 || arrive != base + tt.time(times, alight).0 as i32 {
                     return Some(format!("leg {i}: its stops or times are not the trip's"));
                 }
@@ -571,7 +651,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                     if barred {
                         return Some(format!("leg {i}: the feed says no change is possible from the ride before"));
                     }
-                    let needs = if waits { 0 } else if stop == from { planner.change_at(q, stop).max(least) } else { walk_between(stop, from).unwrap_or(i32::MAX / 2).max(least) };
+                    let needs = if waits { 0 } else if stop == from { change_time(tt, q, stop).max(least) } else { walk_between(stop, from).unwrap_or(i32::MAX / 2).max(least) };
                     if depart < at + needs {
                         return Some(format!("leg {i}: the change from the ride before leaves {} s and needs {needs}", depart - at));
                     }

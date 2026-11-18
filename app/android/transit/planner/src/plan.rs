@@ -586,11 +586,6 @@ impl<'a> Planner<'a> {
         Prefs::of(&self.tt, &q.wishes, &self.ix.by_lat)
     }
 
-    /// What a change at one stop costs for this query at this stop ([`Query::change_s`]).
-    pub(crate) fn change_at(&self, q: &Query, stop: u32) -> i32 {
-        self.ix.change_at(stop, q.change_s.unwrap_or(self.tt.change_seconds()).min(MAX_TIME - 1) as i32, q.change_s.is_some())
-    }
-
     pub(crate) fn walks_into(&self, stop: u32) -> &[(u32, u32)] {
         match (self.ix.back_first.get(stop as usize), self.ix.back_first.get(stop as usize + 1)) {
             (Some(&lo), Some(&hi)) => self.ix.back.get(lo as usize..hi as usize).unwrap_or(&[]),
