@@ -129,9 +129,11 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     v.direction = l.string(s.tag_direction, i);
     v.hidden = l.boolean(s.hidden, i).value_or(false);
     v.flags = static_cast<std::uint64_t>(l.integer(s.flags, i));
+    // its levels outside what a building holds (tl::building::most_levels) read as unmapped, as stage P reads such a
+    // tag, and as sun/Samples.cpp's values_of reads them
     const std::optional<std::int64_t> levels = l.nullable_integer(s.levels, i);
-    v.has_levels = levels.has_value();
-    v.levels = levels.value_or(0);
+    v.has_levels = levels && *levels >= 1 && *levels <= tl::building::most_levels;
+    v.levels = v.has_levels ? *levels : 0;
     v.mat_draw = l.string(s.mat_draw, i);
     v.kind = l.string(s.kind, i);
     v.no_win = l.boolean(s.no_win, i).value_or(false);
@@ -474,8 +476,10 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
 }
 
 std::uint16_t Builder::slot(std::uint32_t value) noexcept {
-    ATLAS_ASSERT(value <= 0xFFFFU, "a building with more painter slots than an item's 16 bits hold");
-    return static_cast<std::uint16_t>(value);
+    // past an item's 16 bits (a building of thousands of walls and their details: a relation's joined ring), its last
+    // slot: what follows draws in no painter's order among itself, but within the item's slots, which its spec counts
+    // in 32 bits; a wall's cells never cross it (walls(): such a wall is drawn as its one cell)
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(value, 0xFFFFU));
 }
 
 int window_cols(double elen, WindowStyle style) noexcept {
@@ -584,7 +588,10 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
             const double u1 = static_cast<double>(c + 1) / nc;
             return quad_at(a, bb, ya, yb, u0, u1);
         };
-        if (ncol == 1 && nrow == 1) {
+        // a wall whose cells' slots would run past the item's last (Builder::slot) is drawn as its one cell near and
+        // far, as a wall of one cell is, so that each wall's cells keep a whole run (BuildingTile.cpp's heap_words)
+        const bool past_slots = std::uint64_t{b.near_slot} + (std::uint64_t(ncol) * std::uint64_t(nrow)) > 0xFFFFU;
+        if ((ncol == 1 && nrow == 1) || past_slots) {
             b.edged(cell(0, 1, 0, 1), PrimKind::cell, static_cast<std::uint16_t>(variant | prim_flag::any | detailed),
                     face, one, Builder::slot(b.near_slot++), Builder::slot(b.far_slot++), {.edge = edge, .part = 0});
         } else {
@@ -676,8 +683,11 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
         // its facade: its shop glazing (its own path, after its cells), its material face, then its windows (a row per
         // level, the shop floor's too, bays by its length), their slots after its cells in both variants (a view's
         // win_d can reach past the cells' 460 m); its plinth and cornice, whose slots follow all its building's walls
-        const int lv = static_cast<int>(bl.v.levels); // Kotlin's Long.toInt()
-        const bool windows = windowed && elen > 2.2 && lv > 0;
+        // its windows' rows and bays: none where its bays pass what its record holds, as sun/Samples.cpp's
+        // wall_windows has them (its levels within tl::building::most_levels: values_of)
+        const int lv = static_cast<int>(bl.v.levels);
+        const int bays_along = windowed && elen > 2.2 && lv > 0 ? window_cols(elen, style) : 0;
+        const bool windows = bays_along > 0 && bays_along <= tl::building::most_window_cols;
         const bool glazing = shop && elen > 2.4;
         // a church's own windows (`if church and d < 520 ...: church_windows(...)`, whatever its levels), at its
         // windows' slots
@@ -690,13 +700,14 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
         }
         const Material faced = elen > 2.0 ? material : Material::none;
         if (windows || glazing || facade_flags != 0 || bays > 0 || faced != Material::none) {
-            const int cols = windows ? window_cols(elen, style) : 0;
-            // its rows: its windows', else its storeys where it has a material face (its floors and decks); a
-            // building:levels past what the record holds (no building has 4095) keeps that many
+            const int cols = windows ? bays_along : 0;
+            // its rows: its windows', else its storeys where it has a material face (its floors and decks), both within
+            // tl::building::most_levels and so within what the record holds; its windows numbered once the tile's
+            // walk is whole (number_windows)
             const std::int64_t rows =
                 std::min<std::int64_t>(windows ? lv : (faced != Material::none ? storeys : 0), max_window_levels);
             b.out.window_walls.push_back({.wall = wall,
-                                          .first = b.windows,
+                                          .first = 0,
                                           .levels = u16(static_cast<int>(rows)),
                                           .cols = u16(cols),
                                           .near_slot = Builder::slot(b.near_slot),
@@ -713,7 +724,6 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
                                           .ribs = faced == Material::metal ? ribs : 0U});
             const std::uint32_t taken =
                 (glazing ? 1U : 0U) + material_slots(faced) + (windows || bays > 0 ? window_slots : 0U);
-            if (windows) b.windows += static_cast<std::uint32_t>(lv) * static_cast<std::uint32_t>(cols);
             b.near_slot += taken;
             b.far_slot += taken;
         }
@@ -766,13 +776,32 @@ constexpr std::array<std::pair<tl::LayerId, Source>, 2> walked{std::pair{tl::Lay
 
 /// What the walk makes of a run of the records (ENGINE.md gain 9: a dense tile's buildings in blocks, each on a
 /// worker): its primitives, faces, n-gons, items and windowed walls as the walk makes them, numbered from its first,
-/// and the sun samples and windows it counts.
+/// and the sun samples it counts (its windows are numbered once the blocks are joined: number_windows).
 struct Block {
     TileBuildings made;
     std::vector<Made> spans;
     std::uint32_t samples = 0;
-    std::uint32_t windows = 0;
 };
+
+/// Numbers a tile's windows in its walk's order, which is its window group of sun samples' order, and returns how many
+/// it holds: each windowed wall's after those before it, its record's rows × bays (a cabin's panes are none of them).
+/// A wall whose windows would take the tile past the most a frame draws (tl::building::most_tile_windows) has none, its
+/// bays cut (its floors, facade and slots kept), as sun/Samples.cpp's wall_windows leaves its samples out; those after
+/// it keep theirs where they fit. Counts the walls cut in `cut`.
+[[nodiscard]] std::uint32_t number_windows(std::vector<WindowWall>& walls, std::uint32_t& cut) noexcept {
+    std::uint32_t n = 0;
+    for (WindowWall& w : walls) {
+        if (w.style == WindowStyle::cabin) continue;
+        const std::uint32_t own = std::uint32_t{w.levels} * w.cols; // within 0x0FFF × 0xFFFF: 32 bits hold it
+        if (own > tl::building::most_tile_windows - n) {
+            w.cols = 0;
+            ++cut;
+        }
+        w.first = n;
+        n += std::uint32_t{w.levels} * w.cols;
+    }
+    return n;
+}
 
 /// Lays `bl`'s roof `rh` high over its ring (0: flat): the walls' top, and a skillion's slope.
 void lay_roof(Building& bl, double rh) {
@@ -986,7 +1015,6 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
         first += l->count;
     }
     out.samples = b.sample;
-    out.windows = b.windows;
 }
 
 /// The opening hours of the places of `out`'s buildings whose walls have shop glazing (TileBuildings::hours): each
@@ -1176,7 +1204,6 @@ TileBuildings build_buildings(const BuildingInput& in) {
     TileBuildings made = std::move(walks[0].made); // the primitives in the samples' order, laid out by cells below
     std::vector<Made> spans = std::move(walks[0].spans);
     std::uint32_t samples = walks[0].samples;
-    std::uint32_t windows = walks[0].windows;
     if (blocks > 1) {
         std::size_t edged_count = 0;
         std::size_t plain_count = 0;
@@ -1215,7 +1242,6 @@ TileBuildings build_buildings(const BuildingInput& in) {
         made.item_facades.insert(made.item_facades.end(), k.made.item_facades.begin(), k.made.item_facades.end());
         for (WindowWall w : k.made.window_walls) {
             w.wall += edged;
-            if (w.style != WindowStyle::cabin) w.first += windows; // a cabin's panes are none of the tile's windows
             made.window_walls.push_back(w);
         }
         // the hoist beams, a kit roof's courses and ridges and a kit's walls' lines and shadows, by their items and
@@ -1249,10 +1275,9 @@ TileBuildings build_buildings(const BuildingInput& in) {
             spans.push_back(m);
         }
         samples += k.samples;
-        windows += k.windows;
     }
     out.samples = samples;
-    out.windows = windows;
+    out.windows = number_windows(made.window_walls, out.windows_cut);
     out.faces = std::move(made.faces);
     out.items = std::move(made.items);
     out.item_facades = std::move(made.item_facades);

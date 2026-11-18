@@ -680,18 +680,28 @@ void FrameBuilder::stage_f() {
     }
 }
 
+namespace {
+
+/// A frame of the clear alone (`clear`), its marks in their order: one with no size yet, or whose descriptors did not
+/// begin.
+void clear_alone(const gpu::FrameContext& frame, const std::array<float, 4>& clear) {
+    frame.frames.mark(frame.slot, gpu::Mark::offscreen);
+    frame.pass.begin(frame.cmd, frame.sync, frame.image, clear);
+    if (frame.pass.composite()) frame.pass.next(frame.cmd, frame.sync);
+    frame.pass.end(frame.cmd, frame.sync, frame.image);
+    frame.frames.mark(frame.slot, gpu::Mark::main);
+    frame.frames.mark(frame.slot, gpu::Mark::after);
+}
+
+} // namespace
+
 void FrameBuilder::record(const gpu::FrameContext& frame) {
     const auto started = clock::now();
     for (PassCounters& c : counters_) c.clear();
     const std::uint32_t slot = frame.slot.slot;
     if (!derive(frame.number, slot, &frame.output)) {
-        // No frame size yet: the clear alone, so the frame still goes out (the marks in their order).
-        frame.frames.mark(frame.slot, gpu::Mark::offscreen);
-        frame.pass.begin(frame.cmd, frame.sync, frame.image, options_.clear);
-        if (frame.pass.composite()) frame.pass.next(frame.cmd, frame.sync);
-        frame.pass.end(frame.cmd, frame.sync, frame.image);
-        frame.frames.mark(frame.slot, gpu::Mark::main);
-        frame.frames.mark(frame.slot, gpu::Mark::after);
+        // No frame size yet: the clear alone, so the frame still goes out.
+        clear_alone(frame, options_.clear);
         return;
     }
     {
@@ -704,7 +714,18 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     const std::uint64_t finished = frame.number >= gpu::Frames::in_flight ? frame.number - gpu::Frames::in_flight : 0;
     const auto rows = state_.items != nullptr ? static_cast<std::uint32_t>(state_.items->rows()) : 0U;
     if (auto begun = layout_->begin_frame(frame.number, finished, rows, Selectors::max_kinds); !begun) {
+        // The ring did not grow to the frame's items, or a set of the frame's was not written: the slice may be the
+        // old one, smaller than the rank table, and the sets not the frame's. Nothing of set 0 is written or bound,
+        // no pass records; what set 1's providers upload and change for the frames after is recorded, then the clear
+        // alone, so the frame still goes out. The next frame begins again.
         log::error("vk frame {}: the frame's descriptors: {}", frame.number, begun.error().text());
+        stage_f_ms_ = ms_since(started);
+        layout_->record_setup(frame.cmd, frame.sync);
+        if (scene != nullptr) {
+            for (GlobalProvider* g : scene->globals()) g->record(frame);
+        }
+        clear_alone(frame, options_.clear);
+        return;
     }
     write_ring(slot);
     stage_f_ms_ = ms_since(started);

@@ -2,6 +2,7 @@
 #include "geometry/Houseboats.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "tiles/layers/Buildings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,12 +39,14 @@ void boat_walls(Builder& b, std::span<const V2> pp, double y0, double y1, std::u
         const auto wall = static_cast<std::uint32_t>(b.out.edged.size());
         b.edged(q, kind, static_cast<std::uint16_t>(prim_flag::weather | prim_flag::any), face, b.sample++, slot, slot,
                 {.edge = static_cast<std::uint32_t>(i), .part = 0});
-        if (win && elen > 1.6) {
+        // its cabin's panes, none where they pass what the record holds (as a wall's windows past them)
+        const int panes_along = std::max(1, kt_int(elen / 1.7));
+        if (win && elen > 1.6 && panes_along <= tiles::building::most_window_cols) {
             const std::uint16_t panes = Builder::slot(b.boat_slot++);
             b.out.window_walls.push_back({.wall = wall,
                                           .first = 0,
                                           .levels = 1,
-                                          .cols = static_cast<std::uint16_t>(std::max(1, kt_int(elen / 1.7))),
+                                          .cols = static_cast<std::uint16_t>(panes_along),
                                           .near_slot = panes,
                                           .far_slot = panes,
                                           .cell = b.cell,

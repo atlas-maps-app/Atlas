@@ -375,6 +375,9 @@ struct TileBuildings {
     std::vector<WindowWall> window_walls;
     std::vector<std::uint32_t> window_walls_first;
     std::uint32_t windows = 0;
+    /// The windowed walls left without their windows, which would have taken the tile past the most it holds
+    /// (tiles::building::most_tile_windows): none in a real tile but where its buildings hold millions of windows.
+    std::uint32_t windows_cut = 0;
     /// Each item's plinth's and cornice's painter slots (the plinth's near | far << 16, the cornice's the next), after
     /// all its walls; no_facade where it has neither.
     std::vector<std::uint32_t> item_facades;
@@ -556,7 +559,7 @@ public:
     /// (fanned from a corner on their edge, it fills the same two triangles), each triangle in one piece.
     void polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind kind, std::uint16_t flags, std::uint32_t face,
                  std::uint32_t sun, std::uint16_t near, std::uint16_t far, double area);
-    /// A painter slot within an item, checked to fit the primitives' 16 bits.
+    /// A painter slot within an item, at most the primitives' 16 bits hold (past them, the last).
     [[nodiscard]] static std::uint16_t slot(std::uint32_t value) noexcept;
 
     TileBuildings& out;
@@ -569,7 +572,6 @@ public:
     std::uint32_t near_slot = 0;
     std::uint32_t far_slot = 0;
     std::uint32_t boat_slot = 0;
-    std::uint32_t windows = 0;              ///< the next window, in the order of the tile's window group of sun samples
     bool paris = false;                     ///< the region's WIN_STYLE is Paris's
     std::optional<double> kit_eaves;        ///< the region's tradition's eaves, where it has a kit (BuildingRegion's)
     std::optional<tiles::KitBand> kit_band; ///< and its band and boards, where it has them

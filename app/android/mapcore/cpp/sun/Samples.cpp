@@ -461,9 +461,11 @@ struct Values {
     v.h = h.value_or(0.0);
     v.min = l.decimal(s.min, i).value_or(0.0);
     v.roof_h = l.decimal(s.roof_h, i).value_or(0.0);
+    // its levels outside what a building holds (tl::building::most_levels) read as unmapped, as stage P reads such a
+    // tag, and as geometry/Walls.cpp's values_of reads them
     const std::optional<std::int64_t> levels = l.nullable_integer(s.levels, i);
-    v.has_levels = levels.has_value();
-    v.levels = levels.value_or(0);
+    v.has_levels = levels && *levels >= 1 && *levels <= tl::building::most_levels;
+    v.levels = v.has_levels ? *levels : 0;
     v.roof = l.string(s.roof, i);
     v.orient = l.string(s.orient, i);
     v.mat_draw = l.string(s.mat_draw, i);
@@ -552,10 +554,12 @@ template <std::size_t N>
 class BuildingSamples {
 public:
     /// `lean`: a frame cell's level's tile, whose walls are their one cell each, without a kit's band or windows
-    /// (geometry::Builder's lean).
+    /// (geometry::Builder's lean). `windows_before`: the tile's windows before this record's (its window group's
+    /// samples), which its own follow.
     BuildingSamples(TileSamples& out, const Region& region, Source source, std::uint32_t record, std::uint32_t solid,
-                    bool lean = false) noexcept
-        : out_(out), region_(region), source_(source), record_(record), solid_(solid), lean_(lean) {}
+                    bool lean = false, std::uint32_t windows_before = 0) noexcept
+        : out_(out), region_(region), source_(source), record_(record), solid_(solid), lean_(lean),
+          windows_before_(windows_before) {}
 
     /// Everything the renders can draw of the building with `v` over footprint `poly`.
     void all(const Values& v, std::span<const V2> poly) {
@@ -742,10 +746,16 @@ private:
     /// The windows of one wall: a row per level (the shop floor's row too), bays by the wall's length.
     void wall_windows(const Values& v, const V2& a, double ex, double ez, double elen, const V3& nrm, std::uint32_t e,
                       double y0, double wall_top, bool modern) {
-        const int lv = static_cast<int>(v.levels); // Kotlin's Long.toInt()
+        const int lv = static_cast<int>(v.levels); // within tl::building::most_levels (values_of)
         const double fh = (wall_top - y0) / std::max(1, lv);
         const bool paris = region_.paris && !modern && in(v.mat_draw, paris_fronts);
         const int wcols = std::max(1, kt_int(elen / (paris ? 2.9 : modern ? 3.4 : 2.1)));
+        // none where its bays pass what its record holds, or where its windows would take the tile past the most a
+        // frame draws, as geometry::Builder's walls and number_windows have them (a window's sample is found by its
+        // place in the tile's window group)
+        if (wcols > tl::building::most_window_cols) return;
+        const std::uint64_t own = static_cast<std::uint64_t>(std::max(0, lv)) * static_cast<std::uint64_t>(wcols);
+        if (std::uint64_t{windows_before_} + windows.size() + own > tl::building::most_tile_windows) return;
         const std::uint32_t wall = windows.add_face(nrm.x, nrm.y, nrm.z); // the wall's face, in the window group's list
         std::uint32_t k = 0;
         for (int r = 0; r < lv; ++r) {
@@ -1068,6 +1078,7 @@ private:
     std::uint32_t record_;
     std::uint32_t solid_;
     bool lean_;
+    std::uint32_t windows_before_;
     /// Where a piece of the record's ring is being sampled: each of its edges' number on the ring.
     std::span<const std::uint32_t> edges_;
 };
@@ -1462,7 +1473,7 @@ TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, con
                 ATLAS_ASSERT(st.solids.source[solid] == source && st.solids.record[solid] == i,
                              "solids_of lists the solids in make_tile's order");
             }
-            BuildingSamples b(st.samples, region, source, i, solid, lean);
+            BuildingSamples b(st.samples, region, source, i, solid, lean, windows.size());
             b.all(v, poly);
             append(windows, b.windows);
             if (b.mirror != no_face) reflections.push_back(b.mirror);
