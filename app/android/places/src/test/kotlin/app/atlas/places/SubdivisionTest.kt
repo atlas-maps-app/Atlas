@@ -1,6 +1,7 @@
 package app.atlas.places
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.time.LocalDate
@@ -56,6 +57,27 @@ class SubdivisionTest {
         assertNull(of("GB", "addr:postcode" to "TD12 4AA"))
         assertNull(of("GB", "addr:postcode" to "GY1 1AA"))
         assertEquals("GB-SCT", of("GB", "addr:state" to "Scotland"))
+    }
+
+    /**
+     * "UK", as many write Britain's code (the app maintainer, 18 November 2026, batch 4 B17), is GB: the place's
+     * country, so its chains are Britain's, and its nation, so Edinburgh keeps Scotland's days.
+     */
+    @Test
+    fun ukIsBritain() {
+        assertEquals("GB", PlaceCountry.code("UK"))
+        assertEquals("GB", PlaceCountry.code(" uk"))
+        assertEquals("GB", PlaceCountry.of(mapOf("addr:country" to "UK"), around = "IE"))
+        assertEquals("GB", PlaceCountry.of(emptyMap(), around = "UK"))
+        val edinburgh = mapOf("addr:country" to "UK", "addr:postcode" to "EH1 1YZ")
+        val country = PlaceCountry.of(edinburgh, around = null)
+        assertEquals("GB-SCT", PlaceCountry.subdivision(edinburgh, country))
+        assertEquals("GB-SCT", of("UK", "addr:postcode" to "EH1 1YZ"))
+        assertEquals("GB-NIR", of("UK", "addr:state" to "Northern Ireland"))
+        assertNotNull(PublicHolidays.forCountry(country!!, PlaceCountry.subdivision(edinburgh, country))?.holiday(LocalDate.of(2026, 1, 2)))
+        // Greggs, Britain's alone (which of its three entries, a tie, is another matter)
+        assertEquals("Q3403981", Brands.forTags(mapOf("amenity" to "fast_food", "name" to "Greggs"), "UK")?.wikidata)
+        assertEquals("Q3403981", Brands.forTags(mapOf("amenity" to "fast_food", "name" to "Greggs", "addr:country" to "UK"), null)?.wikidata)
     }
 
     @Test

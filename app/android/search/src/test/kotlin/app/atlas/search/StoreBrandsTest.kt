@@ -5,6 +5,7 @@ import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
+import app.atlas.places.Brands
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -29,6 +30,7 @@ class StoreBrandsTest {
     private val amsterdam = LatLon(52.3745, 4.8838)
     private val santiago = LatLon(-33.4372, -70.6506)
     private val rome = LatLon(41.9028, 12.4964)
+    private val london = LatLon(51.5136, -0.0890)
     private val etos = mapOf("shop" to "chemist", "name" to "Etos")
     private var next = 1L
 
@@ -91,6 +93,13 @@ class StoreBrandsTest {
         // and where they name one around them, theirs comes first: a border's other side in a country's extract
         val across = place(amsterdam, etos)
         store(street(amsterdam, "NL") + across, country = "BE").use { s -> assertEquals("etos-994f1e", s.get(across.id!!)!!.brand) }
+    }
+
+    /** "UK" in the addresses around is Britain (the app maintainer, 18 November 2026, batch 4 B17): the chains there are its. */
+    @Test
+    fun ukInTheAddressesAroundIsBritain() {
+        val greggs = place(london, mapOf("amenity" to "fast_food", "name" to "Greggs"))
+        store(street(london, "UK") + greggs).use { s -> assertEquals("Greggs, Britain's alone", "Q3403981", s.get(greggs.id!!)!!.brand?.let(Brands::byId)?.wikidata) }
     }
 
     @Test

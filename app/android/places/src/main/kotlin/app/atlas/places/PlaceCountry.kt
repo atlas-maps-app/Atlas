@@ -13,8 +13,12 @@ object PlaceCountry {
     /** The place's own `addr:country`, when it is a two-letter code. */
     fun tagged(tags: Map<String, String>): String? = code(tags["addr:country"])
 
-    /** [s] as an ISO 3166 alpha-2 code, upper case; null when it is none. */
+    /**
+     * [s] as an ISO 3166 alpha-2 code, upper case; null when it is none. "UK", as many write Britain's, is GB (the app
+     * maintainer, 18 November 2026, batch 4 B17): in the place's country, the store's tally and the nation.
+     */
     fun code(s: String?): String? = s?.trim()?.uppercase()?.takeIf { c -> c.length == 2 && c.all { it in 'A'..'Z' } }
+        ?.let { if (it == "UK") "GB" else it }
 
     /**
      * The state or nation of [country] that [tags] put the place in, as ISO 3166-2, in the countries whose public
