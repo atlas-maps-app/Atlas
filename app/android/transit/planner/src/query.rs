@@ -147,7 +147,7 @@ pub enum What {
     BicyclesUnknown,
 }
 
-/// How strongly.
+/// How strongly. A wish's seconds count for a day at most, and a journey's cost for 64 days.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum How {
     /// Not at all.

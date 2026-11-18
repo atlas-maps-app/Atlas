@@ -744,6 +744,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     let (mut found, mut rides, mut options, mut wrong, mut cut, mut later) = (0, 0, 0, 0, [0u32; 2], 0);
     let (mut wish_cut, mut wish_options, mut every_options) = ([0u32; 3], [0usize; 3], [0usize; 3]);
     let (mut wish_wrong, mut compared, mut unsure) = (0, 0, 0);
+    let (mut cost_wrong, mut cost_compared) = (0, 0);
     let every = !args.iter().any(|a| a == "--quick");
     let rules = !args.iter().any(|a| a == "--no-rules");
     let mut most = 0usize;
@@ -856,7 +857,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) over two hours from {}: {how}", clock(at as i32));
         }
-        // with wishes: never by rail (the scan knows closed lines), and rail avoided (the planner's alone)
+        // with wishes: never by rail (the scan knows closed lines), and rail avoided (below)
         let mut never = q.clone();
         never.wishes.push(Wish { what: What::Mode(Mode::Rail), how: How::Never });
         let got = planner.plan(&never);
@@ -872,8 +873,9 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 println!("WRONG  pair {i} ({a} to {b}) never by rail: the planner {:?}, the scan {:?}", ours.map(clock), theirs.map(clock));
             }
         }
-        // rail avoided, and buses avoided with Intercity trains preferred (the planner's alone): timed weighing
-        // the wishes, and held to what every option comes to once the same rule is put to it afterwards
+        // rail avoided, and buses avoided with Intercity trains preferred: timed weighing the wishes, and held to
+        // what every option comes to once the same rule is put to it afterwards; the single departure is held to
+        // the scan that carries a cost as well
         let rail = Wish { what: What::Mode(Mode::Rail), how: How::Avoid(900) };
         let mixed = [Wish { what: What::Mode(Mode::Bus), how: How::Avoid(600) }, Wish { what: What::Kind("Intercity".into()), how: How::Prefer(300) }];
         for (k, (base, wishes)) in [(&q, &[rail.clone()][..]), (&window, &[rail.clone()][..]), (&window, &mixed[..])].into_iter().enumerate() {
@@ -907,6 +909,16 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                     unsure += 1;
                 } else {
                     compared += 1;
+                    // one moment: the scan that carries a cost has its own word on both answers
+                    if wished.window == 0 {
+                        cost_compared += 1;
+                        for (which, asked, journeys) in [("weighed", &wished, &got.journeys), ("every option", &all, &full.journeys)] {
+                            if let Some(how) = scan.costs_differ(&planner, asked, journeys) {
+                                cost_wrong += 1;
+                                println!("COST   pair {i} ({a} to {b}) with wishes {k}, {which}: {how}");
+                            }
+                        }
+                    }
                     // what leaves after the window can beat what leaves inside it: every option from its last
                     // moment on (each as late as it can leave; one that leaves at that moment is the window's own)
                     let mut edge = all.clone();
@@ -968,6 +980,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     );
     if every {
         println!("{wish_wrong} of {compared} wished searches differ from every option weighed afterwards ({unsure} not compared: a cap cut one short)");
+        println!("{cost_wrong} answers of {cost_compared} single departures with a wish (weighed, and every option) differ from the scan that carries a cost");
     }
-    Ok(if wrong == 0 && wish_wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    Ok(if wrong == 0 && wish_wrong == 0 && cost_wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

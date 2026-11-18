@@ -493,6 +493,84 @@ fn weighing_with_a_bag_of(bag: u32) {
     assert!(options > 400 && left_out > 50, "{options} {left_out}");
 }
 
+/// Wishes that cost, held to a second opinion of their own: the scan that carries a cost beside the time
+/// (`Reference::cheapest`), which works out what a wish costs from the wish list, a wish and a ride at a time.
+/// Wishes of every kind, avoided and preferred, alone and several at once; leaving at a moment with every option
+/// and weighed, and arriving by one with every option. And every journey's cost is what the scan's own reading of
+/// its legs comes to (`impossible`).
+#[test]
+fn wishes_with_a_cost_are_held_to_the_scan() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
+    let stops = served(&tt);
+    let (mut asked, mut cut, mut options, mut several, mut costly, mut differ) = (0, 0, 0, 0, 0, Vec::new());
+    for (i, (a, z)) in pairs(&tt, 180, 81).into_iter().enumerate() {
+        let day = i % 2;
+        let place = |s: u32| if i % 3 == 0 { Place::Point { lat: tt.stop(s).lat + 1500, lon: tt.stop(s).lon - 1000 } } else { Place::Stop(s) };
+        let mut q = Query::new(place(a), place(z), day as i32, 6 * 3600 + 547 * (i % 100) as u32);
+        (q.max_rides, q.limits.options, q.limits.bag, q.rules) = (16, 1024, 16, i % 5 != 0);
+        // things to wish about, taken from the file by the pair's number
+        let (mid, other) = (tt.stop(stops[(i * 7) % stops.len()]), stops[(i * 13) % stops.len()]);
+        let trip = (i as u32 * 97) % tt.trips();
+        let line = tt.route(tt.route_of_trip(trip)).line;
+        let wish = |what: What, how: How| Wish { what, how };
+        q.wishes = match i % 6 {
+            0 => vec![wish(What::Mode(Mode::Rail), How::Avoid(900))],
+            1 => vec![
+                wish(What::Mode(Mode::Bus), How::Avoid(240)),
+                wish(What::Area { area: Area::Circle { lat: mid.lat, lon: mid.lon, radius_m: 900 }, through: i % 4 == 1 }, How::Avoid(300)),
+                wish(What::NoWheelchair, How::Avoid(120)),
+            ],
+            2 => vec![wish(What::Mode(Mode::Tram), How::Prefer(180)), wish(What::Mode(Mode::Bus), How::Avoid(30))],
+            3 => vec![
+                wish(What::Station { station: tt.station_of(other), through: true }, How::Avoid(200)),
+                wish(What::Operator(tt.line_operator(line)), How::Avoid(150)),
+                wish(What::BicyclesUnknown, How::Avoid(60)),
+            ],
+            4 => vec![
+                wish(What::Line(line), How::Prefer(120)),
+                wish(What::Stop { stop: other, through: false }, How::Avoid(400)),
+                wish(What::Kind("Sprinter".into()), How::Avoid(300)),
+                wish(What::Area { area: Area::Box { south: mid.lat - 60_000, west: mid.lon - 90_000, north: mid.lat + 60_000, east: mid.lon + 90_000 }, through: false }, How::Prefer(45)),
+            ],
+            _ => vec![
+                wish(What::WheelchairUnknown, How::Avoid(75)),
+                wish(What::Trip(trip), How::Avoid(600)),
+                wish(What::NoBicycles, How::Prefer(20)),
+                wish(What::Station { station: tt.station_of(other), through: false }, How::Never),
+                wish(What::Area { area: Area::Circle { lat: mid.lat, lon: mid.lon, radius_m: 500 }, through: true }, How::Prefer(15)),
+            ],
+        };
+        for (by, weigh) in [(false, false), (false, true), (true, false)] {
+            let mut q = q.clone();
+            (q.arrive_by, q.weigh) = (by, weigh);
+            if by {
+                q.time += 5400;
+            }
+            let got = p.plan(&q);
+            if got.cut_short {
+                cut += 1;
+                continue;
+            }
+            for j in got.journeys.iter() {
+                assert_eq!(impossible(&p, &q, j), None, "{q:?}\n{j:?}");
+            }
+            if let Some(how) = scans[day].costs_differ(&p, &q, &got.journeys) {
+                differ.push(format!("pair {i} ({a} to {z}), arriving by {by}, weighed {weigh}: {how}"));
+            }
+            let mut costs: Vec<u32> = got.journeys.iter().map(|j| j.penalty).collect();
+            costs.sort_unstable();
+            costs.dedup();
+            (asked, options, several, costly) = (asked + 1, options + got.journeys.len(), several + (costs.len() > 1) as u32, costly + (costs.last().is_some_and(|c| *c > 0)) as u32);
+        }
+    }
+    println!("{asked} answers with wishes held to the scan with a cost ({cut} cut short and left out): {options} options, {costly} answers with a cost, {several} with options of several costs");
+    assert!(differ.is_empty(), "{} differ:\n{}", differ.len(), differ[..differ.len().min(12)].join("\n"));
+    assert!(asked > 450 && costly > 200 && several > 60, "{asked} {costly} {several}");
+}
+
 /// A stop keeps so many labels a round and no more ([`atlas_transit::Limits::bag`]); the one that goes when a bag
 /// is full may have led to an option. An answer found with a bag that overflowed says so: wherever a smaller bag
 /// gives other options than the largest, the answer is marked as cut short.
