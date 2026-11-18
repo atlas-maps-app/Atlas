@@ -400,10 +400,26 @@ impl Reference {
 
     /// Every best pair of departure and arrival for leaving inside the query's window: no other leaves later and
     /// arrives no later. By scanning forward for the earliest arrival, back for the latest departure that still
-    /// makes it, and on from a second after that.
+    /// makes it, and on from a second after that. Asked to arrive by, the window lies before the asked moment and
+    /// holds arrivals: the same from its late end, back for the latest departure, forward for the earliest arrival
+    /// that departure gives, and on from a second before that.
     pub fn options(&self, planner: &Planner, q: &Query) -> Vec<(i32, i32)> {
         let mut out = Vec::new();
         let mut time = q.time as i32;
+        if q.arrive_by {
+            let begin = time - q.window as i32;
+            while time >= begin && out.len() < 4096 {
+                let Some(depart) = self.latest_departure(planner, q, time) else { break };
+                let Some(arrive) = self.earliest_arrival(planner, q, depart) else { break };
+                if arrive < begin || arrive > time {
+                    break;
+                }
+                out.push((depart, arrive));
+                time = arrive - 1;
+            }
+            out.reverse();
+            return out;
+        }
         let end = time + q.window as i32;
         while time <= end && out.len() < 4096 {
             let Some(arrive) = self.earliest_arrival(planner, q, time) else { break };
@@ -422,13 +438,28 @@ impl Reference {
     /// They agree when every pair of the scan is among the planner's best pairs, and every further pair of the
     /// planner's is one the scan can't list: it is no faster than the scan's best from that moment, and what
     /// leaves later and arrives no later leaves after the window (the planner keeps such a journey when it has
-    /// fewer rides than the later one).
+    /// fewer rides than the later one). Asked to arrive by, the same turned round: a further pair leaves no later
+    /// than the scan's best for that arrival, and what arrives sooner and leaves no earlier arrives before the
+    /// window.
     pub fn window_differs(&self, planner: &Planner, q: &Query, journeys: &[Journey]) -> Option<String> {
         let (ours, theirs) = (pairs(journeys), self.options(planner, q));
-        let end = q.time as i32 + q.window as i32;
         if let Some(missing) = theirs.iter().find(|p| !ours.contains(p)) {
             return Some(format!("the scan has leaving {} arriving {}, the planner has not ({} pairs against {})", missing.0, missing.1, ours.len(), theirs.len()));
         }
+        if q.arrive_by {
+            let begin = q.time as i32 - q.window as i32;
+            for p in ours.iter().filter(|p| !theirs.contains(p)) {
+                let best = self.latest_departure(planner, q, p.1);
+                if best.is_none_or(|d| d < p.0) {
+                    return Some(format!("the planner has leaving {} arriving {}, which the scan says can't be done: {:?}", p.0, p.1, best));
+                }
+                if best == Some(p.0) && self.earliest_arrival(planner, q, p.0).is_none_or(|a| a >= begin) {
+                    return Some(format!("the planner has leaving {} arriving {}, which the scan should list and does not", p.0, p.1));
+                }
+            }
+            return None;
+        }
+        let end = q.time as i32 + q.window as i32;
         for p in ours.iter().filter(|p| !theirs.contains(p)) {
             // A further pair may arrive later than the scan's best from then: the better journey then leaves after
             // the window, or the planner would have had the scan's pair for it and dropped this one.

@@ -45,8 +45,7 @@ fn held_to_the_scan(planner: &Planner, q: &Query, journeys: &[Journey]) {
     match (q.window, q.arrive_by) {
         (0, false) => assert_eq!(journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
         (0, true) => assert_eq!(journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
-        (_, false) => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
-        _ => {}
+        _ => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
     }
 }
 

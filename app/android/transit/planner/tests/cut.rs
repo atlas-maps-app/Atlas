@@ -49,7 +49,7 @@ fn the_planner_and_the_scan_agree() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
     let mut p = Planner::new(tt);
-    let (mut compared, mut latest) = (0, 0);
+    let (mut compared, mut latest, mut arriving) = (0, 0, 0);
     for (day, time, seed) in [(0, 8 * 3600, 1u64), (0, 17 * 3600 + 1800, 2), (1, 23 * 3600, 3), (0, 600, 4)] {
         let scan = Reference::new(&p, day, time as i32 - 86_400, time as i32 + 2 * 86_400);
         for (i, (a, z)) in pairs(&tt, 40, seed).into_iter().enumerate() {
@@ -97,6 +97,14 @@ fn the_planner_and_the_scan_agree() {
             window.window = 3600;
             let got = ask(&mut p, &window);
             assert_eq!(scan.window_differs(&p, &window, &got), None, "{window:?}");
+            // and a window asked to arrive in: the hour that ends half an hour after the earliest arrival
+            if let Some(arrive) = earliest {
+                let mut by = q.clone();
+                (by.arrive_by, by.time, by.window) = (true, arrive as u32 + 1800, 3600);
+                let got = ask(&mut p, &by);
+                assert_eq!(scan.window_differs(&p, &by, &got), None, "{by:?}");
+                arriving += got.len();
+            }
             // closed things, which the scan knows too: a kind of vehicle, a stop, an area ridden through
             let mid = tt.stop(served(&tt)[(i * 7) % served(&tt).len()]);
             for what in [
@@ -114,7 +122,8 @@ fn the_planner_and_the_scan_agree() {
             compared += 1;
         }
     }
-    assert!(compared > 100 && latest > 100, "{compared} {latest}");
+    println!("{compared} pairs compared, {latest} options asked back, {arriving} options of windows asked to arrive in");
+    assert!(compared > 100 && latest > 100 && arriving > 100, "{compared} {latest} {arriving}");
 }
 
 /// The feed's rules, held to the best answer and not only to journeys that can be made: for each rule, a journey
@@ -175,6 +184,12 @@ fn the_feeds_rules_are_held_to_the_best_answer() {
         window.window = 1800;
         let got = ask(&mut p, &window);
         assert_eq!(scan.window_differs(&p, &window, &got), None, "rule {i} {r:?}: {window:?}");
+        // and asked to arrive in the half hour that ends ten minutes after the earliest arrival
+        if let Some(arrive) = earliest {
+            (window.arrive_by, window.time) = (true, arrive as u32 + 600);
+            let got = ask(&mut p, &window);
+            assert_eq!(scan.window_differs(&p, &window, &got), None, "rule {i} {r:?}: {window:?}");
+        }
         // whether an answer makes the change the rule speaks of, and whether the rules change the answer at all
         let makes = |j: &Journey| {
             let rides: Vec<(u32, u32, u32)> = j.legs.iter().filter_map(|l| if let Leg::Ride { trip, from, to, .. } = l { Some((*trip, *from, *to)) } else { None }).collect();
@@ -714,18 +729,29 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
 /// Late in the evening a window's last connections take long: the next ride from a change may be an hour off, or
 /// the next morning's. They are options all the same, and the answer has them: compared with the scan as far as the
 /// query's own horizon. (A window's answer lacked them until 18 November 2026: the search stopped where the faster
-/// journeys of the day could not end later, and the comparisons asked the scan only that far.)
+/// journeys of the day could not end later, and the comparisons asked the scan only that far.) And the same turned
+/// round: early in the morning a window asked to arrive in has the first connections, which may have left the
+/// evening before.
 #[test]
 fn a_late_window_has_its_last_connections() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
     let mut p = Planner::new(tt);
-    let (mut compared, mut past, mut shown) = (0, 0, 0);
-    for (day, time, window, seed) in [(0, 22 * 3600, 7200, 11u64), (0, 23 * 3600 + 900, 3600, 12), (1, 21 * 3600 + 1800, 10_800, 13), (0, 4 * 3600, 5400, 14)] {
+    let (mut compared, mut past, mut shown, mut arriving) = (0, 0, 0, 0);
+    for (day, time, window, seed, by) in [
+        (0, 22 * 3600, 7200, 11u64, false),
+        (0, 23 * 3600 + 900, 3600, 12, false),
+        (1, 21 * 3600 + 1800, 10_800, 13, false),
+        (0, 4 * 3600, 5400, 14, false),
+        (0, 6 * 3600 + 1800, 5400, 15, true),
+        (1, 5 * 3600, 7200, 16, true),
+        (1, 3600, 3600, 17, true),
+        (0, 23 * 3600 + 1800, 10_800, 18, true),
+    ] {
         let scan = Reference::new(&p, day, time as i32 - 86_400, time as i32 + 2 * 86_400);
         for (a, z) in pairs(&tt, 150, seed) {
             let mut q = Query::new(Place::Stop(a), Place::Stop(z), day, time);
-            (q.rules, q.max_rides, q.window, q.limits.options) = (false, 16, window, 1024);
+            (q.rules, q.max_rides, q.window, q.limits.options, q.arrive_by) = (false, 16, window, 1024, by);
             let got = p.plan(&q);
             assert!(!got.cut_short, "{q:?}");
             if got.journeys.iter().any(|j| j.rides == 0) {
@@ -738,8 +764,10 @@ fn a_late_window_has_its_last_connections() {
             }
             past += differs.is_some() as u32;
             compared += 1;
+            arriving += (by && !got.journeys.is_empty()) as u32;
         }
     }
+    println!("{compared} windows compared, {arriving} of them asked to arrive in and with a journey");
     assert_eq!(past, 0, "of {compared}");
-    assert!(compared > 400, "{compared}");
+    assert!(compared > 800 && arriving > 200, "{compared} {arriving}");
 }
