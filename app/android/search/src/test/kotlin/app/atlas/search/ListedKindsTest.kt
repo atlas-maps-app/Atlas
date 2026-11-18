@@ -11,7 +11,9 @@ import org.junit.Test
 /**
  * A place whose value lists several kinds (`cuisine=italian;pizza`) is each of them, as the kinds' lists read it (the
  * reviewer, 17 November, finding 11: its kind was decided by whole values, its lists by parts, so the kinds around
- * missed the Italian restaurants and the pizzerias that only such places are).
+ * missed the Italian restaurants and the pizzerias that only such places are). A kind a later part alone makes is one
+ * too: the sushi bar of "pizza;sushi", whose own kind is the pizzeria (the app maintainer, 18 November 2026, batch 4
+ * C25: every kind here was some place's own, so the test passed with the kinds around read by whole values again).
  */
 class ListedKindsTest {
     private val here = Fixtures.westerkerk
@@ -22,13 +24,15 @@ class ListedKindsTest {
 
     @Test
     fun eachKindAListNamesIsAKindAroundCountingWhatItsListHolds() {
-        val pool = listOf(eatery(1, "italian;pizza"), eatery(2, "italian;pizza"), eatery(3, "pizza;burger"))
+        val pool = listOf(eatery(1, "italian;pizza"), eatery(2, "italian;pizza"), eatery(3, "pizza;sushi"))
         val kinds = EveryKind.around(pool, here, saturday).associateBy { it.node.id }
         val italian = CategoryTree.of(mapOf("amenity" to "restaurant", "cuisine" to "italian"))!!
         val pizza = CategoryTree.of(mapOf("amenity" to "restaurant", "cuisine" to "pizza"))!!
         assertEquals("the Italian restaurants: ${kinds.keys}", 2, kinds[italian.id]?.count)
         assertEquals("the pizzerias: ${kinds.keys}", 3, kinds[pizza.id]?.count)
         assertEquals(pool.count { Browse.holds(pizza, it) }, kinds[pizza.id]?.count)
+        val sushi = CategoryTree.of(mapOf("amenity" to "restaurant", "cuisine" to "sushi"))!!
+        assertEquals("the sushi bars, no place's own kind: ${kinds.keys}", 1, kinds[sushi.id]?.count)
         assertEquals("a place's own kind is its first", italian.id, CategoryTree.of(pool[0].tags)?.id)
     }
 }
