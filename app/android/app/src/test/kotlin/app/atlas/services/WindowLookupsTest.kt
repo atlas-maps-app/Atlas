@@ -9,6 +9,10 @@ import app.atlas.places.Brands
 import app.atlas.places.TagFilter
 import app.atlas.providers.Http
 import app.atlas.providers.Overpass
+import app.atlas.render.data.ElementType
+import app.atlas.render.data.MemoryBoxes
+import app.atlas.render.data.OsmElement
+import app.atlas.render.data.PackFeatures
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -435,6 +439,45 @@ class WindowLookupsTest {
         assertEquals(nearOff, pool.value.map { it.name() }.toSet())
     }
 
+    /**
+     * At a pack's edge the windows the pack holds whole are no window missing (the app maintainer, 18 November 2026,
+     * batch 4 B12): 2 km around [off], in a pack that ends a column of windows east of it, meet twelve windows, nine of
+     * them the pack's; the three past its edge are asked of the packs and waited for, and with the pack they make the
+     * circle whole, so Overpass is not asked. All twelve counted as missing, more than nine: the nine nearest were asked,
+     * eight of them the pack's, none waited for, and Overpass was asked for the whole.
+     */
+    @Test
+    fun windowsAPackHoldsAreNoneMissing() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val sent = java.util.Collections.synchronizedList(ArrayList<String>())
+        val empty = tmp.newFolder("edge")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent += "$x/$y"; cafeAt(x, y) })
+        val box = BBox.around(off, 2_000.0)
+        val tiles = Mercator.tilesIn(box, WindowPlaces.LEVEL)
+        assertEquals(12, tiles.size)
+        // the pack: the circle but its east column of windows, a café in each as the window holds it
+        val edge = tiles.maxOf { it.x }
+        val ends = TileId(WindowPlaces.LEVEL, edge, tile.y).bbox.west
+        val inPack = tiles.filter { it.x < edge }
+        val pack = PackFeatures(listOf(MemoryBoxes(inPack.map { cafeNode(it.x, it.y) }, BBox(box.west - 0.1, box.south - 0.1, ends, box.north + 0.1))))
+        val local = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val found = local.placesAsFound(off, 2_000.0, cafe).toList()
+        assertEquals(PlaceOrigin.PACK, found.last().origin)
+        assertFalse(found.last().partial)
+        assertEquals(0, asked.get())
+        // the east column alone was asked of the packs, and its cafés within 2 km are found beside the pack's
+        assertEquals(tiles.filter { it.x == edge }.map { "${it.x}/${it.y}" }.toSet(), sent.toSet())
+        val near = tiles.filter { Geo.distance(off, it.bbox.center) <= 2_000.0 }.map { "${it.x}/${it.y}" }.toSet()
+        assertEquals(near, found.last().value.map { it.name() }.toSet())
+    }
+
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
         val until = System.nanoTime() + 5_000_000_000L
@@ -472,6 +515,12 @@ class WindowLookupsTest {
     private fun cafeAt(x: Int, y: Int): ByteArray {
         val c = TileId(WindowPlaces.LEVEL, x, y).bbox.center
         return gz("""{"elements":[{"type":"node","id":${x * 100_000L + y},"lat":${c.lat},"lon":${c.lon},"tags":{"amenity":"cafe","name":"$x/$y"}}]}""")
+    }
+
+    /** Window ([x], [y])'s café as a pack holds it: [cafeAt]'s, an element. */
+    private fun cafeNode(x: Int, y: Int): OsmElement {
+        val c = TileId(WindowPlaces.LEVEL, x, y).bbox.center
+        return OsmElement(ElementType.NODE, x * 100_000L + y, c.lat, c.lon, mapOf("amenity" to "cafe", "name" to "$x/$y"))
     }
 
     private fun gz(text: String): ByteArray = ByteArrayOutputStream().also { o -> GZIPOutputStream(o).use { it.write(text.toByteArray()) } }.toByteArray()
