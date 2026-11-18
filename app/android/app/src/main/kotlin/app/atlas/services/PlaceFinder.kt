@@ -122,6 +122,10 @@ class LayeredPlaceFinder(
         withContext(Dispatchers.Default) {
             val out = LinkedHashMap<String, NearbyPlaces>()
             val ask = LinkedHashMap<String, Pair<TagFilter, List<String>>>()
+            // the windows of the circle the phone keeps no data for are asked of Atlas's packs and waited for once, by
+            // the first kind that lacks them; the rest read what came by then (the app maintainer, 18 November 2026, batch
+            // 4 B14: each of the wheel's eleven waited again, up to 10 s, for the windows still coming)
+            var windowsAsked = false
             for (id in categoryIds.distinct()) {
                 val category = Categories.byId(id) ?: continue
                 val filter = filterOf(category)
@@ -133,7 +137,10 @@ class LayeredPlaceFinder(
                 // as [nearby]: what the phone holds, then the windows Atlas's packs add to it; a whole circle is the
                 // answer, a part of one only the first answer, and Overpass is asked for the rest
                 var packed = inPacks(centre, radiusM, filter, limit)
-                if (packed == null || packed.partial) inWindowPacks(centre, radiusM, filter, limit)?.let { packed = it }
+                if ((packed == null || packed.partial) && !windowsAsked) {
+                    windowsAsked = true
+                    inWindowPacks(centre, radiusM, filter, limit)?.let { packed = it }
+                }
                 val first = packed
                 if (first != null) {
                     out[id] = NearbyPlaces(first.value, PlaceOrigin.PACK)

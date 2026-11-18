@@ -160,6 +160,8 @@ class LocalData(
      * the windows' kept data, and online their data from Atlas's packs); null for none.
      */
     private val windowPlaces: WindowPlaces? = null,
+    /** How long a lookup waits at most for the windows Atlas's packs send ([WindowPlaces.fetched]): [WINDOW_PACKS_MS]. */
+    private val windowWaitMs: Long = WINDOW_PACKS_MS,
 ) : Closeable {
     /** Elements asked of Overpass where no pack reaches: street names at a route's steps and near a pin, bridges along a line. */
     private val online = OnlineElements(overpass, isOnline)
@@ -412,7 +414,7 @@ class LocalData(
         if (pack?.covers(box) == true) return null
         val held = try {
             // the windows the pack holds whole are none of those to make the box whole with (batch 4 B12)
-            w.fetched(box, at, WINDOW_PACKS_MS, waitForPart) { b -> pack?.covers(b) == true }
+            w.fetched(box, at, windowWaitMs, waitForPart) { b -> pack?.covers(b) == true }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

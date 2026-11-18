@@ -510,6 +510,26 @@ class WindowLookupsTest {
         assertEquals(block, got.places.map { it.name() }.toSet())
     }
 
+    /**
+     * The Where wheel waits once for the windows Atlas's packs send, however many kinds it shows (the app maintainer, 18
+     * November 2026, batch 4 B14): each of its kinds waited again, the whole wait, for the windows still coming, so its
+     * eleven could wait eleven times as long. Here the wait is a second, the window comes after it.
+     */
+    @Test
+    fun theWheelWaitsOnceForTheWindows() = runBlocking {
+        val gate = CountDownLatch(1)
+        val empty = tmp.newFolder("wheel")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> gate.await(20, TimeUnit.SECONDS); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 1_000L)
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { null }, online = { true })
+        val started = System.nanoTime()
+        finder.nearbyMany(listOf("restaurants", "drinks", "museums", "parks"), here, 300.0, 20)
+        val took = (System.nanoTime() - started) / 1_000_000
+        gate.countDown()
+        assertTrue("the wheel waited $took ms for four kinds", took < 2_500)
+        assertTrue("the wheel waited for the windows: $took ms", took >= 1_000)
+    }
+
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
         val until = System.nanoTime() + 5_000_000_000L
