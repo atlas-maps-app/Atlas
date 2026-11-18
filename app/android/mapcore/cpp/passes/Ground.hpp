@@ -1095,6 +1095,12 @@ public:
     [[nodiscard]] const SoftShadows* soft_shadows() const noexcept;
     /// Whether the last frame drew its shadows soft (the moment blurs them).
     [[nodiscard]] bool drew_soft() const noexcept { return drew_soft_; }
+    /// The tests' switch: the soft shadows' mask made again every frame, its last result never standing (as before its
+    /// key took what it reads alone: the base its kept results are held to, tests/ground/shadows_vk_test.cpp).
+    void make_mask_always(bool always) noexcept { mask_always_ = always; }
+    /// The tests' look at the soft shadows' kept result: how many results the mask has made (its box, grid, union and
+    /// blur run) since the pass was made; a frame whose mask is the last one's makes none, and dispatches nothing.
+    [[nodiscard]] std::uint64_t mask_makes() const noexcept { return mask_made_; }
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
@@ -1426,6 +1432,10 @@ private:
     void key_ripple(const std::vector<std::uint32_t>& words, const frame::FrameState& state);
     /// Before the main pass: the reflections into the layer, then the filter's stages over it.
     void record_ripple_layer(const frame::Recording& r);
+    /// Whether this frame's soft shadows' mask is the last one's (mask_kept_): what the mask is made of, in the words
+    /// written, against the last result's (mask_key_); the entry the frame's mask lies in (mask_entry_), which its
+    /// frame slot's set 3 is made to name.
+    void key_shadow_mask(const std::vector<std::uint32_t>& words, const frame::FrameState& state);
     /// The rippled reflections composited inside the water's clip at the group's opacity.
     void record_ripple(const frame::Recording& r);
     // Glints.cpp
@@ -1541,6 +1551,13 @@ private:
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
     bool drew_soft_ = false;
+    bool mask_always_ = false;
+    /// What the soft shadows' last result was made of (key_shadow_mask), whether this frame's is that one, the entry
+    /// this frame's lies in (SoftShadows::slots), and the results made.
+    std::vector<std::uint32_t> mask_key_;
+    bool mask_kept_ = false;
+    std::uint32_t mask_entry_ = 0;
+    std::uint64_t mask_made_ = 0;
     bool only_setts_ = false;
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
@@ -1627,8 +1644,8 @@ struct Ground::Pipelines {
     std::array<vk::raii::DescriptorSet, 2> sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr}};
     std::array<gpu::Buffer, 2> buffers;
     /// Set 3, the soft shadows' (Shadows.cpp): the grid, the blurred mask, and the grid as words for the compute
-    /// stages, a set a frame slot (each its slot's: SoftShadowSlot); the ripple's buffers, the same in both. Before the
-    /// layouts made with it, so that it goes after them.
+    /// stages, a set a frame slot (each naming the entry its frame's mask lies in: SoftShadows::bound); the ripple's
+    /// buffers, the same in both. Before the layouts made with it, so that it goes after them.
     vk::raii::DescriptorSetLayout soft_set_layout{nullptr};
     vk::raii::DescriptorPool soft_pool{nullptr};
     std::array<vk::raii::DescriptorSet, 2> soft_sets{vk::raii::DescriptorSet{nullptr},
@@ -1712,10 +1729,11 @@ struct Ground::Pipelines {
     std::unique_ptr<SoftShadows> soft;
 };
 
-/// A frame slot's soft shadows (ENGINE.md's gain 17): what a frame's mask, grid and blur write and its main pass reads,
-/// which only the frame before it in the slot read, and that frame has finished by the time the slot is recorded again
-/// (gpu::Frames::begin). So the frame's barriers order its own work alone: its box, grid and binning need not wait for
-/// the last frame's shading.
+/// One of the soft shadows' two entries (ENGINE.md's gain 17): what a frame's mask, grid and blur write and the main
+/// passes that draw that result read. A new result goes to the entry the last frame did not read (a kept one stands in
+/// its entry, read by each frame after it), and only frames that have finished read that one (gpu::Frames::begin: two
+/// frames in flight). So the frame's barriers order its own work alone: its box, grid and binning need not wait for the
+/// last frame's shading.
 struct SoftShadowSlot {
     gpu::Image mask; ///< the union's resolve (R8), the blur's first source
     vk::raii::ImageView mask_view{nullptr};
@@ -1743,8 +1761,13 @@ struct SoftShadows {
     vk::raii::RenderPass pass{nullptr};
     vk::raii::DescriptorSetLayout blur_set_layout{nullptr};
     vk::raii::DescriptorPool blur_pool{nullptr};
-    std::array<SoftShadowSlot, 2> slots; ///< a frame slot's each
-    std::uint32_t last = 0;              ///< the slot of the last frame that drew them soft (the tests' look)
+    std::array<SoftShadowSlot, 2> slots; ///< the two entries (not the frame slots': a kept result stands in its own)
+    /// The entry whose result the last frame that drew them soft read: made then, or kept from a frame before it
+    /// (the tests' look); and whether it holds one (none before the first is made).
+    std::uint32_t last = 0;
+    bool result = false;
+    /// The entry each frame slot's set 3 names (its bindings 0 to 2: the grid, the blurred mask, the grid as words).
+    std::array<std::uint32_t, 2> bound{0U, 1U};
     vk::raii::PipelineLayout blur_layout{nullptr};
     vk::raii::ShaderModule blur_module{nullptr};
     vk::raii::Pipeline blur{nullptr};
