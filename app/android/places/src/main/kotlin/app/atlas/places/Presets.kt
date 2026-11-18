@@ -107,6 +107,12 @@ object Presets {
 
     fun byId(id: String): Preset? = byId[id]
 
+    /** The keys a preset matches by or adds to its score: none other changes what [match] gives. */
+    private val scoreKeys: Set<String> by lazy { all.flatMapTo(HashSet()) { it.tags.keys + it.addTags.keys } }
+
+    /** Whether [key]'s value can change what [match] gives a place. */
+    fun reads(key: String): Boolean = key in scoreKeys || key.startsWith("addr:")
+
     /** id-tagging-schema's presets, then those of Atlas's own for the kinds it keeps none for ([OwnPresets]: a national park). */
     private fun load(): List<Preset> {
         val root = Resources.json("presets.json").obj ?: error("presets.json")

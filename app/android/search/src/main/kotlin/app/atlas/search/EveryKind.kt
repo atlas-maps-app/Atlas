@@ -40,15 +40,17 @@ object EveryKind {
     /**
      * The kinds [r] is: its own ([CategoryTree.of]) and, where a value lists several (`cuisine=italian;pizza`), each
      * one's, as the kinds' lists read it ([Browse.holds]: a place of "italian;pizza" is in the pizzerias' list too, so
-     * the pizzerias are a kind around; the reviewer, 17 November, finding 11).
+     * the pizzerias are a kind around; the reviewer, 17 November, finding 11). Only the values a kind is read from are
+     * split ([CategoryTree.reads]): `opening_hours` and `phone` were too, each part a copy of the tags and a whole
+     * [CategoryTree.of], on every refresh (the app maintainer, 18 November 2026, batch 4 B20).
      */
     private fun kindsOf(r: PlaceRecord): List<CategoryNode> {
         val geometry = PlaceRecord.geometryOf(r.place)
         val own = CategoryTree.of(r.tags, geometry)
-        if (r.tags.values.none { ';' in it }) return listOfNotNull(own)
+        if (r.tags.none { (k, v) -> ';' in v && CategoryTree.reads(k) }) return listOfNotNull(own)
         val out = LinkedHashSet<CategoryNode>()
         own?.let(out::add)
-        for ((k, v) in r.tags) if (';' in v) {
+        for ((k, v) in r.tags) if (';' in v && CategoryTree.reads(k)) {
             for (part in v.split(';')) part.trim().takeIf { it.isNotEmpty() }?.let { CategoryTree.of(r.tags + (k to it), geometry) }?.let(out::add)
         }
         return out.toList()

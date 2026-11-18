@@ -158,6 +158,9 @@ object Categories {
     /** True unless the tags describe something that is not a place to go (a parking space, a vacant shop, a siren). */
     fun isPlace(tags: Map<String, String>): Boolean = tags.isNotEmpty() && !data.notAPlace.matches(tags)
 
+    /** Whether [key]'s value can change what [of] gives a place: a key some leaf's rule, or what is no place, reads. */
+    fun reads(key: String): Boolean = data.notAPlace.reads(key) || data.leaves.any { it.rule?.reads(key) == true }
+
     /** The first leaf whose rule [tags] pass, or null when it is not a place Atlas lists. */
     fun of(tags: Map<String, String>): Category? {
         if (!isPlace(tags)) return null

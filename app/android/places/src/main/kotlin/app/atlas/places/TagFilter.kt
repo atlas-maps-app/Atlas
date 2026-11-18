@@ -29,6 +29,9 @@ sealed class TagFilter {
     /** Every key the filter reads (key regexes are left out). */
     abstract fun keys(): Set<String>
 
+    /** Whether the filter reads [key]: one of its [keys], or one its key patterns match. */
+    open fun reads(key: String): Boolean = key in keys()
+
     /**
      * The Overpass QL tag selectors when the filter is a plain conjunction, e.g. `[amenity=cafe][!fee]`; else null.
      * They select at least what [matches] accepts: on keys whose values are `;` lists by convention (cuisine, sport…)
@@ -100,6 +103,7 @@ sealed class TagFilter {
             tags.any { (k, v) -> keyRegex.containsMatchIn(k) && (valueRegex?.containsMatchIn(v) ?: true) }
         override fun toText() = "~${quote(keyPattern)}" + (valuePattern?.let { "~${quote(it)}" } ?: "")
         override fun keys() = emptySet<String>()
+        override fun reads(key: String) = keyRegex.containsMatchIn(key)
         override fun toOverpass() = "[~${ql(keyPattern)}~${ql(valuePattern ?: ".")},i]"
     }
 
@@ -115,6 +119,7 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = tags.keys.any { k -> keyRegex.matches(k) && tests.getOrPut(k) { keyed(part, k) }.matches(tags) }
         override fun toText() = part.toText()
         override fun keys() = emptySet<String>()
+        override fun reads(key: String) = keyRegex.matches(key)
         override fun toOverpass(): String? = when (part) {
             is Has -> "[~${ql(keyPattern)}~\".\"]"
             is Equals -> "[~${ql(keyPattern)}~${ql("^" + regexLiteral(part.value) + "$")}]"
@@ -157,6 +162,7 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = parts.all { it.matches(tags) }
         override fun toText() = parts.joinToString(" and ") { if (it is Or) "(${it.toText()})" else it.toText() }
         override fun keys() = parts.flatMapTo(LinkedHashSet()) { it.keys() }
+        override fun reads(key: String) = parts.any { it.reads(key) }
         override fun toOverpass(): String? {
             val sb = StringBuilder()
             for (p in parts) sb.append(p.toOverpass() ?: return null)
@@ -169,6 +175,7 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = parts.any { it.matches(tags) }
         override fun toText() = parts.joinToString(" or ") { it.toText() }
         override fun keys() = parts.flatMapTo(LinkedHashSet()) { it.keys() }
+        override fun reads(key: String) = parts.any { it.reads(key) }
     }
 
     /** The part does not hold. */
@@ -179,6 +186,7 @@ sealed class TagFilter {
             else -> "not ${part.toText()}"
         }
         override fun keys() = part.keys()
+        override fun reads(key: String) = part.reads(key)
         override fun toOverpass(): String? = when (part) {
             is Has -> "[!${ql(part.key)}]"
             is Equals -> "[${ql(part.key)}!=${ql(part.value)}]"

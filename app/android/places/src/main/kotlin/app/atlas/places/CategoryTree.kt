@@ -199,6 +199,14 @@ object CategoryTree {
     }
 
     /**
+     * Whether [key]'s value can change what [of] gives a place: a key a preset or a category's rule reads. Kept per key:
+     * the kinds around ask it of every tag of every place (the app maintainer, 18 November 2026, batch 4 B20).
+     */
+    fun reads(key: String): Boolean = readKeys.getOrPut(key) { Presets.reads(key) || Categories.reads(key) }
+
+    private val readKeys = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
      * The deepest node that holds a thing with [tags] drawn as [geometry]: its preset's node, or the nearest ancestor
      * preset the tree holds, else its category's; for what no category takes, its preset's node on the shelf of
      * everything on the map, else its key's. Null when no preset knows it.
