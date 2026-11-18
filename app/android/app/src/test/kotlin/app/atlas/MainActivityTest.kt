@@ -124,7 +124,7 @@ class MainActivityTest {
     fun theWelcomeOnceOverTheMap() {
         // the first plain launch: the welcome over the map, so that finishing it lands on the map
         val first = Robolectric.buildActivity(MainActivity::class.java, Intent(Intent.ACTION_MAIN)).setup().get()
-        assertEquals(listOf(Dest.Home(), Dest.Onboarding()), settle(first) { it.size > 1 })
+        assertEquals(listOf(Dest.Home(), Dest.Onboarding()), settle(first, within = 10_000) { it.size > 1 })
         // shown is seen, though left unfinished: the next launch is the map's, and a link's never shows it
         val again = Robolectric.buildActivity(MainActivity::class.java, Intent(Intent.ACTION_MAIN)).setup().get()
         assertEquals(listOf<Dest>(Dest.Home()), settle(again) { false })
@@ -134,9 +134,13 @@ class MainActivityTest {
         assertEquals(Dest.WhatsHere(52.37452, 4.88377, go = true), settle(link) { false }.last())
     }
 
-    /** [activity]'s screens once [done] says so, or after a second: the settings are read off the main thread. */
-    private fun settle(activity: MainActivity, done: (List<Dest>) -> Boolean): List<Dest> {
-        val end = System.currentTimeMillis() + 1_000
+    /**
+     * [activity]'s screens once [done] says so, or after [within] ms: the settings are read off the main thread. A
+     * second is long enough to see that nothing more comes; the welcome itself took longer than that where every
+     * module's tests ran at once, so what is waited for gets ten.
+     */
+    private fun settle(activity: MainActivity, within: Long = 1_000, done: (List<Dest>) -> Boolean): List<Dest> {
+        val end = System.currentTimeMillis() + within
         while (System.currentTimeMillis() < end) {
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(20))
             if (activity.navigator?.stack?.let(done) == true) break
@@ -151,6 +155,10 @@ class MainActivityTest {
         val activity = Robolectric.buildActivity(MainActivity::class.java, intent).create().start().resume().get()
         val services = activity.services
         assertTrue(services.location.isDemo)
+        // the switch reaches `last` on the services' own scope, a moment after it is made (SwitchableLocation's
+        // stateIn): read at once it was still the phone's own, null, where CI's runner was busy (18 November 2026)
+        val end = System.currentTimeMillis() + 10_000
+        while (services.location.last.value?.location != Services.WESTERKERK && System.currentTimeMillis() < end) Thread.sleep(10)
         assertEquals(Services.WESTERKERK, services.location.last.value?.location)
     }
 }
