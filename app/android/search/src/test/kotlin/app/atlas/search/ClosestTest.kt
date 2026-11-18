@@ -41,18 +41,18 @@ class ClosestTest {
         assertEquals(HoursFrom.KIND, known.from)
         assertFalse(known.confirmed)
         // the lower medians: 07:00 to 18:00 on a Saturday, as most of them keep
-        assertEquals(true, known.hours.isOpen(now))
-        assertEquals(false, known.hours.isOpen(now.withHour(19)))
+        assertEquals(true, known.hours.isOpen(now, context = Nowhere))
+        assertEquals(false, known.hours.isOpen(now.withHour(19), context = Nowhere))
         assertEquals(HoursFrom.OWN, book.of(records.first())!!.from)
         // the evaluator finds it open now, unconfirmed; at seven in the evening it is not
         val mem = MemoryPlaces(bakeries + bakery(10, 250.0, null))
         val q = Query.and(Query.tags("shop=bakery"), Query.OpenAt(OpenTime.Now))
-        val at = EvalContext(location = here, now = saturday)
+        val at = EvalContext(location = here, now = saturday, hours = Nowhere)
         val bare = OfflineEvaluator(mem).run(q, at).hits.single { it.place.id?.id == 10L }
         assertTrue(bare.hoursInferred && bare.open!!.isOpen)
         assertTrue(OfflineEvaluator(mem).run(q, at.copy(now = saturday.withHour(19))).hits.none { it.place.id?.id == 10L })
         // the hours' facet counts it open now, never confirmed
-        val open = Facets.of(records, context = FacetContext(now, hours = book)).byId(Facets.OPEN)!!.value("now")!!
+        val open = Facets.of(records, context = FacetContext(now, hours = book, opening = Nowhere)).byId(Facets.OPEN)!!.value("now")!!
         assertEquals(5, open.count)
         assertEquals(1, open.unconfirmed)
     }
@@ -67,7 +67,7 @@ class ClosestTest {
         val book = HoursBook((cafes + branches).map { PlaceRecord.of(it) })
         val bare = book.of(PlaceRecord.of(branches.last()))!!
         assertEquals(HoursFrom.BRAND, bare.from)
-        assertEquals(true, bare.hours.isOpen(now.withHour(20)))
+        assertEquals(true, bare.hours.isOpen(now.withHour(20), context = Nowhere))
         // three cafés of thirteen map hours: too few to say what the others keep
         val unmapped = (1..10).map { PlaceRecord.of(place(40L + it, it * 30.0, "amenity" to "cafe", "name" to "Koffie $it")) }
         val rare = HoursBook(cafes.map { PlaceRecord.of(it) } + unmapped)
@@ -90,8 +90,8 @@ class ClosestTest {
         assertEquals(HoursFrom.BRAND, lent.from)
         assertFalse(lent.confirmed)
         // closed on the Saturday as its other branch is, open on the Friday
-        assertEquals(false, lent.hours.isOpen(now))
-        assertEquals(true, lent.hours.isOpen(now.minusDays(1)))
+        assertEquals(false, lent.hours.isOpen(now, context = Nowhere))
+        assertEquals(true, lent.hours.isOpen(now.minusDays(1), context = Nowhere))
     }
 
     @Test
@@ -103,21 +103,21 @@ class ClosestTest {
         ).map { PlaceRecord.of(it) }
         val node = Browse.kindOf(pool)!!
         val open = FacetSelection.NONE.toggle(Facets.OPEN, "now")
-        val r = Browse.results(node, pool, here, Moment(saturday), open)
+        val r = Browse.results(node, pool, here, Moment(saturday, hours = Nowhere), open)
         assertTrue(r.closest)
         assertEquals(listOf(1L, 3L, 2L), r.hits.map { it.record.id!!.id })
         assertEquals(listOf(Miss.Opens(now.withHour(14).withMinute(50), 20)), r.hits.first().misses)
         assertEquals(listOf(Miss.HoursUnknown), r.hits[1].misses)
         // what is as chosen is no closest match
-        assertFalse(Browse.results(node, pool, here, Moment(saturday.withHour(17))).closest)
+        assertFalse(Browse.results(node, pool, here, Moment(saturday.withHour(17), hours = Nowhere)).closest)
         // a circle none is in: the nearest beyond it, saying how far
-        val circle = Browse.results(node, pool, here, Moment(saturday), circle = 90.0)
+        val circle = Browse.results(node, pool, here, Moment(saturday, hours = Nowhere), circle = 90.0)
         assertTrue(circle.closest)
         val first = circle.hits.first()
         assertEquals(2L, first.record.id!!.id)
         assertEquals(10.0, (first.misses.single() as Miss.Beyond).metres, 2.0)
         // inside the circle only the places in it are results
-        assertEquals(listOf(2L), Browse.results(node, pool, here, Moment(saturday), circle = 150.0).hits.map { it.record.id!!.id })
+        assertEquals(listOf(2L), Browse.results(node, pool, here, Moment(saturday, hours = Nowhere), circle = 150.0).hits.map { it.record.id!!.id })
     }
 
     @Test
@@ -128,7 +128,7 @@ class ClosestTest {
             place(3, 70.0, "amenity" to "toilets"),
         ).map { PlaceRecord.of(it) }
         val node = Browse.kindOf(toilets)!!
-        val free = Browse.results(node, toilets, here, Moment(saturday), FacetSelection.NONE.toggle(Facets.PRICE, "free"))
+        val free = Browse.results(node, toilets, here, Moment(saturday, hours = Nowhere), FacetSelection.NONE.toggle(Facets.PRICE, "free"))
         assertTrue(free.closest)
         val by = free.hits.associate { it.record.id!!.id to it.misses }
         assertEquals(listOf(Miss.Price(1)), by[1L])
@@ -155,7 +155,7 @@ class ClosestTest {
                 place(3, 300.0, "amenity" to "cafe", "name" to "Later", "opening_hours" to "Mo-Su 18:00-20:00"),
             ),
         )
-        val ctx = EvalContext(location = here, now = saturday)
+        val ctx = EvalContext(location = here, now = saturday, hours = Nowhere)
         val (b, n) = Closest.split(Query.and(Query.tags("amenity=cafe"), Query.tags("outdoor_seating=yes"), Query.OpenAt(OpenTime.Now)))!!
         val hits = OfflineEvaluator(mem).closest(b, n, ctx).hits
         assertEquals(listOf("Buiten", "Binnen", "Later"), hits.map { it.record.name() })
@@ -167,7 +167,7 @@ class ClosestTest {
     @Test
     fun nothingAsAskedAnywhereShowsTheClosestAndACountStaysAsAsked() {
         val engine = SearchEngine(Fixtures.store)
-        val ctx = SearchContext(location = here, lang = "en", now = saturday)
+        val ctx = SearchContext(location = here, lang = "en", now = saturday, hours = Nowhere)
         val text = "shop=bakery and diet:vegan=only and toilets=yes and wheelchair=yes"
         val r = runBlocking { engine.answer(text, ctx) }!!
         val s = r.items.filterIsInstance<SearchItem.Structured>().single()
@@ -192,7 +192,7 @@ class ClosestTest {
         val far = (0 until (OfflineEvaluator.WIDE_SEED.toInt() + 50)).map { i ->
             Place(OsmId(OsmType.NODE, 1_000L + i), LatLon(here.lat + 0.54 + (i % 100) * 0.0001, here.lon + (i / 100) * 0.0001), mapOf("amenity" to "cafe"))
         }
-        val hits = OfflineEvaluator(MemoryPlaces(far)).run(Query.Tags(TagFilter.Equals("amenity", "cafe")), EvalContext(location = here, now = saturday, limit = 5)).hits
+        val hits = OfflineEvaluator(MemoryPlaces(far)).run(Query.Tags(TagFilter.Equals("amenity", "cafe")), EvalContext(location = here, now = saturday, limit = 5, hours = Nowhere)).hits
         assertEquals(5, hits.size)
         assertTrue(hits.all { it.distance!! in 55_000.0..70_000.0 })
     }

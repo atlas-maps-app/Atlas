@@ -330,7 +330,7 @@ class UnderstandingTest {
         // what a tag implies is mapped with it (a lake is natural=water with water=lake); the marks of the samples go
         val mapped = tags.filterKeys { it != ANY_KEY }.let { m -> m.keys.mapNotNull { IMPLIED[it] }.fold(m) { acc, extra -> extra + acc } }
         val place = Place(OsmId(OsmType.NODE, 1L), here, mapped + ("name" to "Sample"))
-        return OfflineEvaluator(MemoryPlaces(listOf(place))).matches(local(q), EvalContext(location = here, now = now)).isNotEmpty()
+        return OfflineEvaluator(MemoryPlaces(listOf(place))).matches(local(q), EvalContext(location = here, now = now, hours = Nowhere)).isNotEmpty()
     }
 
     private fun acceptsAny(q: Query, kinds: List<Map<String, String>>): Boolean = kinds.any { accepts(q, it) }

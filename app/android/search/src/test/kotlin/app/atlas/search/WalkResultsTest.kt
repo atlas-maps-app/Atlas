@@ -19,7 +19,7 @@ import org.junit.Test
  */
 class WalkResultsTest {
     private val here = LatLon(52.37, 4.88)
-    private val moment = Moment(Fixtures.saturday)
+    private val moment = Moment(Fixtures.saturday, hours = Nowhere)
     private val walk = Intents.all.first { it.id == Intents.WALK }
     private val parks = CategoryTree.category("parks")!!
 

@@ -11,6 +11,7 @@ import app.atlas.guide.OpeningLookup
 import app.atlas.model.Fix
 import app.atlas.model.Place
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.services.Voice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -49,9 +50,13 @@ class EarsSession(
     private val settings: GuideSettings,
     private val scope: CoroutineScope,
     private val places: suspend (LatLon, Double) -> List<Place>,
-    zone: ZoneId = ZoneId.systemDefault(),
+    private val zone: ZoneId,
+    /** The holidays and the sun at a point, which the places' hours there are read in (`HereContext.hours`). */
+    private val hours: (LatLon) -> OpeningHoursContext,
 ) {
-    private val ears = EarsOnly(settings, OpeningLookup { p, at -> closesAt(p, at, zone) })
+    /** The holidays and the sun where the places around were last read: [hours] there. */
+    @Volatile private var opening: OpeningHoursContext? = null
+    private val ears = EarsOnly(settings, OpeningLookup { p, at -> opening?.let { closesAt(p, at, zone, it) } })
     private val viewState = MutableStateFlow(EarsView())
     val view: StateFlow<EarsView> = viewState.asStateFlow()
 
@@ -75,6 +80,7 @@ class EarsSession(
         val last = knownAt
         if (last == null || Geo.distance(last, fix.location) > REFRESH_M) {
             known = places(fix.location, RADIUS_M)
+            opening = hours(fix.location)
             knownAt = fix.location
         }
         val h = heading ?: fix.bearing?.takeIf { (fix.speed ?: 0.0) >= 0.3 }
@@ -166,11 +172,14 @@ class EarsSession(
         const val MAX_LINES = 12
         const val BEACON_MIN_M = 25.0
 
-        /** When [p] closes today, from its opening hours, for "open until 19"; null for an open end, which states no time. */
-        fun closesAt(p: Place, at: java.time.Instant, zone: ZoneId): LocalTime? {
+        /**
+         * When [p] closes today, from its opening hours read in [context], for "open until 19"; null for an open end,
+         * which states no time.
+         */
+        fun closesAt(p: Place, at: java.time.Instant, zone: ZoneId, context: OpeningHoursContext): LocalTime? {
             val hours = OpeningHours.parseOrNull(p.tags["opening_hours"]) ?: return null
             val now = at.atZone(zone).toLocalDateTime()
-            val s = hours.status(now)
+            val s = hours.status(now, context)
             if (!s.isOpen || s.unknown) return null
             val change = s.statedChangeAt ?: return null
             return if (change.toLocalDate() == now.toLocalDate() || change.isBefore(now.plusHours(12))) change.toLocalTime() else null

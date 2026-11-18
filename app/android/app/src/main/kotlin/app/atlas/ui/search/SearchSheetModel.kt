@@ -1375,7 +1375,8 @@ class SearchSheetModel(
         val now = ZonedDateTime.now(services.clock)
         val sunset = runCatching { SunClock.at(c.lat, c.lon, now.zone).times(now.toLocalDate())?.sunset }.getOrNull()
         val outlook = forecast()?.let { f -> runCatching { Outlook.of(f, now) }.getOrNull() }
-        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday)
+        // the holidays and the sun at the centre, which every tile and row reads its places' hours in
+        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday, HereContext.hours(services, c, now.zone))
     }
 
     companion object {

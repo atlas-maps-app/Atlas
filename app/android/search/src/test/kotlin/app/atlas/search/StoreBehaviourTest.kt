@@ -325,7 +325,7 @@ class StoreBehaviourTest {
             assertEquals(2, s.byTag("addr:housenumber", "12").size)
             assertEquals(s.count("addr:housenumber", "14"), s.byTag("addr:housenumber", "14").size)
             // as the search box shows them: one line each
-            val hits = OfflineEvaluator(s).run(QueryParser.parse("addr:street=\"Résidence Le Manoir\"").query, EvalContext(limit = 100)).hits
+            val hits = OfflineEvaluator(s).run(QueryParser.parse("addr:street=\"Résidence Le Manoir\"").query, EvalContext(limit = 100, hours = Nowhere)).hits
             assertEquals(9, hits.map { it.place.key }.toSet().size)
         }
     }
@@ -353,11 +353,11 @@ class StoreBehaviourTest {
             assertTrue(s.indexes("addr:street", "Kerkstraat"))
             assertFalse(s.indexes("addr:housenumber", "12"))
             val ev = OfflineEvaluator(s)
-            val paying = ev.run(QueryParser.parse("amenity=restaurant and payment:credit_cards=yes").query, EvalContext(limit = 100))
+            val paying = ev.run(QueryParser.parse("amenity=restaurant and payment:credit_cards=yes").query, EvalContext(limit = 100, hours = Nowhere))
             assertEquals(3, paying.total)
             // the 40 restaurants were looked at, from the lookup table; not a scan for the rare payment tag
             assertEquals(40, paying.examined)
-            val one = ev.run(QueryParser.parse("addr:housenumber=12 and addr:street=Kerkstraat").query, EvalContext(limit = 100))
+            val one = ev.run(QueryParser.parse("addr:housenumber=12 and addr:street=Kerkstraat").query, EvalContext(limit = 100, hours = Nowhere))
             assertEquals(listOf("12"), one.hits.map { it.tags["addr:housenumber"] })
             // the street's 30 points, not every 12 of the region and its places
             assertEquals(30, one.examined)

@@ -106,7 +106,7 @@ class LargestTest {
         val mid = PlaceRecord.of(place(2_000.0, 1_200.0, "leisure" to "park", "name" to "Middel"))
         val huge = PlaceRecord.of(place(30_000.0, 9_000.0, "leisure" to "park", "name" to "Groot"))
         val point = PlaceRecord.of(place(100.0, null, "leisure" to "park", "name" to "Punt"))
-        val r = Browse.results(parks, listOf(small, point, huge, mid), here, Moment(Fixtures.saturday), order = Order.LARGEST)
+        val r = Browse.results(parks, listOf(small, point, huge, mid), here, Moment(Fixtures.saturday, hours = Nowhere), order = Order.LARGEST)
         assertEquals(Order.LARGEST, r.order)
         // the largest first, one of no known size last
         assertEquals(listOf("Groot", "Middel", "Klein", "Punt"), r.hits.map { it.record.name("en") })
@@ -161,7 +161,7 @@ class LargestTest {
                     listOf("en"), "away",
                 )
                 val q = parse("largest parks").steps.single()
-                val r = OfflineEvaluator(Regions(listOf(home, away))).run(q, EvalContext(location = here, now = Fixtures.saturday))
+                val r = OfflineEvaluator(Regions(listOf(home, away))).run(q, EvalContext(location = here, now = Fixtures.saturday, hours = Nowhere))
                 // the region holding the searcher, however far its largest lies; not another region on the phone
                 assertEquals(listOf("Verderop", "Thuispark"), r.hits.map { it.record.name("en") })
             }

@@ -11,6 +11,7 @@ import app.atlas.places.OpeningHours
 import app.atlas.search.PlaceRecord
 import app.atlas.search.ResultHit
 import app.atlas.search.TravelMode
+import app.atlas.testing.Nowhere
 import app.atlas.testing.testServices
 import app.atlas.ui.kit.walkMinutes
 import org.junit.Assert.assertEquals
@@ -154,18 +155,18 @@ class FindReviewTest {
     @Test
     fun anOpenEndNamesNoClosingTime() {
         // a day's words: the stated end and a "+", or the start and a "+", never the guess of how long it lasts
-        assertEquals("16:00–2:00+", spanWords(OpeningHours.parse("Tu-Su 16:00-02:00+").weekTable()[6]))
-        assertEquals("17:00+", spanWords(OpeningHours.parse("Mo-Su 17:00+").weekTable()[0]))
-        assertEquals("10:00–14:00, 17:00+", spanWords(OpeningHours.parse("Mo 10:00-14:00,17:00+").weekTable()[0]))
+        assertEquals("16:00–2:00+", spanWords(OpeningHours.parse("Tu-Su 16:00-02:00+").weekTable(weekOf = null, context = Nowhere)[6]))
+        assertEquals("17:00+", spanWords(OpeningHours.parse("Mo-Su 17:00+").weekTable(weekOf = null, context = Nowhere)[0]))
+        assertEquals("10:00–14:00, 17:00+", spanWords(OpeningHours.parse("Mo 10:00-14:00,17:00+").weekTable(weekOf = null, context = Nowhere)[0]))
         // a row at 21:00: neither "closed when you get there" nor minutes to spare from the guess
         val evening = LocalDateTime.of(2026, 11, 17, 21, 0)
-        val bar = OpeningHours.parse("Mo-Su 17:00+").status(evening)
+        val bar = OpeningHours.parse("Mo-Su 17:00+").status(evening, context = Nowhere)
         assertNull(arrivalOf(bar, 90, evening))
         val record = PlaceRecord(Place(OsmId(OsmType.NODE, 1), LatLon(52.37, 4.89), mapOf("amenity" to "bar", "opening_hours" to "Mo-Su 17:00+")), null, null, null, "maki-bar")
         val hit = ResultHit(record, 400.0, 5, TravelMode.WALK, bar, hoursConfirmed = true, hoursStale = false, node = null, score = 1.0)
         assertNull(spareMinutes(hit, evening))
         // as before where the hours state the closing
-        val pub = OpeningHours.parse("Mo-Su 17:00-22:00").status(evening)
+        val pub = OpeningHours.parse("Mo-Su 17:00-22:00").status(evening, context = Nowhere)
         assertEquals(Arrival.CLOSED to -30, arrivalOf(pub, 90, evening))
         assertEquals(55, spareMinutes(hit.copy(open = pub), evening))
     }

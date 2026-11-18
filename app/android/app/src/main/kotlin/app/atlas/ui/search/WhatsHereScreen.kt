@@ -70,6 +70,7 @@ import app.atlas.places.FactKind
 import app.atlas.places.FactState
 import app.atlas.places.Facts
 import app.atlas.places.Localise
+import app.atlas.places.OpeningHours
 import app.atlas.search.PlaceRecord
 import app.atlas.services.HereGap
 import app.atlas.services.PlaceOrigin
@@ -103,9 +104,15 @@ import kotlinx.coroutines.withContext
 
 /**
  * What "What's here" knows: the facts once found, the facts of the place the point is in (read on its own clock, in its
- * country), and where a note for mappers stands.
+ * country), the point's country and clock, which the rows of the places nearest read their hours in, and where a note
+ * for mappers stands.
  */
-data class WhatsHereState(val facts: HereFacts? = null, val spotFacts: List<Fact> = emptyList(), val note: Sending = Sending.Idle)
+data class WhatsHereState(
+    val facts: HereFacts? = null,
+    val spotFacts: List<Fact> = emptyList(),
+    val local: PlaceLocale? = null,
+    val note: Sending = Sending.Idle,
+)
 
 /**
  * Finds what is at [at] once (the building [spot] when the press named one), and leaves a note for mappers there when
@@ -136,8 +143,12 @@ class WhatsHereViewModel(private val services: Services, private val at: LatLon,
             } catch (e: Exception) {
                 HereFacts(null, null, emptyList(), null, HereGap.UNANSWERED)
             }
-            val spot = facts.spot?.let { s -> withContext(Dispatchers.Default) { spotFacts(services, s, lang) } }.orEmpty()
-            mutable.update { it.copy(facts = facts, spotFacts = spot) }
+            // the regions on the phone are asked: off the main thread
+            val (spot, local) = withContext(Dispatchers.Default) {
+                facts.spot?.let { s -> spotFacts(services, s, lang) }.orEmpty() to
+                    HereContext.localeAt(services, at, HereContext.phoneAt(services), ZonedDateTime.now(services.clock).zone)
+            }
+            mutable.update { it.copy(facts = facts, spotFacts = spot, local = local) }
         }
     }
 
@@ -247,12 +258,15 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                     facts == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
                     else -> {
                         facts.spot?.let { s -> SpotCard(s, state.spotFacts, lang) { services.remember(s); nav.go(Dest.Place.page(s)) } }
-                        if (facts.nearby.isNotEmpty()) {
+                        val local = state.local
+                        if (facts.nearby.isNotEmpty() && local != null) {
                             Kicker(stringResource(R.string.whatshere_nearby))
                             Card(padding = PaddingValues(horizontal = 16.dp, vertical = 2.dp), elevation = 0.dp, colour = c.cardMuted) {
-                                val now = app.atlas.ui.kit.rememberNow(facts)
+                                // the point's own clock, and its holidays and sun
+                                val now = remember(facts, local) { local.now(services.clock) }
+                                val hours = remember(local, p) { local.hours(p) }
                                 facts.nearby.forEachIndexed { i, n ->
-                                    val line = remember(n, now) { PlaceLine.of(n, p, lang, now) }
+                                    val line = remember(n, now, hours) { PlaceLine.of(n, p, lang, now, OpeningHours.parseOrNull(n.tags["opening_hours"])?.status(now, hours)) }
                                     PlaceResultRow(line, now, lang, onClick = { services.remember(n); nav.go(Dest.Place.page(n)) })
                                     if (i < facts.nearby.lastIndex) Hairline()
                                 }

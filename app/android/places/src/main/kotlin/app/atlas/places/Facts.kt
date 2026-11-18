@@ -97,9 +97,9 @@ object Facts {
     /** The facts of a bare tag map; see the overload for places. */
     fun of(
         tags: Map<String, String>,
-        lang: String? = "en",
-        now: LocalDateTime = LocalDateTime.now(),
-        context: OpeningHoursContext = OpeningHoursContext.Default,
+        lang: String?,
+        now: LocalDateTime,
+        context: OpeningHoursContext,
         geometry: Geometry = Geometry.POINT,
     ): List<Fact> {
         val b = Builder(tags, lang)

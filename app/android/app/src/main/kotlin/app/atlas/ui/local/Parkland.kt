@@ -8,6 +8,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import app.atlas.providers.OverpassElement
 import kotlinx.coroutines.CancellationException
@@ -360,22 +361,23 @@ object Parkland {
     }
 
     /**
-     * "6:00–1:00": the span a park is open today, from its `opening_hours`; "6:00–17:00+" or "17:00+" for an open end,
-     * which states no closing time; "24/7" for always; null when unmapped.
+     * "6:00–1:00": the span a park is open today, from its `opening_hours` read in [context] (the holidays and the sun
+     * there); "6:00–17:00+" or "17:00+" for an open end, which states no closing time; "24/7" for always; null when
+     * unmapped.
      */
-    fun todaysSpan(hours: String?, today: LocalDate): String? {
+    fun todaysSpan(hours: String?, today: LocalDate, context: OpeningHoursContext): String? {
         val parsed = OpeningHours.parseOrNull(hours) ?: return null
         if (parsed.isAlwaysOpen) return "24/7"
         val start = LocalDateTime.of(today, java.time.LocalTime.MIDNIGHT)
-        val s0 = parsed.status(start)
+        val s0 = parsed.status(start, context)
         if (s0.unknown) return null
         val from = if (s0.isOpen) start else s0.changesAt ?: return null
         if (from.toLocalDate() != today) return null
         val f = java.time.format.DateTimeFormatter.ofPattern("H:mm")
-        val st = parsed.status(from)
+        val st = parsed.status(from, context)
         if (st.openEnd) {
             val m = from.hour * 60 + from.minute
-            val end = app.atlas.places.statedSpans(parsed.weekTable(today)[today.dayOfWeek.value - 1]).firstOrNull { it.start == m }?.endTime
+            val end = app.atlas.places.statedSpans(parsed.weekTable(today, context)[today.dayOfWeek.value - 1]).firstOrNull { it.start == m }?.endTime
             return f.format(from) + (end?.let { "–" + f.format(it) } ?: "") + "+"
         }
         val close = st.changesAt ?: return null

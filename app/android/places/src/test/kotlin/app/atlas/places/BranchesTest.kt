@@ -65,7 +65,7 @@ class BranchesTest {
         }
         assertTrue(inferred >= 8)
         val sat = LocalDateTime.of(2026, 10, 10, 14, 30)
-        assertTrue(jamin.hours.isOpen(sat) == true)
+        assertTrue(jamin.hours.isOpen(sat, context = Nowhere) == true)
     }
 
     @Test

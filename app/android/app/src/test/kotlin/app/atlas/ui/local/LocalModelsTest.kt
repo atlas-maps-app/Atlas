@@ -10,6 +10,7 @@ import app.atlas.nav.Dest
 import app.atlas.places.TagFilter
 import app.atlas.providers.Sky
 import app.atlas.providers.WeatherDay
+import app.atlas.testing.Nowhere
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -330,13 +331,13 @@ class LocalModelsTest {
     @Test
     fun aParksHoursReadAsTodaysSpan() {
         val day = LocalDate.of(2026, 10, 13)
-        assertEquals("6:00–23:00", Parkland.todaysSpan("Mo-Su 06:00-23:00", day))
-        assertEquals("24/7", Parkland.todaysSpan("24/7", day))
-        assertNull(Parkland.todaysSpan(null, day))
-        assertNull(Parkland.todaysSpan("by appointment", day))
+        assertEquals("6:00–23:00", Parkland.todaysSpan("Mo-Su 06:00-23:00", day, context = Nowhere))
+        assertEquals("24/7", Parkland.todaysSpan("24/7", day, context = Nowhere))
+        assertNull(Parkland.todaysSpan(null, day, context = Nowhere))
+        assertNull(Parkland.todaysSpan("by appointment", day, context = Nowhere))
         // an open end states no closing time
-        assertEquals("6:00–17:00+", Parkland.todaysSpan("Mo-Su 06:00-17:00+", day))
-        assertEquals("17:00+", Parkland.todaysSpan("Mo-Su 17:00+", day))
+        assertEquals("6:00–17:00+", Parkland.todaysSpan("Mo-Su 06:00-17:00+", day, context = Nowhere))
+        assertEquals("17:00+", Parkland.todaysSpan("Mo-Su 17:00+", day, context = Nowhere))
     }
 
     @Test

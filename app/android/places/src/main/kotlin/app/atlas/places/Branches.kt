@@ -64,7 +64,8 @@ object BrandHours {
      */
     fun weekOf(h: OpeningHours): List<WeekDay?>? {
         if (h.isAlwaysOpen) return List(7) { WeekDay(0, 1440) }
-        val table = h.weekTable()
+        // a plain week, as a door plaque shows it: no date, so no holidays, and the sun's fixed hours
+        val table = h.weekTable(weekOf = null, context = OpeningHoursContext.Default)
         val out = table.map { spans ->
             val open = statedSpans(spans.filter { it.state == OpenState.OPEN })
             if (open.isEmpty()) null else WeekDay(open.minOf { it.start }, open.last().end ?: return null, open.last().openEnd)

@@ -13,7 +13,7 @@ import java.time.LocalDateTime
 class FactsTest {
     private val monday = LocalDateTime.of(2026, 10, 12, 20, 0)
     private fun facts(vararg kv: Pair<String, String>, lang: String = "en", at: LocalDateTime = monday) =
-        Facts.of(mapOf(*kv), lang, at)
+        Facts.of(mapOf(*kv), lang, at, context = Nowhere)
 
     private fun List<Fact>.of(kind: FactKind) = filter { it.kind == kind }
     private fun List<Fact>.one(kind: FactKind) = single { it.kind == kind }
@@ -68,7 +68,7 @@ class FactsTest {
         // a bench has nothing to ask about wheelchairs
         assertTrue(facts("amenity" to "bench").none { it.kind == FactKind.WHEELCHAIR })
         // a footway asks for its surface but not its access
-        val path = Facts.of(mapOf("highway" to "footway"), "en", monday, geometry = Geometry.LINE)
+        val path = Facts.of(mapOf("highway" to "footway"), "en", monday, geometry = Geometry.LINE, context = Nowhere)
         assertTrue(path.any { !it.mapped && it.key == "surface" })
         assertTrue(path.none { it.kind == FactKind.ACCESS })
     }
@@ -113,7 +113,7 @@ class FactsTest {
         assertEquals("maki-soccer", pitch.of(FactKind.SPORT).first().symbol)
         assertEquals(2, pitch.of(FactKind.SPORT).size)
         assertEquals(FactState.YES, pitch.one(FactKind.LIT).state)
-        val path = Facts.of(mapOf("highway" to "path", "surface" to "gravel", "lit" to "no", "incline" to "8%"), "en", monday, geometry = Geometry.LINE)
+        val path = Facts.of(mapOf("highway" to "path", "surface" to "gravel", "lit" to "no", "incline" to "8%"), "en", monday, geometry = Geometry.LINE, context = Nowhere)
         assertEquals(FactState.LIMITED, path.one(FactKind.SURFACE).state)
         assertEquals(FactState.NO, path.one(FactKind.LIT).state)
         assertEquals("8%", path.one(FactKind.INCLINE).value)
@@ -181,13 +181,13 @@ class FactsTest {
     fun hoursSayTheDayWhenTheChangeIsNotTodayOrTomorrow() {
         val tags = mapOf("shop" to "bakery", "opening_hours" to "Mo-Fr 07:00-18:00")
         // Saturday noon: it opens on Monday, not at 07:00 tomorrow
-        assertEquals("Mon 07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value)
-        val nl = Facts.of(tags, "nl", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value!!
+        assertEquals("Mon 07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+        val nl = Facts.of(tags, "nl", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value!!
         assertTrue(nl, nl.endsWith(" 07:00") && !nl.startsWith("Mon"))
         // Sunday noon: tomorrow, so the time alone
-        assertEquals("07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 18, 12, 0)).one(FactKind.OPENING_HOURS).value)
+        assertEquals("07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 18, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
         // hours that do not say give their reason
-        val appt = Facts.of(mapOf("office" to "lawyer", "opening_hours" to "Mo-Fr 08:00-12:00 || \"by appointment\""), "en", monday.withHour(14))
+        val appt = Facts.of(mapOf("office" to "lawyer", "opening_hours" to "Mo-Fr 08:00-12:00 || \"by appointment\""), "en", monday.withHour(14), context = Nowhere)
         assertEquals(FactState.UNKNOWN, appt.one(FactKind.OPENING_HOURS).state)
         assertEquals("by appointment", appt.one(FactKind.OPENING_HOURS).value)
     }
@@ -196,12 +196,12 @@ class FactsTest {
     fun aChangeMoreThanAWeekAwayGivesTheDate() {
         // a weekday alone would read as the coming one: "Tue 10:00" for 1 June
         val summer = mapOf("amenity" to "ice_cream", "opening_hours" to "Jun-Aug 10:00-18:00")
-        assertEquals("1 Jun 10:00", Facts.of(summer, "en", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value)
-        val nl = Facts.of(summer, "nl", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value!!
+        assertEquals("1 Jun 10:00", Facts.of(summer, "en", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+        val nl = Facts.of(summer, "nl", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value!!
         assertTrue(nl, nl.startsWith("1 jun") && nl.endsWith(" 10:00"))
         // six days ahead is still a weekday
         val weekly = mapOf("shop" to "bakery", "opening_hours" to "Su 08:00-12:00")
-        assertEquals("Sun 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 12, 13, 0)).one(FactKind.OPENING_HOURS).value)
-        assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0)).one(FactKind.OPENING_HOURS).value)
+        assertEquals("Sun 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 12, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+        assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
     }
 }

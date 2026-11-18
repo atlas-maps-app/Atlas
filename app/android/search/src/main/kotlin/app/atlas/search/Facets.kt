@@ -283,7 +283,8 @@ data class FacetContext(
     val now: LocalDateTime,
     val lang: String = "en",
     val hours: HoursBook = HoursBook.EMPTY,
-    val opening: OpeningHoursContext = OpeningHoursContext.Default,
+    /** Holidays and the sun, for opening hours: those of where the places are. */
+    val opening: OpeningHoursContext,
     /** A time the searcher asked about ("open Saturday 14:00"), offered as a value of the hours' facet. */
     val at: LocalDateTime? = null,
 )

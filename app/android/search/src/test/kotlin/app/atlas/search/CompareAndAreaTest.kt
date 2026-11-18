@@ -23,7 +23,7 @@ class CompareAndAreaTest {
     private fun ids(hits: List<Hit>) = hits.map { it.place.tags["name"] }.toSet()
     private fun parse(text: String, lang: String = "en") = QueryParser.parse(text, lang, Fixtures.saturday)
     private fun eval(places: List<Place>, text: String, lang: String = "en") =
-        OfflineEvaluator(MemoryPlaces(places)).run(parse(text, lang).query, EvalContext(location = heart, now = Fixtures.saturday, limit = 100)).hits
+        OfflineEvaluator(MemoryPlaces(places)).run(parse(text, lang).query, EvalContext(location = heart, now = Fixtures.saturday, limit = 100, hours = Nowhere)).hits
 
     @Test
     fun closedOnADayGoesByTheHoursAndNotByTheirAbsence() {
@@ -59,7 +59,7 @@ class CompareAndAreaTest {
             place(east(300.0), "tourism" to "hotel", "name" to "Central"),
             place(east(4_000.0), "tourism" to "hotel", "name" to "Outer"),
         )
-        val ctx = SearchContext(location = east(500.0), now = Fixtures.saturday)
+        val ctx = SearchContext(location = east(500.0), now = Fixtures.saturday, hours = Nowhere)
         val engine = SearchEngine(MemoryPlaces(places))
         fun names(text: String, lang: String = "en") = runBlocking { engine.search(text, ctx.copy(lang = lang)) }.places.map { it.hit.tags["name"] }.toSet()
         assertEquals(setOf("Outer"), names("hotel not in the city centre"))
@@ -76,7 +76,7 @@ class CompareAndAreaTest {
             listOf(west to "Jordaan", mid to "Grachtengordel", far to "Plantage").map { (at, n) -> place(at, "place" to "neighbourhood", "name" to n) } +
             (1..3).map { place(east(40.0 * it, west), "amenity" to "bar", "name" to "W$it") } +
             place(east(30.0, far), "amenity" to "bar", "name" to "P1")
-        val r = runBlocking { SearchEngine(MemoryPlaces(places)).search("how many bars per neighbourhood", SearchContext(location = heart, now = Fixtures.saturday)) }
+        val r = runBlocking { SearchEngine(MemoryPlaces(places)).search("how many bars per neighbourhood", SearchContext(location = heart, now = Fixtures.saturday, hours = Nowhere)) }
         val count = r.items.first() as SearchItem.Count
         assertEquals(4, count.answer.total)
         assertEquals(listOf("Jordaan" to 3, "Plantage" to 1), count.answer.groups.map { it.label to it.count })
@@ -88,12 +88,12 @@ class CompareAndAreaTest {
             place(east(2_000.0), "amenity" to "townhall", "name" to "Stadhuis Noord"),
             place(east(6_000.0), "amenity" to "library", "name" to "Bibliotheek Oost"),
         )
-        val r = runBlocking { SearchEngine(MemoryPlaces(places)).search("route to bibliotheek oost via stadhuis noord", SearchContext(location = heart, now = Fixtures.saturday)) }
+        val r = runBlocking { SearchEngine(MemoryPlaces(places)).search("route to bibliotheek oost via stadhuis noord", SearchContext(location = heart, now = Fixtures.saturday, hours = Nowhere)) }
         val way = r.items.first() as SearchItem.Route
         assertEquals("Bibliotheek Oost", way.to.name)
         assertEquals(listOf("Stadhuis Noord"), way.via.map { it.name })
         // a stop nobody can find is no way: the words are searched as they are
-        val lost = runBlocking { SearchEngine(MemoryPlaces(places)).search("route to bibliotheek oost via nergenshuizen", SearchContext(location = heart, now = Fixtures.saturday)) }
+        val lost = runBlocking { SearchEngine(MemoryPlaces(places)).search("route to bibliotheek oost via nergenshuizen", SearchContext(location = heart, now = Fixtures.saturday, hours = Nowhere)) }
         assertTrue(lost.items.none { it is SearchItem.Route })
     }
 

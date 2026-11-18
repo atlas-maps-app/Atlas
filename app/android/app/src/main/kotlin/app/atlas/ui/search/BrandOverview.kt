@@ -56,6 +56,7 @@ import app.atlas.places.FactKind
 import app.atlas.places.FactState
 import app.atlas.places.Facts
 import app.atlas.places.Localise
+import app.atlas.places.OpeningHoursContext
 import app.atlas.providers.WikidataEntity
 import app.atlas.search.CategoryResults
 import app.atlas.search.Facets
@@ -66,6 +67,7 @@ import app.atlas.search.Overview
 import app.atlas.search.SearchItem
 import app.atlas.ui.kit.BrandSigns
 import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssShadow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -303,7 +305,11 @@ private fun everyBranch(brand: Brand, lang: String): List<BranchFact> {
         FactState.YES to stringResource(R.string.place_fact_yes), FactState.NO to stringResource(R.string.place_fact_no),
         FactState.LIMITED to stringResource(R.string.place_fact_limited), FactState.ONLY to stringResource(R.string.place_fact_only),
     )
-    val facts = remember(brand.id, lang) { Facts.of(brand.otherTags + brand.keyTags, lang).filter { it.mapped && it.kind in BRANCH_FACTS && it.state != FactState.UNKNOWN } }
+    // a brand's own tags, of no place: read nowhere in particular, and no hours are among the facts kept (BRANCH_FACTS)
+    val clock = appClock()
+    val facts = remember(brand.id, lang) {
+        Facts.of(brand.otherTags + brand.keyTags, lang, LocalDateTime.now(clock), OpeningHoursContext.Default).filter { it.mapped && it.kind in BRANCH_FACTS && it.state != FactState.UNKNOWN }
+    }
     return remember(facts, words) {
         val cuisines = facts.filter { it.kind == FactKind.CUISINE }
         buildList {

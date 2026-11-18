@@ -266,7 +266,7 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
             if (!findOpen) addAll(HomeHighlights.markers(highlights))
             // The user's edits waiting to go or not sent, at their buildings: drawn as mapped once OpenStreetMap took them.
             addAll(EditMarkers.of(edits, editWaiting, editNotSent))
-            if (findOpen) addAll(if (findText.isNotBlank()) typedMarkers(typedState.results, now, found.centre, found.prefs.mode) else sheetMarkers(found, now))
+            if (findOpen) addAll(if (findText.isNotBlank()) typedMarkers(typedState.results, now, found.centre, found.prefs.mode, found.moment.hours) else sheetMarkers(found, now))
             // the point of a map view a link opened, until the map is moved away from it
             pin?.let { add(Marker("focus", it, "maki-marker", 0xFF2E5BFF, MarkerStyle.PIN, priority = 1_000)) }
             // An opened place's pin, chosen, as the Place board draws it: in place of its marker among the others.

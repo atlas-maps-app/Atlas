@@ -6,6 +6,7 @@ import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.ChangeKind
 import app.atlas.places.OpenStatus
+import app.atlas.testing.Nowhere
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -34,7 +35,7 @@ class KitLogicTest {
             OsmId(OsmType.NODE, 1), LatLon(52.3740, 4.8840),
             mapOf("amenity" to "cafe", "name" to "Café Papeneiland", "opening_hours" to "Mo-Su 10:00-23:00"),
         )
-        val s = PlaceSummary.of(cafe, LatLon(52.37452, 4.88377), "en", LocalDateTime.of(2026, 10, 13, 19, 0))
+        val s = PlaceSummary.of(cafe, LatLon(52.37452, 4.88377), "en", LocalDateTime.of(2026, 10, 13, 19, 0), hours = Nowhere)
         assertEquals("Café Papeneiland", s.name)
         assertEquals("Cafe", s.kind)
         assertTrue(s.symbol, hasSymbol(s.symbol))
@@ -47,7 +48,7 @@ class KitLogicTest {
     @Test
     fun aPlaceWithoutNameOrHours() {
         val bench = Place(null, LatLon(52.0, 4.0), mapOf("amenity" to "bench"))
-        val s = PlaceSummary.of(bench, null, "en")
+        val s = PlaceSummary.withOpen(bench, null, "en", null)
         assertEquals("Bench", s.name)
         assertNull(s.kind)
         assertNull(s.open)
@@ -58,11 +59,11 @@ class KitLogicTest {
     @Test
     fun aShopIsCalledWhatItSellsAndANamelessOneWhatItIs() {
         // the owner, 6 November: "instead of clothing store and gift shop only show Clothes, Gifts?", "apply that everywhere"
-        val named = PlaceSummary.of(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en")
+        val named = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en", null)
         assertEquals("Gifts", named.kind)
-        assertEquals("Cadeaus", PlaceSummary.of(named.place, null, "nl").kind)
+        assertEquals("Cadeaus", PlaceSummary.withOpen(named.place, null, "nl", null).kind)
         // a title says what the place is: a gift shop, and no line says "Gifts" under it
-        val nameless = PlaceSummary.of(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en")
+        val nameless = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en", null)
         assertEquals("Gift Shop", nameless.name)
         assertNull(nameless.kind)
     }

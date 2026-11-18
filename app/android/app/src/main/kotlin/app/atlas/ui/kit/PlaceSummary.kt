@@ -15,6 +15,7 @@ import app.atlas.places.KindColours
 import app.atlas.places.Localise
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
 import java.time.Duration
@@ -42,14 +43,26 @@ data class PlaceSummary(
     val walk: String? get() = distanceM?.let { walkMinutes(WalkTime.seconds(it)) }
 
     companion object {
-        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime = LocalDateTime.now()): PlaceSummary {
+        /**
+         * [place] seen from [from], its hours read at [now] in [hours]: the holidays and the sun where it is, which every
+         * caller passes (the reviewer, 17 November, finding 7: `HereContext.hours`, never a default).
+         */
+        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, hours: OpeningHoursContext): PlaceSummary {
+            val h = OpeningHours.parseOrNull(place.tags["opening_hours"])
+            return of(place, from, lang, h?.status(now, hours), h)
+        }
+
+        /** [place] seen from [from], how it stands for opening [open] as its caller read it (a search's hit, a page's status). */
+        fun withOpen(place: Place, from: LatLon?, lang: String?, open: OpenStatus?): PlaceSummary =
+            of(place, from, lang, open, OpeningHours.parseOrNull(place.tags["opening_hours"]))
+
+        private fun of(place: Place, from: LatLon?, lang: String?, open: OpenStatus?, hours: OpeningHours?): PlaceSummary {
             val tags = place.tags
             val preset = Presets.match(tags)
             val kind = preset?.name(lang)
             val own = Localise.name(tags, lang)
             // A place with no name of its own is titled by what it is ("Gift Shop"), and no kind line repeats it ("Gifts")
             val name = own ?: preset?.fullName(lang) ?: place.id?.toString() ?: ""
-            val hours = OpeningHours.parseOrNull(tags["opening_hours"])
             val (symbol, colour) = markOf(place)
             return PlaceSummary(
                 place = place,
@@ -57,7 +70,7 @@ data class PlaceSummary(
                 kind = kind?.takeIf { own != null && it != name },
                 symbol = symbol,
                 colour = colour,
-                open = hours?.status(now),
+                open = open,
                 alwaysOpen = hours?.isAlwaysOpen == true,
                 distanceM = from?.let { Geo.distance(it, place.location) },
             )

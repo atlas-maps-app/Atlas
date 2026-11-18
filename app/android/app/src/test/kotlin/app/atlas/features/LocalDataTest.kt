@@ -23,6 +23,7 @@ import app.atlas.services.LocalData
 import app.atlas.services.PlaceOrigin
 import app.atlas.services.PackShelf
 import app.atlas.testing.Fixtures
+import app.atlas.testing.Nowhere
 import app.atlas.testing.testServices
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -336,7 +337,7 @@ class LocalDataTest {
     @Test
     fun aQueryRunsOverTheStoreOrThePack() {
         val q = Query.And(listOf(Query.Tags(TagFilter.Equals("amenity", "cafe")), Query.Within(here, 300.0)))
-        val ctx = EvalContext(location = here, now = ZonedDateTime.of(2026, 10, 13, 19, 30, 0, 0, ZoneId.of("Europe/Amsterdam")), limit = 100)
+        val ctx = EvalContext(location = here, now = ZonedDateTime.of(2026, 10, 13, 19, 30, 0, 0, ZoneId.of("Europe/Amsterdam")), limit = 100, hours = Nowhere)
         val a = both().query(q, ctx)
         val b = packOnly().query(q, ctx)
         assertEquals(PlaceOrigin.STORE, a.origin)

@@ -10,6 +10,7 @@ import app.atlas.places.Freshness
 import app.atlas.places.NodeKind
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import app.atlas.model.Place
 import app.atlas.providers.BathingSite
@@ -221,7 +222,7 @@ object Browse {
     /** The tiles of [nodes] over [pool], the places read around [from]. */
     fun pulses(nodes: List<CategoryNode>, pool: List<PlaceRecord>, from: LatLon, moment: Moment, hours: HoursBook = HoursBook(pool)): List<CategoryPulse> {
         val now = moment.now.toLocalDateTime()
-        val ctx = OpeningContext(now, hours)
+        val ctx = OpeningContext(now, hours, moment.hours)
         return nodes.map { node -> pulse(node, pool.filter { holds(node, it) }, from, moment, ctx) }
     }
 
@@ -234,7 +235,7 @@ object Browse {
     fun pulse(intent: Intent, node: CategoryNode, pool: List<PlaceRecord>, from: LatLon, moment: Moment, hours: HoursBook = HoursBook(pool)): CategoryPulse {
         val places = pool.filter(intent::takes)
         if (places.isEmpty()) return CategoryPulse.none(node)
-        if (!intent.outdoors) return pulse(node, places, from, moment, OpeningContext(moment.now.toLocalDateTime(), hours))
+        if (!intent.outdoors) return pulse(node, places, from, moment, OpeningContext(moment.now.toLocalDateTime(), hours, moment.hours))
         // the nearest named of those it goes round in (a walk's greens), else of all it takes; where none has a name, the nearest
         val named = places.filter { !it.name(moment.lang).isNullOrBlank() }
         val (nearest, metres) = named.filter(intent::goesRound).ifEmpty { named }.ifEmpty { places }.map { it to it.distanceTo(from) }.minBy { it.second }
@@ -242,14 +243,14 @@ object Browse {
         return CategoryPulse(node, places.size, 0, 0, nearest, metres, minutes, TellKind.NEAREST, minutes.toString())
     }
 
-    private class OpeningContext(val now: LocalDateTime, val hours: HoursBook) {
+    private class OpeningContext(val now: LocalDateTime, val hours: HoursBook, val opening: OpeningHoursContext) {
         private val cache = HashMap<PlaceRecord, Pair<OpenStatus?, Boolean>>()
 
         /** Its state now and whether its hours are its own; usually open places are open without hours. */
         fun status(r: PlaceRecord): Pair<OpenStatus?, Boolean> = cache.getOrPut(r) {
             val known = hours.of(r)
             when {
-                known != null -> known.hours.status(now) to known.confirmed
+                known != null -> known.hours.status(now, opening) to known.confirmed
                 OfflineEvaluator.usuallyOpen(r) -> OpenStatus(true, null, null, false) to true
                 else -> null to true
             }
@@ -289,7 +290,7 @@ object Browse {
         // the category's own tell first: what is worth knowing about it in particular
         if (category == "charging") fastestKw(places)?.let { return tell(TellKind.FASTEST_KW, it) }
         if (category == "toilets" || category == "parking" || category == "showers") {
-            val free = places.count { Facets.keeps(it, FacetSelection.NONE.toggle(Facets.PRICE, "free"), FacetContext(ctx.now)) }
+            val free = places.count { Facets.keeps(it, FacetSelection.NONE.toggle(Facets.PRICE, "free"), FacetContext(ctx.now, opening = ctx.opening)) }
             if (free > 0 && places.size >= CategoryPulse.DENSE) return tell(TellKind.FREE_COUNT, free.toString())
         }
         // none open: when the first opens
@@ -365,9 +366,9 @@ object Browse {
         val all = pool.filter(takes)
         val places = if (circle == null) all else all.filter { it.distanceTo(from) <= circle }
         val far = elsewhere.filter(takes)
-        val fctx = FacetContext(now, moment.lang, hours, at = at)
+        val fctx = FacetContext(now, moment.lang, hours, moment.hours, at = at)
         val facets = Facets.of(places, selection, fctx, far)
-        val ctx = OpeningContext(now, hours)
+        val ctx = OpeningContext(now, hours, moment.hours)
         val today = now.toLocalDate()
         val purpose = Purposes.of(node)
         val spots = aim?.let { a -> pool.filter { a.filter.matches(it.tags) && !takes(it) } }.orEmpty()
@@ -425,7 +426,7 @@ object Browse {
         return CategoryResults(
             node, if (parts.isEmpty()) bundle(hits, brandSearched, mixed) else parts.flatMap { it.items }, if (parts.isEmpty()) hits else parts.flatMap { it.hits },
             facets, if (filter != null) kindsAmong(node, facets.kept) else subcategories(node, if (with.isEmpty()) facets.kept else facets.kept.filter { holds(node, it) }),
-            byHour = openByHour(facets.overHours, from, hours), hoursFrom = from,
+            byHour = openByHour(facets.overHours, from, hours, moment.hours), hoursFrom = from,
             purpose = purpose, order = chosen, aim = aim, parts = parts, closest = closest,
         )
     }
@@ -569,11 +570,11 @@ object Browse {
     const val CURVE_FROM = 6
 
     /**
-     * How many of [places] are open at each of the 24 hours from [from], by their hours or their brand's ([hours]); one
-     * without hours that is usually open (a park) counts at every hour. The filters' time picker draws it, so the
-     * time asked about shows how much is open then.
+     * How many of [places] are open at each of the 24 hours from [from], by their hours or their brand's ([hours]) read
+     * in [opening]; one without hours that is usually open (a park) counts at every hour. The filters' time picker draws
+     * it, so the time asked about shows how much is open then.
      */
-    fun openByHour(places: List<PlaceRecord>, from: LocalDateTime, hours: HoursBook): List<Int> {
+    fun openByHour(places: List<PlaceRecord>, from: LocalDateTime, hours: HoursBook, opening: OpeningHoursContext): List<Int> {
         // places share their hours (a brand's, a common "Mo-Su 09:00-18:00"): each is read once per hour
         val shared = java.util.IdentityHashMap<OpeningHours, Int>()
         var always = 0
@@ -586,7 +587,7 @@ object Browse {
         }
         return List(24) { h ->
             val t = from.plusHours(h.toLong())
-            always + shared.entries.sumOf { (oh, n) -> if (oh.isOpen(t) == true) n else 0 }
+            always + shared.entries.sumOf { (oh, n) -> if (oh.isOpen(t, opening) == true) n else 0 }
         }
     }
 

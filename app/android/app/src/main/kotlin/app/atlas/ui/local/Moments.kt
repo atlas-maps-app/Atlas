@@ -9,6 +9,7 @@ import app.atlas.providers.Forecast
 import app.atlas.providers.WeatherDay
 import app.atlas.ui.local.astro.IssPass
 import app.atlas.ui.local.astro.PlanetNight
+import app.atlas.ui.search.PlaceLocale
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -65,6 +66,8 @@ class MomentInputs(
     val markets: List<Found>,
     val station: IssPass?,
     val planets: List<PlanetNight>,
+    /** A place's country and clock, the one way (`HereContext.localeOf`): its hours are read in them. */
+    val localeOf: (Place) -> PlaceLocale,
 )
 
 /** Builds the moments that are worth a line: those that happen in the next day (markets: this week), soonest first. */
@@ -106,16 +109,18 @@ object Moments {
     }
 
     private fun places(i: MomentInputs): List<Moment> {
-        val local = LocalDateTime.ofInstant(i.now, i.zone)
         val out = ArrayList<Moment>()
         for (p in i.saved) {
             val hours = OpeningHours.parseOrNull(p.tags["opening_hours"]) ?: continue
-            val st = hours.status(local)
+            // on the place's own clock, in its own country: a saved café in Tokyo closes by Tokyo's time
+            val where = i.localeOf(p)
+            val local = LocalDateTime.ofInstant(i.now, where.zone)
+            val st = hours.status(local, where.hours(p.location))
             if (st.unknown) continue
             val change = st.changesAt ?: continue
             val minutes = Duration.between(local, change).toMinutes()
             if (minutes < 0 || minutes > SOON_MINUTES) continue
-            val at = change.atZone(i.zone).toInstant()
+            val at = change.atZone(where.zone).toInstant()
             if (st.isOpen && !st.openEnd && st.nextChangeKind == app.atlas.places.ChangeKind.CLOSES) out += Moment.Closing(p, at, minutes.toInt())
             else if (!st.isOpen && st.nextChangeKind == app.atlas.places.ChangeKind.OPENS) out += Moment.Opening(p, at, minutes.toInt())
         }
@@ -124,23 +129,26 @@ object Moments {
 
     private fun markets(i: MomentInputs): List<Moment> {
         val out = ArrayList<Moment>()
-        val local = LocalDateTime.ofInstant(i.now, i.zone)
         for (m in i.markets.take(8)) {
             val hours = OpeningHours.parseOrNull(m.place.tags["opening_hours"]) ?: continue
+            val where = i.localeOf(m.place)
+            val zone = where.zone
+            val context = where.hours(m.place.location)
+            val local = LocalDateTime.ofInstant(i.now, zone)
             // The first stretch of opening within a week: now (until it closes) or the next opening.
             var from = local
             repeat(3) {
-                val st = hours.status(from)
+                val st = hours.status(from, context)
                 if (st.unknown) return@repeat
                 val change = st.changesAt ?: return@repeat
                 if (change.isAfter(local.plusDays(7))) return@repeat
                 // an open end states no closing time: open, until none
                 if (st.isOpen) {
-                    out += Moment.Market(m.place, i.now, st.statedChangeAt?.atZone(i.zone)?.toInstant(), m.distanceM)
+                    out += Moment.Market(m.place, i.now, st.statedChangeAt?.atZone(zone)?.toInstant(), m.distanceM)
                     return@repeat
                 }
-                val close = hours.status(change).statedChangeAt
-                out += Moment.Market(m.place, change.atZone(i.zone).toInstant(), close?.atZone(i.zone)?.toInstant(), m.distanceM)
+                val close = hours.status(change, context).statedChangeAt
+                out += Moment.Market(m.place, change.atZone(zone).toInstant(), close?.atZone(zone)?.toInstant(), m.distanceM)
                 return@repeat
             }
         }

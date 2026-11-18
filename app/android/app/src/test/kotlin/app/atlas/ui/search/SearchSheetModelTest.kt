@@ -21,6 +21,7 @@ import app.atlas.search.SearchItem
 import app.atlas.search.SearchResults
 import app.atlas.search.Sure
 import app.atlas.search.TellKind
+import app.atlas.testing.Nowhere
 import kotlinx.coroutines.runBlocking
 import java.time.ZonedDateTime
 import app.atlas.services.PlaceOrigin
@@ -195,7 +196,7 @@ class SearchSheetModelTest {
 
     /** What the field finds for [text] at the Westerkerk, as the sheet's typed words do. */
     private fun typed(services: Services, text: String): SearchResults = runBlocking {
-        services.search.search(text, SearchContext(location = Services.WESTERKERK, lang = "en", now = ZonedDateTime.now(services.clock), limit = SearchViewModel.LIMIT))
+        services.search.search(text, SearchContext(location = Services.WESTERKERK, lang = "en", now = ZonedDateTime.now(services.clock), limit = SearchViewModel.LIMIT, hours = Nowhere))
     }
 
     @Test

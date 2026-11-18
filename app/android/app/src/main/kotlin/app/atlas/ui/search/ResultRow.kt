@@ -71,8 +71,8 @@ fun walkOrDistance(metres: Double): String =
     if (WalkTime.seconds(metres) <= FAR_WALK_S) walkMinutes(WalkTime.seconds(metres)) else shortDistance(metres)
 
 /**
- * What a row says about a place, worked out once: its name and kind, symbol and colour, its open status (holiday
- * aware when [open] comes from a search that knew the country) and how far it is.
+ * What a row says about a place, worked out once: its name and kind, symbol and colour, its open status (as its caller
+ * read it, in the holidays and the sun where it is) and how far it is.
  */
 @Immutable
 data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepFree: Boolean) {
@@ -84,12 +84,14 @@ data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepF
         get() = summary.distanceM?.let(::walkOrDistance)
 
     companion object {
-        /** The line for [place] seen from [from] at [now]; [open] overrides the status read without holidays. */
-        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus? = null, name: String? = null, distanceM: Double? = null): PlaceLine {
-            val base = PlaceSummary.of(place, from, lang, now)
+        /**
+         * The line for [place] seen from [from] at [now], how it stands for opening [open] as its caller read it (a
+         * search's hit, or its hours read where it is: never without its holidays).
+         */
+        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus?, name: String? = null, distanceM: Double? = null): PlaceLine {
+            val base = PlaceSummary.withOpen(place, from, lang, open)
             val s = base.copy(
                 name = name ?: base.name,
-                open = open ?: base.open,
                 distanceM = distanceM ?: base.distanceM,
             )
             return PlaceLine(s, OpenWords.of(s, now), place.tags["wheelchair"] == "yes")

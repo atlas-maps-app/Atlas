@@ -19,7 +19,7 @@ import org.junit.Test
  */
 class DoorsTest {
     private val here = Fixtures.westerkerk
-    private val saturday = Moment(Fixtures.saturday)
+    private val saturday = Moment(Fixtures.saturday, hours = Nowhere)
     private var next = 0L
 
     /** A node [north] metres north of the Westerkerk. */

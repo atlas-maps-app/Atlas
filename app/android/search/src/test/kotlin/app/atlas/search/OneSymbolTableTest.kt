@@ -64,7 +64,7 @@ class OneSymbolTableTest {
                 w.add(OverpassElement(OsmType.NODE, 1, mapOf("amenity" to "library", "name" to "OBA Oosterdok"), amsterdam.lat, amsterdam.lon))
                 w.finish()
             }
-            val r = runBlocking { SearchEngine(s).search("library", SearchContext(location = amsterdam, lang = "en", now = Fixtures.saturday)) }
+            val r = runBlocking { SearchEngine(s).search("library", SearchContext(location = amsterdam, lang = "en", now = Fixtures.saturday, hours = Nowhere)) }
             assertEquals(Kinds.symbolOf(library), r.items.filterIsInstance<SearchItem.Kind>().first().symbol)
             assertEquals(Kinds.symbolOf(library), r.places.first().hit.symbol)
         }

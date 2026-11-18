@@ -63,6 +63,7 @@ fun NearbyList(
     }
     val lang = remember { Locale.getDefault().language }
     val now = rememberNow(state)
+    val hours = rememberHoursAt(centre)
     val c = Atlas.colors
     Column(modifier.fillMaxWidth()) {
         val s = state
@@ -74,7 +75,7 @@ fun NearbyList(
                 tint = if (s?.error != null || failed != null) c.alert else c.inkSoft,
             )
             else -> for (p in s.places) {
-                val sum = PlaceSummary.of(p, centre, lang, now)
+                val sum = PlaceSummary.of(p, centre, lang, now, hours)
                 val open = openLine(sum, now)
                 PlaceRow(
                     name = sum.name,

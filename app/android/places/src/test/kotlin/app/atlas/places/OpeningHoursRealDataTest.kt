@@ -25,7 +25,7 @@ class OpeningHoursRealDataTest {
                 ok += n
                 for (at in moments) oh.status(at, ctx)
                 oh.spans(LocalDate.of(2026, 10, 13), ctx)
-                oh.weekTable()
+                oh.weekTable(weekOf = null, context = Nowhere)
             } catch (e: OpeningHoursException) {
                 failures[v] = e.message ?: "?"
             }

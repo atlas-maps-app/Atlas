@@ -85,7 +85,7 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
     var confirmReview by remember { mutableStateOf<Triple<Int, String, app.atlas.providers.Service?>?>(null) }
     var confirmQuest by remember { mutableStateOf<Pair<Quest, Boolean>?>(null) }
     // the status comes after the place where the hours are borrowed
-    val summary = remember(place, here, state.now, state.status) { PlaceSummary.of(place, here, lang, state.now).copy(open = state.status) }
+    val summary = remember(place, here, state.now, state.status) { PlaceSummary.withOpen(place, here, lang, state.status) }
     val words = remember(summary, state.now) { OpenWords.of(summary, state.now) }
     val guessed = state.guess?.let { guessFrom(it) }
 

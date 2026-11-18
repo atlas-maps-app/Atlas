@@ -5,6 +5,7 @@ import app.atlas.geo.LatLon
 import app.atlas.geo.LocalFrame
 import app.atlas.model.Place
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import java.time.LocalDateTime
 import kotlin.math.abs
 import kotlin.math.cos
@@ -92,13 +93,14 @@ object LookScene {
         }.sortedBy { it.distanceM }
 
     /**
-     * "closes 18:30", "open until 20:00", "opens 09:00" in [now]'s zone clock, from [hours]: open or not, and when that
-     * changes, null for an open end, which states no time ("open"); null when the hours are missing, unclear or 24/7.
+     * "closes 18:30", "open until 20:00", "opens 09:00" in [now]'s zone clock, from [hours] read in [context] (the
+     * holidays and the sun where you stand): open or not, and when that changes, null for an open end, which states no
+     * time ("open"); null when the hours are missing, unclear or 24/7.
      */
-    fun status(hours: String?, now: LocalDateTime): Pair<Boolean, LocalDateTime?>? {
+    fun status(hours: String?, now: LocalDateTime, context: OpeningHoursContext): Pair<Boolean, LocalDateTime?>? {
         val parsed = OpeningHours.parseOrNull(hours) ?: return null
         if (parsed.isAlwaysOpen) return null
-        val s = parsed.status(now)
+        val s = parsed.status(now, context)
         if (s.unknown) return null
         if (s.openEnd) return true to null
         val at = s.changesAt ?: return null

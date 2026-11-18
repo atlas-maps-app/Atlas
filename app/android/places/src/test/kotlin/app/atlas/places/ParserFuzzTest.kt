@@ -31,7 +31,7 @@ class ParserFuzzTest {
                 try {
                     oh.status(LocalDateTime.of(2026, 10, 13, 12, 0), ctx)
                     oh.spans(LocalDate.of(2026, 12, 25), ctx)
-                    oh.weekTable()
+                    oh.weekTable(weekOf = null, context = Nowhere)
                     oh.weekTable(LocalDate.of(2026, 12, 28), ctx)
                 } catch (e: Exception) {
                     fail("'$text' parsed but failed to evaluate: $e")

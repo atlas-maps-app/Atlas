@@ -42,7 +42,8 @@ data class SearchContext(
     /** ISO country of the searcher, for brands that trade there. */
     val country: String? = null,
     val limit: Int = 20,
-    val hours: OpeningHoursContext = OpeningHoursContext.Default,
+    /** Holidays and the sun, for opening hours: those of where the search is (the app's `HereContext`). */
+    val hours: OpeningHoursContext,
     /** The town the searcher is in, when the app knows its bounds ("how many bins in this town"). */
     val town: BBox? = null,
 )

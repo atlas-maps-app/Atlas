@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import app.atlas.geo.LatLon
 import app.atlas.nav.LocalServices
+import app.atlas.places.OpeningHoursContext
+import app.atlas.ui.search.HereContext
 import java.time.Clock
 import java.time.LocalDateTime
 
@@ -15,6 +17,17 @@ import java.time.LocalDateTime
 fun rememberNow(vararg keys: Any?): LocalDateTime {
     val clock = LocalServices.current.clock
     return remember(clock, *keys) { LocalDateTime.now(clock) }
+}
+
+/**
+ * The holidays and the sun at [at], which a screen reads the hours of the places there in ([HereContext.hours]: the
+ * country there, never the phone's language, and the real sun), kept per point. It asks the regions on the phone once
+ * a kilometre.
+ */
+@Composable
+fun rememberHoursAt(at: LatLon): OpeningHoursContext {
+    val services = LocalServices.current
+    return remember(services, at) { HereContext.hours(services, at, services.clock.zone) }
 }
 
 /** The app's clock, for screens that reason with instants and zones themselves. */

@@ -27,7 +27,7 @@ import java.time.ZonedDateTime
 
 class PurposeTest {
     private val here = LatLon(52.37, 4.88)
-    private val saturday = Moment(Fixtures.saturday)
+    private val saturday = Moment(Fixtures.saturday, hours = Nowhere)
     private val now: LocalDateTime = Fixtures.saturday.toLocalDateTime()
 
     private fun place(id: Long, lat: Double, lon: Double, vararg tags: Pair<String, String>, bbox: BBox? = null, type: OsmType = OsmType.NODE) =
@@ -191,7 +191,7 @@ class PurposeTest {
         assertNull(o.warning(start.plusHours(2).toLocalDateTime()))
         // a storm in two hours spoils swimming now
         val july = Fixtures.saturday.withMonth(7)
-        val m = Moment(july, WeatherNow(tempC = 26.0, sunny = true), outlook = o.copy(stormAt = july.toLocalDateTime().plusMinutes(90)))
+        val m = Moment(july, WeatherNow(tempC = 26.0, sunny = true), outlook = o.copy(stormAt = july.toLocalDateTime().plusMinutes(90)), hours = Nowhere)
         assertEquals(FitReason.STORM, Intents.byId("swim")!!.fit(m).second)
         // raining now: when it stops
         val wet = forecast(listOf(hour(0, 1.2, Sky.RAIN), hour(1, 0.8, Sky.RAIN), hour(2), hour(3)))
@@ -206,8 +206,8 @@ class PurposeTest {
     @Test
     fun aHolidayRestsAsASundayDoes() {
         val tuesday = ZonedDateTime.of(2026, 12, 29, 11, 0, 0, 0, Fixtures.amsterdam)
-        val work = Relevance.score("offices", Moment(tuesday)).first
-        val holiday = Relevance.score("offices", Moment(tuesday, holiday = true)).first
+        val work = Relevance.score("offices", Moment(tuesday, hours = Nowhere)).first
+        val holiday = Relevance.score("offices", Moment(tuesday, holiday = true, hours = Nowhere)).first
         assertTrue(holiday < work)
     }
 }

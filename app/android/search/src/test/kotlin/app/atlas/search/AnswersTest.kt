@@ -16,7 +16,7 @@ import java.time.LocalDate
 
 class AnswersTest {
     private val here = LatLon(52.37, 4.88)
-    private val saturday = Moment(Fixtures.saturday)
+    private val saturday = Moment(Fixtures.saturday, hours = Nowhere)
     private val today: LocalDate = Fixtures.saturday.toLocalDate()
 
     private fun place(id: Long, vararg tags: Pair<String, String>, source: String = "osm") =

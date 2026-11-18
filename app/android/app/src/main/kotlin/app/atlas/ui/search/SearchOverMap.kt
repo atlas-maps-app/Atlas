@@ -34,6 +34,7 @@ import app.atlas.mapview.UserLocation
 import app.atlas.model.Place
 import app.atlas.places.CategoryNode
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
 import app.atlas.nav.Dest
@@ -136,7 +137,7 @@ internal fun SearchOverMap(nav: Navigator, query: String = "", kind: String? = n
         // closed places lighter, as their rows are: open or not then as now, the sheet's
         val now = rememberNow(state.results)
         val markers = remember(state.results, text.results, field, state.focus, state.prefs.cards, now) {
-            if (field.isNotBlank()) typedMarkers(text.results, now, state.centre, state.prefs.mode) else sheetMarkers(state, now)
+            if (field.isNotBlank()) typedMarkers(text.results, now, state.centre, state.prefs.mode, state.moment.hours) else sheetMarkers(state, now)
         }
         FitToPlaces(over.state, state, band)
         FitToWalk(over.state, state, band)
@@ -247,14 +248,15 @@ internal fun showsCard(s: SearchSheetState, field: String, place: Place): Boolea
 
 /**
  * The places among typed results as pins, each with its mark ([markOf]) as its row has it, lighter where its row's light
- * says closed at [now], [mode] from [here] ([closedThere]).
+ * says closed at [now], [mode] from [here] ([closedThere]); an online place's own hours read in [hours] (the holidays and
+ * the sun there).
  */
-internal fun typedMarkers(r: SearchResults?, now: LocalDateTime, here: LatLon, mode: TravelMode): List<Marker> {
+internal fun typedMarkers(r: SearchResults?, now: LocalDateTime, here: LatLon, mode: TravelMode, hours: OpeningHoursContext): List<Marker> {
     val places = r?.items.orEmpty().mapNotNull { item ->
         when (item) {
             is SearchItem.PlaceResult -> Triple(item.hit.place, item.hit.open, item.hit.distance)
             // an online place's hours are its own, as its row reads them
-            is SearchItem.Online -> Triple(item.place, OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(now), item.distance)
+            is SearchItem.Online -> Triple(item.place, OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(now, hours), item.distance)
             is SearchItem.Element -> Triple(item.hit.place, item.hit.open, item.hit.distance)
             else -> null
         }
