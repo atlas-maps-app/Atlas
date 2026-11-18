@@ -241,7 +241,8 @@ private fun TodayTile(h: HoursAnswer, now: LocalDateTime, week: Boolean, onWeek:
     val t = h.days.firstOrNull { it.day == now.dayOfWeek } ?: return
     val first = t.opensMiddle ?: t.earliest
     val last = t.closesMiddle ?: t.latest
-    val value = if (first == null || last == null) stringResource(R.string.brand_today_closed) else "${hm(first)}–${hm(last)}"
+    // where no branch open today states when it closes (`17:00+`): "17:00+"
+    val value = if (first == null) stringResource(R.string.brand_today_closed) else if (last == null) "${hm(first)}+" else "${hm(first)}–${hm(last)}"
     val later = t.latest?.takeIf { l -> last != null && l > last }?.let { stringResource(R.string.brand_today_latest, hm(it)) }
     DetailTile(
         "ui-clock", stringResource(R.string.brand_today), value, later, onClick = onWeek,

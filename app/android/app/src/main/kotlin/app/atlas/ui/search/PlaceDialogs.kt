@@ -53,6 +53,7 @@ import app.atlas.places.OpenState
 import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.PublicHolidays
+import app.atlas.places.statedSpans
 import app.atlas.providers.Service
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.Card
@@ -207,15 +208,23 @@ internal fun WeekTableDialog(
     }
 }
 
-/** "9:00–17:00, 18:00–1:00" for a day's open spans; null when it is closed all day. */
+/**
+ * "9:00–17:00, 18:00–1:00" for a day's open spans, "16:00–2:00+" and "17:00+" for an open end, whose closing time
+ * is not stated; null when it is closed all day.
+ */
 internal fun spanWords(spans: List<OpenSpan>): String? {
-    val open = spans.filter { it.state != OpenState.CLOSED }
+    val open = statedSpans(spans.filter { it.state != OpenState.CLOSED })
     if (open.isEmpty()) return null
-    if (open.size == 1 && open[0].start <= 0 && open[0].end >= 1440) return "24 h"
+    if (open.size == 1 && open[0].start <= 0 && !open[0].openEnd && (open[0].end ?: 0) >= 1440) return "24 h"
+    fun clock(m: Int) = "%d:%02d".format(Locale.ROOT, (m / 60) % 24, m % 60)
     return open.joinToString(", ") { s ->
-        val a = "%d:%02d".format(Locale.ROOT, (s.start / 60) % 24, s.start % 60)
-        val b = if (s.end == 1440) "24:00" else "%d:%02d".format(Locale.ROOT, (s.end / 60) % 24, s.end % 60)
-        if (s.state == OpenState.UNKNOWN) "$a–$b?" else "$a–$b"
+        val a = clock(s.start)
+        val words = s.end?.let { "$a–${if (it == 1440) "24:00" else clock(it)}" } ?: a
+        when {
+            s.state == OpenState.UNKNOWN -> "$words?"
+            s.openEnd -> "$words+"
+            else -> words
+        }
     }
 }
 

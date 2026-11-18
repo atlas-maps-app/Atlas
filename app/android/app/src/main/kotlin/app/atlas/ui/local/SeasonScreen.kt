@@ -250,7 +250,7 @@ internal suspend fun nearestMarket(services: app.atlas.Services, at: LatLon, now
     val pick = found.firstOrNull { isFarmersMarket(it.place.tags) } ?: found.firstOrNull { it.place.tags["opening_hours"] != null } ?: found.firstOrNull() ?: return null
     val tags = pick.place.tags
     val name = app.atlas.places.Localise.name(tags, lang) ?: return null
-    return MarketNow(pick.place, name, pick.distanceM, marketLine(tags["opening_hours"], now, zone) { services.context.getString(R.string.moment_market_open_until, it) })
+    return MarketNow(pick.place, name, pick.distanceM, marketLine(tags["opening_hours"], now, zone, services.context.getString(R.string.kit_open)) { services.context.getString(R.string.moment_market_open_until, it) })
 }
 
 private val FARM_WORDS = listOf("boeren", "farm", "biolog", "organic", "bauern", "wochenmarkt", "producteurs", "paysan", "greenmarket", "streekmarkt", "groente", "fresh")
@@ -261,8 +261,11 @@ internal fun isFarmersMarket(tags: Map<String, String>): Boolean {
     return tags["market"] == "farmers" || tags["farmers_market"] == "yes" || FARM_WORDS.any { it in text }
 }
 
-/** "Sat 8–13" for the next opening of a market's hours, "open now until 13:00" while it is open; null when the hours are not mapped. */
-internal fun marketLine(hours: String?, now: Instant, zone: ZoneId, openUntil: (String) -> String): String? {
+/**
+ * "Sat 8–13" for the next opening of a market's hours, "open now until 13:00" while it is open, [openNow] while it is
+ * open to an open end, which states no closing time; null when the hours are not mapped.
+ */
+internal fun marketLine(hours: String?, now: Instant, zone: ZoneId, openNow: String, openUntil: (String) -> String): String? {
     val parsed = OpeningHours.parseOrNull(hours) ?: return null
     val local = LocalDateTime.ofInstant(now, zone)
     val st = parsed.status(local)
@@ -271,9 +274,9 @@ internal fun marketLine(hours: String?, now: Instant, zone: ZoneId, openUntil: (
     fun short(t: LocalDateTime) = if (t.minute == 0) t.hour.toString() else hm.format(t)
     val change = st.changesAt ?: return null
     return if (st.isOpen) {
-        openUntil(hm.format(change))
+        st.statedChangeAt?.let { openUntil(hm.format(it)) } ?: openNow
     } else {
-        val close = parsed.status(change).changesAt
+        val close = parsed.status(change).statedChangeAt
         val range = if (close != null && close.toLocalDate() == change.toLocalDate()) "${short(change)}–${short(close)}" else hm.format(change)
         "${day.format(change)} $range"
     }

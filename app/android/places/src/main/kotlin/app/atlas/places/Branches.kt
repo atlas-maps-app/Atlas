@@ -50,14 +50,16 @@ object BrandHours {
 
     /**
      * Each day's first opening and last closing from Monday, minutes from its midnight (a closing past midnight past
-     * 1440), null for a day closed; null for hours open on no day of a plain week.
+     * 1440), null for a day closed; null for hours open on no day of a plain week. The closings are those the hours
+     * state: an open end its stated end ("16:00-02:00+": 2:00), never the guess of how long it lasts; hours whose last
+     * stretch of a day states none (`17:00+`) say nothing of a week (null).
      */
     fun weekOf(h: OpeningHours): List<Pair<Int, Int>?>? {
         if (h.isAlwaysOpen) return List(7) { 0 to 1440 }
         val table = h.weekTable()
         val out = table.map { spans ->
-            val open = spans.filter { it.state == OpenState.OPEN }
-            if (open.isEmpty()) null else open.minOf { it.start } to open.maxOf { it.end }
+            val open = statedSpans(spans.filter { it.state == OpenState.OPEN })
+            if (open.isEmpty()) null else open.minOf { it.start } to (open.last().end ?: return null)
         }
         return out.takeIf { days -> days.any { it != null } }
     }

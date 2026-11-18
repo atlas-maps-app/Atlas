@@ -210,6 +210,18 @@ class EatLogicTest {
     }
 
     @Test
+    fun aMarketWithAnOpenEndStatesNoClosingTime() {
+        val noorder = place(0.002, 0.0, "amenity" to "marketplace", "name" to "Noordermarkt", "opening_hours" to "Sa 09:00-16:00+; Su 10:00+")
+        val week = MarketModel.week(listOf(eat(noorder)), area(noorder), evening.toLocalDate())
+        // one session a day, its tail no session of its own, and no time it doesn't know
+        val saturday = week[5].sessions.single()
+        assertEquals(LocalTime.of(16, 0), saturday.to)
+        assertEquals("9–16+", sessionHours(saturday))
+        assertEquals("10+", sessionHours(week[6].sessions.single()))
+        assertEquals("9–13", sessionHours(MarketModel.week(listOf(eat(place(0.002, 0.0, "amenity" to "marketplace", "name" to "Markt", "opening_hours" to "Mo 09:00-13:00"))), area(noorder), evening.toLocalDate())[0].sessions.single()))
+    }
+
+    @Test
     fun theMachinePrintsTheSameTicketAllDay() {
         val ramen = place(0.001, 0.0, "amenity" to "restaurant", "name" to "Ramen Tei", "cuisine" to "ramen", "opening_hours" to "Mo-Su 17:00-22:00", "payment:cash" to "only")
         val sushi = place(0.002, 0.0, "amenity" to "restaurant", "name" to "Sushi", "cuisine" to "sushi", "opening_hours" to "Mo-Su 21:00-23:00")

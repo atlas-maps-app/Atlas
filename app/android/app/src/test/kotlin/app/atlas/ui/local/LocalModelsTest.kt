@@ -334,6 +334,9 @@ class LocalModelsTest {
         assertEquals("24/7", Parkland.todaysSpan("24/7", day))
         assertNull(Parkland.todaysSpan(null, day))
         assertNull(Parkland.todaysSpan("by appointment", day))
+        // an open end states no closing time
+        assertEquals("6:00–17:00+", Parkland.todaysSpan("Mo-Su 06:00-17:00+", day))
+        assertEquals("17:00+", Parkland.todaysSpan("Mo-Su 17:00+", day))
     }
 
     @Test

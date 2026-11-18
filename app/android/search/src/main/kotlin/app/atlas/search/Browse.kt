@@ -65,8 +65,8 @@ data class CategoryPulse(
     /** The tell's value: a time ("22:00"), kilowatts ("150"), a count, minutes. */
     val value: String?,
     /**
-     * When the last of the open ones closes (those that never close aside), by hours of their own where any of them
-     * says, else by guessed ones ([untilGuessed]); null when none of them closes.
+     * When the last of the open ones closes (those that never close or are open to an open end aside), by hours of their
+     * own where any of them says, else by guessed ones ([untilGuessed]); null when none of them closes.
      */
     val until: LocalDateTime? = null,
     /** Of [open], those with no closing ahead: open day and night, or open without hours as such places are. */
@@ -77,7 +77,15 @@ data class CategoryPulse(
     val untilGuessed: Boolean = false,
     /** True when only guessed hours say [opensAt]: none of them by hours of its own says when it opens. */
     val opensGuessed: Boolean = false,
+    /** Of [open], those open to an open end (`17:00+`), whose hours state no closing time: [until] leaves them out. */
+    val openEnded: Int = 0,
 ) {
+    /**
+     * When the kind closes around, as far as the hours say: [until], where every one open closes by its hours; null
+     * where one never closes or is open to an open end, so no tile says the kind closes soon while it may stay open.
+     */
+    val closes: LocalDateTime? get() = until?.takeIf { open > 0 && endless == 0 && openEnded == 0 }
+
     /** Many places near: the tile counts them; few: it says the nearest. */
     val dense: Boolean get() = count >= DENSE
 
@@ -262,19 +270,20 @@ object Browse {
         val category = node.category.id
         // each change with whether the hours saying it are the place's own; a time is the own hours' where any says it
         fun changes(of: List<PlaceRecord>, kind: ChangeKind) = of.mapNotNull { r ->
-            statuses[r]?.let { (s, own) -> s?.takeIf { it.nextChangeKind == kind }?.changesAt?.let { it to own } }
+            statuses[r]?.let { (s, own) -> s?.takeIf { it.nextChangeKind == kind }?.statedChangeAt?.let { it to own } }
         }
         fun pick(of: List<Pair<LocalDateTime, Boolean>>, last: Boolean): Pair<LocalDateTime, Boolean>? {
             fun best(l: List<Pair<LocalDateTime, Boolean>>) = if (last) l.maxByOrNull { it.first } else l.minByOrNull { it.first }
             return best(of.filter { it.second })?.let { it.first to false } ?: best(of)?.let { it.first to true }
         }
         val latest = pick(changes(open, ChangeKind.CLOSES), last = true)
+        val openEnded = open.count { r -> statuses[r]?.first?.openEnd == true }
         val endless = open.count { r -> statuses[r]?.first?.let { it.nextChangeKind != ChangeKind.CLOSES || it.changesAt == null } == true }
         val opens = if (open.isNotEmpty()) null else pick(changes(places, ChangeKind.OPENS), last = false)
 
         fun tell(kind: TellKind, value: String?) = CategoryPulse(
             node, places.size, open.size, unconfirmed, nearest, metres, minutes, kind, value, latest?.first, endless, opens?.first,
-            untilGuessed = latest?.second == true, opensGuessed = opens?.second == true,
+            untilGuessed = latest?.second == true, opensGuessed = opens?.second == true, openEnded = openEnded,
         )
 
         // the category's own tell first: what is worth knowing about it in particular

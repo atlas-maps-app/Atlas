@@ -134,11 +134,12 @@ object Moments {
                 if (st.unknown) return@repeat
                 val change = st.changesAt ?: return@repeat
                 if (change.isAfter(local.plusDays(7))) return@repeat
+                // an open end states no closing time: open, until none
                 if (st.isOpen) {
-                    out += Moment.Market(m.place, i.now, change.atZone(i.zone).toInstant(), m.distanceM)
+                    out += Moment.Market(m.place, i.now, st.statedChangeAt?.atZone(i.zone)?.toInstant(), m.distanceM)
                     return@repeat
                 }
-                val close = hours.status(change).changesAt
+                val close = hours.status(change).statedChangeAt
                 out += Moment.Market(m.place, change.atZone(i.zone).toInstant(), close?.atZone(i.zone)?.toInstant(), m.distanceM)
                 return@repeat
             }

@@ -292,7 +292,8 @@ internal enum class Arrival(val tone: Tone) { CLOSED(Tone.CLOSED), CLOSES(Tone.S
  */
 internal fun arrivalOf(open: OpenStatus?, minutes: Int, now: LocalDateTime): Pair<Arrival, Int>? {
     if (open == null) return null
-    val at = open.changesAt ?: return null
+    // an open end states no closing time: open on arriving, as far as its hours say
+    val at = open.statedChangeAt ?: return null
     val after = Duration.between(now.plusMinutes(minutes.toLong()), at).toMinutes().toInt()
     return when {
         open.isOpen && open.nextChangeKind == ChangeKind.CLOSES -> when {
@@ -424,10 +425,10 @@ internal fun PlanKey(onClick: () -> Unit) {
     ) { Symbol("temaki-info_board", tint = c.ink, size = 18.dp) }
 }
 
-/** The minutes to spare on arriving before it closes, where it closes within the errand's window; null where not. */
-private fun spareMinutes(h: ResultHit, now: LocalDateTime): Int? {
+/** The minutes to spare on arriving before it closes, where it closes within the errand's window; null where not, or where an open end states no closing time. */
+internal fun spareMinutes(h: ResultHit, now: LocalDateTime): Int? {
     val open = h.open?.takeIf { it.isOpen && it.nextChangeKind == ChangeKind.CLOSES } ?: return null
-    val at = open.changesAt ?: return null
+    val at = open.statedChangeAt ?: return null
     return Duration.between(now.plusMinutes(h.minutes.toLong()), at).toMinutes().toInt().takeIf { it in MIN_SPARE..CLOSING_WINDOW }
 }
 

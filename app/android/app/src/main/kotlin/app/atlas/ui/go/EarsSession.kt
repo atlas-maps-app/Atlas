@@ -166,13 +166,13 @@ class EarsSession(
         const val MAX_LINES = 12
         const val BEACON_MIN_M = 25.0
 
-        /** When [p] closes today, from its opening hours, for "open until 19". */
+        /** When [p] closes today, from its opening hours, for "open until 19"; null for an open end, which states no time. */
         fun closesAt(p: Place, at: java.time.Instant, zone: ZoneId): LocalTime? {
             val hours = OpeningHours.parseOrNull(p.tags["opening_hours"]) ?: return null
             val now = at.atZone(zone).toLocalDateTime()
             val s = hours.status(now)
             if (!s.isOpen || s.unknown) return null
-            val change = s.changesAt ?: return null
+            val change = s.statedChangeAt ?: return null
             return if (change.toLocalDate() == now.toLocalDate() || change.isBefore(now.plusHours(12))) change.toLocalTime() else null
         }
     }

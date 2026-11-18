@@ -91,12 +91,16 @@ object LookScene {
             if (abs(rel) > half) null else Mark(p, n, d, bearing, rel, p.tags["opening_hours"])
         }.sortedBy { it.distanceM }
 
-    /** "closes 18:30", "open until 20:00", "opens 09:00" in [now]'s zone clock, from [hours]; null when the hours are missing, unclear or 24/7. */
-    fun status(hours: String?, now: LocalDateTime): Pair<Boolean, LocalDateTime>? {
+    /**
+     * "closes 18:30", "open until 20:00", "opens 09:00" in [now]'s zone clock, from [hours]: open or not, and when that
+     * changes, null for an open end, which states no time ("open"); null when the hours are missing, unclear or 24/7.
+     */
+    fun status(hours: String?, now: LocalDateTime): Pair<Boolean, LocalDateTime?>? {
         val parsed = OpeningHours.parseOrNull(hours) ?: return null
         if (parsed.isAlwaysOpen) return null
         val s = parsed.status(now)
         if (s.unknown) return null
+        if (s.openEnd) return true to null
         val at = s.changesAt ?: return null
         return s.isOpen to at
     }

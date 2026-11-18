@@ -10,8 +10,10 @@ import app.atlas.places.CategoryTree
 import app.atlas.places.NodeKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalTime
 import java.time.ZonedDateTime
 
 class BrowseTest {
@@ -87,6 +89,27 @@ class BrowseTest {
         val asleep = pulse(listOf(guessed), 10)
         assertEquals(12, asleep.opensAt!!.hour)
         assertTrue("only the guess says when it opens", asleep.opensGuessed)
+    }
+
+    @Test
+    fun aTileNamesNoClosingTimeWhereAnOpenEndStatesNone() {
+        val drinks = CategoryTree.category("drinks")!!
+        var id = 910_000L
+        fun bar(dLat: Double, hours: String) = PlaceRecord.of(
+            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), mapOf("amenity" to "bar", "name" to "Bar $id", "opening_hours" to hours)),
+        )
+        val late = bar(0.001, "Mo-Su 17:00+")
+        val early = bar(0.002, "Mo-Su 16:00-22:30")
+        fun pulse(places: List<PlaceRecord>) = Browse.pulses(listOf(drinks), places, here, Moment(Fixtures.saturday.withHour(21).withMinute(0)), HoursBook(places)).single()
+        // at 21:00 both open: the time is the one the hours state, and the kind does not close as far as they say (no
+        // "closing soon" tile), nor is it open day and night
+        val both = pulse(listOf(late, early))
+        assertEquals(2 to 1, both.open to both.openEnded)
+        assertEquals(LocalTime.of(22, 30), both.until!!.toLocalTime())
+        assertNull(both.closes)
+        assertEquals(0, both.endless)
+        // the one of stated hours alone: as before
+        assertEquals(LocalTime.of(22, 30), pulse(listOf(early)).closes!!.toLocalTime())
     }
 
     /** The time picker's curve: how many are open each hour of the day asked about, over what the other filters keep. */

@@ -289,11 +289,13 @@ private fun Marks(marks: List<LookScene.Mark>, now: LocalDateTime, show: Boolean
             while (placed.any { (l, t) -> abs(l - left) < 130f && abs(t - top) < 52f } && top < 460f) top += 54f
             placed += left to top
             val s = LookScene.status(m.hours, now)
+            val at = s?.second
             val (text, colour) = when {
                 s == null -> null to Soft
-                s.first && java.time.Duration.between(now, s.second).toMinutes() <= 60 -> stringResource(R.string.look_closes, time.format(s.second)) to Color(0xFF8A5A00)
-                s.first -> stringResource(R.string.look_open_until, time.format(s.second)) to Color(0xFF12663A)
-                else -> stringResource(R.string.look_opens, time.format(s.second)) to Soft
+                at == null -> stringResource(R.string.kit_open) to Color(0xFF12663A)
+                s.first && java.time.Duration.between(now, at).toMinutes() <= 60 -> stringResource(R.string.look_closes, time.format(at)) to Color(0xFF8A5A00)
+                s.first -> stringResource(R.string.look_open_until, time.format(at)) to Color(0xFF12663A)
+                else -> stringResource(R.string.look_opens, time.format(at)) to Soft
             }
             val desc = if (text != null) stringResource(R.string.look_mark_desc, m.name, text) else m.name
             // The board's label: 6 by 10 px in, radius 12, white at 94 per cent, its shadow; name and hours 1 px apart.

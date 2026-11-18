@@ -5,6 +5,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.CategoryTree
+import app.atlas.places.OpeningHoursContext
 import app.atlas.providers.TagEdit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -49,6 +50,27 @@ class AnswersTest {
         // one tap adds it, with what the user saw
         val edit = TagEdits.answer(hit.record, fee.answers.first(), today)!!
         assertEquals(TagEdit(app.atlas.providers.OsmType.NODE, 9, mapOf("fee" to "no"), mapOf("fee" to null)), edit)
+    }
+
+    @Test
+    fun theHoursOverviewCountsOnlyTheClosingTimesTheHoursState() {
+        val bars = listOf(
+            place(21, "amenity" to "bar", "name" to "A", "opening_hours" to "Mo-Su 16:00-02:00+"),
+            place(22, "amenity" to "bar", "name" to "B", "opening_hours" to "Mo-Su 17:00+"),
+            place(23, "amenity" to "bar", "name" to "C", "opening_hours" to "Mo-Su 12:00-23:00"),
+        )
+        val hits = bars.map { Hit(it, 1.0, 1.0, 100.0, null) }
+        fun day(of: List<Hit>) = Overview.hours(of, Fixtures.saturday, OpeningHoursContext.Default, HoursBook(bars)).days.first { it.day == Fixtures.saturday.dayOfWeek }
+        val all = day(hits)
+        assertEquals(3, all.open)
+        assertEquals(12 * 60, all.earliest)
+        // A's stated 2:00 the latest, C's 23:00, and none of B, whose hours state none
+        assertEquals(26 * 60, all.latest)
+        // B alone: open from 17:00, and no closing time
+        val b = day(listOf(hits[1]))
+        assertEquals(1 to 17 * 60, b.open to b.earliest)
+        assertNull(b.latest)
+        assertNull(b.closesMiddle)
     }
 
     @Test

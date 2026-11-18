@@ -256,7 +256,7 @@ private fun factText(f: NoteFact, now: java.time.Instant, zone: java.time.ZoneId
     is NoteFact.Protected -> stringResource(R.string.nature_fact_protected)
     is NoteFact.Autumn -> stringResource(R.string.nature_fact_autumn)
     NoteFact.Blossom -> stringResource(R.string.nature_fact_blossom)
-    is NoteFact.Hours -> { val context = androidx.compose.ui.platform.LocalContext.current; marketLine(f.text, now, zone) { context.getString(R.string.moment_market_open_until, it) } }
+    is NoteFact.Hours -> { val context = androidx.compose.ui.platform.LocalContext.current; marketLine(f.text, now, zone, context.getString(R.string.kit_open)) { context.getString(R.string.moment_market_open_until, it) } }
     is NoteFact.Class -> f.protectClass?.let { stringResource(protectClassName(it)) }
     NoteFact.StepFree -> stringResource(R.string.picnic_step_free)
     is NoteFact.Elevation -> stringResource(R.string.nature_fact_elevation, f.metres)

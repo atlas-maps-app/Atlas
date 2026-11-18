@@ -105,6 +105,10 @@ class LookPeaksTest {
         assertNull(LookScene.status("24/7", at))
         assertNull(LookScene.status(null, at))
         assertNull(LookScene.status("by appointment", at))
+        // an open end states no closing time: open, and no time ("open"), in its stated hours and in the night after
+        assertEquals(true to null, LookScene.status("Mo-Su 17:00-02:00+", at))
+        assertEquals(true to null, LookScene.status("Mo-Su 17:00-02:00+", LocalDateTime.of(2026, 10, 14, 3, 0)))
+        assertEquals(true to null, LookScene.status("Mo-Su 17:00+", at))
     }
 
     @Test

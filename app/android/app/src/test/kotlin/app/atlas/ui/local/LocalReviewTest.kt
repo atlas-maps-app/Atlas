@@ -62,6 +62,26 @@ class LocalReviewTest {
     }
 
     @Test
+    fun aMarketOpenToAnOpenEndNamesNoClosingTime() {
+        val zone = ZoneId.of("Europe/Amsterdam")
+        val saturday = Instant.parse("2026-11-21T10:00:00Z") // 11:00 in Amsterdam
+        fun line(hours: String) = marketLine(hours, saturday, zone, "open") { "open now until $it" }
+        assertEquals("open now until 13:00", line("Sa 08:00-13:00"))
+        assertEquals("open", line("Sa 08:00-13:00+"))
+        assertEquals("open", line("Sa 08:00+"))
+        // the home's moment of the same market: open now, until no time
+        val here = LatLon(52.3731, 4.8922)
+        fun moment(hours: String): Moment.Market {
+            val market = app.atlas.model.Place(app.atlas.model.OsmId(app.atlas.model.OsmType.NODE, 1), here, mapOf("amenity" to "marketplace", "name" to "Markt", "opening_hours" to hours))
+            return Moments.build(MomentInputs(saturday, zone, here, null, emptyList(), listOf(Found(market, 300.0)), null, emptyList()))
+                .filterIsInstance<Moment.Market>().single()
+        }
+        assertEquals(Instant.parse("2026-11-21T12:00:00Z"), moment("Sa 08:00-13:00").until)
+        assertNull(moment("Sa 08:00-13:00+").until)
+        assertEquals(saturday, moment("Sa 08:00-13:00+").at)
+    }
+
+    @Test
     fun aHeightInFeetIsConvertedToMetres() {
         assertEquals(12.192, Footprints.height(mapOf("height" to "40 ft"))!!, 1e-6)
         assertEquals(3.048, Footprints.height(mapOf("height" to "10'"))!!, 1e-6)

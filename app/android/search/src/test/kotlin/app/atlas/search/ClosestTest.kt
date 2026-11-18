@@ -4,6 +4,8 @@ import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
+import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -11,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalDateTime
 
 /** The owner, 4 November: no preset maximum distance, the closest match instead of nothing, hours guessed by kind. */
 class ClosestTest {
@@ -192,5 +195,16 @@ class ClosestTest {
         val hits = OfflineEvaluator(MemoryPlaces(far)).run(Query.Tags(TagFilter.Equals("amenity", "cafe")), EvalContext(location = here, now = saturday, limit = 5)).hits
         assertEquals(5, hits.size)
         assertTrue(hits.all { it.distance!! in 55_000.0..70_000.0 })
+    }
+
+    @Test
+    fun aMissNamesNoClosingTimeAnOpenEndDoesNotState() {
+        val late = LocalDateTime.of(2026, 11, 17, 22, 30)
+        // asked open late: "17:00+" opens tomorrow, and no "closed at 22:00" from the guess of its end
+        val bar = Closest.openMiss(OpeningHours.parse("Mo-Su 17:00+"), late, back = true, OpeningHoursContext.Default)
+        assertEquals(Miss.Opens(LocalDateTime.of(2026, 11, 18, 17, 0), 1110), bar)
+        // a stated end as before
+        val pub = Closest.openMiss(OpeningHours.parse("Mo-Su 17:00-22:00"), late, back = true, OpeningHoursContext.Default)
+        assertEquals(Miss.Closed(LocalDateTime.of(2026, 11, 17, 22, 0), 30), pub)
     }
 }

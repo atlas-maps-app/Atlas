@@ -31,6 +31,16 @@ class BranchesTest {
     }
 
     @Test
+    fun theBranchesTakeTheClosingTheirHoursState() {
+        // "16:00-02:00+" closes at 2:00 as far as its hours say, never at the guess of its open end
+        assertEquals(List(7) { 16 * 60 to 26 * 60 }, BrandHours.weekOf(OpeningHours.parse("Mo-Su 16:00-02:00+")))
+        assertEquals("Mo-Su 16:00-02:00", BrandHours.infer(listOf("Mo-Su 16:00-02:00+"))!!.hours.raw)
+        // "17:00+" states no closing: it says nothing of a branch's week
+        assertNull(BrandHours.weekOf(OpeningHours.parse("Mo-Su 17:00+")))
+        assertNull(BrandHours.infer(listOf("Mo-Su 17:00+")))
+    }
+
+    @Test
     fun realBranchesInAmsterdam() {
         val byBrand = (Fixtures.pois("ams") + Fixtures.pois("eat")).map { it.place }.distinctBy { it.id }
             .filter { it.tags["brand"] != null }.groupBy { it.tags["brand"]!! }
