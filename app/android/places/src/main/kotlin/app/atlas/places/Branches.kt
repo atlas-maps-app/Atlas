@@ -105,18 +105,25 @@ object BrandHours {
  * A brand's own website for a branch that maps none (the user, 3 November: "Some locations have them, usually a
  * specific parameter for the location. If there is no website mapped the brands website without that parameter can
  * be displayed instead"), from the tags of the brand's other branches: a `brand:website` mapped on them, else the
- * site their own websites share, the page of one branch left out. The country's own site comes first
- * ("starbucks.nl" in the Netherlands, where branches link .nl, .com and .co.uk pages); else most of the branches
+ * site their own websites share, the page of one branch left out. The site of [country], the branches' country, comes
+ * first ("starbucks.nl" in the Netherlands, where branches link .nl, .com and .co.uk pages; ".uk" Britain's), when two
+ * branches link it or it is the brand's name under another of its domains: one branch's page under the country's
+ * domain (a shopping centre's) is not the brand's (the reviewer, 17 November, finding 11). Else most of the branches
  * with a website must share one, two at least. Social pages and booking sites say nothing about the brand.
  */
 object BrandSite {
-    fun of(branches: List<Map<String, String>>, country: String? = null): String? {
+    fun of(branches: List<Map<String, String>>, country: String?): String? {
         branches.mapNotNull { t -> t["brand:website"]?.let(::origin)?.takeIf { it.domain !in ELSEWHERE } }
             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.let { return it.key.origin }
         val sites = branches.mapNotNull { mapped(it)?.let(::origin) }.filter { it.domain !in ELSEWHERE }
         if (sites.isEmpty()) return null
         val byDomain = sites.groupBy { it.domain }
-        val local = country?.lowercase()?.let { c -> byDomain.keys.filter { it.endsWith(".$c") }.maxByOrNull { byDomain.getValue(it).size } }
+        val tld = country?.lowercase()?.let { if (it == "gb") "uk" else it }
+        val names = byDomain.keys.groupingBy { it.substringBefore('.') }.eachCount()
+        val local = tld?.let { t ->
+            byDomain.keys.filter { d -> d.endsWith(".$t") && (byDomain.getValue(d).size >= 2 || names.getValue(d.substringBefore('.')) >= 2) }
+                .maxByOrNull { byDomain.getValue(it).size }
+        }
         val domain = local ?: byDomain.maxByOrNull { it.value.size }?.takeIf { it.value.size >= 2 && it.value.size * 2 >= sites.size }?.key ?: return null
         // the form they write it in most, the domain itself or its www before a subdomain, https before http
         return byDomain.getValue(domain).groupingBy { it.origin }.eachCount().entries.sortedWith(

@@ -71,8 +71,8 @@ class BranchesTest {
     @Test
     fun aBranchWithoutAWebsiteShowsTheBrands() {
         fun site(vararg urls: String) = urls.map { mapOf("website" to it) }
-        assertEquals("https://jamin.nl", BrandSite.of(site("https://jamin.nl/winkel/amsterdam-nieuwendijk/", "https://jamin.nl/winkel/amsterdam-damrak/")))
-        assertEquals("https://www.febo.nl", BrandSite.of(site("https://www.febodelekkerste.nl", "https://bestellen.febo.nl/", "https://www.febo.nl/")))
+        assertEquals("https://jamin.nl", BrandSite.of(site("https://jamin.nl/winkel/amsterdam-nieuwendijk/", "https://jamin.nl/winkel/amsterdam-damrak/"), "NL"))
+        assertEquals("https://www.febo.nl", BrandSite.of(site("https://www.febodelekkerste.nl", "https://bestellen.febo.nl/", "https://www.febo.nl/"), "NL"))
         // the country's own site first
         val starbucks = site(
             "https://www.starbucks.co.uk/store-locator/15661-154449/amsterdam-leidsestraat",
@@ -81,12 +81,28 @@ class BranchesTest {
             "https://www.starbucks.nl",
         )
         assertEquals("https://www.starbucks.nl", BrandSite.of(starbucks, "NL"))
-        assertEquals("https://www.starbucks.com", BrandSite.of(starbucks))
+        assertEquals("https://www.starbucks.com", BrandSite.of(starbucks, null))
         // a brand:website mapped on a branch wins; social pages say nothing; one page alone is not a brand's
-        assertEquals("https://www.ah.nl", BrandSite.of(listOf(mapOf("brand:website" to "https://www.ah.nl/"), mapOf("website" to "https://ah.nl/winkel/1"))))
-        assertNull(BrandSite.of(site("https://www.facebook.com/a", "https://www.facebook.com/b")))
-        assertNull(BrandSite.of(site("https://pizzeria-one.nl/")))
-        assertNull(BrandSite.of(site("https://a.nl", "https://b.nl", "https://c.nl")))
+        assertEquals("https://www.ah.nl", BrandSite.of(listOf(mapOf("brand:website" to "https://www.ah.nl/"), mapOf("website" to "https://ah.nl/winkel/1")), "NL"))
+        assertNull(BrandSite.of(site("https://www.facebook.com/a", "https://www.facebook.com/b"), "NL"))
+        assertNull(BrandSite.of(site("https://pizzeria-one.nl/"), "NL"))
+        assertNull(BrandSite.of(site("https://a.nl", "https://b.nl", "https://c.nl"), "NL"))
+    }
+
+    /**
+     * One branch's page under the country's domain is not the brand's site (the reviewer, 17 November, finding 11: a
+     * shopping centre's .nl page became the site of every branch without one); Britain's domain is .uk, not .gb.
+     */
+    @Test
+    fun aCountrysDomainIsTheBrandsOnlyWhereItIsTheBrands() {
+        fun site(vararg urls: String) = urls.map { mapOf("website" to it) }
+        val inACentre = site("https://www.kalvertoren.nl/winkels/hunkemoller", "https://www.hunkemoller.com/nl/store/1", "https://www.hunkemoller.com/nl/store/2")
+        assertEquals("https://www.hunkemoller.com", BrandSite.of(inACentre, "NL"))
+        val britain = site(
+            "https://www.starbucks.co.uk/store/1", "https://www.starbucks.co.uk/store/2",
+            "https://www.starbucks.com/store/3", "https://www.starbucks.com/store/4", "https://www.starbucks.com/store/5",
+        )
+        assertEquals("https://www.starbucks.co.uk", BrandSite.of(britain, "GB"))
     }
 
     @Test

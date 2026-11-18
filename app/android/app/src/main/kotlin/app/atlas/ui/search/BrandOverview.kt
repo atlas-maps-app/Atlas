@@ -200,16 +200,18 @@ internal fun BrandDetails(
     week: Boolean,
     now: LocalDateTime,
     lang: String,
+    country: String?,
     onWeek: () -> Unit,
 ) {
     val services = LocalServices.current
     val uri = LocalUriHandler.current
     val langs = listOf(lang, "en").distinct()
     var reading by remember { mutableStateOf(false) }
-    // its branches' own websites say the brand's first ([BrandSite]), its Wikidata item's after
-    val site = remember(results, wiki) {
+    // its branches' own websites say the brand's first ([BrandSite]), in the country of the map where they are, its
+    // Wikidata item's after
+    val site = remember(results, wiki, country) {
         val tags = results?.hits?.map { it.record.tags }.orEmpty()
-        webUrl(BrandSite.of(tags, tags.firstNotNullOfOrNull { it["addr:country"] }) ?: wiki?.website)
+        webUrl(BrandSite.of(tags, country) ?: wiki?.website)
     }
     val article = wiki?.let { e -> langs.firstNotNullOfOrNull { l -> e.sitelinks["${l}wiki"]?.let { l to it } } }
     val every = everyBranch(brand, lang)

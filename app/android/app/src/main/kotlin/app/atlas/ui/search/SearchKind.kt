@@ -206,7 +206,7 @@ internal fun KindList(
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag(KIND_LIST_TAG), state = list, contentPadding = PaddingValues(bottom = room)) {
             s.asked?.takeIf { chain == null }?.let { asked -> item(key = "head") { AskedHead(asked, s, results, find, nav, lang, onBack) } }
             chain?.let { ch ->
-                item(key = "brand") { BrandDetails(ch.brand, wiki, results, hours, week, now, lang) { week = !week } }
+                item(key = "brand") { BrandDetails(ch.brand, wiki, results, hours, week, now, lang, s.moment.hours.country) { week = !week } }
                 if (week) hours?.let { h -> item(key = "week") { HoursCard(h, now, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp)) } }
             }
             (s.asked as? Asked.Words)?.let { w ->
