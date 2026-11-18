@@ -323,8 +323,11 @@ if(ATLAS_TESTS)
     # ground/ripple_vk_test and frame/map_frame_vk_test 11 each, frame/composite_vk_test 9 under TSan: their cases one a
     # part (each opens its own session, so a process apiece costs little); buildings_vk_test's tenth part its three
     # short cases, a case added since (the guessed roofs' shapes, 3 November) a part after them.
+    # frame/world_vk_test took 23 to 26 minutes on x86_64 once its world's cases had ATLAS_WORLD_DIR (18 November): its
+    # first four cases a part (the zoom to 100 km 5 of their 6 minutes), the three fades of about 4 minutes one a part,
+    # then the next four and the rest, each 2 to 7 minutes.
     set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1,3" "frame/map_frame_vk_test=1,1,1,1,1,1,1,1"
-        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1")
+        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1" "frame/world_vk_test=4,1,1,1,4")
     set(_test_patterns "")
     set(_test_entries "")
     foreach(source IN LISTS _test_sources _test_vulkan_sources)
