@@ -183,12 +183,27 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
     }
 
     companion object {
-        /** How long an open end ("17:00+") is assumed to last: to midnight by day, five hours in the evening, eight at night. */
-        fun openEndGuess(start: Int): Int = when {
-            start < 17 * 60 -> (1440 - start).coerceAtLeast(60)
-            start < 22 * 60 -> 300
-            else -> 480
+        /**
+         * How long an open end is assumed to last from [at], where it begins (`17:00+`: the start; `17:00-01:00+`: the
+         * stated end, which may pass 1440), by the hour it begins: by day to midnight, from 17:00 five hours, at night
+         * (22:00 to 06:00) a few hours, to six the next morning and never past it. (The reviewer, 17 November 2026:
+         * guessed by the minute alone, an end after midnight was taken for one by day, so `18:00-24:00+` read open
+         * around the clock and `Tu-Su 16:00-02:00+` open all Monday.)
+         */
+        fun openEndGuess(at: Int): Int {
+            val m = at % 1440
+            return when {
+                m >= NIGHT -> 1440 - m + MORNING
+                m < MORNING -> MORNING - m
+                m < EVENING -> 1440 - m
+                else -> 300
+            }
         }
+
+        /** Where an open end's hour is evening, night, and morning again (minutes since midnight). */
+        private const val EVENING = 17 * 60
+        private const val NIGHT = 22 * 60
+        private const val MORNING = 6 * 60
     }
 }
 

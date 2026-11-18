@@ -68,6 +68,13 @@ data class OpenStatus(
     val comment: String? = null,
     val openEnd: Boolean = false,
 ) {
+    /**
+     * [changesAt] where the hours state it: null while open into an open end (`17:00+`, `16:00-02:00+`), whose end is
+     * only a guess. Whatever shows or speaks the time a place closes reads this: inside an open end a row says it is
+     * open and names no time it doesn't know.
+     */
+    val statedChangeAt: LocalDateTime? get() = if (openEnd) null else changesAt
+
     companion object {
         /** The status of hours that cannot be read. */
         val Unknown = OpenStatus(isOpen = false, changesAt = null, nextChangeKind = null, unknown = true)
@@ -82,6 +89,35 @@ data class OpenSpan(val start: Int, val end: Int, val state: OpenState, val comm
     val startTime: LocalTime get() = LocalTime.of((start / 60) % 24, start % 60)
     val endTime: LocalTime get() = LocalTime.of((end / 60) % 24, end % 60)
     val minutes: Int get() = end - start
+}
+
+/**
+ * A stretch of a day as its hours state it, for a row to show: from [start] to [end] (minutes since its day's
+ * midnight; [end] may pass 1440), [end] null where none is stated (`17:00+`), and [openEnd] where it runs on past
+ * [end], or past [start] when there is none, with no closing time (`16:00-02:00+`). A row shows "16:00–2:00+" and
+ * "17:00+", never the guess the evaluator makes of an open end's length.
+ */
+data class StatedSpan(val start: Int, val end: Int?, val state: OpenState, val comment: String? = null, val openEnd: Boolean = false) {
+    val startTime: LocalTime get() = LocalTime.of((start / 60) % 24, start % 60)
+    val endTime: LocalTime? get() = end?.let { LocalTime.of((it / 60) % 24, it % 60) }
+}
+
+/**
+ * [spans] (of [OpeningHours.spans] or a day of [OpeningHours.weekTable]) as their hours state them: an open end's
+ * guessed tail joined to the stretch it follows, which keeps its stated end; a tail that follows none (`17:00+`)
+ * keeps its start alone.
+ */
+fun statedSpans(spans: List<OpenSpan>): List<StatedSpan> {
+    val out = ArrayList<StatedSpan>()
+    for (s in spans) {
+        val before = out.lastOrNull()
+        if (s.openEnd && before != null && !before.openEnd && before.end == s.start && before.state == s.state) {
+            out[out.size - 1] = before.copy(openEnd = true)
+        } else {
+            out += StatedSpan(s.start, if (s.openEnd) null else s.end, s.state, s.comment, s.openEnd)
+        }
+    }
+    return out
 }
 
 /**
@@ -234,7 +270,7 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
                             fill(a, b, code or OPEN_END)
                         } else {
                             fill(a, b, code)
-                            if (span.openEnd) fill(b, b + TimeSpan.openEndGuess(b % 1440), code or OPEN_END)
+                            if (span.openEnd) fill(b, b + TimeSpan.openEndGuess(b), code or OPEN_END)
                         }
                     }
                 }
