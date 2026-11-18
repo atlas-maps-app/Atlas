@@ -149,4 +149,18 @@ class PresetsTest {
         assertEquals("line", Presets.fallback(Geometry.LINE)?.id)
         assertNull(Presets.fallback(Geometry.RELATION))
     }
+
+    /**
+     * A value that lists several is read as a tag filter reads it (the reviewer, 17 November, finding 11: the presets
+     * compared whole values, so `cuisine=italian;pizza` was a plain restaurant, though both kinds' lists hold it): its
+     * first value's kind, else a later one's, before the plain kind.
+     */
+    @Test
+    fun aListedValueIsReadByItsParts() {
+        assertEquals("amenity/restaurant/italian", id(mapOf("amenity" to "restaurant", "cuisine" to "italian;pizza")))
+        assertEquals("amenity/restaurant/pizza", id(mapOf("amenity" to "restaurant", "cuisine" to "pizza; italian")))
+        assertEquals("amenity/restaurant/pizza", id(mapOf("amenity" to "restaurant", "cuisine" to "regional;pizza")))
+        assertEquals("amenity/restaurant", id(mapOf("amenity" to "restaurant", "cuisine" to "regional;local")))
+        assertTrue(TagFilter.Equals("cuisine", "pizza").matches(mapOf("cuisine" to "italian;pizza")))
+    }
 }
