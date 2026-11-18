@@ -49,7 +49,7 @@ fn the_planner_and_the_scan_agree() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
     let mut p = Planner::new(tt);
-    let (mut compared, mut latest, mut arriving) = (0, 0, 0);
+    let (mut compared, mut latest, mut arriving, mut stepped, mut most_later) = (0, 0, 0, 0, 0);
     for (day, time, seed) in [(0, 8 * 3600, 1u64), (0, 17 * 3600 + 1800, 2), (1, 23 * 3600, 3), (0, 600, 4)] {
         let scan = Reference::new(&p, day, time as i32 - 86_400, time as i32 + 2 * 86_400);
         for (i, (a, z)) in pairs(&tt, 40, seed).into_iter().enumerate() {
@@ -69,6 +69,8 @@ fn the_planner_and_the_scan_agree() {
             if one.iter().any(|j| j.rides == 0) {
                 continue; // on foot all the way: the scan knows rides only
             }
+            let later = p.plan(&q).later;
+            (stepped, most_later) = (stepped + if later > 12 { one.len() } else { 0 }, most_later.max(later));
             let earliest = scan.earliest_arrival(&p, &q, time as i32);
             assert_eq!(one.iter().map(|j| j.arrive).min(), earliest, "{q:?}");
             // a patient search finds the same earliest arrival as one that follows everything
@@ -122,8 +124,10 @@ fn the_planner_and_the_scan_agree() {
             compared += 1;
         }
     }
-    println!("{compared} pairs compared, {latest} options asked back, {arriving} options of windows asked to arrive in");
-    assert!(compared > 100 && latest > 100 && arriving > 100, "{compared} {latest} {arriving}");
+    println!("{compared} pairs compared, {latest} options asked back ({stepped} of them from an answer that stepped through its later moments, the most {most_later}), {arriving} options of windows asked to arrive in");
+    // (the options asked back are the proof that stepping through the later moments finds the latest: enough of
+    // them come from an answer that stepped)
+    assert!(compared > 100 && latest > 100 && arriving > 100 && stepped > 40, "{compared} {latest} {arriving} {stepped}");
 }
 
 /// The feed's rules, held to the best answer and not only to journeys that can be made: for each rule, a journey
@@ -628,7 +632,7 @@ fn the_answers_are_the_same_everywhere() {
     let mut p = Planner::new(tt);
     let mut sum = 0xcbf2_9ce4_8422_2325u64;
     let mut fold = |v: u64| sum = (sum ^ v).wrapping_mul(0x100_0000_01b3);
-    let mut journeys = 0;
+    let (mut journeys, mut one_moment, mut stepped, mut most_later, mut asked_back) = (0, 0, 0, 0, 0);
     for (i, (a, z)) in pairs(&tt, 60, 7).into_iter().enumerate() {
         let (sa, sz) = (tt.stop(a), tt.stop(z));
         let mut q = Query::new(Place::Point { lat: sa.lat + 3000, lon: sa.lon - 2000 }, Place::Point { lat: sz.lat - 1000, lon: sz.lon + 4000 }, (i % 2) as i32, 7 * 3600 + 977 * i as u32);
@@ -640,6 +644,19 @@ fn the_answers_are_the_same_everywhere() {
         q.weigh = i % 4 != 1;
         let got = ask(&mut p, &q);
         assert_eq!(got, ask(&mut p, &q));
+        let later = p.plan(&q).later;
+        (one_moment, stepped, most_later) = (one_moment + (q.window == 0) as u32, stepped + (later > 12) as u32, most_later.max(later));
+        // Asked to leave at one moment, each option leaves as late as any way to its arrival with no more rides
+        // and at no more cost: asked back from there with every option, the same departure comes out.
+        if q.window == 0 && !q.arrive_by {
+            for j in got.iter().filter(|j| j.rides > 0) {
+                let mut back = q.clone();
+                (back.arrive_by, back.time, back.max_rides, back.weigh) = (true, j.arrive as u32, j.rides, false);
+                let latest = ask(&mut p, &back).iter().filter(|k| k.penalty <= j.penalty).map(|k| k.depart).max();
+                assert_eq!(latest, Some(j.depart), "{q:?}\n{j:?}");
+                asked_back += (later > 12) as u32;
+            }
+        }
         for j in got.iter() {
             journeys += 1;
             for v in [j.depart as u64, j.arrive as u64, j.rides as u64, j.penalty as u64, j.walking as u64] {
@@ -654,6 +671,10 @@ fn the_answers_are_the_same_everywhere() {
             }
         }
     }
+    // The number also stands for the search for a later departure where it steps through the moments (more than 12
+    // of them, `Answer::later`): most of the questions for one moment do.
+    println!("{one_moment} of the fixed questions ask for one moment; {stepped} of them stepped through the later moments (the most: {most_later}); {asked_back} of their options asked back");
+    assert!(one_moment == 12 && stepped >= 8 && most_later > 100 && asked_back >= 8, "{one_moment} {stepped} {most_later} {asked_back}");
     assert_eq!((journeys, sum), (592, 18_032_016_647_273_654_747));
 }
 

@@ -371,6 +371,10 @@ pub struct Answer {
     pub searches: u32,
     pub labels: u32,
     pub steps: u64,
+    /// Asked for one moment: the most later moments at which one of the journeys found might still have left,
+    /// before the search for the latest of them. Up to 12 are tried one by one; more are stepped through (about
+    /// their root apart, then one by one between two steps). 0 where no journey could leave later.
+    pub later: u32,
 }
 
 /// The stops a journey can start at and end at, with the seconds on foot.
@@ -690,6 +694,7 @@ impl<'a> Planner<'a> {
             later: false,
             most: max_rides,
             dropped: false,
+            later_most: 0,
             exact: false,
             beyond: 0,
         };
@@ -841,7 +846,7 @@ impl<'a> Planner<'a> {
             }
             cut = true;
         }
-        Answer { journeys: keep, cut_short: cut, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps }
+        Answer { journeys: keep, cut_short: cut, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps, later: s.later_most }
     }
 }
 
@@ -896,6 +901,8 @@ struct Search<'s, 'a> {
     most: usize,
     /// A label went from a full bag, or a trip from those ridden along a route: what it led to may be missing.
     dropped: bool,
+    /// The most later moments a journey had to choose among in `leave_later` ([`Answer::later`]).
+    later_most: u32,
     /// Whether the fewest rides to the journey's end are counted for every stop within fewer than `beyond` of it,
     /// so that a stop without a count is at least `beyond` rides away.
     exact: bool,
@@ -1079,6 +1086,7 @@ impl<'s> Search<'s, '_> {
         let mut latest: Vec<Option<Journey>> = vec![None; self.anchors.len()];
         // how far apart the moments tried are: one by one where they are few, else about the root of their number
         let most = self.anchors.iter().map(|a| n - 1 - a.lo).max().unwrap_or(0);
+        self.later_most = self.later_most.max(most.max(0) as u32);
         let mut apart = 1;
         while most > 12 && apart * apart < most {
             apart += 1;
