@@ -149,6 +149,14 @@ object Facts {
     private val PAVED = setOf("paved", "asphalt", "concrete", "paving_stones", "sett", "concrete:plates", "concrete:lanes", "metal", "wood", "chipseal", "bricks", "brick", "rubber", "tartan", "acrylic", "artificial_turf")
     private val ROUGH = setOf("compacted", "fine_gravel", "gravel", "unpaved", "pebblestone", "cobblestone", "unhewn_cobblestone", "grass_paver", "rock", "stepping_stones")
 
+    /**
+     * A bottle refill's name (the reviewer, 17 November, finding 11): the fields Atlas bundles have none of their own,
+     * and their drinking_water's "Drinkable" is the water's; in the app's languages, else English.
+     */
+    private val REFILL = mapOf("en" to "Bottle refill", "nl" to "Fles bijvullen", "de" to "Flasche auffüllen", "fr" to "Remplissage de gourde")
+
+    internal fun refillLabel(lang: String?): String = REFILL[lang?.substringBefore('-')?.substringBefore('_')?.lowercase()] ?: REFILL.getValue("en")
+
     /** Asks for these when the preset lists them first and they are not mapped. */
     private val ASKABLE = mapOf(
         "wheelchair" to (FactKind.WHEELCHAIR to "wheelchair"), "outdoor_seating" to (FactKind.OUTDOOR_SEATING to "outdoor_seating"),
@@ -321,7 +329,9 @@ object Facts {
             flag(FactKind.AIR_CONDITIONING, "air_conditioning")
             t("level")?.let { add(FactKind.LEVEL, "level", FactState.YES, "L" + it.substringBefore(';')) }
             (t("drinking_water:refill") ?: t("bottle"))?.let { v ->
-                add(FactKind.BOTTLE_REFILL, if (t("drinking_water:refill") != null) "drinking_water:refill" else "bottle", stateOf(v) ?: FactState.YES)
+                // named as a refill, not as its field's water ("Drinkable: No" said the water was not to drink)
+                add(FactKind.BOTTLE_REFILL, if (t("drinking_water:refill") != null) "drinking_water:refill" else "bottle", stateOf(v) ?: FactState.YES,
+                    label = refillLabel(lang))
             }
         }
 
@@ -419,7 +429,9 @@ object Facts {
                 // the facts that read several keys count as mapped when any of their keys is there
                 if (kind == FactKind.DIET && tags.keys.any { it.startsWith("diet:") }) continue
                 if (key in tags) continue
-                out += Fact(kind, key, kind.symbol, FactState.UNKNOWN, label = fieldLabel(kind), mapped = false)
+                // the question names what a yes maps: the diets ask for diet:vegetarian, so "Vegetarian?", not "Dietary Options?"
+                val label = (if (kind == FactKind.DIET) option(f, key.substringAfter("diet:")) else null) ?: fieldLabel(kind)
+                out += Fact(kind, key, kind.symbol, FactState.UNKNOWN, label = label, mapped = false)
                 kinds += kind
             }
         }

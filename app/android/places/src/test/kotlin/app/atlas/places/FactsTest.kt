@@ -204,4 +204,20 @@ class FactsTest {
         assertEquals("Sun 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 12, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
         assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
     }
+
+    @Test
+    fun aRefillAndTheDietQuestionSayWhatTheyAre() {
+        // the reviewer, 17 November, finding 11: a refill read "Drinkable: No", and the diet question asked "Dietary
+        // Options?" where a yes maps diet:vegetarian
+        val refill = facts("amenity" to "cafe", "drinking_water:refill" to "no").one(FactKind.BOTTLE_REFILL)
+        assertEquals(FactState.NO, refill.state)
+        assertEquals("Bottle refill", refill.label)
+        assertEquals("Fles bijvullen", facts("amenity" to "cafe", "bottle" to "yes", lang = "nl").one(FactKind.BOTTLE_REFILL).label)
+        assertEquals("Bottle refill", facts("amenity" to "cafe", "bottle" to "yes", lang = "ja").one(FactKind.BOTTLE_REFILL).label)
+        val diet = facts("amenity" to "restaurant", "name" to "Nowhere").single { !it.mapped && it.kind == FactKind.DIET }
+        assertEquals("diet:vegetarian", diet.key)
+        assertEquals("Vegetarian", diet.label)
+        // a mapped diet keeps its own names
+        assertEquals("Vegan", facts("amenity" to "restaurant", "diet:vegan" to "yes").one(FactKind.DIET).label)
+    }
 }
