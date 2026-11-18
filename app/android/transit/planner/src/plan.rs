@@ -2204,6 +2204,10 @@ impl<'s> Search<'s, '_> {
                 }
                 let times = self.tt.trip_times(trip);
                 let time = self.board_time(times, pos, off);
+                // (a day's trips of a route are in the order they leave: past the limit, so is every one after)
+                if to.1 == NONE && time > self.limit {
+                    break;
+                }
                 if self.tt.runs(self.tt.trip(trip).service, self.day + off) && !bit(&self.prefs.trip_closed, trip) && time >= lab.time && time <= self.limit {
                     let c = cost(&self.prefs.trip_cost, trip);
                     if c < cheapest {

@@ -159,3 +159,41 @@ fn many_rules_into_one_stop_cost_no_more_than_reading_them() {
     // those before it: a bound that a machine many times slower keeps, and the old way does not)
     assert!(took.as_millis() < 200, "{took:?}");
 }
+
+/// A waiting rule that names a line and no trip, put into a piece of the real timetable (the city of Utrecht): every
+/// bus of the line with the most trips waits, at its second stop, for whatever arrives at the stop most routes call
+/// at. Looking for the bus that waits must end where the search does: at the first trip past the moment the search
+/// follows journeys to, since every trip after it on its day is later still. (It read on to the end of each day:
+/// 150 questions took 7.0 million steps without the rule and 1.75 million more with it, a quarter. Now 0.38 million
+/// more, a twentieth: what it costs that every arrival at that stop is held apart, as under any rule.)
+#[test]
+fn a_line_that_waits_is_read_no_further_than_the_search_goes() {
+    let b = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/utrecht-20261117.tt")).unwrap();
+    let tt = Timetable::open(&b).unwrap();
+    // the route with the most trips, its line and second stop; and the stop most routes call at
+    let route = (0..tt.routes()).max_by_key(|r| (tt.route(*r).trips, *r)).unwrap();
+    let (line, second) = (tt.route(route).line, tt.pattern_stop(tt.route(route).first_stop + 1).stop);
+    let served: Vec<u32> = (0..tt.stops()).filter(|s| tt.routes_at(*s).0 != tt.routes_at(*s).1).collect();
+    let hub = *served.iter().max_by_key(|s| (tt.routes_at(**s).1 - tt.routes_at(**s).0, **s)).unwrap();
+    assert!(tt.route(route).trips > 100 && hub != second, "{} trips", tt.route(route).trips);
+    let with = with_rules(&b, [[hub, second, NONE, line, NONE, NONE, 1, NONE]].into_iter());
+    let ruled = Timetable::open(&with).unwrap();
+    ruled.verify().unwrap();
+    let (mut plain, mut waiting) = (Planner::new(tt), Planner::new(ruled));
+    let (mut steps, mut differ) = ([0u64; 2], 0);
+    for i in 0..150usize {
+        let (a, z) = (served[(i * 131 + 7) % served.len()], served[(i * 197 + 61) % served.len()]);
+        let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 6 * 3600 + 421 * i as u32);
+        (q.arrive_by, q.window) = (i % 3 == 1, if i % 2 == 0 { 0 } else { 1800 });
+        let (without, held) = (plain.plan(&q), waiting.plan(&q));
+        assert!(!without.cut_short && !held.cut_short, "{q:?}");
+        for j in held.journeys.iter() {
+            assert_eq!(impossible(&waiting, &q, j), None, "{q:?}\n{j:?}");
+        }
+        (steps[0], steps[1], differ) = (steps[0] + without.steps, steps[1] + held.steps, differ + (without.journeys != held.journeys) as u32);
+    }
+    let more = steps[1].saturating_sub(steps[0]);
+    println!("150 questions: {} steps without the rule, {} with it ({more} more); the rule changes {differ} answers", steps[0], steps[1]);
+    assert!(more < steps[0] / 10, "{more} steps more than the {} without the rule", steps[0]);
+}
+
