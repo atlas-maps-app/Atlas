@@ -118,17 +118,25 @@ internal class OpeningHoursParser(private val text: String) {
         return if (m > 59 || h * 60 + m > maxHours * 60) null else h * 60 + m
     }
 
-    /** "1900-2200", "0900-1200,1300-1700": the spans written without colons. */
+    /**
+     * "1900-2200", "0900-1200,1300-1700": the spans written without colons, and any written with them among them in the
+     * same rule ("0900-1200, 13:00-17:00"; the app maintainer, 18 November 2026, batch 4 A8: the colon times read as a
+     * rule of no days of their own, open at the weekend too).
+     */
     private fun compactTimes(): List<TimeSpan> {
         val out = ArrayList<TimeSpan>()
         while (true) {
-            val from = compactClock(peek(), 24) ?: fail("time expected")
-            p += 2
-            val to = compactClock(peek(), 48) ?: fail("time expected")
-            p++
-            out += TimeSpan(TimePoint(from), TimePoint(to), openEnd = false)
-            if (isSym(",") && isCompactSpanAt(1)) { p++; continue }
-            if (isCompactSpanAt(0)) continue // "0900-1200 1300-1700"
+            if (isCompactSpanAt(0)) {
+                val from = compactClock(peek(), 24) ?: fail("time expected")
+                p += 2
+                val to = compactClock(peek(), 48) ?: fail("time expected")
+                p++
+                out += TimeSpan(TimePoint(from), TimePoint(to), openEnd = false)
+            } else {
+                out += timeSpan()
+            }
+            if (isSym(",") && (isCompactSpanAt(1) || isTimeStartAt(p + 1))) { p++; continue }
+            if (isCompactSpanAt(0) || isTimeStartAt(p)) continue // "0900-1200 1300-1700", "0900-1200 13:00-17:00"
             return out
         }
     }

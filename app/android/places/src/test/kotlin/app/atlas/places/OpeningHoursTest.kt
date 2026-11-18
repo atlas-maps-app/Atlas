@@ -556,4 +556,29 @@ class OpeningHoursTest {
         assertEquals(true, open("2026 Mo-Fr 08:00-12:00", "2026-10-12T09:00"))
         assertEquals(false, open("2025 Mo-Fr 08:00-12:00", "2026-10-12T09:00"))
     }
+
+    /**
+     * Times with and without their colons in one rule are read in that rule (the app maintainer, 18 November 2026, batch
+     * 4 A8): "Mo-Fr 0900-1200, 13:00-17:00" opened Saturday and Sunday 13:00 to 17:00, the rest read as a rule of no days
+     * of its own; before the colonless times were read it was shown as written. The colon times first, then colonless
+     * ones, are refused as before: never open at the weekend.
+     */
+    @Test
+    fun timesWithAndWithoutColonsInOneRule() {
+        val mixed = oh("Mo-Fr 0900-1200, 13:00-17:00")
+        assertEquals(true, mixed.isOpen(t("2026-10-12T10:00"), context = Nowhere))
+        assertEquals(true, mixed.isOpen(t("2026-10-12T14:00"), context = Nowhere))
+        assertEquals(false, mixed.isOpen(t("2026-10-12T12:30"), context = Nowhere))
+        assertEquals(false, mixed.isOpen(t("2026-10-17T14:00"), context = Nowhere))
+        assertEquals(false, mixed.isOpen(t("2026-10-18T14:00"), context = Nowhere))
+        assertEquals(t("2026-10-12T17:00"), mixed.status(t("2026-10-12T14:00"), context = Nowhere).changesAt)
+        assertEquals(true, open("Mo-Fr 0900-1200 13:00-17:00", "2026-10-13T16:00"))
+        assertEquals(false, open("Mo-Fr 0900-1200 13:00-17:00", "2026-10-17T16:00"))
+        assertEquals(true, open("Mo-Fr 0900-1200, 13:00-15:00, 1600-1800", "2026-10-14T17:00"))
+        assertEquals(false, open("Mo-Fr 0900-1200, 13:00-15:00, 1600-1800", "2026-10-14T15:30"))
+        val colonsFirst = OpeningHours.parseOrNull("Mo-Fr 09:00-12:00, 1300-1700")
+        assertTrue(colonsFirst == null || colonsFirst.isOpen(t("2026-10-17T14:00"), context = Nowhere) != true)
+        // a rule of its own after a semicolon stays its own
+        assertEquals(true, open("Mo-Fr 0900-1200; Sa 10:00-14:00", "2026-10-17T11:00"))
+    }
 }
