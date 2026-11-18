@@ -665,8 +665,9 @@ class SearchEngine(
     /** Whether a place's tags are of the kind [q] names ([Query.Tags] or [Query.Category]); null for other queries. */
     private fun tagsTest(q: Query): ((Map<String, String>) -> Boolean)? = when (q) {
         is Query.Tags -> q.filter::matches
+        // a category's own places and those of other kinds behind its door (a kiosk that takes the post in Post)
         is Query.Category -> Categories.byId(q.id)?.let { c ->
-            val rules = if (c.isGroup) Categories.children(c.id).mapNotNull { it.rule } else listOfNotNull(c.rule)
+            val rules = if (c.isGroup) Categories.children(c.id).mapNotNull { it.door } else listOfNotNull(c.door)
             if (rules.isEmpty()) null else { tags: Map<String, String> -> rules.any { it.matches(tags) } }
         }
         else -> null

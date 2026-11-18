@@ -208,13 +208,15 @@ data class CategoryResults(
  */
 object Browse {
     /**
-     * True when [node] holds the place [r]: a category its own places (the first rule that takes them), a shelf its
+     * True when [node] holds the place [r]: a category its own places (the first rule that takes them) and the places of
+     * other kinds it holds too by their tags ([CategoryNode.alsoTags], a kiosk that takes the post in Post), a shelf its
      * categories' and its guests' ([CategoryNode.guests], a climbing hall in Fun), the rest by tags.
      */
     fun holds(node: CategoryNode, r: PlaceRecord): Boolean = when (node.kind) {
         NodeKind.SHELF -> if (node.category.family == CategoryTree.OSM) r.category == null && node.filter.matches(r.tags)
-            else r.category != null && Categories.byId(r.category)?.shelf?.family == node.category.family || node.guests.any { holds(it, r) }
-        NodeKind.CATEGORY -> r.category == node.category.id
+            else r.category != null && (Categories.byId(r.category)?.shelf?.family == node.category.family || node.alsoTags?.matches(r.tags) == true) ||
+                node.guests.any { holds(it, r) }
+        NodeKind.CATEGORY -> r.category == node.category.id || r.category != null && node.alsoTags?.matches(r.tags) == true
         NodeKind.KEY -> r.category == null && node.filter.matches(r.tags)
         NodeKind.PRESET -> node.filter.matches(r.tags) && (if (node.category.family == CategoryTree.OSM) r.category == null else r.category == node.category.id)
     }

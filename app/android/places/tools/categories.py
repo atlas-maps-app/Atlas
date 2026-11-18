@@ -89,6 +89,12 @@ CORE = {
 # and sport"): a water park is a day out, a pool lanes to swim. A market is the groceries' and the shops' (the owner,
 # 6 November: "What about markets?"): its stalls sell clothes and flowers as well as cheese. Nodes of the search's
 # category tree: "cat:" a category, "preset:" a preset under one, "shelf:" a group or a family.
+# A category named ("cat:post") holds places of other kinds too, by their tags ("tags:" a rule, as a category's): a shop
+# that takes the post or dispenses medicine is a shop of its kind first (the reviewer, 17 November, finding 11) and
+# behind Post's or Health's door as well (the app maintainer, 18 November, batch 4 A6: a kiosk that takes parcels and a
+# chemist's pharmacy counter had left Post and Health altogether), as no kind is theirs alone. The category and its
+# shelf hold it, list it, count it and read it from the store and online; it keeps its own kind, colour and pin, and no
+# kind of the category's row is its. The crafts stay out of Offices: a craft bakery is no studio.
 ALSO = {
     'shops': ('preset:amenity/marketplace',),
     # the other fuels: gas bottles, firewood and heating oil from their shops, a boat's from the marina's pump ("what other
@@ -98,6 +104,8 @@ ALSO = {
     'stay': ('cat:camping',),
     'fun': ('cat:climbing', 'preset:leisure/ice_rink', 'cat:swim', 'shelf:sport'),
     'sport': ('cat:swim',),
+    'cat:post': ('tags:shop and post_office and post_office!=no',),
+    'cat:health': ('tags:shop and healthcare and healthcare!=no',),
 }
 
 # The kinds that end a shelf's or a category's row (the owner, 6 November: "Sort by popularity or what belongs in what

@@ -315,7 +315,11 @@ class OfflineEvaluator(val source: PlaceSource) {
         private fun seed(q: Query, area: BBox?): List<PlaceRecord>? = when (q) {
             is Query.Tags -> seedFilter(q.filter, area)
             is Query.Name -> source.text(q.text, ctx.location, area, TEXT_CANDIDATES)
-            is Query.Category -> source.byCategory(leaves(q.id), area)
+            is Query.Category -> source.byCategory(leaves(q.id), area).let { own ->
+                // and the places of other kinds behind its door (a kiosk that takes the post in Post)
+                val others = Categories.byId(q.id)?.let { c -> if (c.isGroup) Categories.children(c.id).mapNotNull { it.alsoTags } else listOfNotNull(c.alsoTags) }
+                if (others.isNullOrEmpty()) own else union(listOf(own) + others.map { seedFilter(it, area) ?: return@let null })
+            }
             is Query.Brand -> seedBrand(q.id, area)
             is Query.Id -> listOfNotNull(source.get(q.id)).filter { area == null || it.location in area }
             is Query.Within, is Query.InArea, is Query.AlongRoute -> areaOf(q)?.let { b -> source.inBox(area?.let { intersect(it, b) } ?: b) }
@@ -451,7 +455,10 @@ class OfflineEvaluator(val source: PlaceSource) {
             }
             is Query.Category -> {
                 val c = r.category
-                (c != null && (c == q.id || Categories.byId(c)?.parentId == q.id)).also { if (it) found?.why?.add("category:$c") }
+                val own = c != null && (c == q.id || Categories.byId(c)?.parentId == q.id)
+                // a place of another kind behind its door (a kiosk that takes the post in Post) is there for it
+                val also = !own && c != null && Categories.byId(q.id)?.holdsAlso(r.tags) == true
+                (own || also).also { if (it) found?.why?.add("category:" + if (own) c else q.id) }
             }
             is Query.Brand -> brandMatches(q.id, r).also { if (it) found?.why?.add("brand:${q.id}") }
             is Query.OpenAt -> openAt(q.time, r, found)

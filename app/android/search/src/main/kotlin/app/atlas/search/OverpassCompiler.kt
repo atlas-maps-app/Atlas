@@ -429,10 +429,11 @@ object OverpassCompiler {
         else -> Query.Tags(f)
     }
 
+    /** What a category asks for: its own places and those of other kinds behind its door (a kiosk that takes the post in Post). */
     private fun categoryFilter(id: String): TagFilter? {
         val c = Categories.byId(id) ?: return null
-        if (!c.isGroup) return c.rule
-        val rules = Categories.children(id).mapNotNull { it.rule }
+        if (!c.isGroup) return c.door
+        val rules = Categories.children(id).mapNotNull { it.door }
         return if (rules.isEmpty()) null else TagFilter.or(*rules.toTypedArray())
     }
 

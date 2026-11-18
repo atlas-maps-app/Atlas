@@ -603,6 +603,15 @@ def build_categories(src, presets):
                 raise SystemExit(f'ALSO {sid}: no such node {node}')
         return {'also': list(CAT.ALSO[sid])} if sid in CAT.ALSO else {}
 
+    def also_tags(cid):
+        """The places of other kinds category [cid] holds too, by their tags (categories.py ALSO's "cat:"), each a rule."""
+        rules = CAT.ALSO.get('cat:' + cid, ())
+        for r in rules:
+            if not r.startswith('tags:') or not r[len('tags:'):].strip():
+                raise SystemExit(f'ALSO cat:{cid}: not a rule of tags: {r}')
+        parts = [r[len('tags:'):].strip() for r in rules]
+        return {'alsoTags': parts[0] if len(parts) == 1 else ' or '.join(f'({x})' for x in parts)} if parts else {}
+
     def order(node):
         """The kinds that end [node]'s row (categories.py LAST), each checked: a shelf's categories, a category's presets,
         none twice."""
@@ -631,9 +640,10 @@ def build_categories(src, presets):
         assert len(own) == len(LANGS), family
         out.append({'id': family, 'shelf': True, 'symbol': sym, 'colour': CAT.FAMILY[family], 'names': dict(zip(CAT.LANGS, own))}
                    | also(family) | order('shelf:' + family))
-    unknown = set(CAT.ALSO) - {g[0] for g in CAT.GROUPS} - {s[0] for s in CAT.SHELVES}
+    unknown = {k for k in CAT.ALSO if not k.startswith('cat:')} - {g[0] for g in CAT.GROUPS} - {s[0] for s in CAT.SHELVES}
+    unknown |= {k for k in CAT.ALSO if k.startswith('cat:')} - {'cat:' + c[0] for c in CAT.CATEGORIES}
     if unknown:
-        raise SystemExit('ALSO names no shelf: ' + ', '.join(sorted(unknown)))
+        raise SystemExit('ALSO names no shelf or category: ' + ', '.join(sorted(unknown)))
     ids = {g[0] for g in CAT.GROUPS}
     for cid, legacy, group, sym, rule, own, nf in CAT.CATEGORIES:
         if cid in ids:
@@ -646,7 +656,7 @@ def build_categories(src, presets):
             e['legacy'] = legacy
         if cid in CAT.CORE:
             e['core'] = list(CAT.CORE[cid])
-        out.append(e | order('cat:' + cid))
+        out.append(e | order('cat:' + cid) | also_tags(cid))
     return out
 
 

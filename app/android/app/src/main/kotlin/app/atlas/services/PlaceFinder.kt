@@ -205,9 +205,12 @@ class LayeredPlaceFinder(
     }
 
     companion object {
-        /** A category's rule; a group's is the union of its leaves' rules. */
+        /**
+         * What a category finds: its rule and the places of other kinds behind its door (a kiosk that takes the post in
+         * Post, the app maintainer, 18 November 2026, batch 4 A6); a group's, its leaves' together.
+         */
         fun filterOf(category: Category): TagFilter =
-            category.rule ?: TagFilter.Or(Categories.children(category.id).mapNotNull { it.rule })
+            category.door ?: TagFilter.Or(Categories.children(category.id).mapNotNull { it.door })
 
         fun nearest(places: List<Place>, centre: LatLon, limit: Int): List<Place> =
             places.distinctBy { it.key }.sortedBy { Geo.distance(centre, it.location) }.take(limit)

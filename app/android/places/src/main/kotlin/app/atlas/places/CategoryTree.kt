@@ -86,6 +86,18 @@ class CategoryNode internal constructor(
     private fun also(): List<CategoryNode> = if (kind != NodeKind.SHELF) emptyList() else category.also.mapNotNull { CategoryTree.byId(it) }
 
     /**
+     * The places of other kinds it holds too, by their tags ([Category.alsoTags]): a category's, a shelf's categories'
+     * together (a kiosk that takes the post in Post, and so in Services); null for the rest, which is most.
+     */
+    val alsoTags: TagFilter? by lazy {
+        when (kind) {
+            NodeKind.CATEGORY -> category.alsoTags
+            NodeKind.SHELF -> children.mapNotNull { it.alsoTags }.takeIf { it.isNotEmpty() }?.let { TagFilter.Or(it) }
+            else -> null
+        }
+    }
+
+    /**
      * The kinds that belong with this one though each stands where it is ([Categories.links]; the owner, 6 November:
      * "Miniature golf is in fun. Where is golf? Link kinds that belong to each other."): a minigolf's golf courses and
      * disc golf, a pool's beaches. Its own first, then those of the kinds above it (a water park's are the pools'); never
@@ -255,17 +267,18 @@ object CategoryTree {
             val leaves = Categories.onShelf(shelf)
             if (leaves.isEmpty()) continue
             val shelfId = SHELF + shelf.family
-            // a shelf takes the places of the kinds it holds too (a climbing hall in Fun), its leaves' first
+            // a shelf takes the places of the kinds it holds too (a climbing hall in Fun), its leaves' first, each with
+            // the places of other kinds behind its door (a kiosk that takes the post in Post)
             val guests = shelf.also.mapNotNull { id ->
                 when {
-                    id.startsWith(CATEGORY) -> Categories.byId(id.removePrefix(CATEGORY))?.rule
+                    id.startsWith(CATEGORY) -> Categories.byId(id.removePrefix(CATEGORY))?.door
                     id.startsWith(PRESET) -> Presets.byId(id.removePrefix(PRESET))?.let(::filterOf)
                     else -> null
                 }
             }
-            add(CategoryNode(shelfId, NodeKind.SHELF, null, shelf.symbol, shelf.colour, TagFilter.Or(leaves.mapNotNull { it.rule } + guests), shelf, null))
+            add(CategoryNode(shelfId, NodeKind.SHELF, null, shelf.symbol, shelf.colour, TagFilter.Or(leaves.mapNotNull { it.door } + guests), shelf, null))
             for (leaf in leaves) {
-                val rule = leaf.rule ?: continue
+                val rule = leaf.door ?: continue
                 val leafId = CATEGORY + leaf.id
                 add(CategoryNode(leafId, NodeKind.CATEGORY, shelfId, leaf.symbol, leaf.colour, rule, leaf, null))
                 val presets = presetsOf[leaf.id].orEmpty()
