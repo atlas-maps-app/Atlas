@@ -473,6 +473,21 @@ jobs:
             echo "::error::no render packs from the tiles job: the pack tests skip, and this job fails once its tests have run"
             echo "missing=render packs from the tiles job" >> "$GITHUB_OUTPUT"
           fi
+      # The world's cases (frame/world_vk_test, tiles/world_test, load/pack_style_test): ATLAS_WORLD_DIR, a cut of the
+      # world the release world-latest names, as a phone takes it (tools/world/cut.py: world.idx and the globe whole,
+      # and the packs under the cases' views read by range, each checked against its SHA-256, about 1 GB of the 12).
+      # Without it, as without the render packs, the job runs its tests and then fails.
+      - name: The world's packs, from world-latest
+        id: world
+        if: startsWith(matrix.task, 'host-')
+        run: |
+          if python3 -I "$CP/tools/world/cut.py" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/world-latest" "$RUNNER_TEMP/world"; then
+            echo "ATLAS_WORLD_DIR=$RUNNER_TEMP/world" >> "$RUNNER_TEMP/vulkan.env"
+            ls -la "$RUNNER_TEMP/world"
+          else
+            echo "::error::no world from world-latest: the world's cases skip, and this job fails once its tests have run"
+            echo "missing=the world from world-latest" >> "$GITHUB_OUTPUT"
+          fi
       # Each test entry runs under GNU time, so its peak memory is in its output (core-tests sums them up): what tells
       # how many entries a runner can run at once, TSan's above all.
       - name: Build (${{ matrix.task }})
@@ -561,11 +576,13 @@ jobs:
           fi
       # The data the tests read, when a step above found it missing: the tests ran without it, and the job fails.
       - name: The tests' data
-        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && steps.packs.outputs.missing != '' }}
+        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && (steps.packs.outputs.missing != '' || steps.world.outputs.missing != '') }}
         env:
-          MISSING: ${{ steps.packs.outputs.missing }}
+          PACKS: ${{ steps.packs.outputs.missing }}
+          WORLD: ${{ steps.world.outputs.missing }}
         run: |
-          echo "::error::the tests ran without their data ($MISSING): the cases that need it skipped"
+          missing=$(printf '%s\n' "$PACKS" "$WORLD" | sed '/^$/d' | paste -sd ';' - | sed 's/;/; /g')
+          echo "::error::the tests ran without their data ($missing): the cases that need it skipped"
           exit 1
       # The test entries' JUnit files and the shard's plan, for core-tests.
       - name: Keep the shard's test results
