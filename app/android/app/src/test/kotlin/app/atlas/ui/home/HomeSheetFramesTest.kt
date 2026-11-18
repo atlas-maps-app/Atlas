@@ -192,6 +192,10 @@ class HomeSheetFramesTest {
                 "other ${frames.sumOf { it.otherWakes }} (${moving.sumOf { it.otherWakes }} in moving frames); shapes $before -> ${shapeCount()}",
         )
         assertTrue("the sheet glided: $frames", moving.size >= 5)
+        // the control of the counts: where the sheet comes to rest its stop changes, which the home and the sheet
+        // read, so a tracer that sees nothing, or source info written another way, fails the tests rather than passing
+        assertTrue("the sheet's rest recomposes the home: $frames", frames.sumOf { it.home } >= 1)
+        assertTrue("the sheet's rest recomposes the sheet: $frames", frames.sumOf { it.sheet } >= 1)
         assertTrue("the row's eight chips went with its fade: $before -> ${shapeCount()}", shapeCount() <= before - 8)
         return frames
     }
