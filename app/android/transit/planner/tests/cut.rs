@@ -590,6 +590,69 @@ fn an_answer_that_is_not_whole_says_so() {
     assert!(short > 300, "{short} of {asked}");
 }
 
+/// Asked for one moment, the search for a later departure is held to the query's limits like any other: it takes
+/// no more searches than `departures`, says so where that stops it short (an option then leaves sooner than it
+/// need, and makes the same arrival), and looks for no journey that `options` leaves out. Of more options than
+/// that the fastest stay, which is settled before any is searched again: leaving later changes no arrival.
+#[test]
+fn the_search_for_a_later_departure_is_held_to_the_limits() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (mut for_all, mut for_one, mut stopped, mut most, mut asked) = (0, 0, 0, 0, 0);
+    for (i, (a, z)) in pairs(&tt, 120, 61).into_iter().enumerate() {
+        // from a stop, or from a point with every stop within a kilometre: many moments at which something leaves
+        let place = |s: u32| if i % 3 == 0 { Place::Stop(s) } else { Place::Point { lat: tt.stop(s).lat + 1500, lon: tt.stop(s).lon - 2500 } };
+        let mut q = Query::new(place(a), place(z), 0, [8 * 3600, 17 * 3600 + 900][i % 2] + 67 * i as u32);
+        (q.arrive_by, q.limits.options) = (i % 5 == 1, 1024);
+        // wishes that cost, with every option asked for at two pairs in four: a handful of options a pair
+        if i % 4 < 3 {
+            q.wishes.push(Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) });
+            q.wishes.push(Wish { what: What::Area { area: Area::Circle { lat: 520_900_000, lon: 51_100_000, radius_m: 700 }, through: false }, how: How::Avoid(300) });
+            q.weigh = i % 4 == 0;
+        }
+        let whole = p.plan(&q);
+        assert!(!whole.cut_short, "{q:?}");
+        if whole.journeys.is_empty() {
+            continue;
+        }
+        // an option by what leaving later does not change: where it ends (arriving by: begins), its rides, its cost
+        let end = |j: &Journey| (if q.arrive_by { -j.depart } else { j.arrive }, j.rides, j.penalty);
+        let ends = |js: &[Journey]| {
+            let mut v: Vec<_> = js.iter().map(end).collect();
+            v.sort_unstable();
+            v
+        };
+        // two searches for later departures and no more, after the four at most that find the options (the first
+        // pass and its second, the bags, the fewer rides)
+        let mut few = q.clone();
+        few.limits.departures = 2;
+        let got = p.plan(&few);
+        assert!(got.searches <= 4 + 2, "pair {i}: {} searches with departures 2 (the whole answer took {}): {q:?}", got.searches, whole.searches);
+        assert_eq!(ends(&got.journeys), ends(&whole.journeys), "pair {i}: {q:?}");
+        for j in got.journeys.iter() {
+            assert_eq!(impossible(&p, &few, j), None, "pair {i}: {q:?}");
+        }
+        if got.journeys != whole.journeys {
+            assert!(got.cut_short, "pair {i}: an option leaves sooner than it need and the answer does not say so: {q:?}");
+            stopped += 1;
+        }
+        // one option: the fastest, leaving as late as it can, and no search for any other
+        let mut one = q.clone();
+        one.limits.options = 1;
+        let got = p.plan(&one);
+        let fastest = whole.journeys.iter().min_by_key(|j| end(j)).unwrap();
+        assert_eq!(got.journeys, [fastest.clone()], "pair {i}: {q:?}");
+        assert_eq!(got.cut_short, whole.journeys.len() > 1, "pair {i}: {q:?}");
+        // (for a single pair it may take a search more than for all: how far apart the moments tried lie depends
+        // on the journeys looked for)
+        (for_all, for_one, most, asked) = (for_all + whole.searches, for_one + got.searches, most.max(whole.searches), asked + 1);
+    }
+    println!("{asked} pairs: {for_all} searches for every option (the most {most}), {for_one} for one; {stopped} stopped short by departures");
+    // (on Utrecht a pair has one to eight options at one moment, most of them one or two: a third fewer searches)
+    assert!(asked > 100 && stopped > 10 && most > 20 && for_one * 5 < for_all * 4, "{asked} {stopped} {most} {for_one} {for_all}");
+}
+
 /// Late in the evening a window's last connections take long: the next ride from a change may be an hour off, or
 /// the next morning's. They are options all the same, and the answer has them: compared with the scan as far as the
 /// query's own horizon. (A window's answer lacked them until 18 November 2026: the search stopped where the faster

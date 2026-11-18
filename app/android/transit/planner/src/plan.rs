@@ -60,7 +60,9 @@
 //! added, whichever is later: past that, anything with as many rides is beaten. Asked for every option, wishes
 //! that cost are searched with bags alone, to the horizon.
 //!
-//! **What bounds it** ([`Limits`]): rounds by `max_rides`; searches by `departures`; labels and steps by their
+//! **What bounds it** ([`Limits`]): rounds by `max_rides`; searches by `departures` (a window's moments, and the
+//! later moments tried for one moment's journeys, of which only those that `options` lets show are searched for
+//! again); labels and steps by their
 //! caps; time by the window and the horizon. Every loop over the file's data counts steps. An answer says when a
 //! cap was met ([`Answer::cut_short`]), wherever in the search it was: also where the steps passed theirs outside
 //! a search's rounds, in the count from the journey's end or in the list of a window's departures.
@@ -774,6 +776,19 @@ impl<'a> Planner<'a> {
             keep
         };
         let mut keep = best(&journeys);
+        let options = q.limits.options.clamp(1, 1024) as usize;
+        // Asked for one moment, with more options than may be shown: the fastest stay (the earliest arrivals;
+        // arriving by, the latest departures). That is settled here, before any is searched again for a later
+        // departure: leaving later changes no arrival, and what is not shown is not searched for.
+        let mut too_many = false;
+        if window == 0 && keep.len() > options {
+            keep.sort_by_key(|j| {
+                let k = key(j);
+                (k.1, k.2, k.3)
+            });
+            keep.truncate(options);
+            too_many = true;
+        }
         // Asked for one moment, each journey so far leaves when the first trip it caught does, which may be sooner
         // than it need: an earlier bus to the same train. Whoever asks is told when to leave at the latest (and,
         // asking to arrive by, when the journey is over at the earliest).
@@ -786,20 +801,19 @@ impl<'a> Planner<'a> {
                     Anchor { leave, time: reach, rides: j.rides, cost: j.penalty, done: false, lo: -1, hi: 0, near: true, hit: NONE, seen: false }
                 })
                 .collect();
-            searches += s.leave_later(first, last, start, anchors);
+            searches += s.leave_later(first, last, start, anchors, cap);
             if !s.kept.is_empty() {
                 keep.append(&mut s.kept);
                 keep = best(&keep);
             }
         }
         keep.sort_by_key(|j| (j.depart, j.arrive, j.rides, j.penalty));
-        let options = q.limits.options.clamp(1, 1024) as usize;
         // Cut short: a cap was met where the search says so itself, or the steps passed theirs anywhere at all (the
         // count from the journey's end, the list of a window's departures): whatever came after did less than
         // it should.
-        let mut cut = s.cut || s.steps > s.max_steps;
+        let mut cut = s.cut || s.steps > s.max_steps || too_many;
         if keep.len() > options {
-            // too many: those nearest the asked moment stay
+            // too many over a window: those nearest the asked moment stay
             if back {
                 keep.drain(..keep.len() - options);
             } else {
@@ -1000,8 +1014,10 @@ impl<'s> Search<'s, '_> {
     /// between the first that does and the one tried before it in turn; before that, once the moments left are few,
     /// the one next after the journey's own departure by itself, since most journeys already leave as late as they
     /// can and that search says so. Each search is held to what could still match a journey it can tell something
-    /// of. The journeys that leave later are put in `kept`. Returns how many searches it took.
-    fn leave_later(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, mut anchors: Vec<Anchor>) -> u32 {
+    /// of. The journeys that leave later are put in `kept`. Returns how many searches it took: `cap` at most
+    /// ([`crate::Limits::departures`]), and where that stops it before every journey's latest moment is known,
+    /// the search is cut short: a journey may then leave sooner than it need.
+    fn leave_later(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, mut anchors: Vec<Anchor>, cap: usize) -> u32 {
         let Some(end) = anchors.iter().map(|a| a.time).max() else {
             return 0;
         };
@@ -1048,7 +1064,7 @@ impl<'s> Search<'s, '_> {
         // (the moment of the search before, while this one can build on it; the journeys of each are in `found`)
         let (mut searches, mut before) = (0u32, i32::MIN);
         while let Some(target) = self.anchors.iter().position(|a| a.hi - a.lo > 1) {
-            if self.cut || self.steps > self.max_steps {
+            if self.cut || self.steps > self.max_steps || searches as usize >= cap {
                 self.cut = true;
                 break;
             }

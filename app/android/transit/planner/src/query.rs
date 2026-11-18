@@ -171,11 +171,13 @@ pub struct Limits {
     pub labels: u32,
     /// Steps (a stop along a route, a walk, a trip looked at) a search may take.
     pub steps: u64,
-    /// Departures inside the window that each get a search of their own.
+    /// Departures inside the window that each get a search of their own; and, asked for one moment, the later
+    /// moments tried to see whether a journey can leave later.
     pub departures: u32,
     /// Labels kept a stop a round when wishes cost something (without, it is one).
     pub bag: u32,
-    /// Journeys returned.
+    /// Journeys returned. Of more: over a window those nearest the asked moment; asked for one moment the fastest
+    /// (the earliest arrivals; arriving by, the latest departures).
     pub options: u32,
     /// How long after the asked moment a journey may still be under way, in seconds.
     pub horizon: u32,
