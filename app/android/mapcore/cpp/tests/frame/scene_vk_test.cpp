@@ -897,6 +897,27 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     }
     CHECK(w.residency().stats().native_bytes == native);
     MESSAGE(w.residency().resident().size() << " resident tiles hold " << native << " native bytes");
+    // The workers are woken by a want that queued a tile, and by no other (ENGINE.md's audit, B1: every frame woke them
+    // all before): the frames' wants at the same camera, once its tiles are built, wake none.
+    {
+        const scene::ResidencyStats first = w.residency().stats();
+        CHECK(first.wakes >= 1);
+        CHECK(first.wakes <= first.requested);
+        scene::ResidencyStats before = first;
+        for (std::uint64_t n = 41; n <= 60; ++n) {
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            w.residency().wait_idle();
+            const scene::ResidencyStats after = w.residency().stats();
+            // a want woke them only where it asked for a tile (top-ups and the stand-ins' passes among them)
+            CHECK(after.wakes - before.wakes <= after.requested - before.requested);
+            before = after;
+        }
+        const scene::ResidencyStats still = w.residency().stats();
+        MESSAGE(std::format("{} wants woke the workers for {} tiles asked; {} more over 20 frames at the same camera",
+                            first.wakes, first.requested, still.wakes - first.wakes));
+        CHECK(still.wakes - first.wakes <= still.requested - first.requested);
+    }
 
     // The sun: its scene the resident tiles and their halo, its bits published, every drawn tile's texels in the frame
     // slot's half of its buffer, as BitTiles gives them. The tiles were drawn before their first bits, by day, so the
