@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The packer's checks: python3 -I app/android/transit/pack/test_ttpack.py
 
-- the hand-written feed (planner/tests/data/tiny) packs to the very bytes kept beside it (tiny.tt), twice over: the
-  planner's tests read that file, so it can't drift from the packer, and the same feed gives the same bytes;
+- the hand-written feeds (planner/tests/data/tiny and edges) pack to the very bytes kept beside them (tiny.tt,
+  edges.tt), twice over: the planner's tests read those files, so they can't drift from the packer, and the same
+  feed gives the same bytes;
+- the days the clock changes are found from the feed's timezone and written into the file (edges has one);
 - the cosine table is the planner's (planner/src/geo.rs), number for number, so both measure alike;
 - a table or a column the packer does not read is said, and with --strict refused with nothing written;
 - ttlist.py writes the list of published files, and says when only a changed feed is wanted.
@@ -10,6 +12,7 @@
 Python 3's standard library only.
 """
 
+import datetime
 import os
 import re
 import subprocess
@@ -24,8 +27,9 @@ import ttpack  # noqa: E402
 
 
 class Packer(unittest.TestCase):
-    def pack(self, out):
-        subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), os.path.join(DATA, "tiny"), out], check=True, capture_output=True)
+    def pack(self, out, feed="tiny"):
+        r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), os.path.join(DATA, feed), out], check=True, capture_output=True, text=True)
+        self.said = r.stdout
         with open(out, "rb") as f:
             return f.read()
 
@@ -35,6 +39,26 @@ class Packer(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(self.pack(os.path.join(tmp, "a.tt")), kept, "tiny.tt is stale: pack planner/tests/data/tiny again")
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt")), kept)
+            self.assertNotIn("the clock changes", self.said)
+        self.assertNotIn(b"odd_days", kept)
+
+    def test_the_edges_feed_packs_to_the_kept_bytes(self):
+        # (planner/tests/edges.rs: its days span the night the clock goes forward, which the file must say)
+        with open(os.path.join(DATA, "edges.tt"), "rb") as f:
+            kept = f.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.pack(os.path.join(tmp, "a.tt"), "edges"), kept, "edges.tt is stale: pack planner/tests/data/edges again")
+            self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "edges"), kept)
+            self.assertIn("the clock changes: the day after 2027-03-27 begins 82800 s after it", self.said)
+        self.assertIn(b"odd_days=20270327:82800", kept.replace(b"\0", b"="))
+
+    def test_the_days_the_clock_changes(self):
+        day = datetime.date
+        self.assertEqual(ttpack.odd_days("Europe/Amsterdam", day(2027, 3, 26), 4), [(day(2027, 3, 27), 82800)])
+        self.assertEqual(ttpack.odd_days("Europe/Amsterdam", day(2027, 10, 29), 4), [(day(2027, 10, 30), 90000)])
+        self.assertEqual(ttpack.odd_days("Europe/Amsterdam", day(2026, 11, 16), 400), [(day(2027, 3, 27), 82800), (day(2027, 10, 30), 90000)])
+        self.assertEqual(ttpack.odd_days("UTC", day(2027, 3, 26), 4), [])
+        self.assertIsNone(ttpack.odd_days("No/Such_Zone", day(2027, 3, 26), 4))
 
     def test_the_cosine_table_is_the_planners(self):
         with open(os.path.join(HERE, "..", "planner", "src", "geo.rs"), encoding="utf-8") as f:
@@ -90,6 +114,28 @@ class Packer(unittest.TestCase):
             r = run()
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("frequencies.txt has rows", r.stderr)
+
+    def test_a_feed_of_more_days_than_a_file_holds(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            feed = os.path.join(tmp, "tiny")
+            shutil.copytree(os.path.join(DATA, "tiny"), feed)
+            out = os.path.join(tmp, "out.tt")
+            run = lambda *more: subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), feed, out, *more], capture_output=True, text=True)
+            # the weekdays' service runs on to 1 March 2027: 421 days from the feed's first
+            with open(os.path.join(feed, "calendar.txt")) as f:
+                text = f.read()
+            with open(os.path.join(feed, "calendar.txt"), "w") as f:
+                f.write(text.replace("WK,1,1,1,1,1,0,0,20260105,20260111", "WK,1,1,1,1,1,0,0,20260105,20270301"))
+            r = run("--strict")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("left out: the feed's days after 2027-02-08 (it has 421 from 2026-01-05; a file holds 400)", r.stdout)
+            self.assertIn("kept: 400 days from 2026-01-05", r.stdout)
+            # asked for by hand, more days than a file holds is a mistake
+            r = run("--days", "401")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("1 to 400 are allowed", r.stderr)
 
     def test_the_list_of_published_files(self):
         import gzip

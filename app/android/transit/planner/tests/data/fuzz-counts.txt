@@ -1,0 +1,3 @@
+1000000 files a little wrong (269209 still opened and were asked 2 journeys each) and 1000000 queries on the sound file: no panic (464424)
+300000 files a little wrong (85458 still opened and were asked 2 journeys each) and 300000 queries on the sound file: no panic (243643)
+20000 files a little wrong (5676 still opened and were asked 2 journeys each) and 20000 queries on the sound file: no panic (13500)

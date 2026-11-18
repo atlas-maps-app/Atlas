@@ -32,6 +32,7 @@ One file holds one country's public transport timetable for the days its feed co
 - The planner knows no timezone and no clock. Whoever asks it turns a wall-clock moment into a service day and its seconds, and a result back. On the phone that is one call of `java.time`.
 - A **day** is counted from `first_day`: day 0 is that date, and the file covers `days` of them. A service is one bit a day.
 - A trip at day `d` with first departure `t` and a profile entry `(a, b)` arrives at that stop at `d · 86400 + t + a` and leaves at `d · 86400 + t + b`, in seconds from the start of day 0.
+- **But for the two nights a year the clock changes.** A service day starts at "noon minus twelve hours", so the day the clock goes forward is followed by the next one after 82,800 s, and the day it goes back after 90,000 s. `META`'s `odd_days` names each such day of the file with those seconds (`20270327:82800 20271030:90000`); the key is absent when the file has none. A reader that follows a journey from one service day into another starts day `d` at the sum of the lengths of the days before it, not at `d · 86400`: a night bus of Saturday's service at 28:20 is in at 28:30, and Sunday's 05:10 has then left ten minutes ago. The packer finds the days from the feed's timezone (Python's `zoneinfo`, so the machine's tz database), and with `--strict` refuses a feed whose timezone it does not know.
 
 ## Layout
 
@@ -69,11 +70,11 @@ All integers are little-endian `u32` unless said. `NONE` is `0xFFFFFFFF`.
 | `SRTE` | a route at a stop | 2 | the route; the stop's place along its pattern (from 0). A stop a pattern passes twice is there twice |
 | `TRUL` | a transfer rule | 8 | from stop; to stop; from line or `NONE`; to line or `NONE`; from trip or `NONE`; to trip or `NONE`; `transfer_type`; `min_transfer_time` or `NONE`. Sorted by all eight |
 
-**`META` keys:** `first_day` (YYYYMMDD), `days`, `timezone`, `change_same_stop_s` (what changing at one stop costs, 60), `walks` (the rule the walks were made by), `source`, `cut` (the packer's options, empty for a whole feed), the feed's own `feed_publisher_name`, `feed_publisher_url`, `feed_lang`, `feed_version`, `feed_start_date`, `feed_end_date`, `feed_id`, and one `licence:<table>` a row of the feed's `licenses.txt` (`licence:*` for the feed as a whole).
+**`META` keys:** `first_day` (YYYYMMDD), `days`, `timezone`, `odd_days` (the days after which the clock changes, under "Time"; absent when there are none), `change_same_stop_s` (what changing at one stop costs, 60), `walks` (the rule the walks were made by), `source`, `cut` (the packer's options, empty for a whole feed), the feed's own `feed_publisher_name`, `feed_publisher_url`, `feed_lang`, `feed_version`, `feed_start_date`, `feed_end_date`, `feed_id`, and one `licence:<table>` a row of the feed's `licenses.txt` (`licence:*` for the feed as a whole).
 
 ## What the packer does to a feed
 
-- **Days.** `calendar.txt` is spread over its weekdays, then `calendar_dates.txt` adds and removes. A service that runs on no kept day goes, with its trips.
+- **Days.** `calendar.txt` is spread over its weekdays, then `calendar_dates.txt` adds and removes. A service that runs on no kept day goes, with its trips. A file holds 400 days at most: of a longer feed the first 400 are kept, and the packer says which were left out.
 - **Stops.** Kept: every stop a kept trip calls at, its station (and that one's), and the station's other parts (entrances, nodes, boarding areas). They are sorted along a Z-curve, so stops near each other lie near each other in the file.
 - **A stop at 0, 0** has no place in the feed (OVapi: 201 platforms of stations abroad). It is put at its station's place and marked so; with no station that has a place it stays at 0, 0, marked as nowhere, and takes part in nothing that measures.
 - **A trip's stop times** are sorted by `stop_sequence`. A stop without a time takes one between its timed neighbours, by its place in the sequence. A time that goes back is raised to the one before. Both are counted and printed.
@@ -81,7 +82,7 @@ All integers are little-endian `u32` unless said. `NONE` is `0xFFFFFFFF`.
 - **Profiles** are shared by every trip with the same times after its first departure, whatever its pattern. The arrival at the first stop is not kept (it is written as the departure).
 - **Routes.** A pattern's trips are sorted by first departure (then profile, then `trip_id`), and each goes into the first route in which it is nowhere earlier than that route's last trip, at any arrival or departure. So within a route a later trip is later or level everywhere, and a search finds the first trip it can catch by halving.
 - **Walks** (until the foot router makes them; the planner won't change then):
-  - at one stop, a change costs `change_same_stop_s` and is no record;
+  - at one stop, a change costs `change_same_stop_s` and is no record; unless `transfers.txt` has a rule for everyone from that stop to itself, which stays a record (`TRUL`) and gives the stop its own: type 2 its seconds in place of `change_same_stop_s` (where a query asks for a change time of its own, the longer of the two), type 3 that nobody changes there. OVapi's feed has none;
   - between two stops within 400 m: 60 s and the straight line taken 30 % longer at 1.25 m/s, rounded up;
   - between two stops of one station, however far: the same, and 120 s at least;
   - to or from a stop that is nowhere, inside its station: 120 s;
@@ -151,9 +152,17 @@ OVapi's feed of 16 November 2026 (version 9696): 28 days from 15 November, 65,22
 - **Published as gzip:** 12.5 MB a week for the Netherlands (decided 17 November 2026: no new library on the phone).
 - **Measured and not built:** a filter before the compressor that keeps the format (each `u32` column as differences, its four bytes apart) brings gzip to 7.9 MB and xz to 5.0 MB. It would be a second coding to undo on the phone.
 
+### When the new year's timetable is in the feed
+
+The Dutch timetable changes in mid-December, and the operators hand in the new year's about a month before. From then until the change the feed holds both. OVapi's feed of 17 November 2026 (version 9702, 274 MB zipped) covers 391 days, to 11 December 2027: 74,039 stops, 2,849 lines, 1,095,673 trips standing for 20,900,135 stop times. Its file is 93.4 MB at rest and 19.5 MB as gzip -9. Of its trips, 537,207 end with the old timetable on 12 December; the 558,466 that go on are about what the feed of the day before held, so the file falls back to its size by itself once the old year is out.
+
+**The days are not all as full.** Each operator hands in as far ahead as it knows: in that feed the trains and 25 other operators to the last week, HTM to 31 December, GVB to 31 January, RET to 24 February, Qbuzz to 10 July. Lines with a trip in the week: 2,414 in the first, 1,769 in the first week of January, 1,502 in March, 850 in summer. So a day far ahead is in the file and still not whole: a journey asked for it is answered from what is there. `atlas-transit days` says it week by week, and the weekly workflow puts it in its log. Cutting the far days would not make the file much smaller: a file of the first eight weeks would still hold 92 % of the trips, since a trip is in the file once, however many days it runs.
+
+In both feeds about four trips in ten are another trip again in all but `trip_id` and days (the feed has a trip once for each stretch of days it runs unchanged): 671,447 groups among version 9702's 1,095,673 trips, none with a day twice. The file keeps them apart, each with its own `trip_id`.
+
 ## How it is published
 
-`.github/workflows/timetable.yml` runs once a week and by hand. It fetches the feed, packs it strictly, checks the file (`atlas-transit check`, and the fixed journeys against the connection scan), gzips it, and uploads it to a dated release `timetable-YYYYMMDD`. The list `timetable.json` goes there too and, last, onto the fixed release `timetable-latest`: a reader starts from that list. Nothing in the app reads it yet.
+`.github/workflows/timetable.yml` runs once a week and by hand. After the planner's own checks (`.github/workflows/transit.yml`, which a push runs too) it fetches the feed, packs it strictly, checks the file (`atlas-transit check`, how full its days are, and the fixed journeys against the connection scan), gzips it, and uploads it to a dated release `timetable-YYYYMMDD`. The list `timetable.json` goes there too and, last, onto the fixed release `timetable-latest`: a reader starts from that list. Nothing in the app reads it yet.
 
 `pack/ttlist.py` writes the list: `{"list": 1, "timetables": [entry, …]}`, entries by `id`. An entry:
 
