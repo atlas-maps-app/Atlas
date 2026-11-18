@@ -29,15 +29,21 @@
 //!   within that reach then gets its least time and its fewest rides for good, and the searches for the earlier
 //!   departures make no label that could not end sooner than a journey leaving later already does.
 //!
+//! **A window holds its last moment, and its far end is a second after that.** The search from there finds what
+//! leaves after the window: no option, but what an option must beat, the last moment's journeys like any other.
+//! So what counts against a journey is every journey that leaves no earlier, wherever the window ends, and two
+//! windows one after the other give what one window over both gives.
+//!
 //! **Asked for one moment, a journey leaves as late as it can.** The rounds give each journey with the first trip
 //! that could be caught, which may be an earlier bus to the same train. So what was found is searched once more
-//! from each later moment a trip leaves, the latest first, keeping only what ends no later with no more rides and at
-//! no more cost: the first such journey for each is the one that leaves latest. (Asked to arrive by, the same
+//! from later moments at which a trip leaves, from the last downwards (one by one where they are few, in steps
+//! where they are many), keeping only what ends no later with no more rides and at no more cost: the latest moment
+//! that still gives such a journey is when to leave (`Search::leave_later`). (Asked to arrive by, the same
 //! turned round: the journey is over as early as that departure allows.) Over a window nothing of this is needed:
 //! there a later departure is an option in its own right, and beats the earlier one.
 //!
 //! **The two nights a year the clock changes**, a service day is an hour shorter or longer than 86,400 s. The file
-//! says which ([`Planner::zero`]), and a trip of another day than the query's is placed by it.
+//! says which (`Planner::zero`), and a trip of another day than the query's is placed by it.
 //!
 //! **Where wishes cost and are weighed** ([`crate::Query::weigh`]), there are two searches. First the plain one
 //! from the window's far end: one label a stop, the earliest, its cost carried along and deciding nothing. Its
@@ -123,7 +129,12 @@ struct Found {
 }
 
 /// A journey of the answer to one moment, for the search that looks whether one can leave later for it: when it
-/// leaves and ends (in the direction searched), its rides and cost, and whether a later one was found.
+/// leaves and ends (in the direction searched), its rides and cost. Among the later moments tried, `lo` is the
+/// last known to do for it (or the one before them all) and `hi` the first known not to; `near` says no later
+/// moment has done yet, and the one next after `lo` is still to try by itself. In one search, `done` says there
+/// is nothing to look for (its moment tells nothing new of this journey, or the search has matched it: `hit` is
+/// where in `found`). `seen` says every search since the last that began anew looked for this journey to its end,
+/// so that the next may build on them.
 #[derive(Clone, Copy)]
 struct Anchor {
     leave: i32,
@@ -131,6 +142,11 @@ struct Anchor {
     rides: u32,
     cost: u32,
     done: bool,
+    lo: i32,
+    hi: i32,
+    near: bool,
+    hit: u32,
+    seen: bool,
 }
 
 /// The previous ride, for the feed's rules about changing from it.
@@ -650,6 +666,9 @@ impl<'a> Planner<'a> {
             beyond: 0,
         };
         let far = s.limit;
+        // A window holds its last moment, and the search from its far end is from a second after that: what leaves
+        // after the window counts against what leaves inside it, the last moment's journeys too.
+        let span = if window > 0 { window + 1 } else { 0 };
         let cap = q.limits.departures.clamp(1, 100_000) as usize;
         let mut searches = 0u32;
         let mut journeys: Vec<Journey> = Vec::new();
@@ -660,7 +679,7 @@ impl<'a> Planner<'a> {
             // the one with the fewest ends no later than that one's end with its cost added, or is beaten by it.
             let bag = s.bag;
             (s.soft, s.weigh, s.bag) = (false, false, 1);
-            searches += s.sweep(first, last, start, window, far, q.limits.patient, false, cap);
+            searches += s.sweep(first, last, start, span, far, q.limits.patient, false, cap);
             let fastest: Vec<Found> = s.w.found.clone();
             journeys.extend(fastest.iter().filter_map(|f| s.journey(f)));
             (s.soft, s.weigh, s.bag) = (true, true, bag);
@@ -688,15 +707,15 @@ impl<'a> Planner<'a> {
                 } else {
                     s.aim(last, (s.limit as i64 - start as i64).clamp(0, 4 * MAX_TIME as i64) as u32);
                 }
-                searches += s.searches(first, last, start, window, cap, true, false);
+                searches += s.searches(first, last, start, span, cap, true, false);
                 // what ends later than this limit is beaten by the plain search's journeys, unless it has fewer rides
                 s.short = (s.limit < far).then_some(s.limit);
                 s.cover = fastest.iter().map(|f| f.rides.min(254) as u8).min().unwrap_or(255);
             }
-            searches += s.fewer_rides(first, last, start, window, cap, &fastest);
+            searches += s.fewer_rides(first, last, start, span, cap, &fastest);
         } else {
-            searches += s.sweep(first, last, start, window, far, q.limits.patient && !s.soft, true, cap);
-            searches += s.fewer_rides(first, last, start, window, cap, &[]);
+            searches += s.sweep(first, last, start, span, far, q.limits.patient && !s.soft, true, cap);
+            searches += s.fewer_rides(first, last, start, span, cap, &[]);
         }
         let followed = (s.short.unwrap_or(s.limit) - start - window).clamp(0, 2 * DAY) as u32;
         journeys.append(&mut s.kept);
@@ -749,12 +768,12 @@ impl<'a> Planner<'a> {
                 .filter(|j| j.rides > 0)
                 .map(|j| {
                     let (leave, reach) = if back { (-j.arrive, -j.depart) } else { (j.depart, j.arrive) };
-                    Anchor { leave, time: reach, rides: j.rides, cost: j.penalty, done: false }
+                    Anchor { leave, time: reach, rides: j.rides, cost: j.penalty, done: false, lo: -1, hi: 0, near: true, hit: NONE, seen: false }
                 })
                 .collect();
-            searches += s.leave_later(first, last, start, cap, anchors);
-            if !s.w.found.is_empty() {
-                keep.extend(s.w.found.iter().filter_map(|f| s.journey(f)));
+            searches += s.leave_later(first, last, start, anchors);
+            if !s.kept.is_empty() {
+                keep.append(&mut s.kept);
                 keep = best(&keep);
             }
         }
@@ -837,25 +856,25 @@ impl<'s> Search<'s, '_> {
     /// is then still to find is only a journey with fewer rides than each one found that leaves no earlier
     /// ([`Search::fewer_rides`]). Returns how many searches it took.
     #[allow(clippy::too_many_arguments)]
-    fn sweep(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, window: i32, far: i32, patient: bool, inside: bool, cap: usize) -> u32 {
+    fn sweep(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, span: i32, far: i32, patient: bool, inside: bool, cap: usize) -> u32 {
         self.reset(last, false);
         (self.aimed, self.lazy) = (false, false);
         (self.short, self.covered, self.cover) = (None, None, 255);
         let mut limit = far;
         if patient {
             match self.aim_lazily(last, first) {
-                Some(least) => limit = far.min(start + window + (2 * least.min(MAX_TIME) as i32 + 1800).max(3600)),
+                Some(least) => limit = far.min(start + (span - 1).max(0) + (2 * least.min(MAX_TIME) as i32 + 1800).max(3600)),
                 None => return 0, // no timetable could make this journey: there is nothing to search
             }
         }
         self.limit = limit;
-        let mut searches = self.searches(first, last, start, window, cap, inside, true);
+        let mut searches = self.searches(first, last, start, span, cap, inside, true);
         if limit == far {
             return searches;
         }
         // from which moment on nothing was found: after the first search (the latest moment first) that had a journey
         let from = match self.covered {
-            Some(moment) if moment >= start + window => None,
+            Some(moment) if moment >= start + span => None,
             Some(moment) => Some(moment + 1),
             None => Some(start),
         };
@@ -873,26 +892,27 @@ impl<'s> Search<'s, '_> {
         // (the count of least seconds from the journey's end goes on where it was: it holds whatever the limit)
         self.reset(last, true);
         self.limit = far;
-        searches += self.searches(first, last, from, start + window - from, cap, inside, true);
+        searches += self.searches(first, last, from, start + span - from, cap, inside, true);
         self.cover = cover;
         searches
     }
 
-    /// One search from the window's far end, with every first stop: for one moment that is the whole answer. For a
-    /// window it is what the searches inside build on, and what shows which of their journeys a later departure
-    /// makes pointless. Then, `inside`, one search for each moment in the window at which a trip leaves a first
-    /// stop, the latest first; before them, with `aim`, the search is aimed for good.
+    /// One search from the far end of a span of moments (`start + span`: for one moment, with a span of 0, the
+    /// moment itself, and that is the whole answer; for a window the second after its last moment), with every
+    /// first stop. For a window it is what the searches inside build on, and what shows which of their journeys a
+    /// later departure makes pointless. Then, `inside`, one search for each moment of the span at which a trip
+    /// leaves a first stop, the latest first; before them, with `aim`, the search is aimed for good.
     #[allow(clippy::too_many_arguments)]
-    fn searches(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, window: i32, cap: usize, inside: bool, aim: bool) -> u32 {
+    fn searches(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, span: i32, cap: usize, inside: bool, aim: bool) -> u32 {
         let mut searches = 1u32;
         (self.covered, self.cover) = (None, 255);
         self.begin();
         for &(stop, secs) in first.iter() {
-            self.offer_first(stop, start + window + secs as i32, secs);
+            self.offer_first(stop, start + span + secs as i32, secs);
         }
         self.rounds();
-        self.note_cover(start + window);
-        if window == 0 || !inside {
+        self.note_cover(start + span);
+        if span == 0 || !inside {
             return searches;
         }
         if aim {
@@ -902,7 +922,7 @@ impl<'s> Search<'s, '_> {
                 self.aim(last, (latest - start).max(0) as u32);
             }
         }
-        let mut events = self.departures(first, start, window);
+        let mut events = self.departures(first, start, span - 1);
         events.sort_unstable();
         let mut distinct = 0usize;
         let mut keep = events.len();
@@ -945,14 +965,21 @@ impl<'s> Search<'s, '_> {
         }
     }
 
-    /// Asked for one moment: whether one can leave later for what was found. The same search again from each later
-    /// moment at which a trip leaves a first stop, the latest first, kept to what ends no later than one of the
-    /// `anchors`, with no more rides and at no more cost. The first such journey for an anchor is its latest; the
-    /// search is over when each anchor has one, or leaves no earlier than the moments still to come. What it finds
-    /// is in `found`. Returns how many searches it took.
-    fn leave_later(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, cap: usize, anchors: Vec<Anchor>) -> u32 {
+    /// Asked for one moment: whether one can leave later for what was found. Each of the `anchors` is a journey of
+    /// the answer, and a later moment does for it when a search from there ends no later, with no more rides and at
+    /// no more cost. Leaving earlier never hurts, so the moments that do are all those up to one, and that one is
+    /// looked for among the moments at which a trip leaves a first stop, from the last that could be in time
+    /// downwards: a search from an earlier moment builds on the one before it (what was reached then is reached no
+    /// later now), so going down costs little, and going up means beginning anew.
+    ///
+    /// Where the moments are few, each is tried in turn, and the first that does is the latest. Where they are
+    /// many (a busy stop, and a journey with a long wait in it), every so-manieth is tried, and the moments
+    /// between the first that does and the one tried before it in turn; before that, once the moments left are few,
+    /// the one next after the journey's own departure by itself, since most journeys already leave as late as they
+    /// can and that search says so. Each search is held to what could still match a journey it can tell something
+    /// of. The journeys that leave later are put in `kept`. Returns how many searches it took.
+    fn leave_later(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, mut anchors: Vec<Anchor>) -> u32 {
         let Some(end) = anchors.iter().map(|a| a.time).max() else {
-            self.w.found.clear();
             return 0;
         };
         // aimed at the journey's end: as far as the count from there has come, or anew
@@ -978,38 +1005,76 @@ impl<'s> Search<'s, '_> {
         if whole >= span {
             return 0;
         }
+        let mut moments: Vec<i32> = self.departures(first, start.saturating_add(1), (span - whole - 1) as i32).iter().map(|e| e.0).collect();
+        moments.sort_unstable();
+        moments.dedup();
+        let n = moments.len() as i32;
+        for a in anchors.iter_mut() {
+            // the moments up to the journey's own departure do and are no later; past the last, none is in time
+            a.lo = moments.partition_point(|m| *m <= a.leave) as i32 - 1;
+            (a.hi, a.near) = (n, true);
+        }
         (self.anchors, self.later) = (anchors, true);
-        let mut events = self.departures(first, start.saturating_add(1), (span - whole - 1) as i32);
-        events.sort_unstable();
-        let (mut searches, mut distinct) = (0u32, 0usize);
-        let mut i = events.len();
-        while i > 0 && self.steps <= self.max_steps && self.w.labels.len() < self.max_labels {
-            let moment = events[i - 1].0;
-            if self.anchors.iter().all(|a| a.done || a.leave >= moment) {
-                i = 0;
-                break;
-            }
-            self.begin();
-            while i > 0 && events[i - 1].0 == moment {
-                let (stop, secs) = first[events[i - 1].1 as usize];
-                self.offer_first(stop, moment + secs as i32, secs);
-                i -= 1;
-            }
-            if self.w.marks[0].is_empty() {
-                continue; // nothing from this moment can be in time
-            }
-            distinct += 1;
-            if distinct > cap {
+        let mut latest: Vec<Option<Journey>> = vec![None; self.anchors.len()];
+        // how far apart the moments tried are: one by one where they are few, else about the root of their number
+        let most = self.anchors.iter().map(|a| n - 1 - a.lo).max().unwrap_or(0);
+        let mut apart = 1;
+        while most > 12 && apart * apart < most {
+            apart += 1;
+        }
+        // (the moment of the search before, while this one can build on it; the journeys of each are in `found`)
+        let (mut searches, mut before) = (0u32, i32::MIN);
+        while let Some(target) = self.anchors.iter().position(|a| a.hi - a.lo > 1) {
+            if self.cut || self.steps > self.max_steps {
                 self.cut = true;
                 break;
             }
-            self.rounds();
-            searches += 1;
-        }
-        if i > 0 {
-            self.cut = true;
+            let t = self.anchors[target];
+            let p = if t.hi - t.lo > apart {
+                t.hi - apart
+            } else if t.near && apart > 1 {
+                self.anchors[target].near = false;
+                t.lo + 1
+            } else {
+                t.hi - 1
+            };
+            // A search from a later moment is one to build on, for a journey that every search since the last
+            // fresh one looked for to its end: what was reached then is reached no later now, and whatever could
+            // still match that journey was followed. Otherwise the search begins anew.
+            if p >= before || !t.seen {
+                self.reset(last, true);
+                for a in self.anchors.iter_mut() {
+                    a.seen = true;
+                }
+            }
+            before = p;
+            for a in self.anchors.iter_mut() {
+                (a.done, a.hit) = (p <= a.lo || p >= a.hi || !a.seen, NONE);
+            }
+            self.begin();
+            // from every first stop, as a search by itself: a trip that leaves another of them later counts too
+            for &(stop, secs) in first.iter() {
+                self.offer_first(stop, moments[p as usize] + secs as i32, secs);
+            }
+            if !self.w.marks[0].is_empty() {
+                self.rounds();
+                searches += 1;
+            }
+            for k in 0..self.anchors.len() {
+                let mut a = self.anchors[k];
+                if a.hit != NONE {
+                    (a.lo, a.near) = (p, false);
+                    latest[k] = self.w.found.get(a.hit as usize).and_then(|f| self.journey(f));
+                } else if !a.done {
+                    a.hi = p;
+                }
+                // (matched, or not looked for: this search did not follow what could match it to the end)
+                a.seen &= !a.done;
+                self.anchors[k] = a;
+            }
         }
         self.later = false;
+        self.kept.extend(latest.into_iter().flatten());
         searches
     }
 
@@ -1025,7 +1090,7 @@ impl<'s> Search<'s, '_> {
     /// window's first moment: leaving later reaches nothing that leaving then does not, so when that finds no
     /// journey there is none, which is how it mostly ends. `known` are journeys of another search to beat.
     /// Returns how many searches it took.
-    fn fewer_rides(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, window: i32, cap: usize, known: &[Found]) -> u32 {
+    fn fewer_rides(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, span: i32, cap: usize, known: &[Found]) -> u32 {
         if self.short.is_none() || self.cut || !self.aimed || self.cover == 255 || self.cover < 2 {
             return 0;
         }
@@ -1049,8 +1114,8 @@ impl<'s> Search<'s, '_> {
             for f in known {
                 self.know(f);
             }
-            searches += self.searches(first, last, start, if whole { window } else { 0 }, cap, whole, false);
-            if window == 0 || self.w.found.is_empty() || self.cut {
+            searches += self.searches(first, last, start, if whole { span } else { 0 }, cap, whole, false);
+            if span == 0 || self.w.found.is_empty() || self.cut {
                 break;
             }
         }
@@ -1955,14 +2020,14 @@ impl<'s> Search<'s, '_> {
             // (a journey ends with its last walk: one that carries it past the limit is not one that was asked for)
             let end = time + secs as i32;
             if self.later {
-                // one can leave later for these: each is matched once, by the latest
-                let mut any = false;
+                // one can leave at this search's moment for these: each is matched once in a search
+                let (at, mut any) = (self.w.found.len() as u32, false);
                 for a in self.anchors.iter_mut() {
                     if !a.done && end <= a.time && round as u32 <= a.rides && (!self.soft || cost <= a.cost) {
-                        (a.done, any) = (true, true);
+                        (a.done, a.hit, any) = (true, at, true);
                     }
                 }
-                if any && self.w.found.len() < 4096 {
+                if any {
                     self.w.found.push(Found { time: end, cost, rides: round as u32, label: index, secs });
                 }
             } else if end <= self.limit && !self.beaten_at_end(round, end, cost) {

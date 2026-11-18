@@ -151,6 +151,36 @@ fn a_departure_is_the_latest_that_makes_the_arrival() {
     assert_eq!(all(&tt, &ask(&mut p, &q)), [(hm(8, 0), hm(8, 45), "R1a R2a".to_string())]);
 }
 
+/// A window ends with its last moment, and what leaves after it still counts against what leaves inside: the 08:02
+/// bus is no option in a window that ends at 08:02, since the 08:22 makes the same train. So two windows one
+/// after the other give what one window over both gives.
+#[test]
+fn a_window_ends_with_its_last_moment() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let later = (hm(8, 22), hm(9, 10), "B1b B2a".to_string());
+    let mut q = query(&tt, "BA", "BZ", 0, hm(7, 30));
+    for (window, want) in [(31 * 60, vec![]), (32 * 60, vec![]), (51 * 60, vec![]), (52 * 60, vec![later.clone()]), (3600, vec![later.clone()])] {
+        q.window = window;
+        assert_eq!(all(&tt, &ask(&mut p, &q)), want, "a window of {} minutes", window / 60);
+    }
+    // from 08:02 itself, and from a second later
+    (q.time, q.window) = (hm(8, 2), 0);
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [later.clone()]);
+    (q.time, q.window) = (hm(8, 2) + 1, 20 * 60 - 1);
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [later.clone()]);
+    // arriving by, the same turned round: in by 09:05 with the 08:50 bus is no option where the 08:30 bus is in
+    // at 08:45, before the window
+    let sooner = (hm(8, 0), hm(8, 45), "R1a R2a".to_string());
+    let mut q = query(&tt, "RA", "RZ", 0, hm(9, 30));
+    q.arrive_by = true;
+    for (window, want) in [(24 * 60, vec![]), (25 * 60, vec![]), (44 * 60, vec![]), (45 * 60, vec![sooner.clone()]), (3600, vec![sooner.clone()])] {
+        q.window = window;
+        assert_eq!(all(&tt, &ask(&mut p, &q)), want, "arriving in a window of {} minutes", window / 60);
+    }
+}
+
 /// A vehicle that waits is boarded whatever the walk takes: also where no walk leads there, and where the walk is
 /// longer than the time there is. The search aimed at its end finds what the search to the horizon finds.
 #[test]

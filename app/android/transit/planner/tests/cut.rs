@@ -295,9 +295,57 @@ fn option(j: &Journey, q: &Query) -> (i32, i32, u32, u32) {
     }
 }
 
+/// Two windows one after the other give what one window over both gives: what counts against a journey is every
+/// journey that leaves no earlier, inside the window or after it. Each window is cut in two at the very moment one
+/// of its options leaves (arriving by: is over), which is where a search from the window's far end could go wrong.
+#[test]
+fn two_windows_give_what_one_over_both_gives() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let said = |js: &[Journey]| {
+        let mut v: Vec<(i32, i32, u32, u32)> = js.iter().filter(|j| j.rides > 0).map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect();
+        v.sort_unstable();
+        v
+    };
+    let (mut cuts, mut options, mut at_the_cut) = (0, 0, 0);
+    for (i, (a, z)) in pairs(&tt, 150, 31).into_iter().enumerate() {
+        let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 7 * 3600 + 409 * i as u32);
+        q.arrive_by = i % 3 == 1;
+        q.window = 3600 + 60 * (i as u32 % 45);
+        q.rules = i % 5 != 0;
+        q.limits.patient = i % 7 != 0;
+        if i % 4 == 3 {
+            q.wishes = vec![Wish { what: What::Mode(Mode::Rail), how: How::Avoid(600) }];
+        }
+        let whole = said(&ask(&mut p, &q));
+        // the moments to cut at, as seconds into the window: where an option leaves, and a second before
+        let mut at: Vec<u32> = whole.iter().map(|o| if q.arrive_by { q.time - o.1 as u32 } else { o.0 as u32 - q.time }).collect();
+        at.dedup();
+        for (k, into) in at.into_iter().enumerate().filter(|(k, _)| k % 3 == i % 3).flat_map(|(k, t)| [(k, t), (k, t.wrapping_sub(1))]) {
+            if into >= q.window {
+                continue; // (the window's own last moment: nothing comes after it)
+            }
+            let (mut near, mut far) = (q.clone(), q.clone());
+            near.window = into;
+            (far.time, far.window) = (if q.arrive_by { q.time - into - 1 } else { q.time + into + 1 }, q.window - into - 1);
+            let mut both = said(&ask(&mut p, &near));
+            at_the_cut += both.iter().filter(|o| if q.arrive_by { q.time - o.1 as u32 == into } else { o.0 as u32 - q.time == into }).count();
+            both.extend(said(&ask(&mut p, &far)));
+            both.sort_unstable();
+            assert_eq!(both, whole, "pair {i}, cut {k} at {into} s: {q:?}");
+            cuts += 1;
+            options += whole.len();
+        }
+    }
+    assert!(cuts > 150 && options > 1000 && at_the_cut > 60, "{cuts} {options} {at_the_cut}");
+}
+
 /// The search that weighs wishes gives what the rule leaves of every option: asked without weighing (and so as far
-/// as the query's horizon, which a search with every option always is), with every option from the window's far end (what leaves after the window can beat
-/// what leaves inside it), each option is held against all the others by the rule alone.
+/// as the query's horizon, which a search with every option always is), with every option from the window's last
+/// moment on (what leaves after the window can beat what leaves inside it; what leaves at that moment is the
+/// window's own, and beats itself no more than any other does), each option is held against all the others by the
+/// rule alone.
 #[test]
 fn weighing_gives_what_the_rule_leaves_of_every_option() {
     let b = bytes("utrecht-20261117.tt");

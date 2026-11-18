@@ -206,7 +206,9 @@ pub struct Query {
     /// Seconds of that service day: the earliest departure, or with `arrive_by` the latest arrival.
     pub time: u32,
     /// How far the moment may move, in seconds: later for a departure, earlier for an arrival. Every best journey
-    /// inside it is an option. 0 asks for the one moment.
+    /// inside it is an option, its last moment included: a journey as it runs, which no other beats that leaves no
+    /// earlier, inside the window or after it. So a window from the second after this one's last moment goes on
+    /// where this one ends, and the two give what one window over both gives. 0 asks for the one moment.
     pub window: u32,
     pub arrive_by: bool,
     /// The most rides a journey may have (1 to 16).

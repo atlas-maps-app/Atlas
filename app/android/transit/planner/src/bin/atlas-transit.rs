@@ -749,6 +749,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     let mut most = 0usize;
     let (mut many_rides, mut departures) = (0, 0);
     let mut t_whole: [Vec<f64>; 2] = Default::default();
+    let mut slowest = (0.0f64, String::new());
     for i in 0..n {
         let (a, b) = (served[rng.below(served.len() as u64) as usize], served[rng.below(served.len() as u64) as usize]);
         let spot = |s: u32| if points { Place::Point { lat: tt.stop(s).lat, lon: tt.stop(s).lon } } else { Place::Stop(s) };
@@ -758,6 +759,9 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let t0 = Instant::now();
         let one = planner.plan(&q);
         t_one.push(ms(t0));
+        if ms(t0) > slowest.0 {
+            slowest = (ms(t0), format!("pair {i} ({a} to {b}), {} options in {} searches and {} steps", one.journeys.len(), one.searches, one.steps));
+        }
         cut[0] += one.cut_short as u32;
         // the scan is asked as the planner was: as far as the query's own horizon, holding to the feed's rules
         let t0 = Instant::now();
@@ -903,7 +907,8 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                     unsure += 1;
                 } else {
                     compared += 1;
-                    // what leaves after the window can beat what leaves inside it: every option from its far end
+                    // what leaves after the window can beat what leaves inside it: every option from its last
+                    // moment on (each as late as it can leave; one that leaves at that moment is the window's own)
                     let mut edge = all.clone();
                     (edge.window, edge.time) = (0, all.time + all.window);
                     let beyond = if all.window > 0 { planner.plan(&edge).journeys } else { Vec::new() };
@@ -947,6 +952,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         line("  two hours as far as the horizon (not patient)", &mut t_whole[1]);
     }
     line("the scan, one earliest arrival", &mut t_scan);
+    println!("the slowest single departure: {}", slowest.1);
     println!(
         "{} of {} comparisons differ (with the scan: {}{}); {many_rides} more where the scan's journey has more rides than a journey may have; cut short by a cap: {} single departures, {} windows",
         wrong,
