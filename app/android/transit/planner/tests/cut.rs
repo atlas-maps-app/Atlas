@@ -421,6 +421,16 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
 /// rule alone.
 #[test]
 fn weighing_gives_what_the_rule_leaves_of_every_option() {
+    weighing_with_a_bag_of(16);
+}
+
+/// The same with the bag a query has when it says nothing.
+#[test]
+fn weighing_with_the_bag_a_query_has() {
+    weighing_with_a_bag_of(Query::new(Place::Stop(0), Place::Stop(0), 0, 0).limits.bag);
+}
+
+fn weighing_with_a_bag_of(bag: u32) {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
     let mut p = Planner::new(tt);
@@ -432,7 +442,7 @@ fn weighing_gives_what_the_rule_leaves_of_every_option() {
         q.rules = i % 5 != 0;
         q.limits.patient = i % 7 != 0;
         q.limits.options = 1024;
-        q.limits.bag = 16;
+        q.limits.bag = bag;
         q.wishes = match i % 6 {
             0 | 3 => vec![Wish { what: What::Mode(Mode::Rail), how: How::Avoid(900) }],
             1 | 4 => vec![
@@ -466,6 +476,54 @@ fn weighing_gives_what_the_rule_leaves_of_every_option() {
         left_out += all.len() - left.len().min(all.len());
     }
     assert!(options > 400 && left_out > 50, "{options} {left_out}");
+}
+
+/// A stop keeps so many labels a round and no more ([`atlas_transit::Limits::bag`]); the one that goes when a bag
+/// is full may have led to an option. An answer found with a bag that overflowed says so: wherever a smaller bag
+/// gives other options than the largest, the answer is marked as cut short.
+#[test]
+fn a_full_bag_says_so() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (mut asked, mut lost, mut said, mut silent, mut sixteen) = ([0u32; 4], [0u32; 4], [0u32; 4], Vec::new(), 0);
+    for (i, (a, z)) in pairs(&tt, 240, 71).into_iter().enumerate() {
+        let (sa, sz) = (tt.stop(a), tt.stop(z));
+        let place = |s: u32, st: atlas_transit::file::Stop| if i % 3 == 0 { Place::Stop(s) } else { Place::Point { lat: st.lat + 2500, lon: st.lon - 1500 } };
+        let mut q = Query::new(place(a, sa), place(z, sz), (i % 2) as i32, 6 * 3600 + 613 * i as u32);
+        (q.arrive_by, q.window, q.limits.options, q.weigh) = (i % 3 == 1, [0, 2400, 5400][i % 3], 1024, i % 2 == 0);
+        q.wishes = match i % 4 {
+            0 => vec![Wish { what: What::Mode(Mode::Rail), how: How::Avoid(900) }],
+            1 | 2 => vec![
+                Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) },
+                Wish { what: What::Area { area: Area::Circle { lat: 520_900_000, lon: 51_100_000, radius_m: 700 }, through: i % 2 == 0 }, how: How::Avoid(300) },
+                Wish { what: What::NoWheelchair, how: How::Avoid(120) },
+            ],
+            _ => vec![Wish { what: What::Mode(Mode::Tram), how: How::Prefer(180) }, Wish { what: What::Mode(Mode::Bus), how: How::Avoid(30) }],
+        };
+        q.limits.bag = 16;
+        let whole = p.plan(&q);
+        if whole.cut_short {
+            sixteen += 1;
+            continue; // (even sixteen were too few: nothing to hold the others against)
+        }
+        let options = |js: &[Journey]| js.iter().map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect::<Vec<_>>();
+        for (k, bag) in [1, 2, 4, 8].into_iter().enumerate() {
+            q.limits.bag = bag;
+            let got = p.plan(&q);
+            asked[k] += 1;
+            said[k] += got.cut_short as u32;
+            if options(&got.journeys) != options(&whole.journeys) {
+                lost[k] += 1;
+                if !got.cut_short {
+                    silent.push(format!("pair {i} with a bag of {bag}: {} options where sixteen give {}", got.journeys.len(), whole.journeys.len()));
+                }
+            }
+        }
+    }
+    println!("bags of 1, 2, 4, 8: asked {asked:?}, with other options than a bag of 16 gives {lost:?}, saying cut short {said:?}; a bag of 16 was too small for {sixteen}");
+    assert!(silent.is_empty(), "{} answers that lack an option and do not say so:\n{}", silent.len(), silent[..silent.len().min(10)].join("\n"));
+    assert!(asked[0] > 200 && lost[0] > 20, "{asked:?} {lost:?}");
 }
 
 /// The answers to a fixed set of questions, folded into one number: the same on every platform, or something in the

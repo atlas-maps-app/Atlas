@@ -62,10 +62,11 @@
 //!
 //! **What bounds it** ([`Limits`]): rounds by `max_rides`; searches by `departures` (a window's moments, and the
 //! later moments tried for one moment's journeys, of which only those that `options` lets show are searched for
-//! again); labels and steps by their
-//! caps; time by the window and the horizon. Every loop over the file's data counts steps. An answer says when a
-//! cap was met ([`Answer::cut_short`]), wherever in the search it was: also where the steps passed theirs outside
-//! a search's rounds, in the count from the journey's end or in the list of a window's departures.
+//! again); labels and steps by their caps; a stop's bag of labels a round by `bag`; time by the window and the
+//! horizon. Every loop over the file's data counts steps. An answer says when a cap was met
+//! ([`Answer::cut_short`]), wherever in the search it was: also where the steps passed theirs outside a search's
+//! rounds, in the count from the journey's end or in the list of a window's departures, and where a bag was full
+//! and a label went from it (the option it led to may be the one that is missing).
 
 use crate::file::{MAX_TIME, PatternStop, Route, Rule, Timetable};
 use crate::geo::distance_mm;
@@ -693,6 +694,7 @@ impl<'a> Planner<'a> {
             anchors: Vec::new(),
             later: false,
             most: max_rides,
+            dropped: false,
             exact: false,
             beyond: 0,
         };
@@ -833,7 +835,8 @@ impl<'a> Planner<'a> {
         // Cut short: a cap was met where the search says so itself, or the steps passed theirs anywhere at all (the
         // count from the journey's end, the list of a window's departures): whatever came after did less than
         // it should.
-        let mut cut = s.cut || s.steps > s.max_steps || too_many;
+        // And where a bag was full and a label went from it, an option may have gone with it.
+        let mut cut = s.cut || s.steps > s.max_steps || too_many || s.dropped;
         if keep.len() > options {
             // too many over a window: those nearest the asked moment stay
             if back {
@@ -896,6 +899,8 @@ struct Search<'s, 'a> {
     later: bool,
     /// The most rides a journey may have in this pass (`max_rides`, or fewer: [`Search::fewer_rides`]).
     most: usize,
+    /// A label went from a full bag, or a trip from those ridden along a route: what it led to may be missing.
+    dropped: bool,
     /// Whether the fewest rides to the journey's end are counted for every stop within fewer than `beyond` of it,
     /// so that a stop without a count is at least `beyond` rides away.
     exact: bool,
@@ -1702,6 +1707,7 @@ impl<'s> Search<'s, '_> {
                 w.labels[before_worst as usize].next = after;
             }
             w.labels[worst as usize].kind |= DEAD;
+            self.dropped = true;
         }
         for k in round..w.rounds {
             if label.time >= w.cells[at + k].best[which] {
@@ -2269,8 +2275,9 @@ impl<'s> Search<'s, '_> {
         }
     }
 
-    /// Adds a trip to those ridden along the route, unless one ridden already is here no later and no dearer.
-    fn join(&self, riding: &mut Vec<Riding>, new: Riding, pos: u32) {
+    /// Adds a trip to those ridden along the route, unless one ridden already is here no later and no dearer. Of
+    /// more than the bag holds (two at least), the one whose time and cost together are worst goes.
+    fn join(&mut self, riding: &mut Vec<Riding>, new: Riding, pos: u32) {
         let time = self.board_time(new.times, pos, new.off);
         let mut i = 0;
         while i < riding.len() {
@@ -2290,6 +2297,7 @@ impl<'s> Search<'s, '_> {
             let worst = (0..riding.len()).max_by_key(|i| (self.board_time(riding[*i].times, pos, riding[*i].off) as i64 + riding[*i].cost as i64, *i));
             if let Some(worst) = worst {
                 riding.swap_remove(worst);
+                self.dropped = true;
             }
         }
     }

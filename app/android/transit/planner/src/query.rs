@@ -174,7 +174,8 @@ pub struct Limits {
     /// Departures inside the window that each get a search of their own; and, asked for one moment, the later
     /// moments tried to see whether a journey can leave later.
     pub departures: u32,
-    /// Labels kept a stop a round when wishes cost something (without, it is one).
+    /// Labels kept a stop a round when wishes cost something (without, it is one). Where a bag was full and a
+    /// label went from it, an option may have gone with it: the answer says [`crate::Answer::cut_short`].
     pub bag: u32,
     /// Journeys returned. Of more: over a window those nearest the asked moment; asked for one moment the fastest
     /// (the earliest arrivals; arriving by, the latest departures).
@@ -194,7 +195,7 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Limits {
-        Limits { labels: 2_000_000, steps: 100_000_000, departures: 2048, bag: 4, options: 64, horizon: 86_400, patient: true }
+        Limits { labels: 2_000_000, steps: 100_000_000, departures: 2048, bag: 8, options: 64, horizon: 86_400, patient: true }
     }
 }
 
