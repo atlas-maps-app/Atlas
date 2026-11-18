@@ -79,7 +79,8 @@ class TextAndNamesTest {
     @Test
     fun addressesByCountry() {
         val nl = mapOf("addr:street" to "Prinsengracht", "addr:housenumber" to "263", "addr:postcode" to "1016 GV", "addr:city" to "Amsterdam", "addr:country" to "NL")
-        assertEquals("Prinsengracht 263, 1016 GV Amsterdam", Localise.address(nl))
+        // the place's own addr:country before the country of the map there
+        assertEquals("Prinsengracht 263, 1016 GV Amsterdam", Localise.address(nl, "FR"))
         val de = mapOf("addr:street" to "Unter den Linden", "addr:housenumber" to "77", "addr:postcode" to "10117", "addr:city" to "Berlin")
         assertEquals(listOf("Unter den Linden 77", "10117 Berlin"), Localise.addressLines(de, "DE"))
         val fr = mapOf("addr:street" to "Rue de Rivoli", "addr:housenumber" to "12", "addr:postcode" to "75004", "addr:city" to "Paris")
@@ -88,11 +89,29 @@ class TextAndNamesTest {
         assertEquals("10 Downing Street, London SW1A 2AA", Localise.address(gb, "gb"))
         val us = mapOf("addr:street" to "Pennsylvania Avenue NW", "addr:housenumber" to "1600", "addr:postcode" to "20500", "addr:city" to "Washington", "addr:state" to "DC")
         assertEquals(listOf("1600 Pennsylvania Avenue NW", "Washington, DC 20500"), Localise.addressLines(us, "US"))
-        assertEquals("Dam, Amsterdam", Localise.address(mapOf("addr:street" to "Dam", "addr:city" to "Amsterdam")))
-        assertEquals("Hoeve 3, 1234 AB", Localise.address(mapOf("addr:place" to "Hoeve", "addr:housenumber" to "3", "addr:postcode" to "1234 AB")))
-        assertNull(Localise.address(mapOf("name" to "x")))
+        assertEquals("Dam, Amsterdam", Localise.address(mapOf("addr:street" to "Dam", "addr:city" to "Amsterdam"), "NL"))
+        assertEquals("Hoeve 3, 1234 AB", Localise.address(mapOf("addr:place" to "Hoeve", "addr:housenumber" to "3", "addr:postcode" to "1234 AB"), null))
+        assertNull(Localise.address(mapOf("name" to "x"), "NL"))
         assertEquals(AddressStyle.BRITISH, Localise.styleFor("ie"))
         assertEquals(AddressStyle.STREET_FIRST, Localise.styleFor(null))
+    }
+
+    /**
+     * A unit follows the street where the number comes first (the reviewer, 17 November, finding 11: it stood between
+     * the number and the street, "1600 Suite 200 Pennsylvania Avenue NW"); where the street comes first, after the
+     * number, as before.
+     */
+    @Test
+    fun aUnitFollowsTheStreetWhereTheNumberLeads() {
+        val us = mapOf("addr:street" to "Pennsylvania Avenue NW", "addr:housenumber" to "1600", "addr:unit" to "Suite 200", "addr:postcode" to "20500",
+            "addr:city" to "Washington", "addr:state" to "DC")
+        assertEquals(listOf("1600 Pennsylvania Avenue NW, Suite 200", "Washington, DC 20500"), Localise.addressLines(us, "US"))
+        val fr = mapOf("addr:street" to "Rue de Rivoli", "addr:housenumber" to "12", "addr:unit" to "Bâtiment B", "addr:postcode" to "75004", "addr:city" to "Paris")
+        assertEquals("12 Rue de Rivoli, Bâtiment B, 75004 Paris", Localise.address(fr, "FR"))
+        val gb = mapOf("addr:street" to "Downing Street", "addr:housenumber" to "10", "addr:unit" to "Flat 2", "addr:city" to "London")
+        assertEquals("10 Downing Street, Flat 2, London", Localise.address(gb, "GB"))
+        val nl = mapOf("addr:street" to "Prinsengracht", "addr:housenumber" to "263", "addr:unit" to "A", "addr:city" to "Amsterdam")
+        assertEquals("Prinsengracht 263 A, Amsterdam", Localise.address(nl, "NL"))
     }
 
     @Test

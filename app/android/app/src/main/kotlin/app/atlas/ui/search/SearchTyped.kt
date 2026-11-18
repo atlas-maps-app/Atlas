@@ -127,7 +127,7 @@ private fun TypedRow(
     when (item) {
         is SearchItem.PlaceResult -> TypedPlace(item.hit.place, item.title, item.subtitle, item.parts, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
         is SearchItem.Element -> TypedPlace(item.hit.place, null, item.hit.place.id?.toString(), 1, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
-        is SearchItem.Online -> TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place), 1, item.distance, null, here, mode, lang, now, seat, online = true) { open(item.place) }
+        is SearchItem.Online -> TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place, rememberCountryAt(item.place.location)), 1, item.distance, null, here, mode, lang, now, seat, online = true) { open(item.place) }
         is SearchItem.Kind -> {
             // kinds are nouns: lower case inside a sentence, except in German
             val label = if (lang == "de") item.label else item.label.lowercase(Locale.getDefault())

@@ -481,7 +481,7 @@ private fun AnswerButton(symbol: String, glyph: Float, description: String, tint
 private fun InfoCard(place: Place, state: PlaceState, here: LatLon) {
     val t = place.tags
     val rows = buildList {
-        Localise.address(t)?.let { add("ui-map-pin" to it) }
+        Localise.address(t, state.country)?.let { add("ui-map-pin" to it) }
         (t["phone"] ?: t["contact:phone"])?.let { add("ui-phone" to it.substringBefore(';').trim()) }
         (t["website"] ?: t["contact:website"])?.let { add("ui-globe" to it.substringBefore(';').trim().removePrefix("https://").removePrefix("http://").trimEnd('/')) }
         t["opening_hours"]?.let { add("ui-clock" to it) }

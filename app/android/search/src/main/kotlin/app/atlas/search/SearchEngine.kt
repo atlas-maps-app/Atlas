@@ -716,7 +716,8 @@ class SearchEngine(
         val r = h.record
         val preset = r.preset?.let { Presets.byId(it) }
         val kindName = preset?.name(ctx.lang) ?: r.category?.let { Categories.byId(it)?.name(ctx.lang) }
-        val address = Localise.address(r.tags)
+        // as the country searched in writes it, where the place names none of its own
+        val address = Localise.address(r.tags, ctx.hours.country)
         // A place with no name nor address is titled by what it is ("Gift Shop"), and no line repeats it ("Gifts")
         val title = r.name(ctx.lang) ?: address ?: preset?.fullName(ctx.lang) ?: kindName ?: r.place.key
         val said = title == kindName || title == preset?.fullName(ctx.lang)

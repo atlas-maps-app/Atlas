@@ -307,7 +307,7 @@ private fun ListActions(list: SavedList, modifier: Modifier) {
             val at = services.clock.instant()
             services.scope.launch(Dispatchers.IO) {
                 runCatching {
-                    val text = if (ext == "gpx") SavedExport.gpx(title, places, at, lang) else SavedExport.geoJson(title, places)
+                    val text = if (ext == "gpx") SavedExport.gpx(title, places, at, lang) { HereContext.country(services, it) } else SavedExport.geoJson(title, places)
                     context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                 }
             }
