@@ -1,6 +1,6 @@
 # Public transport: the timetable file and the planner
 
-Atlas plans public transport journeys on the phone, without a signal, from a file of the country's timetable. This folder holds the file's format, the tool that makes the file, and the planner that reads it. `.github/workflows/timetable.yml` checks all of it on Linux and publishes the Netherlands' file once a week. Nothing here is wired into the app yet.
+Atlas plans public transport journeys on the phone, without a signal, from a file of the country's timetable. This folder holds the file's format, the tool that makes the file, and the planner that reads it. `.github/workflows/transit.yml` checks all of it on Linux at every push that changes it, and `.github/workflows/timetable.yml` publishes the Netherlands' file once a week. Nothing here is wired into the app yet.
 
 | Here | What |
 |---|---|
@@ -19,7 +19,7 @@ OVapi publishes the Netherlands' timetable daily at `gtfs.ovapi.nl/nl/gtfs-nl.zi
 python3 -I app/android/transit/pack/ttpack.py ~/atlas/var/transit/gtfs/gtfs-nl.zip ~/atlas/var/transit/tt/nl.tt --sizes
 ```
 
-It takes a minute or two and 1.8 GB of memory for the country (run it through `~/atlas/home/bin/heavy`), prints what it kept, what it left out and what it had to mend, and with `--sizes` each section's size. With `--strict` a table or column it does not read is a refusal. `--first`, `--days`, `--box` and `--agency` cut a piece, as the tests' file of Utrecht is.
+It takes a minute or two and 1.8 GB of memory for the country (run it through `~/atlas/home/bin/heavy`; its last line says what it took), prints what it kept, what it left out and what it had to mend, and with `--sizes` each section's size. With `--strict` a table or column it does not read is a refusal. `--first`, `--days`, `--box` and `--agency` cut a piece, as the tests' file of Utrecht is.
 
 ## Asking it
 
@@ -31,6 +31,7 @@ T=$CARGO_TARGET_DIR/release/atlas-transit; F=~/atlas/var/transit/tt/nl.tt
 
 $T info $F                      # what the file holds
 $T check $F                     # what opening it does not check
+$T days $F                      # how full its days are, week by week, and which operators stop short
 $T stops $F "utrecht c"         # stops by a part of their name
 $T trip $F 2835 --date 20261117 # one train: its stops, times and ids
 $T plan $F --from "Amsterdam Centraal" --to Maastricht --date 20261117 --time 08:00 --window 120
@@ -50,10 +51,10 @@ CARGO_TARGET_DIR=~/atlas/var/build/transit-planner ~/.cargo/bin/cargo test --man
 CARGO_TARGET_DIR=~/atlas/var/build/transit-planner ~/.cargo/bin/cargo build --lib --no-default-features --manifest-path app/android/transit/planner/Cargo.toml   # the library without std, as an app links it
 ```
 
-`python3 -I app/android/ci/affected.py` names the first two for a change here; the workflow's first job runs all three on Linux, with a million files a little wrong. The tests run on a feed written by hand (`planner/tests/data/tiny`, every answer worked out on paper) and on a piece of the real timetable (the city of Utrecht, two days). With the whole country's file at hand, `ATLAS_TRANSIT_FILE=<file> cargo test --test fixed` also runs the fixed journeys across the country.
+`python3 -I app/android/ci/affected.py` names the first two for a change here; `.github/workflows/transit.yml` runs all three on x86_64 and arm64 Linux at a push, with a million files a little wrong. The tests run on a feed written by hand (`planner/tests/data/tiny`, every answer worked out on paper) and on a piece of the real timetable (the city of Utrecht, two days). With the whole country's file at hand, `ATLAS_TRANSIT_FILE=<file> cargo test --test fixed` also runs the fixed journeys across the country.
 
 How the planner is held to being right:
 - **A second opinion.** `src/reference.rs` is a connection scan over the same file, sharing the places, the walks and what is closed, and nothing of the search. The two must agree on the earliest arrival, the latest departure, and every best pair over a window.
 - **Every journey can be made.** `reference::impossible` takes a journey and the file, and checks each ride, walk and change as a rider would meet them. It reads nothing of how the journey was found.
 - **No panic from data.** `src/fuzz.rs` makes files a little wrong and queries at the edge of every field; the tests run 6,300, the tool's `fuzz` command as many as asked (`cargo run --profile fuzz -- fuzz <file> <runs>` keeps the overflow checks on).
-- **The same everywhere.** A fixed set of answers folds to one number that the tests keep.
+- **The same everywhere.** A fixed set of answers folds to one number that the tests keep (`tests/cut.rs`). And the files a little wrong give counts (how many still opened, how many journeys they and the queries gave) that `tests/data/fuzz-counts.txt` keeps and the workflow holds each platform to. After a change to the search or to `fuzz.rs`, write them again: `./fuzz-counts.sh > tests/data/fuzz-counts.txt` in `planner/`.

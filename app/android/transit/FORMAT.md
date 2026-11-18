@@ -73,7 +73,7 @@ All integers are little-endian `u32` unless said. `NONE` is `0xFFFFFFFF`.
 
 ## What the packer does to a feed
 
-- **Days.** `calendar.txt` is spread over its weekdays, then `calendar_dates.txt` adds and removes. A service that runs on no kept day goes, with its trips.
+- **Days.** `calendar.txt` is spread over its weekdays, then `calendar_dates.txt` adds and removes. A service that runs on no kept day goes, with its trips. A file holds 400 days at most: of a longer feed the first 400 are kept, and the packer says which were left out.
 - **Stops.** Kept: every stop a kept trip calls at, its station (and that one's), and the station's other parts (entrances, nodes, boarding areas). They are sorted along a Z-curve, so stops near each other lie near each other in the file.
 - **A stop at 0, 0** has no place in the feed (OVapi: 201 platforms of stations abroad). It is put at its station's place and marked so; with no station that has a place it stays at 0, 0, marked as nowhere, and takes part in nothing that measures.
 - **A trip's stop times** are sorted by `stop_sequence`. A stop without a time takes one between its timed neighbours, by its place in the sequence. A time that goes back is raised to the one before. Both are counted and printed.
@@ -151,9 +151,17 @@ OVapi's feed of 16 November 2026 (version 9696): 28 days from 15 November, 65,22
 - **Published as gzip:** 12.5 MB a week for the Netherlands (decided 17 November 2026: no new library on the phone).
 - **Measured and not built:** a filter before the compressor that keeps the format (each `u32` column as differences, its four bytes apart) brings gzip to 7.9 MB and xz to 5.0 MB. It would be a second coding to undo on the phone.
 
+### When the new year's timetable is in the feed
+
+The Dutch timetable changes in mid-December, and the operators hand in the new year's about a month before. From then until the change the feed holds both. OVapi's feed of 17 November 2026 (version 9702, 274 MB zipped) covers 391 days, to 11 December 2027: 74,039 stops, 2,849 lines, 1,095,673 trips standing for 20,900,135 stop times. Its file is 93.4 MB at rest and 19.5 MB as gzip -9. Of its trips, 537,207 end with the old timetable on 12 December; the 558,466 that go on are about what the feed of the day before held, so the file falls back to its size by itself once the old year is out.
+
+**The days are not all as full.** Each operator hands in as far ahead as it knows: in that feed the trains and 25 other operators to the last week, HTM to 31 December, GVB to 31 January, RET to 24 February, Qbuzz to 10 July. Lines with a trip in the week: 2,414 in the first, 1,769 in the first week of January, 1,502 in March, 850 in summer. So a day far ahead is in the file and still not whole: a journey asked for it is answered from what is there. `atlas-transit days` says it week by week, and the weekly workflow puts it in its log. Cutting the far days would not make the file much smaller: a file of the first eight weeks would still hold 92 % of the trips, since a trip is in the file once, however many days it runs.
+
+In both feeds about four trips in ten are another trip again in all but `trip_id` and days (the feed has a trip once for each stretch of days it runs unchanged): 671,447 groups among version 9702's 1,095,673 trips, none with a day twice. The file keeps them apart, each with its own `trip_id`.
+
 ## How it is published
 
-`.github/workflows/timetable.yml` runs once a week and by hand. It fetches the feed, packs it strictly, checks the file (`atlas-transit check`, and the fixed journeys against the connection scan), gzips it, and uploads it to a dated release `timetable-YYYYMMDD`. The list `timetable.json` goes there too and, last, onto the fixed release `timetable-latest`: a reader starts from that list. Nothing in the app reads it yet.
+`.github/workflows/timetable.yml` runs once a week and by hand. After the planner's own checks (`.github/workflows/transit.yml`, which a push runs too) it fetches the feed, packs it strictly, checks the file (`atlas-transit check`, how full its days are, and the fixed journeys against the connection scan), gzips it, and uploads it to a dated release `timetable-YYYYMMDD`. The list `timetable.json` goes there too and, last, onto the fixed release `timetable-latest`: a reader starts from that list. Nothing in the app reads it yet.
 
 `pack/ttlist.py` writes the list: `{"list": 1, "timetables": [entry, …]}`, entries by `id`. An entry:
 
