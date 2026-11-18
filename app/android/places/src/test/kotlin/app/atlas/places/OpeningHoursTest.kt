@@ -222,13 +222,13 @@ class OpeningHoursTest {
     }
 
     /**
-     * An open end after a stated end is guessed by the hour of that end: one at night (22:00 to 06:00) lasts to six the
-     * next morning and never past it, so a bar's hours are no longer open around the clock, nor on its closed day.
-     * Inside the guessed tail the place is open, with no closing time it knows (the reviewer, 17 November 2026: an end
-     * after midnight was taken for one by day, and its tail ran to the next midnight).
+     * An open end after a stated end lasts two hours (the app maintainer's rule, 18 November 2026), so a bar's hours are
+     * no longer open around the clock, nor on its closed day. Inside the guessed tail the place is open, with no closing
+     * time it knows (the reviewer, 17 November 2026: an end after midnight was taken for one by day, and its tail ran to
+     * the next midnight).
      */
     @Test
-    fun anOpenEndAtNightLastsTillMorning() {
+    fun anOpenEndAfterMidnightEndsInTheNight() {
         // the reviewer's three, on a Monday at noon (16 November 2026)
         for ((hours, opens) in listOf(
             "Mo-Su 18:00-24:00+" to "2026-11-16T18:00",
@@ -240,18 +240,20 @@ class OpeningHoursTest {
             assertEquals(hours, ChangeKind.OPENS, s.nextChangeKind)
             assertEquals(hours, t(opens), s.changesAt)
         }
-        // the night after: open, an open end, till six at the latest
-        val night = oh("Mo-Su 18:00-24:00+").status(t("2026-11-17T03:00"), context = Nowhere)
+        // the night after: open, an open end, two hours past the stated end
+        val night = oh("Mo-Su 18:00-24:00+").status(t("2026-11-17T01:00"), context = Nowhere)
         assertTrue(night.isOpen)
         assertTrue(night.openEnd)
-        assertEquals(t("2026-11-17T06:00"), night.changesAt)
+        assertEquals(t("2026-11-17T02:00"), night.changesAt)
+        assertEquals(false, oh("Mo-Su 18:00-24:00+").isOpen(t("2026-11-17T03:00"), context = Nowhere))
         // Sunday's night ends on Monday morning, the closed day
         val sunday = oh("Tu-Su 16:00-02:00+")
-        assertTrue(sunday.status(t("2026-11-16T04:00"), context = Nowhere).let { it.isOpen && it.openEnd })
-        assertEquals(false, sunday.isOpen(t("2026-11-16T06:00"), context = Nowhere))
-        assertEquals(listOf(OpenSpan(0, 120, OpenState.OPEN), OpenSpan(120, 360, OpenState.OPEN, openEnd = true)), sunday.spans(LocalDate.of(2026, 11, 16), context = Nowhere))
-        // by the hour the open end begins: night, evening, day
-        assertEquals(listOf(480, 360, 240, 60, 300, 600), listOf(22 * 60, 24 * 60, 26 * 60, 5 * 60, 17 * 60, 14 * 60).map { TimeSpan.openEndGuess(it) })
+        assertTrue(sunday.status(t("2026-11-16T03:00"), context = Nowhere).let { it.isOpen && it.openEnd })
+        assertEquals(false, sunday.isOpen(t("2026-11-16T04:00"), context = Nowhere))
+        assertEquals(listOf(OpenSpan(0, 120, OpenState.OPEN), OpenSpan(120, 240, OpenState.OPEN, openEnd = true)), sunday.spans(LocalDate.of(2026, 11, 16), context = Nowhere))
+        // a start alone, by its hour: night, before four, early, evening, day
+        assertEquals(listOf(480, 360, 240, 1140, 300, 600), listOf(22 * 60, 24 * 60, 26 * 60, 5 * 60, 17 * 60, 14 * 60).map { TimeSpan.openEndGuess(it) })
+        assertEquals(TimeSpan.STATED_TAIL, 120)
         // as before for an open end with no stated end
         assertEquals(false, oh("Mo-Su 17:00+").isOpen(t("2026-11-16T22:00"), context = Nowhere))
         assertEquals(true, oh("Mo-Su 22:00+").isOpen(t("2026-11-17T05:59"), context = Nowhere))
@@ -274,6 +276,49 @@ class OpeningHoursTest {
         assertEquals(listOf(StatedSpan(0, 120, OpenState.OPEN, openEnd = true)), statedSpans(bar.spans(LocalDate.of(2026, 11, 16), context = Nowhere)))
         assertEquals(listOf(StatedSpan(600, 840, OpenState.OPEN), StatedSpan(1020, null, OpenState.OPEN, openEnd = true)), statedSpans(oh("Mo 10:00-14:00,17:00+").weekTable(weekOf = null, context = Nowhere)[0]))
         assertEquals(listOf(StatedSpan(540, 1020, OpenState.OPEN)), statedSpans(oh("Mo-Fr 09:00-17:00").weekTable(weekOf = null, context = Nowhere)[0]))
+    }
+
+    /**
+     * How long an open end lasts, as the app maintainer decided (18 November 2026, batch 4, A1): a start alone by its
+     * hour (before 04:00 to six, from 04:00 to midnight, from 17:00 five hours, from 22:00 to six the next morning),
+     * and after a stated end two hours, whatever the hour. An early start was open for minutes (`Mo-Sa 05:30+` till
+     * six), and an end after six filled the day (`Fr,Sa 23:00-07:00+` open all Saturday).
+     */
+    @Test
+    fun anOpenEndLastsAsDecided() {
+        // a start alone: early, by day, in the evening, at night (Monday 16 November 2026)
+        val early = oh("Mo-Sa 05:30+")
+        assertEquals(true, early.isOpen(t("2026-11-16T12:00"), context = Nowhere))
+        assertEquals(true, early.isOpen(t("2026-11-16T23:59"), context = Nowhere))
+        assertEquals(false, early.isOpen(t("2026-11-17T00:00"), context = Nowhere))
+        assertEquals(true, oh("Mo-Su 03:00+").isOpen(t("2026-11-16T05:59"), context = Nowhere))
+        assertEquals(false, oh("Mo-Su 03:00+").isOpen(t("2026-11-16T06:00"), context = Nowhere))
+        assertEquals(true, oh("Mo-Su 18:00+").isOpen(t("2026-11-16T22:59"), context = Nowhere))
+        assertEquals(false, oh("Mo-Su 18:00+").isOpen(t("2026-11-16T23:00"), context = Nowhere))
+        assertEquals(true, oh("Mo-Su 22:00+").isOpen(t("2026-11-17T05:59"), context = Nowhere))
+        assertEquals(false, oh("Mo-Su 22:00+").isOpen(t("2026-11-17T06:00"), context = Nowhere))
+        // the sun rises before six in an Amsterdam June: open till midnight
+        val amsterdam = OpeningHoursContext(sun = SunClock.at(52.3731, 4.8926, java.time.ZoneId.of("Europe/Amsterdam")))
+        assertEquals(true, oh("sunrise+").isOpen(t("2026-06-21T12:00"), amsterdam))
+        assertEquals(true, oh("sunrise+").isOpen(t("2026-06-21T23:00"), amsterdam))
+        // after a stated end, two hours, whatever the hour: open with no stated end till then, closed from then
+        for ((hours, ends) in listOf(
+            "Mo-Su 18:00-22:00+" to "2026-11-17T00:00",
+            "Mo-Su 20:00-02:00+" to "2026-11-17T04:00",
+            "Mo-Su 18:00-24:00+" to "2026-11-17T02:00",
+            "Fr,Sa 23:00-07:00+" to "2026-11-21T09:00",
+            "Mo-Su 22:00-06:00+" to "2026-11-17T08:00",
+            "Mo-Fr 09:00-17:00+" to "2026-11-16T19:00",
+        )) {
+            val end = t(ends)
+            val tail = oh(hours).status(end.minusMinutes(1), context = Nowhere)
+            assertTrue("$hours just before $ends", tail.isOpen && tail.openEnd)
+            assertEquals(hours, end, tail.changesAt)
+            assertEquals("$hours at $ends", false, oh(hours).isOpen(end, context = Nowhere))
+        }
+        // neither all Saturday nor around the clock
+        assertEquals(false, oh("Fr,Sa 23:00-07:00+").isOpen(t("2026-11-21T12:00"), context = Nowhere))
+        assertEquals(false, oh("Mo-Su 22:00-06:00+").isOpen(t("2026-11-17T12:00"), context = Nowhere))
     }
 
     @Test

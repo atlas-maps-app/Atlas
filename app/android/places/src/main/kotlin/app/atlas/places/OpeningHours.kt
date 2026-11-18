@@ -298,7 +298,7 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
                             fill(a, b, code or OPEN_END)
                         } else {
                             fill(a, b, code)
-                            if (span.openEnd) fill(b, b + TimeSpan.openEndGuess(b), code or OPEN_END)
+                            if (span.openEnd) fill(b, b + TimeSpan.STATED_TAIL, code or OPEN_END)
                         }
                     }
                 }

@@ -208,23 +208,27 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
 
     companion object {
         /**
-         * How long an open end is assumed to last from [at], where it begins (`17:00+`: the start; `17:00-01:00+`: the
-         * stated end, which may pass 1440), by the hour it begins: by day to midnight, from 17:00 five hours, at night
-         * (22:00 to 06:00) a few hours, to six the next morning and never past it. (The reviewer, 17 November 2026:
-         * guessed by the minute alone, an end after midnight was taken for one by day, so `18:00-24:00+` read open
-         * around the clock and `Tu-Su 16:00-02:00+` open all Monday.)
+         * How long an open end with no stated end (`17:00+`) is assumed to last from [at], where it begins, by the hour
+         * it begins: before 04:00 to six; from 04:00 to midnight; from 17:00 five hours; from 22:00 to six the next
+         * morning. After a stated end (`17:00-01:00+`) the tail is [STATED_TAIL] whatever the hour. (The reviewer, 17
+         * November 2026: `18:00-24:00+` read open around the clock; then the app maintainer's rule of 18 November: an
+         * early start was open for minutes, `Mo-Sa 05:30+` till six, and an end after six filled the day.)
          */
         fun openEndGuess(at: Int): Int {
             val m = at % 1440
             return when {
-                m >= NIGHT -> 1440 - m + MORNING
-                m < MORNING -> MORNING - m
+                m < EARLY -> MORNING - m
                 m < EVENING -> 1440 - m
-                else -> 300
+                m < NIGHT -> 300
+                else -> 1440 - m + MORNING
             }
         }
 
-        /** Where an open end's hour is evening, night, and morning again (minutes since midnight). */
+        /** The tail after a stated end (`a-b+`): two hours, whatever the hour ("a few hours": a kitchen's `-22:00+` is not open at three). */
+        const val STATED_TAIL = 120
+
+        /** Where an open start's hour is early, evening, night, and morning again (minutes since midnight). */
+        private const val EARLY = 4 * 60
         private const val EVENING = 17 * 60
         private const val NIGHT = 22 * 60
         private const val MORNING = 6 * 60

@@ -41,8 +41,8 @@ class BranchesTest {
         // "17:00+" states no closing: it says nothing of a branch's week
         assertNull(BrandHours.weekOf(OpeningHours.parse("Mo-Su 17:00+")))
         assertNull(BrandHours.infer(listOf("Mo-Su 17:00+")))
-        // borrowed, an open end reads as the branch's own: open after midnight, and no closing time said
-        val night = BrandHours.infer(listOf("Mo-Su 12:00-22:00+"))!!.hours.status(LocalDateTime.of(2026, 11, 17, 0, 30), OpeningHoursContext.Default)
+        // borrowed, an open end reads as the branch's own: open in the tail after its stated end, and no closing time said
+        val night = BrandHours.infer(listOf("Mo-Su 12:00-22:00+"))!!.hours.status(LocalDateTime.of(2026, 11, 16, 23, 30), OpeningHoursContext.Default)
         assertTrue(night.isOpen && night.openEnd)
         assertNull(night.statedChangeAt)
     }
