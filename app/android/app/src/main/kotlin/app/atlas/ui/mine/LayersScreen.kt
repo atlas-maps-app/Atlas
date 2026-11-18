@@ -107,9 +107,6 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val effects by settings.screenEffects.collectAsStateWithLifecycle(screenEffectsOn(emptyPreferences()))
     val (haze, vignette, grain) = effects
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
-    val paletteCode by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
-    val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
-    val lookFrom by settings.flow(SettingsKeys.MAP_LOOK_FROM).collectAsStateWithLifecycle(null)
     val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON).collectAsStateWithLifecycle(null)
     val toneKept by settings.flow(SettingsKeys.MAP_TONE).collectAsStateWithLifecycle(null)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
@@ -171,11 +168,11 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
         ) {
             Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).bbox(0xFFD5D8DE, cr(3f)))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // the Map look's own screen (the Settings board's row): its presets, colours and switches, what the map
-                // draws now as its value
+                // the Map look's own screen (the Settings board's row): its presets, colours and switches; its value the
+                // look's name, then the theme where it isn't Auto, as Settings' row says it
                 SettingRow(
                     stringResource(R.string.mine_settings_look), symbol = "ui.layers.2", tile = Color(INK),
-                    value = lookLine(paletteCode, savedText, lookFrom, toneOn, toneKept),
+                    value = lookRowValue(settings),
                     onClick = { nav.go(Dest.MapLook()) },
                 )
                 LayerChips(layers) { layer, on ->

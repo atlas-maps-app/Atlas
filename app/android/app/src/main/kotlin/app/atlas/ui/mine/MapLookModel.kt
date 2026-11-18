@@ -143,6 +143,31 @@ internal object MapLookModel {
     /** The longest name a palette keeps. */
     const val NAME_MAX = 40
 
+    /** What a name typed for a palette says: nothing (it will do), that it is blank, or that another palette has it. */
+    sealed interface NameSays {
+        data object Fine : NameSays
+        data object Blank : NameSays
+        data class Taken(val name: String) : NameSays
+    }
+
+    /** What [name] says as a palette's, [taken] the names of the others (not the palette's own). */
+    fun nameSays(name: String, taken: Collection<String>): NameSays {
+        val clean = clean(name)
+        return when {
+            clean.isEmpty() -> NameSays.Blank
+            taken.any { it.equals(clean, ignoreCase = true) } -> NameSays.Taken(clean)
+            else -> NameSays.Fine
+        }
+    }
+
+    /** [name] where no other palette has it, else "[name] 2", or the least number no other has. */
+    fun unique(name: String, taken: Collection<String>): String {
+        val clean = clean(name)
+        if (taken.none { it.equals(clean, ignoreCase = true) }) return clean
+        return generateSequence(2) { it + 1 }.map { n -> "${clean.take(NAME_MAX - 1 - n.toString().length)} $n" }
+            .first { c -> taken.none { it.equals(c, ignoreCase = true) } }
+    }
+
     /** The name of a new palette from [base] (its preset's name): "[base] 1", or the least number no other has. */
     fun newName(base: String, taken: Collection<String>): String =
         generateSequence(1) { it + 1 }.map { "$base $it" }.first { it !in taken }
@@ -190,8 +215,8 @@ internal object MapLookModel {
     /** The QR's text: the scheme Atlas opens (lower case, as Android matches it) and the code. */
     fun link(code: String): String = LINK + code
 
-    /** The message a palette is shared as: its name, then its code on a line of its own. */
-    fun message(name: String, code: String): String = "$name\n$code"
+    /** The message a palette is shared as: its name, then its link (which opens it in Atlas) on a line of its own. */
+    fun message(name: String, code: String): String = "$name\n${link(code)}"
 
     const val LINK = "app.atlas:"
 
@@ -273,7 +298,8 @@ internal object MapLookWrites {
         val p = MapLookModel.lookPalette(palette)
         val alike = MapLookModel.savedIndex(saved, MapLookModel.look(p))
         if (alike >= 0) return Added.Yours(saved[alike].name)
-        val kept = name?.let(MapLookModel::clean)?.takeIf { it.isNotEmpty() } ?: MapLookModel.newName(base, saved.map { it.name })
+        val names = saved.map { it.name }
+        val kept = name?.let(MapLookModel::clean)?.takeIf { it.isNotEmpty() }?.let { MapLookModel.unique(it, names) } ?: MapLookModel.newName(base, names)
         val code = PaletteCode.write(p)
         m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(saved + SavedPalette(kept, code)))
         take(m, p, code)
@@ -286,9 +312,10 @@ internal object MapLookWrites {
      */
     fun save(m: MutablePreferences, palette: Palette, name: String, replace: String?): String {
         val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
-        val kept = MapLookModel.clean(name).ifEmpty { MapLookModel.newName(palette.base.code, saved.map { it.name }) }
-        val code = PaletteCode.write(MapLookModel.withTone(MapLookModel.lookPalette(palette), MapLookModel.tone(m).drawn))
         val at = replace?.let { c -> saved.indexOfFirst { it.code == c } } ?: -1
+        val others = saved.filterIndexed { i, _ -> i != at }.map { it.name }
+        val kept = MapLookModel.clean(name).ifEmpty { MapLookModel.newName(palette.base.code, others) }.let { MapLookModel.unique(it, others) }
+        val code = PaletteCode.write(MapLookModel.withTone(MapLookModel.lookPalette(palette), MapLookModel.tone(m).drawn))
         val next = if (at >= 0) saved.mapIndexed { i, s -> if (i == at) SavedPalette(kept, code) else s } else saved + SavedPalette(kept, code)
         m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(next))
         m.put(SettingsKeys.MAP_PALETTE, MapLookModel.keep(palette))
@@ -304,11 +331,12 @@ internal object MapLookWrites {
         if (m[SettingsKeys.MAP_LOOK_FROM] == saved[index].code) m.remove(SettingsKeys.MAP_LOOK_FROM)
     }
 
-    /** The saved palette at [index] is called [name] (left as it was for a blank one). */
+    /** The saved palette at [index] is called [name]; left as it was for a blank one or one another palette has. */
     fun rename(m: MutablePreferences, index: Int, name: String) {
         val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
+        if (index !in saved.indices) return
         val clean = MapLookModel.clean(name)
-        if (index !in saved.indices || clean.isEmpty()) return
+        if (MapLookModel.nameSays(clean, saved.filterIndexed { i, _ -> i != index }.map { it.name }) != MapLookModel.NameSays.Fine) return
         m.put(SettingsKeys.MAP_PALETTES, MapLookModel.textOf(saved.mapIndexed { i, s -> if (i == index) s.copy(name = clean) else s }))
     }
 

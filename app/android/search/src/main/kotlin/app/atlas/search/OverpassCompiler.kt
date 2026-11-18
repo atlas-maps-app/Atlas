@@ -35,12 +35,14 @@ object OverpassCompiler {
      * drawn, the places of every "near" clause.
      */
     fun compile(query: Query, area: OverpassArea? = null, me: LatLon? = null, timeoutSeconds: Int = 60): String {
+        // an outer sort and count are the client's, which ranks the whole answer and then cuts it: Overpass cuts
+        // `out … qt N` in quadtile order, so a count sent kept the server's first N for the client to sort, not the
+        // nearest or the tallest N (the reviewer, 18 November 2026)
         var q = query
-        var limit: Int? = null
         while (true) {
             q = when (q) {
                 is Query.Sort -> q.query
-                is Query.Limit -> { limit = q.count; q.query }
+                is Query.Limit -> q.query
                 else -> break
             }
         }
@@ -49,11 +51,9 @@ object OverpassCompiler {
         val sb = StringBuilder()
         sb.append("[out:json][timeout:").append(timeoutSeconds).append("];\n")
         sb.append(c.body)
-        // a client-side check after the fact (opening hours, units) needs every candidate, so no limit then
-        val countClause = if (limit != null && !needsClientCheck(q)) " $limit" else ""
         // `bb`: the outline's box (its centre is the pin, as with `center`), so "within 200 m of a park" is measured
         // to the park's edge, as offline
-        sb.append('.').append(result).append(" out tags bb qt").append(countClause).append(";\n")
+        sb.append('.').append(result).append(" out tags bb qt;\n")
         for (n in c.nearSets) sb.append('.').append(n).append(" out tags bb qt;\n")
         return sb.toString().trimEnd()
     }
@@ -65,24 +65,6 @@ object OverpassCompiler {
         is OverpassArea.Around -> area.center
         is OverpassArea.Along -> area.points[area.points.size / 2]
         null -> null
-    }
-
-    private fun needsClientCheck(q: Query): Boolean {
-        var needs = false
-        q.walk {
-            if (it is Query.OpenAt || (it is Query.Tags && hasCompare(it.filter)) || it is Query.Name || it is Query.Want || it is Query.Rated ||
-                it is Query.Inside || it is Query.Contains || it is Query.ChangesAt || it is Query.Coloured || it is Query.ClosedOn || it is Query.Than
-            ) needs = true
-        }
-        return needs
-    }
-
-    private fun hasCompare(f: TagFilter): Boolean = when (f) {
-        is TagFilter.Compare -> true
-        is TagFilter.And -> f.parts.any { hasCompare(it) }
-        is TagFilter.Or -> f.parts.any { hasCompare(it) }
-        is TagFilter.Not -> hasCompare(f.part)
-        else -> false
     }
 
     /**

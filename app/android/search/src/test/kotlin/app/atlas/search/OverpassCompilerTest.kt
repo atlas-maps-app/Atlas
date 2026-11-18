@@ -222,8 +222,8 @@ class OverpassCompilerTest {
             """.trimIndent(),
             OverpassCompiler.compile(Query.Category("viewpoint"), box),
         )
-        assertTrue(OverpassCompiler.compile(Query.Limit(Query.tags("amenity=cafe"), 10), box).contains(".result out tags bb qt 10;"))
-        // a client-side check (opening hours) needs every candidate: no limit then
+        // a count is the client's, with or without a check of its own to make: never sent ([aCountIsNeverSentToTheServer])
+        assertTrue(OverpassCompiler.compile(Query.Limit(Query.tags("amenity=cafe"), 10), box).contains(".result out tags bb qt;"))
         assertTrue(OverpassCompiler.compile(Query.Limit(Query.and(Query.tags("amenity=cafe"), Query.OpenAt(OpenTime.Now)), 10), box).contains(".result out tags bb qt;"))
         assertEquals(
             """
@@ -280,6 +280,25 @@ class OverpassCompilerTest {
             ql("cuisine~^(pizza|pasta)$"),
         )
         assertTrue(app.atlas.places.TagFilter.parse("cuisine~^(pizza|pasta)$").matches(mapOf("cuisine" to "italian;pizza")))
+    }
+
+    /**
+     * A count is the client's to keep: Overpass cuts `out … qt N` in quadtile order, so a count sent leaves the server's
+     * first three for the client to sort, not the nearest three (the reviewer, 18 November 2026).
+     */
+    @Test
+    fun aCountIsNeverSentToTheServer() {
+        val cut = Regex("""out tags bb qt \d+;""")
+        val asked = listOf(
+            Query.Limit(Query.Sort(Query.tags("amenity=pharmacy"), SortBy.DISTANCE), 3),
+            Query.Limit(Query.tags("amenity=pharmacy"), 3),
+            QueryParser.parse("3 nearest pharmacies").query,
+            QueryParser.parse("5 tallest buildings").query,
+        )
+        for (q in asked) {
+            val ql = OverpassCompiler.compile(q, box, me)
+            assertTrue("$q:\n$ql", !cut.containsMatchIn(ql) && ql.endsWith(".result out tags bb qt;"))
+        }
     }
 
     @Test

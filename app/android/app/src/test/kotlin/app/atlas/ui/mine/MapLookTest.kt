@@ -307,6 +307,17 @@ class MapLookWordsTest {
             }
         }
     }
+
+    /** Every string of the Map look, Colour the map and the Tone is said somewhere: none left behind unused. */
+    @Test
+    fun noStringIsLeftUnused() {
+        val code = File("src/main/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }.joinToString("\n") { it.readText() }
+        val text = File("src/main/res/values/strings_mine.xml").readText()
+        val names = Regex("""<(string|plurals) name="(mine_(?:look|colour|layers_tone)[a-z0-9_]*)"""").findAll(text).map { it.groupValues[1] to it.groupValues[2] }.toList()
+        assertTrue(names.size > 100)
+        val unused = names.filter { (kind, name) -> !Regex("""R\.${if (kind == "string") "string" else "plurals"}\.$name\b""").containsMatchIn(code) }
+        assertEquals(emptyList<Pair<String, String>>(), unused)
+    }
 }
 
 /** Colour the map's colours: OKLCH and hex, the board's light, and a colour changed alone or with its group. */
@@ -348,7 +359,7 @@ class ColourMapModelTest {
         assertTrue(ColourMapModel.changed(one, Slot.RED_TILES))
         // back to the preset's colour: none of its own
         assertEquals(emptyMap<Slot, Int>(), ColourMapModel.withColour(one, Slot.RED_TILES, Slot.RED_TILES.today).colours)
-        assertEquals(emptyMap<Slot, Int>(), ColourMapModel.reset(one, Slot.RED_TILES).colours)
+        assertEquals(emptyMap<Slot, Int>(), ColourMapModel.reset(one, Slot.RED_TILES, p).colours)
         // the group moves with it: the colour exactly, the others by the palette's move, none left as they were
         val all = ColourMapModel.withGroup(p, Slot.RED_TILES, 0x3E6E9E)
         assertEquals(0x3E6E9E, all.colour(Slot.RED_TILES))

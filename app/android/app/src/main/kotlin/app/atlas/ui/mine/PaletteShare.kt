@@ -55,17 +55,22 @@ import kotlin.math.floor
 /**
  * A saved palette shared (the Map look board's share sheet): over the page's scrim a sheet 12 px from the edges, the
  * palette's name (22, 900; typed over to rename it), the delete and close buttons, the line under it, the QR code of
- * the palette's link (196 px), its code in Geist Mono, and Copy code and Share…. Delete asks once more, its button
- * turning red with the word, before the palette goes.
+ * the palette's link (196 px), its code in Geist Mono, and Copy code and Share…. A name that is blank or another
+ * palette's ([taken]) is said in red in place of the line, and kept as it was. Delete asks once more, its button
+ * turning red with the word, before the palette goes. Share sends the name and the link, which opens it in Atlas.
  */
 @Composable
-internal fun PaletteSheet(name: String, code: String, onClose: () -> Unit, onRename: (String) -> Unit, onDelete: () -> Unit) {
+internal fun PaletteSheet(name: String, code: String, taken: List<String>, onClose: () -> Unit, onRename: (String) -> Unit, onDelete: () -> Unit) {
     val context = LocalContext.current
     val focus = LocalFocusManager.current
     var typed by remember(name) { mutableStateOf(name) }
     var deleting by remember { mutableStateOf(false) }
+    val says = MapLookModel.nameSays(typed, taken)
+    fun rename() {
+        if (says == MapLookModel.NameSays.Fine && MapLookModel.clean(typed) != name) onRename(typed)
+    }
     fun close() {
-        if (typed != name) onRename(typed)
+        rename()
         onClose()
     }
     BackHandler { close() }
@@ -82,7 +87,7 @@ internal fun PaletteSheet(name: String, code: String, onClose: () -> Unit, onRen
                 BasicTextField(
                     typed, { typed = it.replace("\n", " ").take(MapLookModel.NAME_MAX) },
                     Modifier.weight(1f).semantics { contentDescription = nameCd }
-                        .onFocusChanged { if (!it.isFocused && typed != name && typed.isNotBlank()) onRename(typed) },
+                        .onFocusChanged { if (!it.isFocused) rename() },
                     textStyle = bt(22f, 900, 28f).copy(color = Color(INK)),
                     singleLine = true,
                     cursorBrush = SolidColor(Color(INK)),
@@ -100,7 +105,17 @@ internal fun PaletteSheet(name: String, code: String, onClose: () -> Unit, onRen
                 }
                 RoundIcon(LookIcons.CROSS, stringResource(R.string.kit_close)) { close() }
             }
-            BText(stringResource(R.string.mine_look_share_sub), bt(13f, 600, 17f), SOFT, Modifier.padding(top = 2.dp), lines = 3)
+            when (says) {
+                is MapLookModel.NameSays.Taken -> BText(
+                    stringResource(R.string.mine_look_name_taken, says.name), bt(13f, 600, 17f), 0xFFC8322A,
+                    Modifier.padding(top = 2.dp).semantics { liveRegion = LiveRegionMode.Polite }, lines = 3,
+                )
+                MapLookModel.NameSays.Blank -> BText(
+                    stringResource(R.string.mine_look_name_blank), bt(13f, 600, 17f), 0xFFC8322A,
+                    Modifier.padding(top = 2.dp).semantics { liveRegion = LiveRegionMode.Polite }, lines = 3,
+                )
+                MapLookModel.NameSays.Fine -> BText(stringResource(R.string.mine_look_share_sub), bt(13f, 600, 17f), SOFT, Modifier.padding(top = 2.dp), lines = 3)
+            }
             Box(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 12.dp), contentAlignment = Alignment.Center) {
                 QrImage(MapLookModel.link(code), stringResource(R.string.mine_look_qr_cd), Modifier.size(196.dp))
             }
