@@ -530,6 +530,22 @@ class OpeningHoursTest {
         assertEquals(true, oh("dawn-dusk").isOpen(t("2026-10-13T12:00"), ams))
     }
 
+    /**
+     * A start the sun does not make that day never opens (the app maintainer, 18 November 2026, batch 4 B19): `sunset+`
+     * in Tromsø's polar day read the evening that never came as midnight and was open from 0:00 to 6:00; `sunrise+` in
+     * its polar night likewise. Where the sun sets, it opens as before.
+     */
+    @Test
+    fun aStartTheSunDoesNotMakeNeverOpens() {
+        val tromso = OpeningHoursContext(sun = SunClock.at(69.6492, 18.9553, java.time.ZoneId.of("Europe/Oslo")))
+        assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T00:30"), tromso))
+        assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T05:00"), tromso))
+        assertEquals(false, oh("Mo-Su sunset+").isOpen(t("2026-06-23T01:00"), tromso))
+        assertEquals(false, oh("sunrise+").isOpen(t("2026-12-22T00:30"), tromso))
+        val ams = OpeningHoursContext(sun = SunClock.at(52.3746, 4.8840, java.time.ZoneId.of("Europe/Amsterdam")))
+        assertEquals(true, oh("sunset+").isOpen(t("2026-10-13T20:00"), ams))
+    }
+
     @Test
     fun allDayAndTimesWithoutTheirColons() {
         // the reviewer, 17 November, finding 11: "24h" read as the moment 24:00, "closed, opens 0:00"; "Mo-Fr 1900-2200"

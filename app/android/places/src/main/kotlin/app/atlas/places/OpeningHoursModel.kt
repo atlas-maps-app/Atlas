@@ -195,7 +195,12 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
     /** Start and end minutes on [date] (end may pass 1440) and whether the span itself is open-ended; null when a sun event is missing. */
     fun resolve(date: LocalDate, sun: SunClock): Pair<Int, Int>? {
         val a = from.resolve(date, sun) ?: return null
-        if (to == null) return if (openEnd) a to a + openEndGuess(a) else a to a + 1
+        if (to == null) {
+            // a start the sun does not make that day, one that never comes (`sunset+` in polar day), never opens (the app
+            // maintainer, 18 November 2026, batch 4 B19: it opened at midnight)
+            if (a >= 1440 && from.missed(date, sun)) return null
+            return if (openEnd) a to a + openEndGuess(a) else a to a + 1
+        }
         var b = to.resolve(date, sun) ?: return null
         if (b <= a) {
             // past midnight; but where a sun event did not happen, a span that ends before it starts never begins
