@@ -7,6 +7,7 @@
 #include "gen/spirv/world/world.hpp"
 #include "geometry/Ground.hpp"
 #include "gpu/Descriptors.hpp"
+#include "passes/Ground.hpp"
 #include "scene/WorldTiles.hpp"
 #include "style/Theme.hpp"
 #include "tiles/Style.hpp"
@@ -84,9 +85,11 @@ constexpr std::uint32_t fading_lifts = 7;
 /// slot, tested without a write.
 [[nodiscard]] float over_depth(std::uint32_t camera_flags) noexcept { return fading_depth(camera_flags, fading_lifts); }
 
-/// The palette of a ground, a water and a road (the palette's words) and the world's style by day or at night.
+/// The palette of a ground, a water and a road (the palette's words) and the world's style by day or at night, as the
+/// user's palette has it (World::palette_of).
 [[nodiscard]] std::vector<std::uint32_t> palette_from(std::uint32_t ground, std::uint32_t water, std::uint32_t road,
-                                                      bool night, const tiles::Style* style) {
+                                                      bool night, const tiles::Style* style,
+                                                      const style::PaletteBlock* palette) {
     std::vector<std::uint32_t> out(wp::size, ground);
     out[wp::water] = water;
     out[wp::road] = road;
@@ -102,6 +105,21 @@ constexpr std::uint32_t fading_lifts = 7;
         const bool lawn = std::ranges::find(lawn_kinds, kind) != lawn_kinds.end();
         const geometry::Rgba c = geometry::rgba(lawn ? style->area_colour(kind) : style->land_colours[k]);
         out[k + wp::kinds] = (night ? geometry::darken(c, lawn ? 0.18 : 0.2) : c).packed();
+    }
+    // the user's palette: the land kinds and the asphalt as the ground's fills of their colours move (its table of
+    // pairs, today's colour and the user's), so a slot holds from the street out to the world's tiles
+    if (palette != nullptr && !palette->today()) {
+        const std::vector<std::uint32_t> table = ground_palette(*style, palette, night);
+        const auto moved = [&table](std::uint32_t word) {
+            for (std::uint32_t k = 0; k < palette_pairs && !table.empty(); ++k) {
+                const std::size_t at = std::size_t{2} * ((palette_hash(word) + k) & (palette_pairs - 1));
+                if (table[at] == word) return table[at + 1];
+                if (table[at] == 0U) break;
+            }
+            return word;
+        };
+        out[wp::asphalt] = moved(out[wp::asphalt]);
+        for (std::size_t k = wp::kinds; k < wp::size; ++k) out[k] = moved(out[k]);
     }
     // the coast's line, the ladder's (the world pass draws it by the ladder's weight alone)
     if (style->ladder) out[wp::coast] = geometry::rgba(style->ladder->coast.colour).packed();
@@ -137,8 +155,38 @@ void World::ladder_for_tests(bool on) noexcept { test_ladder().store(on, std::me
 
 World::~World() { World::release(); }
 
-std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, bool night, const tiles::Style* style) {
-    return palette_from(word_of(theme.ground), word_of(theme.water), word_of(theme.road), night, style);
+std::vector<std::uint32_t> World::palette_of(const style::ThemeBlock& theme, bool night, const tiles::Style* style,
+                                             const style::PaletteBlock* palette) {
+    return palette_from(word_of(theme.ground), word_of(theme.water), word_of(theme.road), night, style, palette);
+}
+
+tiles::WorldLadder World::painted_ladder(const tiles::WorldLadder& ladder, const tiles::Style& style,
+                                         const style::PaletteBlock* palette) {
+    tiles::WorldLadder l = ladder;
+    if (palette == nullptr || palette->today()) return l;
+    namespace slot = style::palette_slot;
+    // the live day's: PaletteTheme.recolour's moves of the theme's ground, water and roads, whose day colours these are
+    const std::uint32_t lawn_own = style.area_colour("park");
+    if (palette->has(style::palette_flag::grass)) {
+        l.day_ground =
+            style::palette_move(ladder.day_ground, style::paper_own, palette->colour(slot::lawn).value_or(lawn_own));
+    } else {
+        l.day_ground = style::paint(palette, slot::paper, style::paper_own, ladder.day_ground);
+    }
+    l.day_water = style::paint(palette, slot::water, ladder.day_water, ladder.day_water);
+    l.day_road = style::paint(palette, slot::street, ladder.day_road, ladder.day_road);
+    // the globe's: the sea's ramp with the water, the land's greens and their edge with the lawns (its last stop, the
+    // snow, stays as the ice does), the night with the night's ground, the cities' lights with the lit windows
+    for (tiles::LadderStop& s : l.sea) s.colour = style::paint(palette, slot::water, ladder.day_water, s.colour);
+    for (std::size_t i = 0; i + 1 < l.land.size(); ++i) {
+        l.land.at(i).colour = style::paint(palette, slot::lawn, lawn_own, l.land.at(i).colour);
+    }
+    l.coast.colour = style::paint(palette, slot::lawn, lawn_own, ladder.coast.colour);
+    l.night = style::paint(palette, slot::night_ground, style::night_ground_own, ladder.night);
+    for (tiles::LadderTint& s : l.lights) {
+        s.colour = style::paint(palette, slot::lit_windows, style::lit_windows_own, s.colour);
+    }
+    return l;
 }
 
 double World::day_share(const style::ThemeBlock& theme) noexcept {
@@ -148,11 +196,12 @@ double World::day_share(const style::ThemeBlock& theme) noexcept {
     return t * t * (3.0 - (2.0 * t));
 }
 
-std::vector<std::uint32_t> World::day_palette_of(const style::ThemeBlock& theme, const tiles::Style* style) {
+std::vector<std::uint32_t> World::day_palette_of(const style::ThemeBlock& theme, const tiles::Style* style,
+                                                 const style::PaletteBlock* palette) {
     const bool night = theme.has(style::theme_flag::night);
-    if (style == nullptr || !style->ladder) return palette_of(theme, night, style);
+    if (style == nullptr || !style->ladder) return palette_of(theme, night, style, palette);
     const double share = day_share(theme);
-    if (share >= 1.0) return palette_of(theme, false, style);
+    if (share >= 1.0) return palette_of(theme, false, style, palette);
     // a word between the ladder's day colour and the moment's own, a channel at a time, rounded
     const auto between = [share](std::uint32_t ladder, const style::Rgb8& own) {
         const geometry::Rgba a = geometry::rgba(ladder);
@@ -164,9 +213,9 @@ std::vector<std::uint32_t> World::day_palette_of(const style::ThemeBlock& theme,
         return geometry::Rgba{.r = channel(a.r, own.r), .g = channel(a.g, own.g), .b = channel(a.b, own.b), .a = 255}
             .packed();
     };
-    const tiles::WorldLadder& l = *style->ladder;
+    const tiles::WorldLadder l = painted_ladder(*style->ladder, *style, palette);
     return palette_from(between(l.day_ground, theme.ground), between(l.day_water, theme.water),
-                        between(l.day_road, theme.road), false, style);
+                        between(l.day_road, theme.road), false, style, palette);
 }
 
 bool World::room_for_parts(Slot& s, std::size_t entries) {
@@ -199,8 +248,8 @@ void World::update(const frame::FrameState& state) {
         return;
     }
     const bool night = state.theme.has(style::theme_flag::night);
-    palette_ = palette_of(state.theme, night, world->style);
-    const std::vector<std::uint32_t> day = day_palette_of(state.theme, world->style);
+    palette_ = palette_of(state.theme, night, world->style, state.palette);
+    const std::vector<std::uint32_t> day = day_palette_of(state.theme, world->style, state.palette);
     palette_.insert(palette_.end(), day.begin(), day.end());
     const std::uint32_t paint = test_paint().load(std::memory_order_relaxed);
     if (paint != 0) std::ranges::fill(palette_, paint);
@@ -223,7 +272,8 @@ void World::update(const frame::FrameState& state) {
     if (world->style != nullptr && world->style->ladder && paint == 0 &&
         test_ladder().load(std::memory_order_relaxed)) {
         const view::Device& device = state.view->device();
-        look_ = scene::world_look(*world->style->ladder, camera.spec().dist, state.theme, bend, eye, device.density,
+        look_ = scene::world_look(painted_ladder(*world->style->ladder, *world->style, state.palette),
+                                  camera.spec().dist, state.theme, bend, eye, device.density,
                                   static_cast<double>(device.width_px), static_cast<double>(device.height_px));
         space_ = look_.weights.space > 0.0;
         glass_ = look_.weights.ring > 0.0;

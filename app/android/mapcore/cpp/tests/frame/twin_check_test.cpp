@@ -1,38 +1,24 @@
-// The twin's check (frame/TwinCheck.hpp) on the host's Vulkan: the bundled Westerkerk (ATLAS_TILES_DIR, as the scene's
-// tests take it) at the engine references' home, settled without drawing, emits a picture (its tiles drawn, its
-// buildings lit by the sun), the same stream twice, and hashes to twin_check_expected, which ci/hashes.env's
-// ATLAS_TWIN_HASH holds the emulator to.
+// The twin's check (frame/TwinCheck.hpp) on the host's Vulkan: the Westerkerk as the core cuts the app's pack of it
+// (tests/load/westerkerk.hpp, the pack VK facts runs the check over) at the engine references' home, settled without
+// drawing, emits a picture (its tiles drawn, its buildings lit by the sun), the same stream twice, and hashes to
+// twin_check_expected, which ci/hashes.env's ATLAS_TWIN_HASH holds the emulator to.
 #include "frame/TwinCheck.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "tests/load/westerkerk.hpp"
 
 #include <doctest/doctest.h>
 
-#include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <string>
 
 using namespace atlas;
 
-namespace {
-
-[[nodiscard]] std::string environment(const char* name) {
-    const char* v = std::getenv(name); // NOLINT(concurrency-mt-unsafe): read before the test's threads
-    return v == nullptr ? std::string() : std::string(v);
-}
-
-} // namespace
-
-TEST_CASE("the twin's check: the bundled Westerkerk at the home emits one stream every time, the host's") {
-    const std::string dir = environment("ATLAS_TILES_DIR");
-    const std::filesystem::path pack = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty()) {
-        MESSAGE("ATLAS_TILES_DIR has no amsterdam.atlas: the twin's check is not run here");
-        return;
-    }
-    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
-    ATLAS_REQUIRE(std::filesystem::exists(pack), "ATLAS_TILES_DIR has no " << pack.string());
+TEST_CASE("the twin's check: the Westerkerk the core cuts for the app, at the home, emits one stream every time, the "
+          "host's") {
+    const std::filesystem::path pack = atlas::test::westerkerk_core_pack();
+    ATLAS_REQUIRE(!pack.empty(), "the Westerkerk's pack is made");
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);

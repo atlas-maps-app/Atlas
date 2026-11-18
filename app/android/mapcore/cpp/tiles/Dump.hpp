@@ -15,7 +15,9 @@
 #include "tiles/Checksums.hpp"
 #include "tiles/Payload.hpp"
 
+#include <cstddef>
 #include <string>
+#include <vector>
 
 namespace atlas::tiles {
 
@@ -24,5 +26,18 @@ namespace atlas::tiles {
 
 /// The SHA-256 of the canonical text's bytes (computed as it is written, without holding the text).
 [[nodiscard]] Sha256Digest canonical_hash(const Tile& tile);
+
+/// How many of a layer's lines two tiles' canonical texts hold, and how many of them differ (line for line in the
+/// layer's order; a line one side lacks differs).
+struct LayerLines {
+    std::string layer;
+    std::size_t lines = 0;
+    std::size_t differ = 0;
+};
+
+/// Adds to `into` (a layer once, in the order the layers first come) how the features of `a` and `b` compare, layer by
+/// layer: for a change that is to touch some layers alone, the others' lines must not differ. The tile's and the
+/// cells' lines, which sum over every layer, are left out.
+void compare_layers(const Tile& a, const Tile& b, std::vector<LayerLines>& into);
 
 } // namespace atlas::tiles

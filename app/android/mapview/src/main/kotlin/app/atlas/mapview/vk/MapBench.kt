@@ -39,7 +39,7 @@ object MapBench {
     /** The core's passes, as its registry names them (`CP/frame/PassRegistry.cpp`), in its order. */
     val PASSES = listOf(
         "composite", "frosted", "ground", "buildings", "house", "trees", "things", "items", "doors", "shopfronts",
-        "ground_text", "routes", "markers", "labels", "overlays", "world",
+        "ground_text", "routes", "markers", "labels", "overlays", "world", "relief",
     )
 
     /**

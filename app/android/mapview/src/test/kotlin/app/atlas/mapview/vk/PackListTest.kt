@@ -299,6 +299,28 @@ class PackListTest {
     }
 
     @Test
+    fun aTerrainPackCIPutsOnTheDeviceIsListedAsTheTerrainsFromItsFile() {
+        val pushed = File(dir, "atlas").apply { mkdirs() }
+        val canal = File(pushed, "grachten.atlas")
+        canal.writeBytes(renderPack("grachten", "region", 4.86, 52.35, 4.93, 52.39, mapOf("home" to 2300), chunks = 23))
+        val terrain = File(pushed, "netherlands-terrain.9-262-168.atlas").apply { writeBytes(ByteArray(64)) }
+        val list = PackList(windows = { windows }, bench = { listOf(canal, terrain) })
+        // the canal ring stays the map's pack; the terrain pack is no pack the map draws, but the core's relief reads it
+        assertEquals(listOf("grachten"), list.load().map { it.id })
+        val ref = list.terrainRefs.single()
+        assertEquals("terrain/netherlands-terrain/9/262/168", ref.id)
+        assertEquals(MapCore.PackRef.TERRAIN_COUNTRY, ref.kind)
+        assertEquals(terrain.path, ref.path)
+        assertEquals(64L, ref.length)
+        assertEquals(listOf("grachten", "terrain/netherlands-terrain/9/262/168"), list.refs().map { it.id })
+        // the names it takes: cut.py's, and nothing else
+        assertEquals("terrain/tuscany-terrain/9/271/187", PackList.terrainFileId("tuscany-terrain.9-271-187.atlas"))
+        assertEquals(null, PackList.terrainFileId("grachten.atlas"))
+        assertEquals(null, PackList.terrainFileId("netherlands-terrain.idx"))
+        assertEquals(null, PackList.terrainFileId("netherlands-terrain.9-262.atlas"))
+    }
+
+    @Test
     fun aWindowsFileNamesItsWindow() {
         assertEquals(MapCore.Window(14, 8414, 5384), Windows.windowOf(File("14-8414-5384.atlas")))
         assertEquals("window/14/8414/5384", Windows.windowOf(File("14-8414-5384.atlas"))?.id)

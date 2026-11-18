@@ -1729,6 +1729,12 @@ std::uint64_t Ground::words_hash() const noexcept {
 
 void Ground::update(const frame::FrameState& state) {
     frame_.thin_runs.clear();
+    // where the ground lies, for the relief's light (frame::GroundReach): under everything where the world draws, else
+    // the plate's square (the tiles' ground and the windows' lie on it), none where the ground is left out
+    if (state.ground_reach != nullptr) {
+        const bool drawn = frame_.valid && !frame_.out(style::camera_part::ground);
+        *state.ground_reach = {.everywhere = drawn && frame_.world, .half_side = drawn ? frame_.ground_r : 0.0};
+    }
     if (!frame_.valid) return;
     lay_designators(state);
     if (pipelines_ == nullptr || words_ == nullptr) return;
@@ -2039,16 +2045,32 @@ void Ground::write_canopy(std::vector<std::uint32_t>& words, const frame::FrameS
 }
 
 void Ground::write_palette(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
-    const tiles::Style* style =
-        state.active_pack != nullptr && state.active_pack->source ? state.active_pack->source->pack.style() : nullptr;
-    if (state.palette == nullptr || style == nullptr) return;
+    // the styles of the packs drawn: the active one's first, then the coarser one's and its neighbours' (a frame
+    // cell's windows beside a country's pack may be made with another), so their tiles' fills move alike
+    const auto style_of = [](const scene::ResidentPack* p) -> const tiles::Style* {
+        return p != nullptr && p->source ? p->source->pack.style() : nullptr;
+    };
+    std::array<const tiles::Style*, 2 + scene::max_neighbours> drawn{};
+    std::size_t n = 0;
+    const auto add = [&](const tiles::Style* s) {
+        const std::span<const tiles::Style* const> seen = std::span(drawn).first(n);
+        if (s != nullptr && n < drawn.size() && std::ranges::find(seen, s) == seen.end()) {
+            drawn.at(n++) = s;
+        }
+    };
+    add(style_of(state.active_pack));
+    if (n == 0) return; // no pack drawn: no fill
+    add(style_of(state.coarser_pack));
+    for (const scene::ResidentPack* p : state.neighbour_packs) add(style_of(p));
+    const std::span<const tiles::Style* const> styles = std::span(drawn).first(n);
+    if (state.palette == nullptr) return;
     const bool night = frame_.night;
-    const bool same = palette_style_ == style && palette_night_ == night &&
+    const bool same = std::ranges::equal(palette_styles_, styles) && palette_night_ == night &&
                       std::memcmp(&palette_of_, state.palette, sizeof palette_of_) == 0;
     if (!same) {
-        palette_table_ = ground_palette(*style, state.palette, night);
+        palette_table_ = ground_palette(styles, state.palette, night);
         palette_of_ = *state.palette;
-        palette_style_ = style;
+        palette_styles_.assign(styles.begin(), styles.end());
         palette_night_ = night;
     }
     if (palette_table_.empty()) return;
@@ -2057,6 +2079,12 @@ void Ground::write_palette(std::vector<std::uint32_t>& words, const frame::Frame
 }
 
 std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style::PaletteBlock* palette, bool night) {
+    const std::array<const tiles::Style*, 1> one{&style};
+    return ground_palette(one, palette, night);
+}
+
+std::vector<std::uint32_t> ground_palette(std::span<const tiles::Style* const> styles,
+                                          const style::PaletteBlock* palette, bool night) {
     std::vector<std::uint32_t> table;
     if (palette == nullptr) return table;
     const auto put = [&table](geo::Rgba from, geo::Rgba to) {
@@ -2076,19 +2104,21 @@ std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style
     };
     // each colour of the style a slot moves, with its move, by day, or at night as the fills darken it (lawns and
     // areas .18, the rest .2); the big roads' asphalt by day or at night as the style has it
-    for (const geo::GroundSlot& s : geo::ground_slots(style, night)) {
-        if (!s.darkens) {
-            const std::uint32_t moved = style::paint(palette, s.code, s.own, s.colour);
-            if (s.own != 0U && moved != s.colour) put(geo::rgba(s.colour), geo::rgba(moved));
-            continue;
+    for (const tiles::Style* style : styles) {
+        for (const geo::GroundSlot& s : geo::ground_slots(*style, night)) {
+            if (!s.darkens) {
+                const std::uint32_t moved = style::paint(palette, s.code, s.own, s.colour);
+                if (s.own != 0U && moved != s.colour) put(geo::rgba(s.colour), geo::rgba(moved));
+                continue;
+            }
+            const std::uint32_t to = style::paint(palette, s.code, s.own, s.colour);
+            if (to == s.colour) continue;
+            if (!night) {
+                put(geo::rgba(s.colour), geo::rgba(to));
+                continue;
+            }
+            for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(s.colour), k), geo::darken(geo::rgba(to), k));
         }
-        const std::uint32_t to = style::paint(palette, s.code, s.own, s.colour);
-        if (to == s.colour) continue;
-        if (!night) {
-            put(geo::rgba(s.colour), geo::rgba(to));
-            continue;
-        }
-        for (const double k : {0.18, 0.2}) put(geo::darken(geo::rgba(s.colour), k), geo::darken(geo::rgba(to), k));
     }
     return table;
 }
