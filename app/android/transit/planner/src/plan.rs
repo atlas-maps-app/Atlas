@@ -61,7 +61,9 @@
 //! that cost are searched with bags alone, to the horizon.
 //!
 //! **What bounds it** ([`Limits`]): rounds by `max_rides`; searches by `departures`; labels and steps by their
-//! caps; time by the window and the horizon. Every loop over the file's data counts steps.
+//! caps; time by the window and the horizon. Every loop over the file's data counts steps. An answer says when a
+//! cap was met ([`Answer::cut_short`]), wherever in the search it was: also where the steps passed theirs outside
+//! a search's rounds, in the count from the journey's end or in the list of a window's departures.
 
 use crate::file::{MAX_TIME, PatternStop, Route, Rule, Timetable};
 use crate::geo::distance_mm;
@@ -775,7 +777,7 @@ impl<'a> Planner<'a> {
         // Asked for one moment, each journey so far leaves when the first trip it caught does, which may be sooner
         // than it need: an earlier bus to the same train. Whoever asks is told when to leave at the latest (and,
         // asking to arrive by, when the journey is over at the earliest).
-        if window == 0 && !s.cut {
+        if window == 0 && !s.cut && s.steps <= s.max_steps {
             let anchors: Vec<Anchor> = keep
                 .iter()
                 .filter(|j| j.rides > 0)
@@ -792,7 +794,10 @@ impl<'a> Planner<'a> {
         }
         keep.sort_by_key(|j| (j.depart, j.arrive, j.rides, j.penalty));
         let options = q.limits.options.clamp(1, 1024) as usize;
-        let mut cut = s.cut;
+        // Cut short: a cap was met where the search says so itself, or the steps passed theirs anywhere at all (the
+        // count from the journey's end, the list of a window's departures): whatever came after did less than
+        // it should.
+        let mut cut = s.cut || s.steps > s.max_steps;
         if keep.len() > options {
             // too many: those nearest the asked moment stay
             if back {
@@ -936,6 +941,11 @@ impl<'s> Search<'s, '_> {
             }
         }
         let mut events = self.departures(first, start, span - 1);
+        if self.steps > self.max_steps {
+            // (the count from the journey's end or this list went past the cap: the list is not whole)
+            self.cut = true;
+            return searches;
+        }
         events.sort_unstable();
         let mut distinct = 0usize;
         let mut keep = events.len();
@@ -1104,7 +1114,7 @@ impl<'s> Search<'s, '_> {
     /// journey there is none, which is how it mostly ends. `known` are journeys of another search to beat.
     /// Returns how many searches it took.
     fn fewer_rides(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, span: i32, cap: usize, known: &[Found]) -> u32 {
-        if self.short.is_none() || self.cut || !self.aimed || self.cover == 255 || self.cover < 2 {
+        if self.short.is_none() || self.cut || self.steps > self.max_steps || !self.aimed || self.cover == 255 || self.cover < 2 {
             return 0;
         }
         let fewer = (self.cover as usize - 1).min(self.max_rides);
@@ -1681,7 +1691,11 @@ impl<'s> Search<'s, '_> {
 
     /// A first stop of the journey, reached on foot at `time`.
     fn offer_first(&mut self, stop: u32, time: i32, secs: u32) {
-        if stop as usize >= self.stops || bit(&self.prefs.closed, stop) || self.pointless(0, stop, time, 0) || self.beaten(true, 0, stop, time, 0) || self.w.labels.len() >= self.max_labels {
+        if stop as usize >= self.stops || bit(&self.prefs.closed, stop) || self.pointless(0, stop, time, 0) || self.beaten(true, 0, stop, time, 0) {
+            return;
+        }
+        if self.w.labels.len() >= self.max_labels {
+            self.cut = true;
             return;
         }
         self.put(true, 0, Label { time, cost: 0, prev: NONE, next: NONE, stop, trip: secs, from: 0, to: 0, off: 0, kind: ACCESS });

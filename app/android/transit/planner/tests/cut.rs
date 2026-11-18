@@ -551,6 +551,45 @@ fn a_search_stops_at_its_caps() {
     assert_eq!(p.plan(&q).journeys.len(), 1);
 }
 
+/// Whatever cap a search meets, and wherever in it, the answer says so: an answer that is not the whole one is
+/// marked as cut short. Each query is asked with its steps capped at every twentieth of what the whole search took,
+/// and with few labels: so the cap falls in the first search, in the count from the journey's end, between two
+/// searches, and in the search for a later departure.
+#[test]
+fn an_answer_that_is_not_whole_says_so() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (mut asked, mut short, mut silent) = (0, 0, Vec::new());
+    for (i, (a, z)) in pairs(&tt, 90, 51).into_iter().enumerate() {
+        let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600 + 311 * i as u32);
+        (q.window, q.arrive_by, q.limits.options, q.limits.patient) = ([0, 7200, 3600][i % 3], i % 4 == 1, 1024, i % 7 != 3);
+        if i % 5 == 4 {
+            q.wishes.push(Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) });
+        }
+        let whole = p.plan(&q);
+        assert!(!whole.cut_short, "{q:?}");
+        let mut caps: Vec<(u64, u32)> = (1..20).map(|k| ((whole.steps * k / 20).max(10_000), q.limits.labels)).collect();
+        caps.extend([1024, 1500, 2500, 5000, 12_000].map(|labels| (q.limits.steps, labels)));
+        caps.dedup();
+        for (steps, labels) in caps {
+            let mut capped = q.clone();
+            (capped.limits.steps, capped.limits.labels) = (steps, labels);
+            let got = p.plan(&capped);
+            asked += 1;
+            if got.journeys != whole.journeys {
+                short += 1;
+                if !got.cut_short {
+                    silent.push(format!("pair {i} ({a} to {z}, window {}, {} steps of {}, {labels} labels): {} journeys where the whole answer has {}", q.window, steps, whole.steps, got.journeys.len(), whole.journeys.len()));
+                }
+            }
+        }
+    }
+    println!("{asked} capped searches, {short} with a short answer, {} of them silent", silent.len());
+    assert!(silent.is_empty(), "{} short answers that say they are whole, of {short}:\n{}", silent.len(), silent[..silent.len().min(12)].join("\n"));
+    assert!(short > 300, "{short} of {asked}");
+}
+
 /// Late in the evening a window's last connections take long: the next ride from a change may be an hour off, or
 /// the next morning's. They are options all the same, and the answer has them: compared with the scan as far as the
 /// query's own horizon. (A window's answer lacked them until 18 November 2026: the search stopped where the faster
