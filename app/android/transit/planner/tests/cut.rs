@@ -8,6 +8,7 @@
 //! search as far as the horizon gives; wishes close and cost what they say; the answers are the same on every
 //! platform; and no file a little wrong, and no query, panics.
 
+use atlas_transit::geo::distance_mm;
 use atlas_transit::reference::{Reference, impossible};
 use atlas_transit::{Area, How, Journey, Leg, Mode, Place, Planner, Query, Timetable, What, Wish, fuzz};
 
@@ -341,6 +342,78 @@ fn two_windows_give_what_one_over_both_gives() {
     assert!(cuts > 150 && options > 1000 && at_the_cut > 60, "{cuts} {options} {at_the_cut}");
 }
 
+/// The same between two points near enough to walk all the way: the walk can begin at any moment, so each window
+/// has it (once, from its own first moment) and the rides are the same however the window is cut. A ride that takes
+/// no less time than the walk is no option, wherever in a window it leaves.
+#[test]
+fn two_windows_between_points_give_the_rides_one_over_both_gives() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (stops, mut rng) = (served(&tt), fuzz::Rng(41));
+    let rides = |js: &[Journey]| {
+        let mut v: Vec<(i32, i32, u32, u32)> = js.iter().filter(|j| j.rides > 0).map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect();
+        v.sort_unstable();
+        v
+    };
+    let on_foot = |js: &[Journey]| js.iter().filter(|j| j.rides == 0).map(|j| (j.depart, j.arrive)).collect::<Vec<_>>();
+    let (mut cuts, mut options, mut slower) = (0, 0, 0);
+    for i in 0..200usize {
+        // two stops 600 m to 1.9 km apart, and a point beside each
+        let a = stops[rng.below(stops.len() as u64) as usize];
+        let sa = tt.stop(a);
+        let near: Vec<u32> = stops.iter().copied().filter(|z| (600_000..1_900_000).contains(&distance_mm(sa.lat, sa.lon, tt.stop(*z).lat, tt.stop(*z).lon))).collect();
+        if near.is_empty() {
+            continue;
+        }
+        let sz = tt.stop(near[rng.below(near.len() as u64) as usize]);
+        let mut q = Query::new(Place::Point { lat: sa.lat + 2000, lon: sa.lon - 3000 }, Place::Point { lat: sz.lat - 1000, lon: sz.lon + 2000 }, (i % 2) as i32, 7 * 3600 + 409 * i as u32);
+        q.arrive_by = i % 3 == 1;
+        q.window = 3600 + 60 * (i as u32 % 45);
+        q.reach_m = [1000, 600, 1500][i % 3];
+        (q.limits.patient, q.limits.options) = (i % 7 != 0, 1024);
+        if i % 4 == 3 {
+            q.wishes = vec![Wish { what: What::Mode(Mode::Bus), how: How::Avoid(300) }];
+        }
+        let all = ask(&mut p, &q);
+        let (whole, walk) = (rides(&all), on_foot(&all));
+        if walk.is_empty() {
+            continue; // further apart than twice the reach
+        }
+        // the walk is there once, from the asked moment
+        let secs = walk[0].1 - walk[0].0;
+        assert_eq!(walk, [if q.arrive_by { (q.time as i32 - secs, q.time as i32) } else { (q.time as i32, q.time as i32 + secs) }], "pair {i}: {q:?}");
+        // what the walk leaves out: of the rides the same query finds between the two points' stops with their
+        // seconds on foot (where nobody walks all the way), exactly those that take no less time than the walk
+        let ends = p.ends(&q);
+        let mut by_stops = q.clone();
+        (by_stops.from, by_stops.to) = (Place::Walks(ends.from), Place::Walks(ends.to));
+        let without = rides(&ask(&mut p, &by_stops));
+        assert_eq!(whole, without.iter().copied().filter(|o| o.1 - o.0 < secs).collect::<Vec<_>>(), "pair {i}: {q:?}");
+        slower += without.len() - whole.len();
+        let mut at: Vec<u32> = whole.iter().map(|o| if q.arrive_by { q.time - o.1 as u32 } else { o.0 as u32 - q.time }).collect();
+        at.dedup();
+        for (k, into) in at.into_iter().enumerate().filter(|(k, _)| k % 2 == i % 2).flat_map(|(k, t)| [(k, t), (k, t.wrapping_sub(1))]) {
+            if into >= q.window {
+                continue;
+            }
+            let (mut near, mut far) = (q.clone(), q.clone());
+            near.window = into;
+            (far.time, far.window) = (if q.arrive_by { q.time - into - 1 } else { q.time + into + 1 }, q.window - into - 1);
+            let (first, second) = (ask(&mut p, &near), ask(&mut p, &far));
+            let mut both = rides(&first);
+            both.extend(rides(&second));
+            both.sort_unstable();
+            assert_eq!(both, whole, "pair {i}, cut {k} at {into} s: {q:?}");
+            assert_eq!((on_foot(&first).len(), on_foot(&second).len()), (1, 1), "pair {i}, cut {k} at {into} s: {q:?}");
+            cuts += 1;
+            options += whole.len();
+        }
+    }
+    println!("{cuts} cuts, {options} options, {slower} rides no faster than the walk");
+    assert!(cuts > 150 && options > 600 && slower > 100, "{cuts} {options} {slower}");
+}
+
 /// The search that weighs wishes gives what the rule leaves of every option: asked without weighing (and so as far
 /// as the query's horizon, which a search with every option always is), with every option from the window's last
 /// moment on (what leaves after the window can beat what leaves inside it; what leaves at that moment is the
@@ -430,7 +503,7 @@ fn the_answers_are_the_same_everywhere() {
             }
         }
     }
-    assert_eq!((journeys, sum), (699, 2_269_919_399_596_808_041));
+    assert_eq!((journeys, sum), (592, 18_032_016_647_273_654_747));
 }
 
 #[test]

@@ -16,6 +16,8 @@
 //! - Minstens: the same times, 08:12 and 08:20; the feed wants 300 s from that bus to the 08:12 one.
 //! - Klok: on Saturday's service a night bus A to B, 28:20 to 28:30 (04:30 on Sunday by the old clock, 05:30 by the
 //!   new). On Sunday's service B to Z leaves 05:10 and 05:40.
+//! - Lopen: A and Z are 1.5 km apart, 26 minutes on foot by the rule for points. A bus A to Z leaves 08:05 and takes
+//!   10 minutes; another, round about, leaves 08:10 and takes 33.
 
 use atlas_transit::file::{StopText, TripText};
 use atlas_transit::reference::{Reference, impossible};
@@ -74,7 +76,7 @@ fn the_file_is_sound() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
     tt.verify().unwrap();
-    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270326, 4, 29, 29, 2, 4));
+    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270326, 4, 31, 31, 2, 4));
 }
 
 /// A window late in the evening has its last connection, though it takes far longer than the journey's least and
@@ -261,4 +263,54 @@ fn the_night_the_clock_changes() {
     let mut q = query(&tt, "KA", "KZ", 2, hm(6, 0));
     q.arrive_by = true;
     assert_eq!(all(&tt, &ask(&mut p, &q)).iter().map(|j| (j.0 as i32 - 0, j.1)).collect::<Vec<_>>(), [(hm(5, 20) as i32, hm(6, 0))]);
+}
+
+/// Between two points one can walk all the way, and begin at any moment. Over a window the walk is one option, given
+/// from the asked moment, and it counts against a ride whenever that leaves: the bus round about leaves 08:10 and is
+/// in at 08:43, and whoever walks from 08:10 is there at 08:36. So that bus is no option, in whichever window
+/// 08:10 lies, and two windows one after the other give the rides that one window over both gives.
+#[test]
+fn a_walk_all_the_way_can_begin_at_any_moment() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let at = |id: &str| {
+        let s = tt.stop((0..tt.stops()).find(|s| tt.stop_text(*s, StopText::Id) == id).unwrap());
+        Place::Point { lat: s.lat, lon: s.lon }
+    };
+    let walk = 26 * 60;
+    let on_foot = |from: u32| (from, from + walk, String::new());
+    let fast = (hm(8, 5), hm(8, 15), "P2a".to_string());
+    let mut q = Query::new(at("PA"), at("PZ"), 0, hm(8, 0));
+    // one moment: the bus is there sooner, the walk has no ride
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [on_foot(hm(8, 0)), fast.clone()]);
+    // an hour: the same two, and not the bus round about
+    q.window = 3600;
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [on_foot(hm(8, 0)), fast.clone()]);
+    // the same hour as two windows, cut where the bus round about leaves and a second before
+    for cut in [10 * 60, 10 * 60 - 1] {
+        q.window = cut;
+        assert_eq!(all(&tt, &ask(&mut p, &q)), [on_foot(hm(8, 0)), fast.clone()], "the first {cut} s");
+        let mut far = q.clone();
+        (far.time, far.window) = (hm(8, 0) + cut + 1, 3600 - cut - 1);
+        assert_eq!(all(&tt, &ask(&mut p, &far)), [on_foot(far.time)], "after the first {cut} s");
+    }
+    // from 08:10 itself, one moment: the walk alone
+    (q.time, q.window) = (hm(8, 10), 0);
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [on_foot(hm(8, 10))]);
+    // arriving by 09:00 over an hour, the same turned round: the fast bus, and the walk that ends at 09:00
+    (q.time, q.window, q.arrive_by) = (hm(9, 0), 3600, true);
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [fast.clone(), on_foot(hm(9, 0) - walk)]);
+    // whoever walks slower, so that the walk takes a second more than the 33 minutes of the bus round about, has
+    // that bus as an option; a second less, and it is none
+    let stops = p.ends(&q);
+    assert_eq!((stops.from.len(), stops.to.len()), (1, 1));
+    (q.time, q.window, q.arrive_by) = (hm(8, 0), 3600, false);
+    let round = (hm(8, 10), hm(8, 43), "P1a".to_string());
+    for (speed, secs, want) in [(985, 33 * 60 - 1, vec![fast.clone()]), (984, 33 * 60 + 1, vec![fast.clone(), round.clone()])] {
+        q.walk_mm_s = speed;
+        let mut got = all(&tt, &ask(&mut p, &q));
+        assert_eq!(got.remove(0), (hm(8, 0), hm(8, 0) + secs, String::new()), "at {speed} mm/s");
+        assert_eq!(got, want, "at {speed} mm/s");
+    }
 }

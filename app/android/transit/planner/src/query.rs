@@ -209,6 +209,8 @@ pub struct Query {
     /// inside it is an option, its last moment included: a journey as it runs, which no other beats that leaves no
     /// earlier, inside the window or after it. So a window from the second after this one's last moment goes on
     /// where this one ends, and the two give what one window over both gives. 0 asks for the one moment.
+    /// (Between two points near enough to walk all the way, the walk is one option, given from the asked moment;
+    /// it can begin at any moment, so a journey with a ride that takes no less time than the walk is none.)
     pub window: u32,
     pub arrive_by: bool,
     /// The most rides a journey may have (1 to 16).

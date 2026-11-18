@@ -34,6 +34,11 @@
 //! So what counts against a journey is every journey that leaves no earlier, wherever the window ends, and two
 //! windows one after the other give what one window over both gives.
 //!
+//! **Between two points near enough, one can walk all the way,** and begin at any moment. The walk is one option,
+//! given from the asked moment (arriving by: ending at it). Over a window it counts against a ride whenever that
+//! leaves: a journey with a ride that takes no less time than the walk is no option, since whoever sets out on
+//! foot as it leaves is there no later. So here too two windows give the rides that one window over both gives.
+//!
 //! **Asked for one moment, a journey leaves as late as it can.** The rounds give each journey with the first trip
 //! that could be caught, which may be an earlier bus to the same train. So what was found is searched once more
 //! from later moments at which a trip leaves, from the last downwards (one by one where they are few, in steps
@@ -724,7 +729,10 @@ impl<'a> Planner<'a> {
                 journeys.push(j);
             }
         }
-        // on foot all the way, between two points near enough
+        // On foot all the way, between two points near enough. The walk can begin at any moment: it is one option,
+        // given from the asked moment (arriving by: ending at it), and over a window it counts against a ride
+        // whenever that leaves.
+        let mut on_foot: Option<i32> = None;
         if let (Place::Point { lat: a, lon: b }, Place::Point { lat: c, lon: d }) = (&q.from, &q.to) {
             let mm = distance_mm(*a, *b, *c, *d);
             if mm <= 2 * q.reach_m.min(50_000) as u64 * 1000 {
@@ -732,6 +740,7 @@ impl<'a> Planner<'a> {
                 let depart = if back { time - secs } else { time };
                 let leg = Leg::Walk { from: Spot::Origin, to: Spot::Destination, depart, arrive: depart + secs };
                 journeys.push(Journey { depart, arrive: depart + secs, rides: 0, penalty: 0, walking: secs as u32, legs: vec![leg] });
+                on_foot = Some(secs);
             }
         }
         // What is asked for one moment is judged by arrival (or, arriving by, by departure), rides and cost; over a
@@ -752,6 +761,10 @@ impl<'a> Planner<'a> {
                     let same = (b.0, b.1, b.2, b.3) == (a.0, a.1, a.2, a.3);
                     (b.0 <= a.0 && b.1 <= a.1 && b.2 <= a.2 && b.3 <= a.3 && !same) || (same && (b.4 < a.4 || (b.4 == a.4 && k < i)))
                 });
+                // Over a window, a journey with a ride that takes no less time than the walk all the way is beaten
+                // by that walk begun when it leaves, in whichever window that moment lies. (For one moment the
+                // walk from that moment is among the journeys, and beats it there.)
+                let beaten = beaten || (window > 0 && j.rides > 0 && on_foot.is_some_and(|secs| j.arrive - j.depart >= secs));
                 if inside && !beaten {
                     keep.push(j.clone());
                 }
