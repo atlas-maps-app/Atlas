@@ -33,11 +33,17 @@ fun interface SunClock {
     }
 }
 
-/** What opening hours are read against: public holidays (`PH`), school holidays (`SH`) and the sun. */
+/**
+ * What opening hours are read against: public holidays (`PH`), school holidays (`SH`) and the sun; and the [country]
+ * they are of, where the place or the area is, which a place naming no country of its own is read in, its brand too
+ * ([Brands.forTags]).
+ */
 data class OpeningHoursContext(
     val publicHolidays: HolidayCalendar? = null,
     val schoolHolidays: HolidayCalendar? = null,
     val sun: SunClock = SunClock.Fixed,
+    /** ISO 3166 alpha-2, upper case; null nowhere in particular. */
+    val country: String? = null,
 ) {
     companion object {
         /**
@@ -47,11 +53,12 @@ data class OpeningHoursContext(
          */
         val Default = OpeningHoursContext()
 
-        /** The public holidays of [country] (when Atlas has its rules) and, with a position, the real sun. */
+        /** The public holidays of [country] (when Atlas has its rules), the country itself and, with a position, the real sun. */
         fun forPlace(country: String?, zone: ZoneId, lat: Double? = null, lon: Double? = null, subdivision: String? = null) =
             OpeningHoursContext(
                 publicHolidays = country?.let { PublicHolidays.forCountry(it, subdivision) },
                 sun = if (lat != null && lon != null) SunClock.at(lat, lon, zone) else SunClock.Fixed,
+                country = PlaceCountry.code(country),
             )
     }
 }

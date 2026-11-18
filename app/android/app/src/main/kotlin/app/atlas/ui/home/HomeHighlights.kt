@@ -105,11 +105,14 @@ object HomeHighlights {
         return !s.unknown && s.isOpen
     }
 
-    /** The markers for [highlights], in the board's looks, a kind of place in its family's colour ([HighlightKind]). */
-    fun markers(highlights: List<Highlight>): List<Marker> = highlights.map { h ->
+    /**
+     * The markers for [highlights], in the board's looks, a kind of place in its family's colour ([HighlightKind]); a
+     * branch with its brand's logo, as it trades in [country], the country of the map here.
+     */
+    fun markers(highlights: List<Highlight>, country: String?): List<Marker> = highlights.map { h ->
         val p = h.place
         val id = "hl:${h.kind.name.lowercase()}:${p.key}"
-        val (symbol, family) = markOf(p)
+        val (symbol, family) = markOf(p, country)
         val colour = h.kind.colour ?: (family.toLong() and 0xFFFFFFFFL)
         when (h.kind) {
             HighlightKind.SAVED -> Marker(
@@ -120,7 +123,7 @@ object HomeHighlights {
             HighlightKind.SIGHT -> Marker(id, p.location, "maki-star", colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)
             HighlightKind.BRANCH -> Marker(
                 id, p.location, symbol, colour, MarkerStyle.BRAND,
-                logo = Brands.forTags(p.tags)?.id, priority = h.kind.priority, place = p,
+                logo = Brands.forTags(p.tags, country)?.id, priority = h.kind.priority, place = p,
             )
             HighlightKind.CHARGER -> Marker(id, p.location, "maki-charging-station", colour, MarkerStyle.CHIP, value = h.value, priority = h.kind.priority, place = p)
             else -> Marker(id, p.location, symbol, colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)

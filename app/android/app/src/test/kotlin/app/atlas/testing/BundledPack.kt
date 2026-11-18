@@ -15,5 +15,5 @@ object BundledPack {
     val features: PackFeatures by lazy { PackFeatures(listOf(PackBoxes(PackReader.open(file)))) }
 
     /** [LocalData] over the pack alone: no region's store, offline. */
-    val local: LocalData by lazy { LocalData(stores = { null }, packs = { features }) }
+    val local: LocalData by lazy { LocalData(stores = { null }, packs = { features }, countryAt = { null }) }
 }

@@ -24,7 +24,7 @@ class DoorsTest {
 
     /** A node [north] metres north of the Westerkerk. */
     private fun place(north: Double, vararg tags: Pair<String, String>) =
-        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++next), LatLon(here.lat + north / 111_320.0, here.lon), mapOf(*tags)))
+        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++next), LatLon(here.lat + north / 111_320.0, here.lon), mapOf(*tags)), country = null)
 
     private val playground = place(100.0, "leisure" to "playground")
     private val cinema = place(200.0, "amenity" to "cinema", "name" to "Kriterion")

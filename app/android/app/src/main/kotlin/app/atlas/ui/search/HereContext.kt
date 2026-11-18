@@ -48,6 +48,16 @@ object HereContext {
     /** The ISO country at [at]: the downloaded regions', else the map's own; null only far from every country it knows. */
     fun country(services: Services, at: LatLon): String? = regionCountry(services, at) ?: Countries.of(at)
 
+    /**
+     * [country] as far as it is known without asking the regions, for a frame that cannot wait: what they said at [at]
+     * before, else the map's own there.
+     */
+    fun countryNow(services: Services, at: LatLon): String? {
+        val store = services.placeStores
+        val said = if (store.size == 0) null else countries[key(store.size, at)]?.ifEmpty { null }
+        return said ?: Countries.of(at)
+    }
+
     /** Opening hours as they are read at [at]: its country's holidays and its sunrise and sunset. */
     fun hours(services: Services, at: LatLon, zone: ZoneId): OpeningHoursContext =
         OpeningHoursContext.forPlace(country(services, at), zone, at.lat, at.lon)
@@ -73,7 +83,7 @@ object HereContext {
     private fun regionCountry(services: Services, at: LatLon): String? {
         val store = services.placeStores
         if (store.size == 0) return null
-        val key = "${store.size}:${(at.lat * 100).roundToInt()}:${(at.lon * 100).roundToInt()}"
+        val key = key(store.size, at)
         countries[key]?.let { return it.ifEmpty { null } }
         val counts = HashMap<String, Int>()
         runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull()?.forEach { r ->
@@ -84,6 +94,8 @@ object HereContext {
         countries[key] = found.orEmpty()
         return found
     }
+
+    private fun key(regions: Int, at: LatLon) = "$regions:${(at.lat * 100).roundToInt()}:${(at.lon * 100).roundToInt()}"
 }
 
 /** Which clock a far-away place keeps, worked out without a network: the country's zones, else the sun's hour. */

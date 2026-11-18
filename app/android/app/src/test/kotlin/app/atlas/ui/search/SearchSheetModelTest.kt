@@ -513,7 +513,7 @@ class SearchSheetModelTest {
         val near = listOf(-0.001, 0.001, 0.002).mapIndexed { i, north -> node(i + 1L, north, "leisure" to "playground") }
         // a bowling alley and an ice rink 60 km off, none of either near
         val far = listOf(node(11, 0.54, "leisure" to "bowling_alley", "name" to "Bowling"), node(12, 0.55, "leisure" to "ice_rink", "name" to "IJsbaan"))
-        val m = SearchSheetModel(testServices(stores = listOf(MemoryPlaces(near + far))), w, "en")
+        val m = SearchSheetModel(testServices(stores = listOf(MemoryPlaces(near + far, country = null))), w, "en")
         val outings = CategoryTree.shelf("fun")!!
         m.enter(outings.id)
         until { m.state.value.results != null && !m.state.value.loading }
@@ -557,7 +557,7 @@ class SearchSheetModelTest {
         val near = listOf(-0.001 to -0.001, 0.001 to 0.001, -0.001 to 0.001).mapIndexed { i, (n, e) -> node(i + 1L, n, e, "amenity" to "cafe", "name" to "Café $i") }
         // no alpine hut is in the store or the map's packs around Amsterdam: these three are 60 km off
         val far = (1..3).map { node(10L + it, 0.54 + it * 0.001, 0.0, "tourism" to "alpine_hut", "name" to "Hut $it") }
-        val services = testServices(stores = listOf(MemoryPlaces(near + far)))
+        val services = testServices(stores = listOf(MemoryPlaces(near + far, country = null)))
         val m = SearchSheetModel(services, w, "en")
         m.enter(CategoryTree.of(mapOf("tourism" to "alpine_hut"))!!.id)
         until { m.state.value.results?.hits?.isNotEmpty() == true && !m.state.value.loading && m.state.value.noneWithin != null }

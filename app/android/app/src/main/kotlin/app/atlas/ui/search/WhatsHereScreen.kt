@@ -257,7 +257,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                 when {
                     facts == null -> Text(stringResource(R.string.kit_loading), style = Atlas.type.caption, color = c.inkSoft)
                     else -> {
-                        facts.spot?.let { s -> SpotCard(s, state.spotFacts, lang) { services.remember(s); nav.go(Dest.Place.page(s)) } }
+                        facts.spot?.let { s -> SpotCard(s, state.spotFacts, lang, state.local?.country) { services.remember(s); nav.go(Dest.Place.page(s)) } }
                         val local = state.local
                         if (facts.nearby.isNotEmpty() && local != null) {
                             Kicker(stringResource(R.string.whatshere_nearby))
@@ -266,7 +266,7 @@ fun WhatsHereScreen(args: Dest.WhatsHere, nav: Navigator) {
                                 val now = remember(facts, local) { local.now(services.clock) }
                                 val hours = remember(local, p) { local.hours(p) }
                                 facts.nearby.forEachIndexed { i, n ->
-                                    val line = remember(n, now, hours) { PlaceLine.of(n, p, lang, now, OpeningHours.parseOrNull(n.tags["opening_hours"])?.status(now, hours)) }
+                                    val line = remember(n, now, hours) { PlaceLine.of(n, p, lang, now, OpeningHours.parseOrNull(n.tags["opening_hours"])?.status(now, hours), hours.country) }
                                     PlaceResultRow(line, now, lang, onClick = { services.remember(n); nav.go(Dest.Place.page(n)) })
                                     if (i < facts.nearby.lastIndex) Hairline()
                                 }
@@ -349,9 +349,9 @@ private fun Header(title: String, facts: HereFacts?, p: LatLon, here: LatLon) {
 /** The place the point is in: its tile, name and kind, its facts as symbols, and its building's year, floors and height. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SpotCard(place: Place, facts: List<Fact>, lang: String, onOpen: () -> Unit) {
+private fun SpotCard(place: Place, facts: List<Fact>, lang: String, country: String?, onOpen: () -> Unit) {
     val c = Atlas.colors
-    val (symbol, colour) = remember(place) { markOf(place) }
+    val (symbol, colour) = remember(place, country) { markOf(place, country) }
     val building = remember(place) { buildingLines(place.tags) }
     Card(padding = PaddingValues(16.dp), elevation = 0.dp, colour = c.cardMuted, onClick = onOpen, onClickLabel = stringResource(R.string.whatshere_open_place)) {
         Kicker(stringResource(R.string.whatshere_at_spot))

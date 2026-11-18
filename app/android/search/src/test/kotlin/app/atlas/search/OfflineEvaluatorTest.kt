@@ -246,7 +246,7 @@ class OfflineEvaluatorTest {
             place(3, 45.0, 5.0, mapOf("amenity" to "bicycle_rental")),
             place(4, 45.0, 6.0, mapOf("amenity" to "bicycle_rental")),
         )
-        val mem = MemoryPlaces(places)
+        val mem = MemoryPlaces(places, country = null)
         val hits = OfflineEvaluator(mem).run(Query.Near(Query.tags("amenity=cafe"), Query.tags("amenity=bicycle_rental"), 200.0), EvalContext(hours = Nowhere)).hits
         assertEquals(1, hits.size)
         assertEquals(195.0, hits.single().near.single().distance, 0.5)
@@ -286,7 +286,7 @@ class OfflineEvaluatorTest {
             mapOf("amenity" to "cafe", "name" to "Starbucks", "brand" to "Starbucks", "brand:wikidata" to "Q37158") +
                 (hours?.let { mapOf("opening_hours" to it) } ?: emptyMap()),
         )
-        val mem = MemoryPlaces(listOf(branch(1, 4.88, "Mo-Su 07:00-21:00"), branch(2, 4.885, "Mo-Su 07:00-21:00"), branch(3, 4.89, "Mo-Su 08:00-20:00"), branch(4, 4.895, null)))
+        val mem = MemoryPlaces(listOf(branch(1, 4.88, "Mo-Su 07:00-21:00"), branch(2, 4.885, "Mo-Su 07:00-21:00"), branch(3, 4.89, "Mo-Su 08:00-20:00"), branch(4, 4.895, null)), country = null)
         val at = EvalContext(location = LatLon(52.37, 4.88), now = Fixtures.saturday, hours = Nowhere)
         val q = Query.and(Query.Brand("starbucks-795f60"), Query.OpenAt(OpenTime.Now))
         val hits = OfflineEvaluator(mem).run(q, at).hits

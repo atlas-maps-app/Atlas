@@ -102,10 +102,10 @@ class LargestTest {
         val parks = CategoryTree.category("parks")!!
         assertTrue(Order.LARGEST in Purposes.of(parks).orders)
         assertTrue(Order.LARGEST in Purposes.of(CategoryTree.category("nature_reserve")!!).orders)
-        val small = PlaceRecord.of(place(200.0, 300.0, "leisure" to "park", "name" to "Klein"))
-        val mid = PlaceRecord.of(place(2_000.0, 1_200.0, "leisure" to "park", "name" to "Middel"))
-        val huge = PlaceRecord.of(place(30_000.0, 9_000.0, "leisure" to "park", "name" to "Groot"))
-        val point = PlaceRecord.of(place(100.0, null, "leisure" to "park", "name" to "Punt"))
+        val small = PlaceRecord.of(place(200.0, 300.0, "leisure" to "park", "name" to "Klein"), country = null)
+        val mid = PlaceRecord.of(place(2_000.0, 1_200.0, "leisure" to "park", "name" to "Middel"), country = null)
+        val huge = PlaceRecord.of(place(30_000.0, 9_000.0, "leisure" to "park", "name" to "Groot"), country = null)
+        val point = PlaceRecord.of(place(100.0, null, "leisure" to "park", "name" to "Punt"), country = null)
         val r = Browse.results(parks, listOf(small, point, huge, mid), here, Moment(Fixtures.saturday, hours = Nowhere), order = Order.LARGEST)
         assertEquals(Order.LARGEST, r.order)
         // the largest first, one of no known size last

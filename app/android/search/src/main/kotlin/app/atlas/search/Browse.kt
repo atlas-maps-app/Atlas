@@ -514,7 +514,8 @@ object Browse {
 
     /** A bathing water no place found lies at, as a result of its own: a swim spot by the register's name. */
     fun siteRecord(s: BathingSite): PlaceRecord =
-        PlaceRecord.of(Place(null, s.location, mapOf("leisure" to "bathing_place", "name" to s.name), s.area, s.source, mapOf(SITE_KEY to s.id)))
+        // a register's water is no chain's branch, wherever it is
+        PlaceRecord.of(Place(null, s.location, mapOf("leisure" to "bathing_place", "name" to s.name), s.area, s.source, mapOf(SITE_KEY to s.id)), country = null)
 
     /** True when a bathing water of [kind] is the kind of water [node] holds: a lake's for lakes, any for beaches. */
     private fun fits(node: CategoryNode, kind: WaterKind): Boolean {

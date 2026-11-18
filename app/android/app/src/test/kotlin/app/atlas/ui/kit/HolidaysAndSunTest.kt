@@ -96,9 +96,9 @@ class HolidaysAndSunTest {
     @Test
     fun theHomeShowsNoCafeOpenOnChristmas() {
         val cafe = place(5, mapOf("amenity" to "cafe", "brand" to "Koffieketen", "name" to "Koffieketen", "opening_hours" to shop))
-        val picked = HomeHighlights.pick(MemoryPlaces(listOf(cafe)), here, christmas, hours())
+        val picked = HomeHighlights.pick(MemoryPlaces(listOf(cafe), country = null), here, christmas, hours())
         assertTrue(picked.toString(), picked.none { it.kind == HighlightKind.BRANCH })
         // the day before, it is
-        assertTrue(HomeHighlights.pick(MemoryPlaces(listOf(cafe)), here, christmas.minusDays(1), hours()).any { it.kind == HighlightKind.BRANCH })
+        assertTrue(HomeHighlights.pick(MemoryPlaces(listOf(cafe), country = null), here, christmas.minusDays(1), hours()).any { it.kind == HighlightKind.BRANCH })
     }
 }

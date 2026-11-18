@@ -86,7 +86,7 @@ class WalkScreensTest {
     private val realOrStraight: Router get() = GoFixtures.router ?: straight
 
     private fun open(router: Router, dark: Boolean = false): BackStackNavigator {
-        val services: Services = testServices(stores = listOf(MemoryPlaces(places)), router = router)
+        val services: Services = testServices(stores = listOf(MemoryPlaces(places, country = null)), router = router)
         val nav = BackStackNavigator(listOf(Dest.Home(), Dest.Search()))
         compose.setContent { AtlasRoot(services, nav, dark = dark) }
         compose.settle(15_000)

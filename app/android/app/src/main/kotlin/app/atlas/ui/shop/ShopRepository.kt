@@ -45,9 +45,9 @@ internal class ShopRepository(private val services: Services, prices: OpenPrices
     fun area(key: String, filter: TagFilter, centre: LatLon, radiusM: Double = ShopArea.DEFAULT_RADIUS_M, nameless: Boolean = false): Flow<ShopArea> {
         var local: PlaceLocale? = null
         return finder.around(key, filter, centre, radiusM).map { a ->
-            val places = a.places.mapNotNull { ShopPlace.of(it, centre, lang, nameless) }
             // the country and clock here, once per area: the regions on the phone are asked, so off the main thread
             val l = local ?: HereContext.localeAt(services, centre, HereContext.phoneAt(services), services.clock.zone).also { local = it }
+            val places = a.places.mapNotNull { ShopPlace.of(it, centre, lang, l.country, nameless) }
             ShopArea(centre, radiusM, places, a.origin, a.loading, l, a.error)
         }.flowOn(Dispatchers.Default)
     }

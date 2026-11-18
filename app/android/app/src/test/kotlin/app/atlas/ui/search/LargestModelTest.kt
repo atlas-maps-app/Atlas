@@ -54,7 +54,7 @@ class LargestModelTest {
         Place(OsmId(OsmType.NODE, 30), w, mapOf("amenity" to "cafe", "name" to "Kalkhoven"))
 
     private fun model(): SearchSheetModel {
-        val m = SearchSheetModel(testServices(stores = listOf(MemoryPlaces(places))), w, "en")
+        val m = SearchSheetModel(testServices(stores = listOf(MemoryPlaces(places, country = null))), w, "en")
         m.moveTo(w)
         return m
     }

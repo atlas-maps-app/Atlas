@@ -593,7 +593,7 @@ class SearchEngine(
         }
         return try {
             o.places("[out:json][timeout:25];\n$type(id:${id.id});\nout tags center;").firstOrNull()?.let { p ->
-                val r = PlaceRecord.of(p)
+                val r = PlaceRecord.of(p, ctx.hours.country)
                 Hit(r, 1.0, 1.0, ctx.location?.let { r.distanceTo(it) }, null)
             }
         } catch (e: IOException) {

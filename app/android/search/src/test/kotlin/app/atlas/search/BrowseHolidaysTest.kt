@@ -26,7 +26,7 @@ class BrowseHolidaysTest {
     private val drinks = CategoryTree.category("drinks")!!
     private val bars = (1..3).map { i ->
         PlaceRecord.of(
-            Place(OsmId(OsmType.NODE, 920_000L + i), LatLon(here.lat + i * 0.001, here.lon), mapOf("amenity" to "bar", "name" to "Bar $i", "opening_hours" to "Mo-Su 16:00-23:00; PH off")),
+            Place(OsmId(OsmType.NODE, 920_000L + i), LatLon(here.lat + i * 0.001, here.lon), mapOf("amenity" to "bar", "name" to "Bar $i", "opening_hours" to "Mo-Su 16:00-23:00; PH off")), country = null,
         )
     }
 

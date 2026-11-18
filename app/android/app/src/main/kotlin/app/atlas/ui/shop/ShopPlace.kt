@@ -43,13 +43,16 @@ internal enum class Open {
  * A shop, errand or amenity as the shop screens read it: its name, how far it is from the centre of the area, its
  * brand, and its opening hours parsed once on first use. Everything else is read from [tags] when asked.
  */
-internal class ShopPlace(val place: Place, val name: String, val distanceM: Double) {
+internal class ShopPlace(val place: Place, val name: String, val distanceM: Double, private val country: String?) {
     val tags: Map<String, String> get() = place.tags
     val key: String get() = place.key
     val location: LatLon get() = place.location
 
-    /** The chain it belongs to, from `brand:wikidata`, the brand tag or the name; null for an independent. */
-    val brand: Brand? by lazy { Brands.forTags(place.tags) }
+    /**
+     * The chain it belongs to, from `brand:wikidata`, the brand tag or the name, as it trades in the country of the map
+     * here ([Brands.forTags]); null for an independent.
+     */
+    val brand: Brand? by lazy { Brands.forTags(place.tags, country) }
 
     /** True when no chain claims it (no `brand` tag and no brand matched). */
     val independent: Boolean get() = tags["brand"] == null && tags["brand:wikidata"] == null && brand == null
@@ -142,10 +145,10 @@ internal class ShopPlace(val place: Place, val name: String, val distanceM: Doub
         val CARD_KEYS = listOf("cards", "credit_cards", "debit_cards", "contactless", "maestro", "visa", "mastercard", "american_express", "v_pay", "girocard")
         private const val METRES_PER_DEGREE = 111_320.0
 
-        /** Wraps [place] measured from [centre]; null when it has no name to show. */
-        fun of(place: Place, centre: LatLon, lang: String?, nameless: Boolean = false): ShopPlace? {
+        /** Wraps [place] measured from [centre], in [country], the country of the map there; null when it has no name to show. */
+        fun of(place: Place, centre: LatLon, lang: String?, country: String?, nameless: Boolean = false): ShopPlace? {
             val name = Localise.name(place.tags, lang) ?: Presets.match(place.tags)?.fullName(lang)?.takeIf { nameless } ?: return null
-            return ShopPlace(place, name, Geo.distance(centre, place.location))
+            return ShopPlace(place, name, Geo.distance(centre, place.location), country)
         }
     }
 }

@@ -86,10 +86,11 @@ data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepF
     companion object {
         /**
          * The line for [place] seen from [from] at [now], how it stands for opening [open] as its caller read it (a
-         * search's hit, or its hours read where it is: never without its holidays).
+         * search's hit, or its hours read where it is: never without its holidays); its mark the brand's of [country],
+         * the country of the map at it.
          */
-        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus?, name: String? = null, distanceM: Double? = null): PlaceLine {
-            val base = PlaceSummary.withOpen(place, from, lang, open)
+        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus?, country: String?, name: String? = null, distanceM: Double? = null): PlaceLine {
+            val base = PlaceSummary.withOpen(place, from, lang, open, country)
             val s = base.copy(
                 name = name ?: base.name,
                 distanceM = distanceM ?: base.distanceM,

@@ -56,7 +56,7 @@ class WindowLookupsTest {
 
     private fun keptDir(): File = tmp.newFolder("windows").also { File(it, "${tile.z}-${tile.x}-${tile.y}.json.gz").writeBytes(gz(window())) }
 
-    private fun offline(dir: File = keptDir()) = LocalData(stores = { null }, packs = { null }, windowPlaces = WindowPlaces({ dir }))
+    private fun offline(dir: File = keptDir()) = LocalData(stores = { null }, packs = { null }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
 
     @Test
     fun offlineEachLookupFindsWhatOnlyTheWindowHolds() = runBlocking {
@@ -69,7 +69,7 @@ class WindowLookupsTest {
         // the bench is no place, the far café beyond the circle
         assertEquals(listOf("Café de Vliet", "Albert Heijn"), local.places(here, 300.0, TagFilter.Has("name")).value.map { it.name() })
 
-        val ah = Brands.forTags(AH_TAGS)
+        val ah = Brands.forTags(AH_TAGS, "NL")
         assertNotNull(ah)
         assertEquals(listOf("Albert Heijn"), local.branches(ah!!.id, here, 300.0).value.map { it.name() })
         assertEquals(listOf(ah.id), local.brands(BBox.around(here, 300.0)).value.map { it.brand.id })
@@ -125,7 +125,7 @@ class WindowLookupsTest {
         server.start()
         val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
         val dir = keptDir()
-        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }))
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
         val answers = ArrayList<LocalAnswer<List<app.atlas.model.Place>>>()
         // 2 km reaches past the window: the window's part at once, then Overpass for the whole circle
         local.placesAsFound(here, 2_000.0, cafe).collect {
@@ -164,7 +164,7 @@ class WindowLookupsTest {
                 if (x == tile.x && y == tile.y) gz(window()) else null
             },
         )
-        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { online }, windowPlaces = windows)
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { online }, windowPlaces = windows, countryAt = { null })
         val answers = local.placesAsFound(here, 300.0, cafe).toList()
         assertEquals(listOf(PlaceOrigin.PACK), answers.map { it.origin })
         assertEquals(listOf("Café de Vliet"), answers.single().value.map { it.name() })
@@ -198,7 +198,7 @@ class WindowLookupsTest {
                 gz("""{"version":0.6,"elements":[{"type":"node","id":2,${at(-150.0, 0.0)},"tags":{"shop":"supermarket","name":"Albert Heijn"}}]}"""),
             )
         }
-        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }))
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
         val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
         val alone = finder.nearby("eat", here, 2_000.0, 20).toList()
         assertEquals(listOf("Café de Vliet", "Café de Overkant", "Café Ver Weg"), alone.last().places.map { it.name() })
@@ -292,7 +292,7 @@ class WindowLookupsTest {
         val sent = AtomicInteger()
         val empty = tmp.newFolder("none")
         val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
-        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows)
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
         // 2 km around the window's east edge: four windows by three, twelve missing
         val edge = LatLon(here.lat, tile.bbox.east)
         assertEquals(12, Mercator.tilesIn(BBox.around(edge, 2_000.0), WindowPlaces.LEVEL).size)

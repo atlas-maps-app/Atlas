@@ -65,6 +65,7 @@ import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.markOf
+import app.atlas.ui.kit.rememberCountryAt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -132,7 +133,8 @@ private fun PlaceView(
     val lists by services.saved.lists.collectAsStateWithLifecycle()
     val saved = remember(lists, place.key) { lists.any { l -> l.places.any { it.place.key == place.key } } }
     var saveTo by remember { mutableStateOf(false) }
-    val (symbol, colour) = remember(place) { markOf(place) }
+    val country = rememberCountryAt(place.location)
+    val (symbol, colour) = remember(place, country) { markOf(place, country) }
     // the map on screen, which goes to the place in its own look (over the Map home's, the home brings it out itself)
     val over = rememberOverMap(place.location)
     val map = if (ownMap) over else null

@@ -1,6 +1,7 @@
 package app.atlas.ui.search
 
 import app.atlas.Services
+import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.Place
@@ -8,6 +9,8 @@ import app.atlas.places.FactKind
 import app.atlas.places.FactState
 import app.atlas.places.OpeningHours
 import app.atlas.search.MemoryPlaces
+import app.atlas.search.PlaceRecord
+import app.atlas.search.PlaceSource
 import app.atlas.testing.testServices
 import app.atlas.ui.eat.EatRepository
 import app.atlas.ui.eat.Openness
@@ -101,7 +104,7 @@ class HereCountryTest {
     @Test
     fun shopsAreaKeepsTheHolidaysOfWhereItIs() {
         val market = place(2, 0.001, mapOf("name" to "Buurtsuper", "shop" to "supermarket", "opening_hours" to shutOnHolidays))
-        val s = testServices(clock = kingsDay, stores = listOf(MemoryPlaces(around(market))))
+        val s = testServices(clock = kingsDay, stores = listOf(MemoryPlaces(around(market), country = null)))
         val area = runBlocking {
             var last: ShopArea? = null
             withTimeout(30_000) { ShopRepository.of(s).area("t", Shelf.SUPER.filter, here).collect { last = it } }
@@ -114,9 +117,31 @@ class HereCountryTest {
     }
 
     @Test
+    fun aFrameThatCannotWaitAsksTheRegionsNothing() {
+        // Places on the phone in Amsterdam's south-east that say Belgium, where the map's own boxes say the Netherlands.
+        // A screen's first frame reads what is known without asking ([rememberCountryAt] asks off the main thread): the
+        // map's own; once the regions were asked, what they said, still asking nothing.
+        val at = LatLon(52.3120, 4.9450)
+        val belgian = (1..3).map { i -> Place(OsmId.parse("n${70 + i}")!!, LatLon(at.lat + i * 0.0005, at.lon), mapOf("name" to "Frituur $i", "amenity" to "fast_food", "addr:country" to "BE")) }
+        val inner = MemoryPlaces(belgian, country = null)
+        var asked = 0
+        val counting = object : PlaceSource by inner {
+            override fun inBox(box: BBox, limit: Int): List<PlaceRecord> = inner.inBox(box, limit).also { asked++ }
+        }
+        val s = testServices(stores = listOf(counting))
+        assertEquals("NL", HereContext.countryNow(s, at))
+        assertEquals(0, asked)
+        assertEquals("BE", HereContext.country(s, at))
+        val once = asked
+        assertEquals("BE", HereContext.countryNow(s, at))
+        assertEquals(once, asked)
+        s.close()
+    }
+
+    @Test
     fun eatsAreaKeepsTheHolidaysOfWhereItIs() {
         val diner = place(3, 0.001, mapOf("name" to "Eetcafé", "amenity" to "restaurant", "opening_hours" to shutOnHolidays))
-        val s = testServices(clock = kingsDay, stores = listOf(MemoryPlaces(around(diner))))
+        val s = testServices(clock = kingsDay, stores = listOf(MemoryPlaces(around(diner), country = null)))
         val area = runBlocking { withTimeout(30_000) { EatRepository.of(s).area(here).first { !it.loading } } }
         assertEquals("NL", area.country)
         assertEquals("Eetcafé", area.places.single().name)

@@ -117,7 +117,7 @@ class FacetsTest {
 
     @Test
     fun priceFreeAndBands() {
-        fun place(id: Long, vararg tags: Pair<String, String>) = PlaceRecord.of(Place(OsmId(OsmType.NODE, id), LatLon(52.37, 4.88), mapOf("amenity" to "toilets") + tags))
+        fun place(id: Long, vararg tags: Pair<String, String>) = PlaceRecord.of(Place(OsmId(OsmType.NODE, id), LatLon(52.37, 4.88), mapOf("amenity" to "toilets") + tags), country = null)
         val toilets = listOf(
             place(1, "fee" to "no"),
             place(2, "fee" to "yes", "charge" to "0.50 EUR"),

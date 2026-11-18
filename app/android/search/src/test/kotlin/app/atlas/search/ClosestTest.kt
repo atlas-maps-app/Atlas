@@ -35,7 +35,7 @@ class ClosestTest {
 
     @Test
     fun aPlaceWithoutHoursTakesTheHoursOfItsKindAround() {
-        val records = (bakeries + bakery(10, 250.0, null)).map { PlaceRecord.of(it) }
+        val records = (bakeries + bakery(10, 250.0, null)).map { PlaceRecord.of(it, country = null) }
         val book = HoursBook(records)
         val known = book.of(records.last())!!
         assertEquals(HoursFrom.KIND, known.from)
@@ -45,7 +45,7 @@ class ClosestTest {
         assertEquals(false, known.hours.isOpen(now.withHour(19), context = Nowhere))
         assertEquals(HoursFrom.OWN, book.of(records.first())!!.from)
         // the evaluator finds it open now, unconfirmed; at seven in the evening it is not
-        val mem = MemoryPlaces(bakeries + bakery(10, 250.0, null))
+        val mem = MemoryPlaces(bakeries + bakery(10, 250.0, null), country = null)
         val q = Query.and(Query.tags("shop=bakery"), Query.OpenAt(OpenTime.Now))
         val at = EvalContext(location = here, now = saturday, hours = Nowhere)
         val bare = OfflineEvaluator(mem).run(q, at).hits.single { it.place.id?.id == 10L }
@@ -64,17 +64,17 @@ class ClosestTest {
         )
         val cafes = (1..3).map { place(20L + it, it * 50.0, "amenity" to "cafe", "name" to "Café $it", "opening_hours" to "Mo-Su 10:00-16:00") }
         val branches = listOf(starbucks(1, 10.0, "Mo-Su 07:00-21:00"), starbucks(2, 20.0, "Mo-Su 07:00-21:00"), starbucks(3, 30.0, "Mo-Su 07:00-21:00"), starbucks(4, 40.0, null))
-        val book = HoursBook((cafes + branches).map { PlaceRecord.of(it) })
-        val bare = book.of(PlaceRecord.of(branches.last()))!!
+        val book = HoursBook((cafes + branches).map { PlaceRecord.of(it, country = null) })
+        val bare = book.of(PlaceRecord.of(branches.last(), country = null))!!
         assertEquals(HoursFrom.BRAND, bare.from)
         assertEquals(true, bare.hours.isOpen(now.withHour(20), context = Nowhere))
         // three cafés of thirteen map hours: too few to say what the others keep
-        val unmapped = (1..10).map { PlaceRecord.of(place(40L + it, it * 30.0, "amenity" to "cafe", "name" to "Koffie $it")) }
-        val rare = HoursBook(cafes.map { PlaceRecord.of(it) } + unmapped)
+        val unmapped = (1..10).map { PlaceRecord.of(place(40L + it, it * 30.0, "amenity" to "cafe", "name" to "Koffie $it"), country = null) }
+        val rare = HoursBook(cafes.map { PlaceRecord.of(it, country = null) } + unmapped)
         assertNull(rare.of(unmapped.first()))
         // a park is open without hours
-        val parks = (1..4).map { PlaceRecord.of(place(60L + it, it * 40.0, "leisure" to "park", "name" to "Park $it", "opening_hours" to "Mo-Su 08:00-20:00")) }
-        val bareParks = PlaceRecord.of(place(70, 90.0, "leisure" to "park", "name" to "Park zonder uren"))
+        val parks = (1..4).map { PlaceRecord.of(place(60L + it, it * 40.0, "leisure" to "park", "name" to "Park $it", "opening_hours" to "Mo-Su 08:00-20:00"), country = null) }
+        val bareParks = PlaceRecord.of(place(70, 90.0, "leisure" to "park", "name" to "Park zonder uren"), country = null)
         assertNull(HoursBook(parks + bareParks).of(bareParks))
     }
 
@@ -85,8 +85,8 @@ class ClosestTest {
             id, north, *listOfNotNull("shop" to "shoes", "name" to "Birkenstock", "brand" to "Birkenstock", "brand:wikidata" to "Q648458", hours?.let { "opening_hours" to it }).toTypedArray(),
         )
         val bare = birkenstock(2, 400.0, null)
-        val book = HoursBook(listOf(birkenstock(1, 100.0, "Mo-Fr 10:00-18:00"), bare).map { PlaceRecord.of(it) })
-        val lent = book.of(PlaceRecord.of(bare))!!
+        val book = HoursBook(listOf(birkenstock(1, 100.0, "Mo-Fr 10:00-18:00"), bare).map { PlaceRecord.of(it, country = null) })
+        val lent = book.of(PlaceRecord.of(bare, country = null))!!
         assertEquals(HoursFrom.BRAND, lent.from)
         assertFalse(lent.confirmed)
         // closed on the Saturday as its other branch is, open on the Friday
@@ -100,7 +100,7 @@ class ClosestTest {
             bakery(1, 200.0, "Mo-Su 14:50-18:00"), // opens in 20 minutes
             bakery(2, 100.0, "Mo-Su 16:30-18:00"), // in two hours
             bakery(3, 300.0, null), // no hours, and too few of its kind to guess them
-        ).map { PlaceRecord.of(it) }
+        ).map { PlaceRecord.of(it, country = null) }
         val node = Browse.kindOf(pool)!!
         val open = FacetSelection.NONE.toggle(Facets.OPEN, "now")
         val r = Browse.results(node, pool, here, Moment(saturday, hours = Nowhere), open)
@@ -126,7 +126,7 @@ class ClosestTest {
             place(1, 50.0, "amenity" to "toilets", "fee" to "yes", "charge" to "0.50 EUR"),
             place(2, 60.0, "amenity" to "toilets", "fee" to "yes", "charge" to "3 EUR"),
             place(3, 70.0, "amenity" to "toilets"),
-        ).map { PlaceRecord.of(it) }
+        ).map { PlaceRecord.of(it, country = null) }
         val node = Browse.kindOf(toilets)!!
         val free = Browse.results(node, toilets, here, Moment(saturday, hours = Nowhere), FacetSelection.NONE.toggle(Facets.PRICE, "free"))
         assertTrue(free.closest)
@@ -153,7 +153,7 @@ class ClosestTest {
                 place(1, 100.0, "amenity" to "cafe", "name" to "Buiten", "outdoor_seating" to "yes", "opening_hours" to "Mo-Su 15:00-20:00"),
                 place(2, 50.0, "amenity" to "cafe", "name" to "Binnen", "outdoor_seating" to "no", "opening_hours" to "Mo-Su 08:00-20:00"),
                 place(3, 300.0, "amenity" to "cafe", "name" to "Later", "opening_hours" to "Mo-Su 18:00-20:00"),
-            ),
+            ), country = null,
         )
         val ctx = EvalContext(location = here, now = saturday, hours = Nowhere)
         val (b, n) = Closest.split(Query.and(Query.tags("amenity=cafe"), Query.tags("outdoor_seating=yes"), Query.OpenAt(OpenTime.Now)))!!
@@ -192,7 +192,7 @@ class ClosestTest {
         val far = (0 until (OfflineEvaluator.WIDE_SEED.toInt() + 50)).map { i ->
             Place(OsmId(OsmType.NODE, 1_000L + i), LatLon(here.lat + 0.54 + (i % 100) * 0.0001, here.lon + (i / 100) * 0.0001), mapOf("amenity" to "cafe"))
         }
-        val hits = OfflineEvaluator(MemoryPlaces(far)).run(Query.Tags(TagFilter.Equals("amenity", "cafe")), EvalContext(location = here, now = saturday, limit = 5, hours = Nowhere)).hits
+        val hits = OfflineEvaluator(MemoryPlaces(far, country = null)).run(Query.Tags(TagFilter.Equals("amenity", "cafe")), EvalContext(location = here, now = saturday, limit = 5, hours = Nowhere)).hits
         assertEquals(5, hits.size)
         assertTrue(hits.all { it.distance!! in 55_000.0..70_000.0 })
     }

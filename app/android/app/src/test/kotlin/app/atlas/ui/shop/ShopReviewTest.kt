@@ -32,7 +32,7 @@ class ShopReviewTest {
     private val amsterdam = PlaceLocale("NL", ZoneId.of("Europe/Amsterdam"))
 
     private fun place(id: Long, tags: Map<String, String>, where: LatLon = Geo.destination(here, 0.0, 80.0)): ShopPlace =
-        ShopPlace(Place(OsmId(OsmType.NODE, id), where, tags), tags["name"] ?: "x", Geo.distance(here, where))
+        ShopPlace(Place(OsmId(OsmType.NODE, id), where, tags), tags["name"] ?: "x", Geo.distance(here, where), country = null)
 
     @Test
     fun everySymbolIdInTheSourcesIsOneAtlasCanDraw() {

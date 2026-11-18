@@ -48,7 +48,7 @@ class KitLogicTest {
     @Test
     fun aPlaceWithoutNameOrHours() {
         val bench = Place(null, LatLon(52.0, 4.0), mapOf("amenity" to "bench"))
-        val s = PlaceSummary.withOpen(bench, null, "en", null)
+        val s = PlaceSummary.withOpen(bench, null, "en", null, country = null)
         assertEquals("Bench", s.name)
         assertNull(s.kind)
         assertNull(s.open)
@@ -59,11 +59,11 @@ class KitLogicTest {
     @Test
     fun aShopIsCalledWhatItSellsAndANamelessOneWhatItIs() {
         // the owner, 6 November: "instead of clothing store and gift shop only show Clothes, Gifts?", "apply that everywhere"
-        val named = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en", null)
+        val named = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en", null, country = null)
         assertEquals("Gifts", named.kind)
-        assertEquals("Cadeaus", PlaceSummary.withOpen(named.place, null, "nl", null).kind)
+        assertEquals("Cadeaus", PlaceSummary.withOpen(named.place, null, "nl", null, country = null).kind)
         // a title says what the place is: a gift shop, and no line says "Gifts" under it
-        val nameless = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en", null)
+        val nameless = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en", null, country = null)
         assertEquals("Gift Shop", nameless.name)
         assertNull(nameless.kind)
     }

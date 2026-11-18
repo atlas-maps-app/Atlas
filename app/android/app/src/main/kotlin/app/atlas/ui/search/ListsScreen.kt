@@ -67,6 +67,7 @@ import app.atlas.places.OpeningHours
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.PrimaryButton
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import app.atlas.ui.kit.rememberNow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -254,9 +255,8 @@ private fun added(list: SavedList, today: LocalDate, zone: ZoneId): String {
  */
 @Composable
 private fun SavedRow(n: Int, saved: SavedPlace, colour: Long, here: LatLon, lang: String, now: java.time.LocalDateTime, onClick: () -> Unit) {
-    val services = LocalServices.current
-    val ctx = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
-    val line = remember(saved, now) { PlaceLine.of(saved.place, here, lang, now, open = OpeningHours.parseOrNull(saved.place.tags["opening_hours"])?.status(now, ctx)) }
+    val ctx = rememberHoursAt(here)
+    val line = remember(saved, now, ctx.country) { PlaceLine.of(saved.place, here, lang, now, open = OpeningHours.parseOrNull(saved.place.tags["opening_hours"])?.status(now, ctx), country = ctx.country) }
     val status = statusWords(line)
     Row(
         Modifier.fillMaxWidth().height(46.dp).boardBox(0xFFF4EDE2, round(14f)).clickable(role = Role.Button, onClick = onClick)

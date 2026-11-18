@@ -35,7 +35,7 @@ class OnlineMockTest {
     @Test
     fun memoryPlacesAnswerLikeAStore() {
         val places = OverpassParser.parse(StringReader(eat)).places()
-        val mem = MemoryPlaces(places)
+        val mem = MemoryPlaces(places, country = null)
         assertEquals(1925, mem.size)
         val store = PlaceStore.inMemory().also { it.importOverpass(Fixtures.eat) }
         val ctx = Fixtures.context().copy(limit = 2000)
@@ -105,7 +105,7 @@ class OnlineMockTest {
     fun aSignInPageInsteadOfPhotonsAnswerLeavesTheOfflineResults() = runBlocking {
         server { MockResponse.Builder().body("<html><body>Sign in to the hotel's Wi-Fi</body></html>").build() }.use { s ->
             val kerk = Place(OsmId(OsmType.WAY, 99205257), Fixtures.westerkerk, mapOf("amenity" to "place_of_worship", "name" to "Westerkerk"))
-            val engine = SearchEngine(MemoryPlaces(listOf(kerk)), geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
+            val engine = SearchEngine(MemoryPlaces(listOf(kerk), country = null), geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
             val r = engine.search("westerkerk", SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday, hours = Nowhere))
             assertEquals(listOf("Westerkerk"), r.places.map { it.hit.place.name() })
             assertTrue("Photon was asked", s.requestCount > 0)

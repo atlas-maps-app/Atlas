@@ -64,7 +64,7 @@ class BrowseTest {
         val drinks = CategoryTree.category("drinks")!!
         var id = 900_000L
         fun bar(dLat: Double, hours: String?) = PlaceRecord.of(
-            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), listOfNotNull("amenity" to "bar", "name" to "Bar $id", hours?.let { "opening_hours" to it }).toMap()),
+            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), listOfNotNull("amenity" to "bar", "name" to "Bar $id", hours?.let { "opening_hours" to it }).toMap()), country = null,
         )
         // three bars a little off keep late hours: the one that maps none goes by them
         val around = (1..3).map { bar(0.003 + 0.001 * it, "Mo-Su 12:00-03:00") }
@@ -96,7 +96,7 @@ class BrowseTest {
         val drinks = CategoryTree.category("drinks")!!
         var id = 910_000L
         fun bar(dLat: Double, hours: String) = PlaceRecord.of(
-            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), mapOf("amenity" to "bar", "name" to "Bar $id", "opening_hours" to hours)),
+            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), mapOf("amenity" to "bar", "name" to "Bar $id", "opening_hours" to hours)), country = null,
         )
         val late = bar(0.001, "Mo-Su 17:00+")
         val early = bar(0.002, "Mo-Su 16:00-22:30")

@@ -38,6 +38,7 @@ import app.atlas.search.Travel
 import app.atlas.search.TravelMode
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.rememberCountryAt
 import app.atlas.ui.kit.shortDistance
 import java.time.LocalDateTime
 import java.util.Locale
@@ -208,7 +209,8 @@ private fun TypedPlace(
     onClick: () -> Unit,
 ) {
     val c = indexColors()
-    val line = remember(place, now, open, distance) { PlaceLine.of(place, here, lang, now, open, name, distance) }
+    val country = rememberCountryAt(here)
+    val line = remember(place, now, open, distance, country) { PlaceLine.of(place, here, lang, now, open, country, name, distance) }
     val metres = line.summary.distanceM
     val minutes = metres?.let { Travel.minutes(it, mode) }
     val arrival = if (minutes != null) arrivalWords(open, minutes, now) else null

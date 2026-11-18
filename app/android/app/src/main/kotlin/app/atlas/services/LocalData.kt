@@ -144,6 +144,8 @@ data class MapName(val name: String, val water: Boolean, val rank: Int, val poin
 class LocalData(
     private val stores: () -> PlaceSource?,
     private val packs: () -> PackFeatures?,
+    /** The country of the map at a point, which the brands of the places there are matched in ([app.atlas.ui.search.HereContext.country]). */
+    private val countryAt: (LatLon) -> String?,
     private val overpass: () -> Overpass? = { null },
     private val isOnline: () -> Boolean = { false },
     private val onClose: () -> Unit = {},
@@ -452,11 +454,12 @@ class LocalData(
     /** [answer]'s places in [box] as the chains among them, most branches first, at most [limit]. */
     private fun chains(answer: LocalAnswer<List<Place>>, box: BBox, limit: Int): LocalAnswer<List<LocalBrand>> {
         val centre = box.center
+        val country = countryAt(centre)
         val byBrand = LinkedHashMap<String, MutableList<Place>>()
         val brands = HashMap<String, Brand>()
         for (p in answer.value) {
             if (!isTrade(p.tags) || p.location !in box) continue
-            val b = Brands.forTags(p.tags) ?: continue
+            val b = Brands.forTags(p.tags, country) ?: continue
             brands[b.id] = b
             byBrand.getOrPut(b.id) { ArrayList() } += p
         }
@@ -475,7 +478,8 @@ class LocalData(
     fun branchesAsFound(id: String, centre: LatLon, radiusM: Double): Flow<LocalAnswer<List<Place>>> {
         val box = BBox.around(centre, radiusM)
         val within = { p: Place -> Geo.distance(centre, p.location) <= radiusM }
-        val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t)?.id == id }
+        val country = countryAt(centre)
+        val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t, country)?.id == id }
         val order = { list: List<Place> -> nearest(list, centre, Int.MAX_VALUE) }
         val brand = Brands.byId(id)
         val filter = brand?.wikidata?.let { TagFilter.Equals("brand:wikidata", it) } ?: brand?.let { TagFilter.Equals("brand", it.brand) }
@@ -826,7 +830,7 @@ class LocalData(
         val at = ctx.location ?: area?.center ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
         storeCovering(at)?.let { return LocalAnswer(OfflineEvaluator(it).run(query, ctx), PlaceOrigin.STORE) }
         val f = packsCovering(at) ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
-        val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true })
+        val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true }, ctx.hours.country)
         return LocalAnswer(OfflineEvaluator(places).run(query, ctx), PlaceOrigin.PACK)
     }
 

@@ -31,7 +31,7 @@ class PurposeTest {
     private val now: LocalDateTime = Fixtures.saturday.toLocalDateTime()
 
     private fun place(id: Long, lat: Double, lon: Double, vararg tags: Pair<String, String>, bbox: BBox? = null, type: OsmType = OsmType.NODE) =
-        PlaceRecord.of(Place(OsmId(type, id), LatLon(lat, lon), tags.toMap(), bbox))
+        PlaceRecord.of(Place(OsmId(type, id), LatLon(lat, lon), tags.toMap(), bbox), country = null)
 
     @Test
     fun everyKindHasAPurposeOfItsOwn() {

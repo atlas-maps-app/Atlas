@@ -34,11 +34,11 @@ class EatArea(
     val hours: OpeningHoursContext = local.hours(centre)
 
     init {
-        guessHours(places)
+        guessHours(places, local.country)
     }
 
     /** The places as a search source, so `:search` queries run over exactly what the screens show. */
-    val source: MemoryPlaces by lazy { MemoryPlaces(places.map { it.place }) }
+    val source: MemoryPlaces by lazy { MemoryPlaces(places.map { it.place }, country) }
 
     private val byKey: Map<String, EatPlace> by lazy { places.associateBy { it.key } }
 
@@ -86,9 +86,9 @@ class EatArea(
          * Gives each of [places] that maps no hours those its brand's other branches among them keep, else those the
          * places of its kind around it keep ([HoursBook], as the one search guesses them); once for a set of places.
          */
-        internal fun guessHours(places: List<EatPlace>) {
+        internal fun guessHours(places: List<EatPlace>, country: String?) {
             if (places.all { it.hours != null || it.weighed }) return
-            val records = places.map { PlaceRecord.of(it.place) }
+            val records = places.map { PlaceRecord.of(it.place, country) }
             val book = HoursBook(records)
             places.forEachIndexed { i, p ->
                 if (p.hours == null) p.guess = book.of(records[i])

@@ -141,7 +141,7 @@ class PlaceViewModel(
     /** A place that maps no hours takes its brand's branches' near, else its kind's around it ([BorrowedHours]): a guess, shown as one. */
     private suspend fun borrow(p: Place) {
         if ("opening_hours" in p.tags) return
-        val guess = withContext(Dispatchers.IO) { runCatching { BorrowedHours.of(services.placeStores, p, lang) }.getOrNull() } ?: return
+        val guess = withContext(Dispatchers.IO) { runCatching { BorrowedHours.of(services.placeStores, p, lang, mutable.value.country) }.getOrNull() } ?: return
         mutable.update { s ->
             if (s.hours != null || s.place?.key != p.key) s else s.copy(hours = guess.hours, status = guess.hours.status(s.now, s.hoursContext), guess = guess)
         }
@@ -150,7 +150,7 @@ class PlaceViewModel(
     /** A branch without a website of its own gets its brand's: the site its brand's branches within 50 km share. */
     private suspend fun brandSite(p: Place) {
         if (BrandSite.mapped(p.tags) != null) return
-        val brand = Brands.forTags(p.tags) ?: return
+        val brand = Brands.forTags(p.tags, mutable.value.country) ?: return
         val site = withContext(Dispatchers.IO) {
             val branches = runCatching { services.placeStores.byBrand(listOf(brand.id), BBox.around(p.location, 50_000.0), 300) }.getOrDefault(emptyList())
             BrandSite.of(branches.filter { it.place.key != p.key }.map { it.tags }, mutable.value.country)
@@ -206,7 +206,7 @@ class PlaceViewModel(
                 country = local.country,
                 status = hours?.status(now, ctx),
                 now = now,
-                brand = Brands.forTags(place.tags),
+                brand = Brands.forTags(place.tags, local.country),
             )
         }
         mutable.update {
@@ -221,7 +221,7 @@ class PlaceViewModel(
         val kept = KeptFacts(File(services.dirs.files, "search/wikidata"))
         val images = KeptImages(services.dirs.images)
         val qid = p.tags["wikidata"]?.trim()
-        val brandQid = (p.tags["brand:wikidata"] ?: Brands.forTags(p.tags)?.wikidata)?.trim()
+        val brandQid = (p.tags["brand:wikidata"] ?: Brands.forTags(p.tags, mutable.value.country)?.wikidata)?.trim()
         suspend fun entity(q: String?): WikidataEntity? {
             if (q.isNullOrEmpty()) return null
             withContext(Dispatchers.IO) { kept.read(q) }?.let { return it }
@@ -326,9 +326,9 @@ internal object BorrowedHours {
     const val BRANCH_SAMPLE = HoursBook.KIND_SAMPLE
 
     /** [p]'s borrowed hours from the places of [source]; [lang] names the branch they come from. Reads the regions. */
-    fun of(source: PlaceSource, p: Place, lang: String): HoursGuess? {
+    fun of(source: PlaceSource, p: Place, lang: String, country: String?): HoursGuess? {
         if ("opening_hours" in p.tags) return null
-        val r = PlaceRecord.of(p)
+        val r = PlaceRecord.of(p, country)
         return ofBrand(source, r, lang) ?: ofKind(source, r)
     }
 

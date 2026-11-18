@@ -13,5 +13,6 @@ object PlaceCountry {
     /** The place's own `addr:country`, when it is a two-letter code. */
     fun tagged(tags: Map<String, String>): String? = code(tags["addr:country"])
 
-    private fun code(s: String?): String? = s?.trim()?.uppercase()?.takeIf { c -> c.length == 2 && c.all { it in 'A'..'Z' } }
+    /** [s] as an ISO 3166 alpha-2 code, upper case; null when it is none. */
+    fun code(s: String?): String? = s?.trim()?.uppercase()?.takeIf { c -> c.length == 2 && c.all { it in 'A'..'Z' } }
 }

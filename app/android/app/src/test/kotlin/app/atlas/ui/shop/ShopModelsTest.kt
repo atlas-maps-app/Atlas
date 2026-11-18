@@ -28,7 +28,7 @@ class ShopModelsTest {
 
     private val area: ShopArea by lazy {
         val found = ShopFixtures.store.inBox(BBox.around(here, 1_500.0)).map { it.place }
-        val places = found.mapNotNull { ShopPlace.of(it, here, "en", nameless = true) }.sortedBy { it.distanceM }
+        val places = found.mapNotNull { ShopPlace.of(it, here, "en", nameless = true, country = null) }.sortedBy { it.distanceM }
         ShopArea(here, 1_500.0, places, PlaceOrigin.STORE, loading = false, local = PlaceLocale("NL", Fixtures.evening.zone))
     }
 

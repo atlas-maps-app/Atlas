@@ -77,7 +77,7 @@ class OneSymbolTableTest {
         PlaceStore.open(File(tmp.root, "earlier.db")).use { s ->
             s.writer(regionName = "Grachtengordel").use { w ->
                 val place = Place(filedEarlier, amsterdam, mapOf("amenity" to "library", "name" to "OBA Oosterdok"))
-                val filed = PlaceRecord.of(place, Geometry.POINT, null)
+                val filed = PlaceRecord.of(place, Geometry.POINT, null, country = null)
                 assertEquals(library.id, filed.preset)
                 w.add(PlaceRecord(filed.place, filed.category, filed.brand, filed.preset, library.icon!!))
                 // no kind to ask about: what was filed stands

@@ -20,7 +20,7 @@ class AnswersTest {
     private val today: LocalDate = Fixtures.saturday.toLocalDate()
 
     private fun place(id: Long, vararg tags: Pair<String, String>, source: String = "osm") =
-        PlaceRecord.of(Place(OsmId(OsmType.NODE, id), LatLon(52.37 + id * 0.0001, 4.88), tags.toMap(), source = source))
+        PlaceRecord.of(Place(OsmId(OsmType.NODE, id), LatLon(52.37 + id * 0.0001, 4.88), tags.toMap(), source = source), country = null)
 
     private fun toilets(): List<PlaceRecord> =
         (1L..6L).map { place(it, "amenity" to "toilets", "fee" to "no", "wheelchair" to "yes") } +

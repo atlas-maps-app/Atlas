@@ -36,7 +36,7 @@ class HomeHighlightsTest {
     @Test
     fun aKindOfPlaceWearsItsFamilysColour() {
         val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday, hours = Nowhere)
-        val markers = HomeHighlights.markers(h)
+        val markers = HomeHighlights.markers(h, country = null)
         fun argb(c: Int) = c.toLong() and 0xFFFFFFFFL
         for ((hl, m) in h.zip(markers)) {
             val want = hl.kind.colour ?: argb(Symbols.colourFor(hl.place.tags))
@@ -84,7 +84,7 @@ class HomeHighlightsTest {
         assertEquals(listOf("Near", "Far"), names(h, HighlightKind.SAVED))
         assertTrue(h[0].value!!.endsWith("′"))
         assertNull(h[1].value)
-        val m = HomeHighlights.markers(h)
+        val m = HomeHighlights.markers(h, country = null)
         assertEquals(MarkerStyle.PIN, m[0].style)
         assertEquals("Near", m[0].label)
         assertEquals("ui-check", m[0].badge)
