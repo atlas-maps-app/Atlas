@@ -29,6 +29,9 @@ data class PlaceLocale(val country: String?, val zone: ZoneId, val subdivision: 
 
     /** Opening hours as they are read at [at] in this country and on this clock: its holidays and the sun there. */
     fun hours(at: LatLon): OpeningHoursContext = OpeningHoursContext.forPlace(country, zone, at.lat, at.lon, subdivision)
+
+    /** The moment a phone's clock on [phoneZone] reads as [phoneNow], on the place's own clock. */
+    fun fromPhone(phoneNow: LocalDateTime, phoneZone: ZoneId): LocalDateTime = phoneNow.atZone(phoneZone).withZoneSameInstant(zone).toLocalDateTime()
 }
 
 /**
@@ -95,11 +98,18 @@ object HereContext {
      * `addr:country`, else [country] at its point ([PlaceCountry]); its clock the phone's near the phone in the phone's
      * country, else its country's ([PlaceZone]), else the sun's own hour. Asks the regions: off the main thread.
      */
-    fun localeOf(services: Services, place: Place, phone: LatLon, phoneZone: ZoneId): PlaceLocale {
-        val around = region(services, place.location)
+    fun localeOf(services: Services, place: Place, phone: LatLon, phoneZone: ZoneId): PlaceLocale =
+        localeAmong(region(services, place.location), place, phone, phoneZone) { HereContext.country(services, phone) }
+
+    /** [localeOf] as far as it is known without asking the regions ([regionNow]), for a frame that cannot wait. */
+    fun localeNow(services: Services, place: Place, phone: LatLon, phoneZone: ZoneId): PlaceLocale =
+        localeAmong(regionNow(services, place.location), place, phone, phoneZone) { countryNow(services, phone) }
+
+    /** [place]'s country and state or nation, its own first, else of [around], and its clock ([locale]). */
+    private fun localeAmong(around: HereRegion, place: Place, phone: LatLon, phoneZone: ZoneId, phoneCountry: () -> String?): PlaceLocale {
         val country = PlaceCountry.of(place.tags, around.country)
         val subdivision = PlaceCountry.subdivision(place.tags, country) ?: around.subdivision?.takeIf { country != null && it.startsWith("$country-") }
-        return locale(HereRegion(country, subdivision), place.location, phone, phoneZone) { HereContext.country(services, phone) }
+        return locale(HereRegion(country, subdivision), place.location, phone, phoneZone, phoneCountry)
     }
 
     /** The same for a point and the places around it, as an area's screens read them all ([localeOf]). */

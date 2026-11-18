@@ -39,8 +39,8 @@ import app.atlas.search.Travel
 import app.atlas.search.TravelMode
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
-import app.atlas.ui.kit.rememberCountryAt
-import app.atlas.ui.kit.rememberHoursAt
+import app.atlas.ui.kit.appClock
+import app.atlas.ui.kit.rememberLocaleOf
 import app.atlas.ui.kit.shortDistance
 import java.time.LocalDateTime
 import java.util.Locale
@@ -130,11 +130,13 @@ private fun TypedRow(
         is SearchItem.PlaceResult -> TypedPlace(item.hit.place, item.title, item.subtitle, item.parts, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
         is SearchItem.Element -> TypedPlace(item.hit.place, null, item.hit.place.id?.toString(), 1, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
         is SearchItem.Online -> {
-            // an online find comes with no status: its hours read where it is, as its pin fades by them (the app
-            // maintainer, 18 November 2026: the row said nothing)
-            val hours = rememberHoursAt(item.place.location)
-            val status = remember(item.place, now, hours) { OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(now, hours) }
-            TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place, rememberCountryAt(item.place.location)), 1, item.distance, status, here, mode, lang, now, seat, online = true) { open(item.place) }
+            // an online find comes with no status: its hours read where it is, on its own clock, as its pin fades by
+            // them (the app maintainer, 18 November 2026: the row said nothing; batch 4 B18: on the phone's clock)
+            val where = rememberLocaleOf(item.place)
+            val zone = appClock().zone
+            val local = remember(now, where, zone) { where.fromPhone(now, zone) }
+            val status = remember(item.place, local, where) { OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(local, where.hours(item.place.location)) }
+            TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place, where.country), 1, item.distance, status, here, mode, lang, local, seat, online = true) { open(item.place) }
         }
         is SearchItem.Kind -> {
             // kinds are nouns: lower case inside a sentence, except in German
@@ -217,7 +219,8 @@ private fun TypedPlace(
     onClick: () -> Unit,
 ) {
     val c = indexColors()
-    val country = rememberCountryAt(here)
+    // its chain the one of its own country, not the phone's (the app maintainer, 18 November 2026, batch 4 B18)
+    val country = rememberLocaleOf(place).country
     val line = remember(place, now, open, distance, country) { PlaceLine.of(place, here, lang, now, open, country, name, distance) }
     val metres = line.summary.distanceM
     val minutes = metres?.let { Travel.minutes(it, mode) }

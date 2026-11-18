@@ -5,10 +5,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import app.atlas.geo.LatLon
+import app.atlas.model.Place
 import app.atlas.nav.LocalServices
 import app.atlas.places.OpeningHoursContext
 import app.atlas.ui.search.HereContext
 import app.atlas.ui.search.HereRegion
+import app.atlas.ui.search.PlaceLocale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.Clock
@@ -53,6 +55,21 @@ fun rememberRegionAt(at: LatLon): HereRegion {
     val region = remember(services, at) { mutableStateOf(HereContext.regionNow(services, at)) }
     LaunchedEffect(region) { region.value = withContext(Dispatchers.IO) { HereContext.region(services, at) } }
     return region.value
+}
+
+/**
+ * Where [place] keeps its time, seen from the phone ([HereContext.localeOf]): its own country, else the map's at it,
+ * its state or nation, and its clock; kept per place. A row reads its place so, never where the phone is (the app
+ * maintainer, 18 November 2026, batch 4 B18: a saved café in Munich read Dutch holidays). The regions are asked off the
+ * main thread; until they answer, what is known without them ([HereContext.localeNow]).
+ */
+@Composable
+fun rememberLocaleOf(place: Place): PlaceLocale {
+    val services = LocalServices.current
+    val zone = services.clock.zone
+    val locale = remember(services, place, zone) { mutableStateOf(HereContext.localeNow(services, place, HereContext.phoneAt(services), zone)) }
+    LaunchedEffect(locale) { locale.value = withContext(Dispatchers.IO) { HereContext.localeOf(services, place, HereContext.phoneAt(services), zone) } }
+    return locale.value
 }
 
 /** The app's clock, for screens that reason with instants and zones themselves. */
