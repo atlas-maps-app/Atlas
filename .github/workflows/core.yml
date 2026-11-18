@@ -140,7 +140,8 @@ jobs:
   # the canal ring's element pack is fetched from packs-renders and checked against its SHA-256), and cached by their
   # inputs, so a push that leaves the port, the render tiles' compiler, the engine's style file and the packer alone
   # takes them from the cache in seconds. The APK carries none of them for a map (ENGINE.md step 3, one pack per
-  # country). A failure here leaves the host jobs to run without them, as before.
+  # country). A failure here fails the host jobs, once their tests have run: a pack test that skips for want of its
+  # packs would pass without a word.
   tiles:
     needs: core-changes
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
@@ -453,7 +454,8 @@ jobs:
           cat "$RUNNER_TEMP/vulkan.env"
 
       # ---- host-debug, host-tsan, host-release: build, unit tests (Vulkan on lavapipe), the feature probe, benchmarks.
-      # The pack tests' render packs (the tiles job's): ATLAS_TILES_DIR beside the Vulkan variables.
+      # The pack tests' render packs (the tiles job's): ATLAS_TILES_DIR beside the Vulkan variables. Without them the
+      # pack tests skip and count as passed, so the job still runs its tests and then fails (the step after Test).
       - id: tiles
         if: startsWith(matrix.task, 'host-') && needs.tiles.outputs.key != ''
         uses: actions/cache/restore@v6
@@ -461,13 +463,15 @@ jobs:
           path: ${{ runner.temp }}/tiles
           key: ${{ needs.tiles.outputs.key }}
       - name: The pack tests' render packs
+        id: packs
         if: startsWith(matrix.task, 'host-')
         run: |
           if [ -e "$RUNNER_TEMP/tiles/amsterdam.atlas" ] && [ -e "$RUNNER_TEMP/tiles/grachten.atlas" ]; then
             echo "ATLAS_TILES_DIR=$RUNNER_TEMP/tiles" >> "$RUNNER_TEMP/vulkan.env"
             ls -la "$RUNNER_TEMP/tiles"
           else
-            echo "::warning::no render packs from the tiles job: the pack tests skip"
+            echo "::error::no render packs from the tiles job: the pack tests skip, and this job fails once its tests have run"
+            echo "missing=render packs from the tiles job" >> "$GITHUB_OUTPUT"
           fi
       # Each test entry runs under GNU time, so its peak memory is in its output (core-tests sums them up): what tells
       # how many entries a runner can run at once, TSan's above all.
@@ -555,6 +559,14 @@ jobs:
               done
             fi
           fi
+      # The data the tests read, when a step above found it missing: the tests ran without it, and the job fails.
+      - name: The tests' data
+        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && steps.packs.outputs.missing != '' }}
+        env:
+          MISSING: ${{ steps.packs.outputs.missing }}
+        run: |
+          echo "::error::the tests ran without their data ($MISSING): the cases that need it skipped"
+          exit 1
       # The test entries' JUnit files and the shard's plan, for core-tests.
       - name: Keep the shard's test results
         if: startsWith(matrix.task, 'host-') && always()
