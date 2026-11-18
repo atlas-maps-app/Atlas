@@ -17,8 +17,11 @@ object PaletteCode {
     private const val ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
     private const val KEEP = 255
 
-    /** Why a code could not be read. */
-    enum class Fault { FORM, PRESET, LETTER, CHECK, SLOT }
+    /**
+     * Why a code could not be read: not in the code's form, a letter outside its alphabet or a check that fails (both
+     * mistyped), or a preset, a colour or a switch this Atlas does not know (from a newer Atlas).
+     */
+    enum class Fault { FORM, PRESET, LETTER, CHECK, SLOT, SWITCH }
 
     /** A code read: the palette, or why not. */
     sealed interface Read {
@@ -59,7 +62,7 @@ object PaletteCode {
         val crc = (bytes[bytes.size - 2] shl 8) or bytes[bytes.size - 1]
         if (crc != crc(preset.code, body)) return Read.Bad(Fault.CHECK)
         val flags = bytes[0].takeIf { it != KEEP }
-        if (flags != null && flags and PaletteFlags.KNOWN.inv() != 0) return Read.Bad(Fault.FORM)
+        if (flags != null && flags and PaletteFlags.KNOWN.inv() != 0) return Read.Bad(Fault.SWITCH)
         val tone = bytes[1].takeIf { it != KEEP }?.let { if (it > 40) return Read.Bad(Fault.FORM) else it / 20f }
         val colours = LinkedHashMap<Slot, Int>()
         for (i in 0 until n) {

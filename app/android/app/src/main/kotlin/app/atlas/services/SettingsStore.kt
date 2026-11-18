@@ -196,6 +196,12 @@ object SettingsKeys {
 
     /** The Map look's saved palettes (Your palettes), in the order saved: a line each, the code, a tab and the name. */
     val MAP_PALETTES = stringPreferencesKey("map.palettes")
+
+    /**
+     * The saved palette the map's look came from (its code in MAP_PALETTES): what the Map look's line names once a switch
+     * or the Tone changes it, and what Colour the map's Save offers to replace. Unset for a preset's look.
+     */
+    val MAP_LOOK_FROM = stringPreferencesKey("map.look.from")
     val MAP_VIGNETTE = booleanPreferencesKey("map.vignette")
     val MAP_GRAIN = booleanPreferencesKey("map.grain")
 

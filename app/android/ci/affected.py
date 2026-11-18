@@ -10,7 +10,8 @@ there is a build, else the test files that include it by name; a changed source 
 the same name) and the test files that include its header; the shaders pick the Vulkan tests (label vk) and the
 SPIR-V locks; the build's configuration or third-party code picks every entry. Every change of the core adds the JNI
 tests of :mapcorecheck that cover its area (the engine's references among them). A Kotlin module picks its own unit
-tests and those of each module that depends on it. Prints the commands; runs nothing.
+tests and those of each module that depends on it. The transit planner (app/android/transit) picks its own two: the
+packer's check and the crate's tests. Prints the commands; runs nothing.
 
 Python 3's standard library only.
 """
@@ -128,7 +129,7 @@ def main():
                 if f'"{include}"' in t.read_text(encoding="utf-8", errors="replace")}
 
     labels, names, packages = set(), set(), set()
-    everything = spirv = check_all = fuzz = bench = False
+    everything = spirv = check_all = fuzz = bench = transit = False
     gradle_changed, other = set(), []
     for path in paths:
         p = Path(path)
@@ -181,6 +182,8 @@ def main():
                 labels.add("style")
             elif rel.parts[0] == "ci":
                 other.append(path)
+            elif rel.parts[0] == "transit":
+                transit = True
             else:
                 gradle_changed.add(rel.parts[0])
         else:
@@ -230,6 +233,12 @@ def main():
         elif packages:
             filters = " ".join(f"--tests 'app.atlas.mapcorecheck.{p}.*'" for p in sorted(packages))
             print(f"  ./gradlew :mapcorecheck:test {filters}")
+    if transit:
+        print()
+        print(f"The transit planner (in {ANDROID / 'transit'}; Rust from ~/.cargo/bin, a build folder outside the tree):")
+        print("  python3 -I pack/test_ttpack.py   # the packer: the hand-written feed's bytes, the cosine table")
+        print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
+        print("  (no workflow runs these yet: they are local until one does)")
     if other:
         print()
         print("Other paths, which no local suite covers (CI's do): " + ", ".join(other[:12]) + (" ..." if len(other) > 12 else ""))
