@@ -401,6 +401,12 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .sky_view = sky_view_});
 }
 
+void MapFrame::update_scene(const style::CameraState& camera, double seconds) {
+    if (!ready()) return;
+    next(camera, seconds);
+    builder_->update_scene();
+}
+
 void MapFrame::set_asked(std::optional<AskedBuilding> asked) {
     const bool same_house = asked && asked_ && asked->id == asked_->id && asked->relation == asked_->relation &&
                             asked->roof == asked_->roof;

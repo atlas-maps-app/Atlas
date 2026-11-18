@@ -648,6 +648,15 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     return d;
 }
 
+bool Session::update_scene(const style::CameraState& camera) {
+    // after the map's first frame (its renderer made), so that the scene's releases retire at a frame that went out
+    if (closed_ || mode_ != 2 || map_ == nullptr || !map_->ready() || renderer_ == nullptr || lost_ >= 3) return false;
+    const std::int64_t start = now_ns();
+    if (epoch_ns_ == 0) epoch_ns_ = start;
+    map_->update_scene(camera, static_cast<double>(start - epoch_ns_) / 1e9);
+    return true;
+}
+
 void Session::note_not_drawing() {
     std::string why = not_drawing_why();
     const std::scoped_lock lock(records_mutex_);
