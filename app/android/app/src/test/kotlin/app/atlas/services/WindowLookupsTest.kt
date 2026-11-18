@@ -4,6 +4,7 @@ import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.geo.Mercator
+import app.atlas.geo.TileId
 import app.atlas.places.Brands
 import app.atlas.places.TagFilter
 import app.atlas.providers.Http
@@ -203,6 +204,121 @@ class WindowLookupsTest {
         assertEquals(listOf("Café de Vliet", "Café de Overkant", "Café Ver Weg"), alone.last().places.map { it.name() })
         val many = finder.nearbyMany(listOf("eat"), here, 2_000.0, 20)
         assertEquals(listOf("Café de Vliet", "Café de Overkant", "Café Ver Weg"), many.getValue("eat").places.map { it.name() })
+    }
+
+    /**
+     * A circle of more windows than [WindowPlaces] holds at once keeps the windows at its middle, whichever lookup asks:
+     * here the nine a kilometre around, from Atlas's packs, then five by five (the reviewer, 17 November 2026: held by
+     * when they were last read, the windows a wide circle fetched pushed out those nearest the user, and the lookups of
+     * one circle held 9, 7, 5 and 5 of the nine).
+     */
+    @Test
+    fun aWideCircleKeepsTheWindowAtItsMiddle() = runBlocking {
+        val empty = tmp.newFolder("wide")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> cafeAt(x, y) })
+        val near = BBox.around(here, 1_000.0)
+        val first = windows.fetched(near, here, 10_000L)!!
+        assertTrue("the nine come from the packs whole", first.covers(near))
+        assertEquals(block, first.places.map { it.name() }.toSet())
+        val box = BBox.around(here, 3_500.0)
+        assertTrue("more windows than are held at once", Mercator.tilesIn(box, WindowPlaces.LEVEL).size > WindowPlaces.HELD)
+        val holds = (1..4).map { windows.fetched(box, here, 10_000L)!!.places.count { it.name() in block } }
+        assertEquals("each lookup of the same circle holds the nine windows nearest its middle", listOf(9, 9, 9, 9), holds)
+    }
+
+    /**
+     * Offline, a circle the phone keeps data for in more windows than are held at once is read once: each lookup reads
+     * at most nine windows it does not hold, nearest first, and none past those it can hold, so once they are held the
+     * next lookup reads none (the reviewer, 17 November 2026: up to nine window files read and parsed again at every
+     * lookup, for ever).
+     */
+    @Test
+    fun offlineAWideCircleIsReadOnce() = runBlocking {
+        val dir = tmp.newFolder("kept")
+        for (dx in -3..3) for (dy in -3..3) File(dir, "${tile.z}-${tile.x + dx}-${tile.y + dy}.json.gz").writeBytes(cafeAt(tile.x + dx, tile.y + dy))
+        var reads = 0
+        val windows = WindowPlaces({ dir }, open = { reads++; it.inputStream() })
+        val box = BBox.around(here, 5_000.0)
+        assertEquals("seven by seven", 49, Mercator.tilesIn(box, WindowPlaces.LEVEL).size)
+        val read = ArrayList<Int>()
+        val holds = (1..4).map {
+            val before = reads
+            val held = windows.held(box, here)!!
+            read += reads - before
+            held.places.count { it.name() in block }
+        }
+        assertEquals("each lookup holds the nine windows nearest its middle", listOf(9, 9, 9, 9), holds)
+        assertEquals("the windows each lookup reads", listOf(9, 9, 0, 0), read)
+    }
+
+    /**
+     * Over the windows held at once, those farthest from the last lookup's middle go, never one of its own: a walk east
+     * and back finds the windows it passed still held, and the packs are asked for each window once, but for the
+     * column the walk left farthest behind (the reviewer, 17 November 2026: held by when they were last read).
+     */
+    @Test
+    fun theWindowsHeldAreThoseNearestTheLastLookup() = runBlocking {
+        // the packs are read three at a time
+        val sent = java.util.Collections.synchronizedList(ArrayList<String>())
+        val empty = tmp.newFolder("walk")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent += "$x/$y"; cafeAt(x, y) })
+        for (dx in listOf(0, 1, 2, 3, 4, 0, 1, 2)) {
+            val c = TileId(WindowPlaces.LEVEL, tile.x + dx, tile.y).bbox.center
+            val box = BBox.around(c, 1_000.0)
+            assertTrue("whole at ${tile.x + dx}", windows.fetched(box, c, 10_000L)!!.covers(box))
+        }
+        // nine, then a column of three at each step east; back at the start, the column it left first, and nothing more
+        val again = (-1..1).map { dy -> "${tile.x - 1}/${tile.y + dy}" }
+        assertEquals(9 + 4 * 3 + 3, sent.size)
+        assertEquals(again.toSet(), sent.groupingBy { it }.eachCount().filterValues { it > 1 }.keys)
+    }
+
+    /**
+     * Where more windows are missing than the packs are asked for at once, the packs cannot make the circle whole:
+     * Overpass is asked at once, and no window is waited for; where few enough are missing, the packs make it whole and
+     * Overpass is not asked (the reviewer, 17 November 2026: nine windows were waited for, up to 10 s, before Overpass,
+     * for a circle of any size).
+     */
+    @Test
+    fun overpassIsAskedAtOnceWhereThePacksCannotMakeTheCircleWhole() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val sent = AtomicInteger()
+        val empty = tmp.newFolder("none")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows)
+        // 2 km around the window's east edge: four windows by three, twelve missing
+        val edge = LatLon(here.lat, tile.bbox.east)
+        assertEquals(12, Mercator.tilesIn(BBox.around(edge, 2_000.0), WindowPlaces.LEVEL).size)
+        val wide = local.placesAsFound(edge, 2_000.0, cafe).toList()
+        assertEquals("the packs sent no window", 0, sent.get())
+        assertEquals(listOf(PlaceOrigin.ONLINE), wide.map { it.origin })
+        assertEquals(1, asked.get())
+        // a kilometre around the window: nine missing, from the packs, whole
+        assertFalse(local.places(here, 1_000.0, cafe).partial)
+        assertEquals(9, sent.get())
+        // now the circle at the edge lacks three: they complete it, and Overpass is not asked
+        val whole = local.placesAsFound(edge, 2_000.0, cafe).toList()
+        assertEquals(listOf(PlaceOrigin.PACK, PlaceOrigin.PACK), whole.map { it.origin })
+        assertEquals(listOf(true, false), whole.map { it.partial })
+        assertEquals(12, sent.get())
+        assertEquals(1, asked.get())
+    }
+
+    /** The window at [tile]'s middle and the eight around it, by the names [cafeAt] gives their cafés. */
+    private val block: Set<String>
+        get() = (-1..1).flatMap { dx -> (-1..1).map { dy -> "${tile.x + dx}/${tile.y + dy}" } }.toSet()
+
+    /** Window ([x], [y])'s data, gzipped: one café at its middle, named "x/y". */
+    private fun cafeAt(x: Int, y: Int): ByteArray {
+        val c = TileId(WindowPlaces.LEVEL, x, y).bbox.center
+        return gz("""{"elements":[{"type":"node","id":${x * 100_000L + y},"lat":${c.lat},"lon":${c.lon},"tags":{"amenity":"cafe","name":"$x/$y"}}]}""")
     }
 
     private fun gz(text: String): ByteArray = ByteArrayOutputStream().also { o -> GZIPOutputStream(o).use { it.write(text.toByteArray()) } }.toByteArray()
