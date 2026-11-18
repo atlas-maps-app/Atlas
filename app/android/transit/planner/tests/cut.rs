@@ -145,12 +145,18 @@ fn wishes_close_and_cost_what_they_say() {
         let never = ask(&mut p, &q);
         assert!(never.iter().all(|j| rail(&tt, j) == 0));
         q.wishes[0].how = How::Avoid(900);
+        let weighed = ask(&mut p, &q);
+        q.weigh = false;
         let avoid = ask(&mut p, &q);
+        q.weigh = true;
         // each journey costs a quarter of an hour a rail ride, and nothing else
-        assert!(avoid.iter().all(|j| j.penalty == 900 * rail(&tt, j)), "{q:?}");
-        // the fastest is still there, and so is the fastest that follows the wish
+        assert!(avoid.iter().chain(weighed.iter()).all(|j| j.penalty == 900 * rail(&tt, j)), "{q:?}");
+        // the fastest is still there, and with every option so is the fastest that follows the wish
         assert_eq!(avoid.iter().map(|j| j.arrive).min(), plain.iter().map(|j| j.arrive).min());
+        assert_eq!(weighed.iter().map(|j| j.arrive).min(), plain.iter().map(|j| j.arrive).min());
         assert_eq!(avoid.iter().filter(|j| j.penalty == 0).map(|j| j.arrive).min(), never.iter().map(|j| j.arrive).min(), "{q:?}");
+        // weighing leaves out options, and adds none
+        assert!(weighed.len() <= avoid.len() && weighed.iter().all(|j| avoid.iter().any(|o| (o.depart, o.arrive, o.rides, o.penalty) == (j.depart, j.arrive, j.rides, j.penalty))), "{q:?}");
         with_rail += plain.iter().any(|j| rail(&tt, j) > 0) as u32;
         both += (avoid.iter().any(|j| j.penalty > 0) && avoid.iter().any(|j| j.penalty == 0)) as u32;
         // rail preferred: the cost is what is not rail
@@ -158,6 +164,73 @@ fn wishes_close_and_cost_what_they_say() {
         assert!(ask(&mut p, &q).iter().all(|j| j.penalty == 60 * (j.rides - rail(&tt, j))));
     }
     assert!(with_rail > 5 && both > 5, "{with_rail} {both}");
+}
+
+/// A journey as the rule that weighs wishes sees it (query.rs's head): how early it leaves (over a window), how
+/// late it arrives, its rides, and its arrival with its cost added. Asked to arrive by, time is turned round.
+fn weight(j: &Journey, q: &Query) -> [i64; 4] {
+    let (leave, reach) = if q.arrive_by { (-j.arrive, -j.depart) } else { (j.depart, j.arrive) };
+    [if q.window == 0 { 0 } else { -(leave as i64) }, reach as i64, j.rides as i64, reach as i64 + j.penalty as i64]
+}
+
+/// An option as far as the rule tells it from another.
+fn option(j: &Journey, q: &Query) -> (i32, i32, u32, u32) {
+    match (q.window, q.arrive_by) {
+        (0, false) => (0, j.arrive, j.rides, j.penalty),
+        (0, true) => (j.depart, 0, j.rides, j.penalty),
+        _ => (j.depart, j.arrive, j.rides, j.penalty),
+    }
+}
+
+/// The search that weighs wishes gives what the rule leaves of every option: asked without weighing as far as the
+/// weighing search followed, with every option from the window's far end (what leaves after the window can beat
+/// what leaves inside it), each option is held against all the others by the rule alone.
+#[test]
+fn weighing_gives_what_the_rule_leaves_of_every_option() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (mut options, mut left_out) = (0, 0);
+    for (i, (a, z)) in pairs(&tt, 240, 8).into_iter().enumerate() {
+        let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 6 * 3600 + 613 * i as u32);
+        q.arrive_by = i % 3 == 1;
+        q.window = [0, 2400, 0, 5400][i % 4];
+        q.rules = i % 5 != 0;
+        q.limits.patient = i % 7 != 0;
+        q.limits.options = 1024;
+        q.limits.bag = 16;
+        q.wishes = match i % 6 {
+            0 | 3 => vec![Wish { what: What::Mode(Mode::Rail), how: How::Avoid(900) }],
+            1 | 4 => vec![
+                Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) },
+                Wish { what: What::Area { area: Area::Circle { lat: 520_900_000, lon: 51_100_000, radius_m: 700 }, through: i % 2 == 0 }, how: How::Avoid(300) },
+            ],
+            2 => vec![Wish { what: What::Mode(Mode::Tram), how: How::Prefer(180) }, Wish { what: What::NoWheelchair, how: How::Avoid(120) }],
+            _ => vec![Wish { what: What::Mode(Mode::Bus), how: How::Avoid(30) }],
+        };
+        let (weighed, mut every) = asked(&mut p, &q);
+        every.weigh = false;
+        let all = ask(&mut p, &every);
+        let mut edge = every.clone();
+        (edge.window, edge.time) = (0, if q.arrive_by { q.time - q.window } else { q.time + q.window });
+        let beyond = if q.window > 0 { ask(&mut p, &edge) } else { Vec::new() };
+        let mut left: Vec<_> = all
+            .iter()
+            .filter(|j| {
+                let w = weight(j, &q);
+                !all.iter().chain(beyond.iter()).any(|o| weight(o, &q) != w && weight(o, &q).iter().zip(w.iter()).all(|(x, y)| x <= y))
+            })
+            .map(|j| option(j, &q))
+            .collect();
+        left.sort_unstable();
+        left.dedup();
+        let mut got: Vec<_> = weighed.iter().map(|j| option(j, &q)).collect();
+        got.sort_unstable();
+        assert_eq!(got, left, "pair {i}: {q:?}");
+        options += got.len();
+        left_out += all.len() - left.len().min(all.len());
+    }
+    assert!(options > 400 && left_out > 50, "{options} {left_out}");
 }
 
 /// The answers to a fixed set of questions, folded into one number: the same on every platform, or something in the
@@ -174,10 +247,11 @@ fn the_answers_are_the_same_everywhere() {
         let (sa, sz) = (tt.stop(a), tt.stop(z));
         let mut q = Query::new(Place::Point { lat: sa.lat + 3000, lon: sa.lon - 2000 }, Place::Point { lat: sz.lat - 1000, lon: sz.lon + 4000 }, (i % 2) as i32, 7 * 3600 + 977 * i as u32);
         q.window = 2700;
-        q.limits.options = 1024; // with wishes that cost, a short hop has a hundred options: all of them count here
+        q.limits.options = 1024; // with wishes that cost and every option asked for, a short hop has a hundred
         q.arrive_by = i % 3 == 0;
         q.wishes.push(Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) });
         q.wishes.push(Wish { what: What::Area { area: Area::Circle { lat: 520_900_000, lon: 51_100_000, radius_m: 700 }, through: false }, how: How::Avoid(300) });
+        q.weigh = i % 4 != 1;
         let got = ask(&mut p, &q);
         assert_eq!(got, ask(&mut p, &q));
         for j in got.iter() {
@@ -194,7 +268,7 @@ fn the_answers_are_the_same_everywhere() {
             }
         }
     }
-    assert_eq!((journeys, sum), (1171, 3_551_298_446_134_272_512));
+    assert_eq!((journeys, sum), (852, 9_002_286_344_891_886_101));
 }
 
 #[test]

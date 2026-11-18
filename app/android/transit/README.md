@@ -37,6 +37,8 @@ $T trip $F 2835 --date 20261117 # one train: its stops, times and ids
 $T plan $F --from "Amsterdam Centraal" --to Maastricht --date 20261117 --time 08:00 --window 120
 $T plan $F --from 52.3745,4.8840 --to "Utrecht Centraal" --date 20261117 --time 17:00 --arrive-by \
         --avoid mode:bus --never "station:Amsterdam Centraal" --prefer kind:Intercity=5
+        # an avoided thing counts as arriving that many minutes later (10 unless said); --every-option keeps the
+        # options that are slower by more than their wishes are worth too
 $T bench $F --date 20261117     # times on random pairs, each compared with the connection scan
 $T fixed $F tests/data/journeys-nl-9696.tsv   # the fixed journeys, against the scan and what the file keeps
 ```
@@ -56,5 +58,6 @@ CARGO_TARGET_DIR=~/atlas/var/build/transit-planner ~/.cargo/bin/cargo build --li
 How the planner is held to being right:
 - **A second opinion.** `src/reference.rs` is a connection scan over the same file, sharing the places, the walks and what is closed, and nothing of the search. The two must agree on the earliest arrival, the latest departure, and every best pair over a window.
 - **Every journey can be made.** `reference::impossible` takes a journey and the file, and checks each ride, walk and change as a rider would meet them. It reads nothing of how the journey was found.
+- **Wishes weighed by the rule alone.** An option stays unless another leaves no earlier, arrives no later, has no more rides, and is no later with each one's cost added (`src/query.rs`'s head). The search that weighs prunes by that rule as it goes; `tests/cut.rs` and the tool's `bench` hold it to what the rule leaves of every option, found without weighing.
 - **No panic from data.** `src/fuzz.rs` makes files a little wrong and queries at the edge of every field; the tests run 6,300, the tool's `fuzz` command as many as asked (`cargo run --profile fuzz -- fuzz <file> <runs>` keeps the overflow checks on).
 - **The same everywhere.** A fixed set of answers folds to one number that the tests keep (`tests/cut.rs`). And the files a little wrong give counts (how many still opened, how many journeys they and the queries gave) that `tests/data/fuzz-counts.txt` keeps and the workflow holds each platform to. After a change to the search or to `fuzz.rs`, write them again: `./fuzz-counts.sh > tests/data/fuzz-counts.txt` in `planner/`.

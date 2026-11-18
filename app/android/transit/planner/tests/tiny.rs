@@ -230,11 +230,35 @@ fn wishes() {
         let j = ask(&mut p, &q);
         assert_eq!((j.len(), j[0].depart as u32, j[0].arrive as u32, numbers(&tt, &j[0])), (1, hm(8, 0), hm(8, 40), vec!["101".to_string()]));
     }
-    // the fast trip avoided at ten minutes: both are options, the fast one saying what it costs
-    let j = ask(&mut p, &with(What::Trip(fast), How::Avoid(600)));
-    let mut got: Vec<_> = j.iter().map(|j| (j.arrive as u32, j.penalty, numbers(&tt, j).join(" "))).collect();
-    got.sort();
-    assert_eq!(got, [(hm(8, 20), 600, "105".to_string()), (hm(8, 40), 0, "101".to_string())]);
+    // The fast trip avoided: it is there at 08:20, the slow bus at 08:40. What the wish is worth decides whether the
+    // slow bus is an option beside it: at twenty-five minutes it is (twenty later, and the wish kept); at ten it is
+    // not; at twenty exactly it is no better for being later, and is not. The fast one says what it costs.
+    let mut options = |q: &Query| {
+        let mut got: Vec<_> = ask(&mut p, q).iter().map(|j| (j.depart as u32, j.arrive as u32, j.penalty, numbers(&tt, j).join(" "))).collect();
+        got.sort();
+        got
+    };
+    let (quick, slow) = (|cost: u32| (hm(8, 5), hm(8, 20), cost, "105".to_string()), (hm(8, 0), hm(8, 40), 0, "101".to_string()));
+    assert_eq!(options(&with(What::Trip(fast), How::Avoid(1500))), [slow.clone(), quick(1500)]);
+    assert_eq!(options(&with(What::Trip(fast), How::Avoid(600))), [quick(600)]);
+    assert_eq!(options(&with(What::Trip(fast), How::Avoid(1200))), [quick(1200)]);
+    // asked for every option, the slow bus stays whatever the wish is worth
+    let mut every = with(What::Trip(fast), How::Avoid(600));
+    every.weigh = false;
+    assert_eq!(options(&every), [slow.clone(), quick(600)]);
+    // To arrive by 08:40 the fast bus leaves five minutes later than the slow one: a wish worth ten keeps the slow
+    // one beside it, a wish worth five (no better for leaving earlier) or less does not.
+    let mut by = with(What::Trip(fast), How::Avoid(600));
+    (by.arrive_by, by.time) = (true, hm(8, 40));
+    assert_eq!(options(&by), [slow.clone(), quick(600)]);
+    by.wishes[0].how = How::Avoid(300);
+    assert_eq!(options(&by), [quick(300)]);
+    // over a window the same holds between the options that leave no earlier: from 07:50 on for a quarter of an hour
+    let mut over = with(What::Trip(fast), How::Avoid(600));
+    (over.time, over.window) = (hm(7, 50), 900);
+    assert_eq!(options(&over), [quick(600)]);
+    over.wishes[0].how = How::Avoid(1500);
+    assert_eq!(options(&over), [slow, quick(1500)]);
     // what a wheelchair can't board: the fast bus says no; the slow one says yes
     let j = ask(&mut p, &with(What::NoWheelchair, How::Never));
     assert_eq!((j.len(), numbers(&tt, &j[0])), (1, vec!["101".to_string()]));

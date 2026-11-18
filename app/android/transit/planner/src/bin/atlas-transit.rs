@@ -6,7 +6,8 @@
 //!   atlas-transit stops <file> <text>                stops and stations by a part of their name
 //!   atlas-transit trip  <file> <number> [--date D]   one train or bus by its number: its stops, times and ids
 //!   atlas-transit plan  <file> --from P --to P [--date YYYYMMDD] [--time HH:MM] [--window MIN] [--arrive-by]
-//!                       [--max-rides N] [--never W]… [--avoid W[=MIN]]… [--prefer W[=MIN]]… [--no-rules] [--scan]
+//!                       [--max-rides N] [--never W]… [--avoid W[=MIN]]… [--prefer W[=MIN]]… [--every-option]
+//!                       [--no-rules] [--scan]
 //!   atlas-transit fixed <file> <journeys.tsv> [--write]   the fixed journeys: checked against the scan, or written
 //!   atlas-transit bench <file> [--date D] [--pairs N]     times, and agreement with the scan, on random pairs
 //!   atlas-transit fuzz  <file> <runs> [seed]              files a little wrong, and queries at their edges
@@ -394,6 +395,7 @@ fn query_of(tt: &Timetable, args: &[String]) -> Result<Query, String> {
     q.window = option(args, "--window").map_or(Ok(0), |m| m.parse::<u32>().map(|m| m * 60).map_err(|_| "--window: minutes"))?;
     q.arrive_by = args.iter().any(|a| a == "--arrive-by");
     q.rules = !args.iter().any(|a| a == "--no-rules");
+    q.weigh = !args.iter().any(|a| a == "--every-option");
     if let Some(n) = option(args, "--max-rides") {
         q.max_rides = n.parse().map_err(|_| "--max-rides: a number")?;
     }
@@ -684,6 +686,39 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
     Ok(if wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
+/// The options that weighing leaves of a set, by the rule alone (query.rs's head): one is beaten by another, of the
+/// set or of `beyond` (the journeys that leave after the window), that leaves no earlier, arrives no later, has no
+/// more rides, and is no later with each one's cost added to its arrival. As (depart, arrive, rides, cost) with the
+/// end that was asked for left out where one moment was asked; sorted. The bench holds the weighing search to it.
+fn thinned(all: &[Journey], beyond: &[Journey], window: u32, back: bool) -> Vec<(i32, i32, u32, u32)> {
+    let v = |j: &Journey| {
+        let (leave, reach) = if back { (-j.arrive, -j.depart) } else { (j.depart, j.arrive) };
+        [if window == 0 { 0 } else { -(leave as i64) }, reach as i64, j.rides as i64, reach as i64 + j.penalty as i64]
+    };
+    let mut out: Vec<(i32, i32, u32, u32)> = Vec::new();
+    for j in all {
+        let a = v(j);
+        let beaten = all.iter().chain(beyond.iter()).any(|o| {
+            let b = v(o);
+            b != a && b.iter().zip(a.iter()).all(|(x, y)| x <= y)
+        });
+        if !beaten {
+            out.push(option_of(j, window, back));
+        }
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+fn option_of(j: &Journey, window: u32, back: bool) -> (i32, i32, u32, u32) {
+    match (window, back) {
+        (0, false) => (0, j.arrive, j.rides, j.penalty),
+        (0, true) => (j.depart, 0, j.rides, j.penalty),
+        _ => (j.depart, j.arrive, j.rides, j.penalty),
+    }
+}
+
 fn percentile(v: &mut [f64], p: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     if v.is_empty() { 0.0 } else { v[((v.len() - 1) as f64 * p) as usize] }
@@ -706,8 +741,12 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         return Err("no stop has a route".into());
     }
     let mut rng = fuzz::Rng(0x9E37_79B9_7F4A_7C15);
-    let (mut t_one, mut t_window, mut t_back, mut t_wish, mut t_scan) = (vec![], vec![], vec![], vec![], vec![]);
-    let (mut found, mut rides, mut options, mut wrong, mut cut, mut later) = (0, 0, 0, 0, [0u32; 3], 0);
+    let (mut t_one, mut t_window, mut t_back, mut t_scan) = (vec![], vec![], vec![], vec![]);
+    let (mut t_wish, mut t_every): ([Vec<f64>; 3], [Vec<f64>; 3]) = Default::default();
+    let (mut found, mut rides, mut options, mut wrong, mut cut, mut later) = (0, 0, 0, 0, [0u32; 2], 0);
+    let (mut wish_cut, mut wish_options, mut every_options) = ([0u32; 3], [0usize; 3], [0usize; 3]);
+    let (mut wish_wrong, mut compared, mut unsure) = (0, 0, 0);
+    let every = !args.iter().any(|a| a == "--quick");
     let mut most = 0usize;
     for i in 0..n {
         let (a, b) = (served[rng.below(served.len() as u64) as usize], served[rng.below(served.len() as u64) as usize]);
@@ -792,20 +831,57 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) never by rail: the planner {:?}, the scan {:?}", ours.map(clock), theirs.map(clock));
         }
-        let mut avoid = window.clone();
-        avoid.wishes.push(Wish { what: What::Mode(Mode::Rail), how: How::Avoid(900) });
-        let t0 = Instant::now();
-        let got = planner.plan(&avoid);
-        t_wish.push(ms(t0));
-        cut[2] += got.cut_short as u32;
-        most = most.max(got.journeys.len());
-        for j in got.journeys.iter() {
-            if let Some(why) = impossible(&planner, &avoid, j) {
-                wrong += 1;
-                println!("WRONG  pair {i} ({a} to {b}) with rail avoided: a journey that can't be made: {why}");
+        // rail avoided, and buses avoided with Intercity trains preferred (the planner's alone): timed weighing
+        // the wishes, and held to what every option comes to once the same rule is put to it afterwards
+        let rail = Wish { what: What::Mode(Mode::Rail), how: How::Avoid(900) };
+        let mixed = [Wish { what: What::Mode(Mode::Bus), how: How::Avoid(600) }, Wish { what: What::Kind("Intercity".into()), how: How::Prefer(300) }];
+        for (k, (base, wishes)) in [(&q, &[rail.clone()][..]), (&window, &[rail.clone()][..]), (&window, &mixed[..])].into_iter().enumerate() {
+            let mut wished = base.clone();
+            wished.wishes.extend(wishes.iter().cloned());
+            let t0 = Instant::now();
+            let got = planner.plan(&wished);
+            t_wish[k].push(ms(t0));
+            wish_cut[k] += got.cut_short as u32;
+            wish_options[k] += got.journeys.len();
+            most = most.max(got.journeys.len());
+            for j in got.journeys.iter() {
+                if let Some(why) = impossible(&planner, &wished, j) {
+                    wrong += 1;
+                    println!("WRONG  pair {i} ({a} to {b}) with wishes {k}: a journey that can't be made: {why}");
+                }
+            }
+            if k == 1 {
+                later += (got.journeys.iter().any(|j| j.penalty > 0) && got.journeys.iter().any(|j| j.penalty == 0 && j.rides > 0)) as u32;
+            }
+            if every {
+                // (every option as far as the weighing search followed: patience ends it sooner)
+                let mut all = followed(&wished, got.horizon);
+                all.weigh = false;
+                all.limits.options = 1024;
+                let t0 = Instant::now();
+                let full = planner.plan(&all);
+                t_every[k].push(ms(t0));
+                every_options[k] += full.journeys.len();
+                if full.cut_short || got.cut_short {
+                    unsure += 1;
+                } else {
+                    compared += 1;
+                    // what leaves after the window can beat what leaves inside it: every option from its far end
+                    let mut edge = all.clone();
+                    (edge.window, edge.time) = (0, all.time + all.window);
+                    let beyond = if all.window > 0 { planner.plan(&edge).journeys } else { Vec::new() };
+                    let weighed = thinned(&full.journeys, &beyond, wished.window, wished.arrive_by);
+                    let mut ours: Vec<(i32, i32, u32, u32)> = got.journeys.iter().map(|j| option_of(j, wished.window, wished.arrive_by)).collect();
+                    ours.sort_unstable();
+                    if weighed != ours {
+                        wish_wrong += 1;
+                        let show = |v: &[(i32, i32, u32, u32)]| v.iter().map(|o| format!("{}-{} {}r {}s", clock(o.0), clock(o.1), o.2, o.3)).collect::<Vec<_>>().join(", ");
+                        let only = |x: &[(i32, i32, u32, u32)], y: &[(i32, i32, u32, u32)]| x.iter().filter(|o| !y.contains(o)).copied().collect::<Vec<_>>();
+                        println!("WISH   pair {i} ({a} to {b}) with wishes {k}: weighing gave [{}] that every option weighed after lacks, and lacks [{}]", show(&only(&ours, &weighed)), show(&only(&weighed, &ours)));
+                    }
+                }
             }
         }
-        later += (got.journeys.iter().any(|j| j.penalty > 0) && got.journeys.iter().any(|j| j.penalty == 0 && j.rides > 0)) as u32;
     }
     let line = |name: &str, v: &mut Vec<f64>| println!("{name:<58} {:>8.2} {:>8.2} {:>8.2}", percentile(v, 0.5), percentile(v, 0.9), percentile(v, 1.0));
     println!("{n} random pairs of {} on {} at {}: {found} have a journey, {:.1} rides each", if points { "points at stops" } else { "stops" }, tt.date_of(day), clock(at as i32), rides as f64 / found.max(1) as f64);
@@ -813,8 +889,23 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     line("one departure (every best by arrival and rides)", &mut t_one);
     line("arrive by", &mut t_back);
     line(&format!("two hours of departures ({:.1} options a pair)", options as f64 / n as f64), &mut t_window);
-    line("two hours, rail avoided (15 min a ride)", &mut t_wish);
+    let names = ["one departure, rail avoided (15 min a ride)", "two hours, rail avoided", "two hours, buses avoided (10 min) and Intercity preferred (5)"];
+    for k in 0..3 {
+        line(&format!("{} ({:.1} options)", names[k], wish_options[k] as f64 / n as f64), &mut t_wish[k]);
+    }
+    if every {
+        for k in 0..3 {
+            line(&format!("  the same, every option ({:.1})", every_options[k] as f64 / n as f64), &mut t_every[k]);
+        }
+    }
     line("the scan, one earliest arrival", &mut t_scan);
-    println!("{} of {} comparisons with the scan differ; cut short by a cap: {} single departures, {} windows, {} windows with rail avoided (the most options one of those gave: {most}); for {later} pairs avoiding rail offers both a way by rail and one without", wrong, n * 4, cut[0], cut[1], cut[2]);
-    Ok(if wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    println!("{} of {} comparisons with the scan differ; cut short by a cap: {} single departures, {} windows", wrong, n * 4, cut[0], cut[1]);
+    println!(
+        "with wishes: cut short {} single departures, {} and {} windows (the most options one gave: {most}); for {later} pairs avoiding rail offers both a way by rail and one without",
+        wish_cut[0], wish_cut[1], wish_cut[2]
+    );
+    if every {
+        println!("{wish_wrong} of {compared} wished searches differ from every option weighed afterwards ({unsure} not compared: a cap cut one short)");
+    }
+    Ok(if wrong == 0 && wish_wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

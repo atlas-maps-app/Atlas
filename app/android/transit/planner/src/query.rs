@@ -8,7 +8,16 @@
 //!   cost never goes below zero, and a search may drop what is later and dearer.
 //!
 //! The cost is counted beside the arrival, never added to it: an answer says when a journey arrives and what it
-//! cost in wishes, and the options keep both the fastest and the one that follows the wishes best.
+//! cost in wishes.
+//!
+//! **What a wish is worth.** Its seconds say it: "avoid rail, fifteen minutes" makes a ride by rail as bad as
+//! arriving fifteen minutes later. So an option that follows the wishes better than a faster one stays only if it
+//! is later by less than that is worth. An option is beaten by another that leaves no earlier, arrives no later,
+//! has no more rides, and is no later when each one's cost is added to its arrival ([`Query::weigh`], the default;
+//! asked to arrive by, the cost is taken off the departure). The fastest option always stays; the one that follows
+//! the wishes best stays when it is worth its time. Without weighing, cost is a fourth thing to be best in and
+//! every option stays that no other beats in all four: on a real timetable half as many again, most of them a
+//! slower way round to save a part of a wish.
 
 use crate::file::{Timetable, TripText};
 pub use crate::geo::Area;
@@ -173,8 +182,10 @@ pub struct Limits {
     /// Whether the search first follows journeys only as far as one could sensibly take: twice the least time any
     /// timetable could give it, and half an hour (an hour at least), past the asked moment and its window; and as
     /// far as the horizon only when nothing is found by then. It makes a search many times shorter. What it leaves
-    /// out: an option with fewer rides that ends later than that although a faster one exists. A query with wishes
-    /// that cost is never searched so: the option that follows them best is the slower one.
+    /// out: an option with fewer rides that ends later than that although a faster one exists. With wishes that
+    /// cost, weighed, the search goes on past it as far as an option could still be worth its time (the latest
+    /// end, with its cost added, of the fastest journeys). With wishes that cost and every option asked for
+    /// ([`Query::weigh`] off) a search is never patient: the option that follows them best may be the slowest.
     pub patient: bool,
 }
 
@@ -208,6 +219,10 @@ pub struct Query {
     pub change_s: Option<u32>,
     /// Whether the feed's transfer rules between trips hold (a change that is not possible, a vehicle that waits).
     pub rules: bool,
+    /// Whether a wish's seconds are what following it is worth: an option slower than another stays only if it
+    /// saves at least as much in wishes as it loses in time (this module's head). `false` keeps every option that
+    /// no other beats in departure, arrival, rides and cost each.
+    pub weigh: bool,
     pub limits: Limits,
 }
 
@@ -227,6 +242,7 @@ impl Query {
             walk_mm_s: 1250,
             change_s: None,
             rules: true,
+            weigh: true,
             limits: Limits::default(),
         }
     }
