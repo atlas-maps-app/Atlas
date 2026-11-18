@@ -288,6 +288,9 @@ pub(crate) struct Prefs {
     /// A bit a trip: never ridden. Seconds a trip: what a ride costs on top of its line's.
     pub trip_closed: Option<Vec<u64>>,
     pub trip_cost: Option<Vec<u32>>,
+    /// Seconds a route, where trips cost: the least any of its trips costs. A boarding that has a trip at that
+    /// cost need look at no later one.
+    pub route_least: Option<Vec<u32>>,
 }
 
 #[inline]
@@ -336,6 +339,7 @@ impl Prefs {
             line_cost: None,
             trip_closed: None,
             trip_cost: None,
+            route_least: None,
         };
         let (stops, lines, trips) = (tt.stops(), tt.lines(), tt.trips());
         // at most 64 wishes are read; more would be a caller's mistake, and each costs a pass over what it names
@@ -371,6 +375,13 @@ impl Prefs {
             }
         }
         let _ = stops;
+        if let Some(costs) = &p.trip_cost {
+            let least = |r: u32| {
+                let route = tt.route(r);
+                (route.first_trip..route.first_trip.saturating_add(route.trips)).map(|t| costs.get(t as usize).copied().unwrap_or(0)).min().unwrap_or(0)
+            };
+            p.route_least = Some((0..tt.routes()).map(least).collect());
+        }
         p
     }
 

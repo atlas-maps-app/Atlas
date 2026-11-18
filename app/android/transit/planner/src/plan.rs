@@ -2178,8 +2178,8 @@ impl<'s> Search<'s, '_> {
 
     /// What a rule says waits for the ride before a held label: its trip of this route; or, where it names a line
     /// and no trip, the first trip of that line leaving once the ride before is in. Whoever came by that ride is
-    /// at the stop from then on, so where trips differ in cost a few later and cheaper ones of the line are
-    /// boarded too, as in `board`.
+    /// at the stop from then on, so where trips differ in cost the later and cheaper ones of the line are boarded
+    /// too, as in `board`.
     fn board_waiting(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, h: &Held, lab: &Label, cost_here: u32) {
         let rule = self.tt.rule(h.rule);
         let (_, to) = self.sides(&rule);
@@ -2188,14 +2188,15 @@ impl<'s> Search<'s, '_> {
         }
         let base = lab.cost.saturating_add(cost(&self.prefs.stop_cost, lab.stop)).saturating_add(cost_here);
         let trip_costs = to.1 == NONE && self.soft && self.prefs.trip_cost.is_some();
+        let least = cost(&self.prefs.route_least, r);
         // the earliest of all the days, and with costly trips each one cheaper than those before it on its day
         let mut found: Vec<(i32, Riding)> = Vec::new();
         for off in self.off_lo..=self.off_hi {
             // the rule's own trip if it names one, else the line's first of the day that can be caught
             let run = self.run(r, off);
             let mut rank = if to.1 == NONE { self.first_rank(&run, pos, off, lab.time) } else { 0 };
-            let (mut cheapest, mut looked) = (u32::MAX, 0);
-            while (to.1 != NONE || (rank as usize) < run.trips.len()) && looked < 32 {
+            let mut cheapest = u32::MAX;
+            while (to.1 != NONE || (rank as usize) < run.trips.len()) && self.steps <= self.max_steps {
                 self.steps += 1;
                 let trip = if to.1 == NONE { self.trip_at(&run, rank).0 } else { to.1 };
                 rank += 1;
@@ -2214,10 +2215,9 @@ impl<'s> Search<'s, '_> {
                         cheapest = c;
                         found.push((time, Riding { trip, times, off, cost: base.saturating_add(c), from: h.label, pos }));
                     }
-                    if !trip_costs || c == 0 {
+                    if !trip_costs || c <= least {
                         break;
                     }
-                    looked += 1;
                 }
                 if to.1 != NONE {
                     break;
@@ -2245,6 +2245,7 @@ impl<'s> Search<'s, '_> {
             return;
         }
         let before = if held { self.before(lab, stop) } else { None };
+        let least = cost(&self.prefs.route_least, r);
         let mut best = NEVER;
         let step = if self.back { -1 } else { 1 };
         let mut off = if self.back { self.off_hi } else { self.off_lo };
@@ -2252,17 +2253,19 @@ impl<'s> Search<'s, '_> {
             if best <= self.earliest_of(off) {
                 break;
             }
-            // the first trip of this day that can be caught, and with costly trips a few later and cheaper ones
+            // the first trip of this day that can be caught, and with costly trips each later one that is cheaper
+            // than those before it, as far as the search goes
             let run = self.run(r, off);
             if !self.in_reach(&run, off, lab.time) {
                 off += step;
                 continue;
             }
             let mut rank = self.first_rank(&run, pos, off, lab.time);
-            let (mut cheapest, mut looked) = (u32::MAX, 0);
+            let mut cheapest = u32::MAX;
             // (a trip the rules bar is passed over for the next, and reading the rules for it is counted: a file
-            // may bar every trip of a day, with any number of rules)
-            while (rank as usize) < run.trips.len() && looked < 32 && self.steps <= self.max_steps {
+            // may bar every trip of a day, with any number of rules; and so is each costlier trip passed over for
+            // a cheaper one after it)
+            while (rank as usize) < run.trips.len() && self.steps <= self.max_steps {
                 self.steps += 1;
                 let (trip, times) = self.trip_at(&run, rank);
                 rank += 1;
@@ -2285,10 +2288,10 @@ impl<'s> Search<'s, '_> {
                     best = best.min(time);
                     self.join(riding, Riding { trip, times, off, cost: base.saturating_add(c), from: l, pos }, pos);
                 }
-                if !trip_costs || c == 0 {
+                // (no trip of this route costs less than that: nothing later is cheaper)
+                if !trip_costs || c <= least {
                     break;
                 }
-                looked += 1;
             }
             off += step;
         }

@@ -586,6 +586,51 @@ fn wishes_with_a_cost_are_held_to_the_scan() {
     assert!(asked > 450 && costly > 200 && several > 60, "{asked} {costly} {several}");
 }
 
+/// Where trips of one route differ in cost, a boarding goes on to each later trip that is cheaper than those before
+/// it, however many costlier ones stand between (it looked at 32 and no further: the answer then lacked the option
+/// that waits for the cheaper trip, and did not say so). Here 40 trips in a row of a busy route are each avoided,
+/// from one of its stops to the next; every option asked for. The scan with a cost says what the options are.
+#[test]
+fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let scan = Reference::new(&p, 0, -86_400, 3 * 86_400);
+    let mut routes: Vec<u32> = (0..tt.routes()).collect();
+    routes.sort_by_key(|r| (core::cmp::Reverse(tt.route(*r).trips), *r));
+    let (mut asked, mut whole, mut said, mut silent) = (0, 0, 0, Vec::new());
+    for &r in routes.iter().take(12) {
+        let route = tt.route(r);
+        // the trips that run on the first day, as they leave; the fifth of them and the 39 after it are avoided
+        let running: Vec<u32> = (route.first_trip..route.first_trip + route.trips).filter(|t| tt.runs(tt.trip(*t).service, 0)).collect();
+        if running.len() < 60 {
+            continue;
+        }
+        for pos in [0, route.stops / 2] {
+            let (from, to) = (tt.pattern_stop(route.first_stop + pos).stop, tt.pattern_stop(route.first_stop + pos + 1).stop);
+            let leaves = tt.time(tt.trip_times(running[4]), pos).1;
+            let mut q = Query::new(Place::Stop(from), Place::Stop(to), 0, leaves.saturating_sub(120));
+            (q.max_rides, q.limits.options, q.limits.bag, q.weigh) = (16, 1024, 16, false);
+            q.wishes = running[4..44].iter().map(|t| Wish { what: What::Trip(*t), how: How::Avoid(60) }).collect();
+            let got = p.plan(&q);
+            for j in got.journeys.iter() {
+                assert_eq!(impossible(&p, &q, j), None, "{q:?}\n{j:?}");
+            }
+            asked += 1;
+            if got.cut_short {
+                said += 1;
+            } else if let Some(how) = scan.costs_differ(&p, &q, &got.journeys) {
+                silent.push(format!("route {r} from its stop {pos}: {how}"));
+            } else {
+                whole += 1;
+            }
+        }
+    }
+    println!("{asked} questions with 40 trips in a row avoided: {whole} answers are whole, {said} say they are not, {} lack an option and do not say so", silent.len());
+    assert!(silent.is_empty(), "{} answers that lack an option and do not say so:\n{}", silent.len(), silent[..silent.len().min(8)].join("\n"));
+    assert!(asked >= 10 && whole >= 10, "{asked} {whole}");
+}
+
 /// A stop keeps so many labels a round and no more ([`atlas_transit::Limits::bag`]); the one that goes when a bag
 /// is full may have led to an option. An answer found with a bag that overflowed says so: wherever a smaller bag
 /// gives other options than the largest, the answer is marked as cut short.
