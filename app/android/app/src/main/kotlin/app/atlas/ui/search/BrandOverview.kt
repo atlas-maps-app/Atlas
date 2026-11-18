@@ -56,6 +56,7 @@ import app.atlas.places.FactKind
 import app.atlas.places.FactState
 import app.atlas.places.Facts
 import app.atlas.places.Localise
+import app.atlas.places.OpeningHoursContext
 import app.atlas.providers.WikidataEntity
 import app.atlas.search.CategoryResults
 import app.atlas.search.Facets
@@ -66,6 +67,7 @@ import app.atlas.search.Overview
 import app.atlas.search.SearchItem
 import app.atlas.ui.kit.BrandSigns
 import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssShadow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -198,16 +200,18 @@ internal fun BrandDetails(
     week: Boolean,
     now: LocalDateTime,
     lang: String,
+    country: String?,
     onWeek: () -> Unit,
 ) {
     val services = LocalServices.current
     val uri = LocalUriHandler.current
     val langs = listOf(lang, "en").distinct()
     var reading by remember { mutableStateOf(false) }
-    // its branches' own websites say the brand's first ([BrandSite]), its Wikidata item's after
-    val site = remember(results, wiki) {
+    // its branches' own websites say the brand's first ([BrandSite]), in the country of the map where they are, its
+    // Wikidata item's after
+    val site = remember(results, wiki, country) {
         val tags = results?.hits?.map { it.record.tags }.orEmpty()
-        webUrl(BrandSite.of(tags, tags.firstNotNullOfOrNull { it["addr:country"] }) ?: wiki?.website)
+        webUrl(BrandSite.of(tags, country) ?: wiki?.website)
     }
     val article = wiki?.let { e -> langs.firstNotNullOfOrNull { l -> e.sitelinks["${l}wiki"]?.let { l to it } } }
     val every = everyBranch(brand, lang)
@@ -241,7 +245,8 @@ private fun TodayTile(h: HoursAnswer, now: LocalDateTime, week: Boolean, onWeek:
     val t = h.days.firstOrNull { it.day == now.dayOfWeek } ?: return
     val first = t.opensMiddle ?: t.earliest
     val last = t.closesMiddle ?: t.latest
-    val value = if (first == null || last == null) stringResource(R.string.brand_today_closed) else "${hm(first)}–${hm(last)}"
+    // where no branch open today states when it closes (`17:00+`): "17:00+"
+    val value = if (first == null) stringResource(R.string.brand_today_closed) else if (last == null) "${hm(first)}+" else "${hm(first)}–${hm(last)}"
     val later = t.latest?.takeIf { l -> last != null && l > last }?.let { stringResource(R.string.brand_today_latest, hm(it)) }
     DetailTile(
         "ui-clock", stringResource(R.string.brand_today), value, later, onClick = onWeek,
@@ -302,7 +307,11 @@ private fun everyBranch(brand: Brand, lang: String): List<BranchFact> {
         FactState.YES to stringResource(R.string.place_fact_yes), FactState.NO to stringResource(R.string.place_fact_no),
         FactState.LIMITED to stringResource(R.string.place_fact_limited), FactState.ONLY to stringResource(R.string.place_fact_only),
     )
-    val facts = remember(brand.id, lang) { Facts.of(brand.otherTags + brand.keyTags, lang).filter { it.mapped && it.kind in BRANCH_FACTS && it.state != FactState.UNKNOWN } }
+    // a brand's own tags, of no place: read nowhere in particular, and no hours are among the facts kept (BRANCH_FACTS)
+    val clock = appClock()
+    val facts = remember(brand.id, lang) {
+        Facts.of(brand.otherTags + brand.keyTags, lang, LocalDateTime.now(clock), OpeningHoursContext.Default).filter { it.mapped && it.kind in BRANCH_FACTS && it.state != FactState.UNKNOWN }
+    }
     return remember(facts, words) {
         val cuisines = facts.filter { it.kind == FactKind.CUISINE }
         buildList {

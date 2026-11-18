@@ -16,7 +16,9 @@ import androidx.compose.runtime.CompositionTracer
 import androidx.compose.runtime.InternalComposeTracingApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -79,9 +81,22 @@ class MapStageFramesTest {
 
     private fun near(a: Rect, b: Rect) = abs(a.left - b.left) <= 1f && abs(a.top - b.top) <= 1f && abs(a.right - b.right) <= 1f && abs(a.bottom - b.bottom) <= 1f
 
-    /** One frame after [move], drawn as a phone draws it: the stage's runs in it, and the map's bounds after it. */
+    /**
+     * The control of the counts: a frame that changes what the stage reads (its cover's colour) recomposes it, so a
+     * tracer that sees nothing, or source info the compiler writes another way, fails a test rather than passing it.
+     */
+    private fun assertTheTracerSeesTheStage(change: () -> Unit) {
+        val n = frame(change).first
+        assertTrue("a frame that changes what the stage reads recomposes it: $n of ${runs.size} the tracer saw, ${runs.distinct().take(12)}", n >= 1)
+    }
+
+    /**
+     * One frame after [move], drawn as a phone draws it: the stage's runs in it, and the map's bounds after it. The
+     * change is sent to the composition at once, as a phone's main thread does before its next frame; else it would
+     * come a frame late, and the last frame's work would go uncounted.
+     */
     private fun frame(move: () -> Unit): Pair<Int, Rect> {
-        compose.runOnIdle(move)
+        compose.runOnIdle { move(); Snapshot.sendApplyNotifications() }
         runs.clear()
         compose.mainClock.advanceTimeByFrame()
         compose.waitForIdle()
@@ -96,9 +111,10 @@ class MapStageFramesTest {
         val state = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 0.0, 0.0)).apply { time = Fixtures.afternoon }
         lateinit var scroll: ScrollState
         var window = Rect.Zero
+        var cover by mutableStateOf(Color.White)
         compose.setContent {
             Box(Modifier.fillMaxSize()) {
-                MapStageHost(stage, cover = Color.White)
+                MapStageHost(stage, cover = cover)
                 CompositionLocalProvider(LocalMapStage provides stage) {
                     scroll = rememberScrollState()
                     Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
@@ -115,6 +131,7 @@ class MapStageFramesTest {
         Composer.setTracer(tracer)
         compose.mainClock.autoAdvance = false
         val frames = (1..12).map { frame { scroll.dispatchRawDelta(17f) } }
+        assertTheTracerSeesTheStage { cover = Color.Black }
         Composer.setTracer(null)
         compose.mainClock.autoAdvance = true
 
@@ -131,9 +148,10 @@ class MapStageFramesTest {
         val stage = MapStage()
         val state = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 0.0, 0.0)).apply { time = Fixtures.afternoon }
         var shift by mutableFloatStateOf(0f)
+        var cover by mutableStateOf(Color.White)
         compose.setContent {
             Box(Modifier.fillMaxSize()) {
-                MapStageHost(stage, cover = Color.White)
+                MapStageHost(stage, cover = cover)
                 CompositionLocalProvider(LocalMapStage provides stage) {
                     // a push's slide: the screen in from a third of the width
                     StageMap(state, Modifier.fillMaxSize().offset { IntOffset(shift.roundToInt(), 0) })
@@ -148,6 +166,7 @@ class MapStageFramesTest {
         compose.mainClock.autoAdvance = false
         val width = whole.width
         val frames = (10 downTo 0).map { k -> frame { shift = width / 3f * k / 10f } }
+        assertTheTracerSeesTheStage { cover = Color.Black }
         Composer.setTracer(null)
         compose.mainClock.autoAdvance = true
 

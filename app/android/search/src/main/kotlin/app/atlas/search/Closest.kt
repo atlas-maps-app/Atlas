@@ -94,8 +94,9 @@ object Closest {
         if (s.unknown) return Miss.HoursUnknown
         val opens = s.changesAt?.takeIf { s.nextChangeKind == ChangeKind.OPENS }?.let { Miss.Opens(it, Duration.between(at, it).toMinutes()) }
         val minute = at.hour * 60 + at.minute
+        // an open end states no closing time: no "closed at" from the guess of how long it lasted
         val closed = if (!back) null else h.spans(at.toLocalDate(), context)
-            .filter { it.state == OpenState.OPEN && it.end <= minute }.maxOfOrNull { it.end }
+            .filter { it.state == OpenState.OPEN && it.end <= minute }.maxByOrNull { it.end }?.takeIf { !it.openEnd }?.end
             ?.let { end -> at.toLocalDate().atStartOfDay().plusMinutes(end.toLong()) }
             ?.let { Miss.Closed(it, Duration.between(it, at).toMinutes()) }
         return listOfNotNull(opens, closed).minByOrNull { it.off }

@@ -144,6 +144,8 @@ data class MapName(val name: String, val water: Boolean, val rank: Int, val poin
 class LocalData(
     private val stores: () -> PlaceSource?,
     private val packs: () -> PackFeatures?,
+    /** The country of the map at a point, which the brands of the places there are matched in ([app.atlas.ui.search.HereContext.country]). */
+    private val countryAt: (LatLon) -> String?,
     private val overpass: () -> Overpass? = { null },
     private val isOnline: () -> Boolean = { false },
     private val onClose: () -> Unit = {},
@@ -310,9 +312,10 @@ class LocalData(
     /**
      * The places in [box] as they are found: what the phone holds ([onPhone]) at once; where that is only part of
      * the box (or nothing), online, the packs and the map's windows again once the windows the phone keeps no data for
-     * came from Atlas's packs ([WindowPlaces.fetched]), where that holds more; then, where the box is still not held
-     * whole, [ask]'s (Overpass's) for the whole of it, kept by [keep] and sorted by [order], or the last answer again
-     * with [ask]'s error where it failed. Nothing on the phone and offline: [ask]'s answer alone (none, no origin).
+     * came from Atlas's packs ([WindowPlaces.fetched]: only where they make the box whole), where that holds more; then,
+     * where the box is still not held whole, [ask]'s (Overpass's) for the whole of it, at once where the packs could
+     * not make it whole, kept by [keep] and sorted by [order], or the last answer again with [ask]'s error where it
+     * failed. Nothing on the phone and offline: [ask]'s answer alone (none, no origin).
      */
     private fun asFound(
         at: LatLon,
@@ -385,8 +388,8 @@ class LocalData(
 
     /**
      * [packsAndWindows] again, online, once the windows meeting [box] that the phone keeps no data for came from Atlas's
-     * packs ([WindowPlaces.fetched], waited for at most [WINDOW_PACKS_MS]); null offline, or where no pack and no window
-     * holds any of the box.
+     * packs ([WindowPlaces.fetched], waited for at most [WINDOW_PACKS_MS], and asked only where they make the box whole:
+     * else at once); null offline, or where no pack and no window holds any of the box.
      */
     private suspend fun fetchedWindows(at: LatLon, box: BBox, accept: (Map<String, String>) -> Boolean): Pair<List<Place>, Boolean>? {
         val w = windowPlaces ?: return null
@@ -425,9 +428,9 @@ class LocalData(
 
     /**
      * [inPacks] once, online, the map's windows in the circle the phone keeps no data for came from Atlas's packs (not
-     * Overpass), waited for at most [WINDOW_PACKS_MS]: for the screens that show [inPacks]' part of a circle, before
-     * they ask Overpass for the whole. Null offline, where a region's store covers [centre], or where nothing holds any
-     * of the circle.
+     * Overpass), waited for at most [WINDOW_PACKS_MS], where they make the circle's box whole ([WindowPlaces.fetched]);
+     * at once where they cannot: for the screens that show [inPacks]' part of a circle, before they ask Overpass for the
+     * whole. Null offline, where a region's store covers [centre], or where nothing holds any of the circle.
      */
     suspend fun inWindowPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<Place>>? =
         withContext(Dispatchers.IO) {
@@ -451,11 +454,12 @@ class LocalData(
     /** [answer]'s places in [box] as the chains among them, most branches first, at most [limit]. */
     private fun chains(answer: LocalAnswer<List<Place>>, box: BBox, limit: Int): LocalAnswer<List<LocalBrand>> {
         val centre = box.center
+        val country = countryAt(centre)
         val byBrand = LinkedHashMap<String, MutableList<Place>>()
         val brands = HashMap<String, Brand>()
         for (p in answer.value) {
             if (!isTrade(p.tags) || p.location !in box) continue
-            val b = Brands.forTags(p.tags) ?: continue
+            val b = Brands.forTags(p.tags, country) ?: continue
             brands[b.id] = b
             byBrand.getOrPut(b.id) { ArrayList() } += p
         }
@@ -474,7 +478,8 @@ class LocalData(
     fun branchesAsFound(id: String, centre: LatLon, radiusM: Double): Flow<LocalAnswer<List<Place>>> {
         val box = BBox.around(centre, radiusM)
         val within = { p: Place -> Geo.distance(centre, p.location) <= radiusM }
-        val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t)?.id == id }
+        val country = countryAt(centre)
+        val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t, country)?.id == id }
         val order = { list: List<Place> -> nearest(list, centre, Int.MAX_VALUE) }
         val brand = Brands.byId(id)
         val filter = brand?.wikidata?.let { TagFilter.Equals("brand:wikidata", it) } ?: brand?.let { TagFilter.Equals("brand", it.brand) }
@@ -825,7 +830,7 @@ class LocalData(
         val at = ctx.location ?: area?.center ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
         storeCovering(at)?.let { return LocalAnswer(OfflineEvaluator(it).run(query, ctx), PlaceOrigin.STORE) }
         val f = packsCovering(at) ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
-        val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true })
+        val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true }, ctx.hours.country)
         return LocalAnswer(OfflineEvaluator(places).run(query, ctx), PlaceOrigin.PACK)
     }
 
@@ -1004,7 +1009,10 @@ class LocalData(
         /** What's here: the longest Overpass is waited on for the places around, where nothing else has them. */
         const val HERE_ONLINE_MS = 20_000L
 
-        /** A lookup's longest wait for the map's windows from Atlas's packs, where the phone keeps no data for them, before Overpass. */
+        /**
+         * A lookup's longest wait for the map's windows from Atlas's packs, where the phone keeps no data for them and
+         * they make its box whole, before Overpass.
+         */
         const val WINDOW_PACKS_MS = 10_000L
 
         /** Two bridge crossings closer than this along a route are one bridge (metres). */

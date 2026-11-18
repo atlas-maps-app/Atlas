@@ -4,6 +4,7 @@ import app.atlas.places.CategoryNode
 import app.atlas.places.CategoryTree
 import app.atlas.places.Geometry
 import app.atlas.places.NodeKind
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import java.time.DayOfWeek
 import java.time.LocalTime
@@ -42,6 +43,11 @@ data class Moment(
     val outlook: Outlook? = null,
     /** Today is a public holiday where the searcher is: offices and the post shut, the parks and the lakes full. */
     val holiday: Boolean = false,
+    /**
+     * The holidays and the sun where the searcher is, which every place's hours are read against (the reviewer, 17
+     * November, finding 7): the app's `HereContext.hours`, never a default.
+     */
+    val hours: OpeningHoursContext,
 ) {
     val part: Daypart get() = Daypart.of(now.toLocalTime())
     val weekend: Boolean get() = now.dayOfWeek == DayOfWeek.SATURDAY || now.dayOfWeek == DayOfWeek.SUNDAY

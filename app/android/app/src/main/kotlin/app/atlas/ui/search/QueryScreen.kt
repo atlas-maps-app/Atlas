@@ -87,6 +87,7 @@ import app.atlas.ui.kit.Kicker
 import app.atlas.ui.kit.PrimaryButton
 import app.atlas.ui.kit.Sheet
 import app.atlas.ui.kit.SheetStop
+import app.atlas.ui.kit.rememberCountryAt
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberHere
@@ -422,10 +423,11 @@ private fun QueryResults(state: QueryState, parsed: ParsedQuery?, here: app.atla
         )
         else -> {
             val rows = remember(parsed) { QueryEdit.rows(parsed).filter { !it.negated } }
+            val country = rememberCountryAt(here)
             LazyColumn(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 itemsIndexed(r.hits, key = { _, h -> h.place.key }) { i, h ->
                     val symbols = h.near.map { n -> rows.getOrNull(n.clause)?.let { QueryEdit.subjectOf(parsed, it.row)?.symbol } ?: n.record.symbol }
-                    RankedRow(i + 1, h, symbols, lang, onClick = { onPlace(h.place) })
+                    RankedRow(i + 1, h, symbols, lang, country, onClick = { onPlace(h.place) })
                 }
             }
         }
@@ -438,7 +440,7 @@ private fun QueryResults(state: QueryState, parsed: ParsedQuery?, here: app.atla
  * (13 px symbol, 12 px figures, 10 apart); walk minutes at the end in 14 / 700.
  */
 @Composable
-private fun RankedRow(rank: Int, h: Hit, symbols: List<String>, lang: String, onClick: () -> Unit) {
+private fun RankedRow(rank: Int, h: Hit, symbols: List<String>, lang: String, country: String?, onClick: () -> Unit) {
     val near = h.near.joinToString(", ") { shortMetres(it.distance) }
     Row(
         Modifier.fillMaxWidth().heightIn(min = 61.dp)
@@ -452,7 +454,7 @@ private fun RankedRow(rank: Int, h: Hit, symbols: List<String>, lang: String, on
         Column(Modifier.weight(1f).padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             BoardLine(h.record.name(lang) ?: kindTitleOf(h.place, lang) ?: h.place.key, boardText(16f, 600, 20.5f), INK)
             if (h.near.isEmpty()) {
-                listOfNotNull(kindOf(h.place, lang)?.takeIf { h.record.name(lang) != null }, addressOf(h.place)).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
+                listOfNotNull(kindOf(h.place, lang)?.takeIf { h.record.name(lang) != null }, addressOf(h.place, country)).joinToString(" · ").takeIf { it.isNotEmpty() }?.let {
                     BoardLine(it, boardText(12f, 400, 15.5f), GREY)
                 }
             } else {

@@ -3,9 +3,15 @@ package app.atlas.ui.search
 import android.os.Looper
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
+import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.OpenSpan
 import app.atlas.places.OpenState
+import app.atlas.places.OpeningHours
+import app.atlas.search.PlaceRecord
+import app.atlas.search.ResultHit
+import app.atlas.search.TravelMode
+import app.atlas.testing.Nowhere
 import app.atlas.testing.testServices
 import app.atlas.ui.kit.walkMinutes
 import org.junit.Assert.assertEquals
@@ -17,6 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.time.Duration
+import java.time.LocalDateTime
 import java.time.ZoneId
 
 /** What the review of the search package fixed: far places keep their own clock, quests can be retried, safe links. */
@@ -59,13 +66,24 @@ class FindReviewTest {
     }
 
     @Test
-    fun aFarPlaceWithoutACountryHasNoHolidaysOfTheirs() {
+    fun aFarPlaceWithoutACountryKeepsTheMapsOwn() {
+        // Sydney, tagged with no country and with no region on the phone: the map's own country there (finding 8).
         val s = testServices()
         val far = Place(OsmId.parse("n8")!!, LatLon(-33.87, 151.21), mapOf("name" to "Far"))
         val l = HereContext.localeOf(s, far, LatLon(52.37, 4.89), ZoneId.of("Europe/Amsterdam"))
+        assertEquals("AU", l.country)
+        // Australia's zone nearest the sun's hour there: +10 at 151 degrees east, before its summer time.
+        assertEquals(10 * 3600, l.zone.rules.getStandardOffset(java.time.Instant.parse("2026-10-13T00:00:00Z")).totalSeconds)
+    }
+
+    @Test
+    fun aPlaceFarFromEveryCountryHasNoHolidaysOfTheirs() {
+        val s = testServices()
+        val far = Place(OsmId.parse("n9")!!, LatLon(-25.07, -130.10), mapOf("name" to "Adamstown"))
+        val l = HereContext.localeOf(s, far, LatLon(52.37, 4.89), ZoneId.of("Europe/Amsterdam"))
         assertNull(l.country)
-        // The sun's own hour there: +10 at 151 degrees east.
-        assertEquals(10 * 3600, l.zone.rules.getOffset(java.time.Instant.parse("2026-10-13T00:00:00Z")).totalSeconds)
+        // The sun's own hour there: -9 at 130 degrees west.
+        assertEquals(-9 * 3600, l.zone.rules.getOffset(java.time.Instant.parse("2026-10-13T00:00:00Z")).totalSeconds)
     }
 
     @Test
@@ -132,5 +150,24 @@ class FindReviewTest {
         assertEquals("18:00–24:00", spanWords(listOf(OpenSpan(18 * 60, 1440, OpenState.OPEN))))
         assertEquals("24 h", spanWords(listOf(OpenSpan(0, 1440, OpenState.OPEN))))
         assertEquals("18:00–1:00", spanWords(listOf(OpenSpan(18 * 60, 25 * 60, OpenState.OPEN))))
+    }
+
+    @Test
+    fun anOpenEndNamesNoClosingTime() {
+        // a day's words: the stated end and a "+", or the start and a "+", never the guess of how long it lasts
+        assertEquals("16:00–2:00+", spanWords(OpeningHours.parse("Tu-Su 16:00-02:00+").weekTable(weekOf = null, context = Nowhere)[6]))
+        assertEquals("17:00+", spanWords(OpeningHours.parse("Mo-Su 17:00+").weekTable(weekOf = null, context = Nowhere)[0]))
+        assertEquals("10:00–14:00, 17:00+", spanWords(OpeningHours.parse("Mo 10:00-14:00,17:00+").weekTable(weekOf = null, context = Nowhere)[0]))
+        // a row at 21:00: neither "closed when you get there" nor minutes to spare from the guess
+        val evening = LocalDateTime.of(2026, 11, 17, 21, 0)
+        val bar = OpeningHours.parse("Mo-Su 17:00+").status(evening, context = Nowhere)
+        assertNull(arrivalOf(bar, 90, evening))
+        val record = PlaceRecord(Place(OsmId(OsmType.NODE, 1), LatLon(52.37, 4.89), mapOf("amenity" to "bar", "opening_hours" to "Mo-Su 17:00+")), null, null, null, "maki-bar")
+        val hit = ResultHit(record, 400.0, 5, TravelMode.WALK, bar, hoursConfirmed = true, hoursStale = false, node = null, score = 1.0)
+        assertNull(spareMinutes(hit, evening))
+        // as before where the hours state the closing
+        val pub = OpeningHours.parse("Mo-Su 17:00-22:00").status(evening, context = Nowhere)
+        assertEquals(Arrival.CLOSED to -30, arrivalOf(pub, 90, evening))
+        assertEquals(55, spareMinutes(hit.copy(open = pub), evening))
     }
 }

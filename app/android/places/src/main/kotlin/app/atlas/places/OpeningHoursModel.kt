@@ -153,18 +153,37 @@ internal class DaySelector(val weekdays: List<WeekdayRange>, val holidays: List<
     }
 }
 
-/** A time of day: fixed minutes (up to 48:00), or a sun event moved by [offset] minutes. */
+/**
+ * A time of day: fixed minutes (up to 48:00), or a sun event moved by [offset] minutes. A sun event that does not happen
+ * that day, the sun on one side of it all day ([DaySun.upAllDay], [DaySun.lightAllDay]), has happened at midnight when
+ * the whole day is after it (dawn in the white nights, sunrise in polar day) and never comes, 24:00, when the whole day
+ * is before it (dusk in the white nights): `dawn-dusk` in Trondheim in June is open all day (the reviewer, 17
+ * November, finding 11: it read closed). Null when the clock does not say why.
+ */
 internal class TimePoint(val minutes: Int, val event: SunEvent? = null, val offset: Int = 0) {
     fun resolve(date: LocalDate, sun: SunClock): Int? {
         if (event == null) return minutes
         val t = sun.times(date) ?: return null
-        val at = when (event) {
-            SunEvent.DAWN -> t.dawn
-            SunEvent.SUNRISE -> t.sunrise
-            SunEvent.SUNSET -> t.sunset
-            SunEvent.DUSK -> t.dusk
+        eventTime(t)?.let { return it.hour * 60 + it.minute + offset }
+        val sideAfter = when (event) {
+            SunEvent.DAWN, SunEvent.DUSK -> t.lightAllDay
+            SunEvent.SUNRISE, SunEvent.SUNSET -> t.upAllDay
         } ?: return null
-        return at.hour * 60 + at.minute + offset
+        // a rising (dawn, sunrise) leads to light, a setting away from it: the whole day is after a rising when it is
+        // light. An offset moves nothing that is not there: "(sunset+01:00)" in polar day never comes either
+        val rising = event == SunEvent.DAWN || event == SunEvent.SUNRISE
+        return if (rising == sideAfter) 0 else 1440
+    }
+
+    /** True when this is a sun event that does not happen on [date]. */
+    fun missed(date: LocalDate, sun: SunClock): Boolean = event != null && sun.times(date)?.let { eventTime(it) } == null
+
+    private fun eventTime(t: DaySun) = when (event) {
+        SunEvent.DAWN -> t.dawn
+        SunEvent.SUNRISE -> t.sunrise
+        SunEvent.SUNSET -> t.sunset
+        SunEvent.DUSK -> t.dusk
+        null -> null
     }
 }
 
@@ -178,17 +197,37 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
         val a = from.resolve(date, sun) ?: return null
         if (to == null) return if (openEnd) a to a + openEndGuess(a) else a to a + 1
         var b = to.resolve(date, sun) ?: return null
-        if (b <= a) b += 1440
+        if (b <= a) {
+            // past midnight; but where a sun event did not happen, a span that ends before it starts never begins
+            // (`sunset-sunrise` in polar day: no night)
+            if (from.missed(date, sun) || to.missed(date, sun)) return null
+            b += 1440
+        }
         return a to b.coerceAtMost(a + 2880).coerceAtMost(2880)
     }
 
     companion object {
-        /** How long an open end ("17:00+") is assumed to last: to midnight by day, five hours in the evening, eight at night. */
-        fun openEndGuess(start: Int): Int = when {
-            start < 17 * 60 -> (1440 - start).coerceAtLeast(60)
-            start < 22 * 60 -> 300
-            else -> 480
+        /**
+         * How long an open end is assumed to last from [at], where it begins (`17:00+`: the start; `17:00-01:00+`: the
+         * stated end, which may pass 1440), by the hour it begins: by day to midnight, from 17:00 five hours, at night
+         * (22:00 to 06:00) a few hours, to six the next morning and never past it. (The reviewer, 17 November 2026:
+         * guessed by the minute alone, an end after midnight was taken for one by day, so `18:00-24:00+` read open
+         * around the clock and `Tu-Su 16:00-02:00+` open all Monday.)
+         */
+        fun openEndGuess(at: Int): Int {
+            val m = at % 1440
+            return when {
+                m >= NIGHT -> 1440 - m + MORNING
+                m < MORNING -> MORNING - m
+                m < EVENING -> 1440 - m
+                else -> 300
+            }
         }
+
+        /** Where an open end's hour is evening, night, and morning again (minutes since midnight). */
+        private const val EVENING = 17 * 60
+        private const val NIGHT = 22 * 60
+        private const val MORNING = 6 * 60
     }
 }
 

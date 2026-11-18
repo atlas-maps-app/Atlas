@@ -8,6 +8,8 @@ import app.atlas.places.Categories
 import app.atlas.providers.OverpassArea
 import app.atlas.providers.OverpassQl
 import app.atlas.services.PlaceOrigin
+import app.atlas.ui.search.HereContext
+import app.atlas.ui.search.PlaceLocale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,7 +55,7 @@ class EatRepository internal constructor(private val services: Services) {
     fun area(centre: LatLon, version: Int = 0): StateFlow<EatArea> = synchronized(areas) {
         val key = keyOf(centre)
         areas.remove(key)?.takeIf { it.version == version }?.let { areas[key] = it; return it.flow.asStateFlow() }
-        val flow = MutableStateFlow(EatArea.empty(centre))
+        val flow = MutableStateFlow(EatArea.empty(centre, zone = services.clock.zone))
         areas[key] = Loaded(version, flow)
         while (areas.size > MAX_AREAS) areas.remove(areas.keys.first())
         services.scope.launch(Dispatchers.IO) { load(centre, flow) }
@@ -68,46 +70,48 @@ class EatRepository internal constructor(private val services: Services) {
         val flow = synchronized(areas) { areas[keyOf(centre)]?.flow } ?: return
         val now = flow.value
         if (now.loading) return
-        flow.value = EatArea(now.centre, now.radiusM, now.places, now.origin, loading = true, country = now.country, zone = services.clock.zone)
+        flow.value = EatArea(now.centre, now.radiusM, now.places, now.origin, loading = true, local = now.local)
         services.scope.launch(Dispatchers.IO) { load(now.centre, flow) }
     }
 
     private suspend fun load(centre: LatLon, out: MutableStateFlow<EatArea>) {
         val r = EatArea.RADIUS_M
         val online = !services.config.offline && services.connectivity.online.value
+        // the country and clock here, the one way for every screen (the regions on the phone are asked: on this thread)
+        val local = HereContext.localeAt(services, centre, HereContext.phoneAt(services), services.clock.zone)
         try {
-            fromStore(centre, r)?.let { out.value = it; return }
-            var (sketch, whole) = fromPacks(centre, r, online)
+            fromStore(centre, r, local)?.let { out.value = it; return }
+            var (sketch, whole) = fromPacks(centre, r, online, local)
             if (sketch != null) out.value = sketch
             // packs and windows around the whole circle answer fully, with every tag
             if (!online || whole) {
-                if (sketch == null) out.value = EatArea(centre, r, emptyList(), null, loading = false)
+                if (sketch == null) out.value = EatArea(centre, r, emptyList(), null, loading = false, local = local)
                 return
             }
             // online, the map's windows the phone keeps no data for from Atlas's packs, before Overpass
-            val (windows, held) = fromWindowPacks(centre, r)
+            val (windows, held) = fromWindowPacks(centre, r, local)
             if (windows != null) {
                 sketch = windows
                 out.value = windows
             }
             if (held) return
             out.value = try {
-                fromOverpass(centre, r)
+                fromOverpass(centre, r, local)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // A network failure, or an answer that does not parse (a captive portal's page).
                 val why = (e as? IOException)?.message ?: e.message ?: e.javaClass.simpleName
-                sketch?.let { it.copyWith(loading = false, error = why) } ?: EatArea(centre, r, emptyList(), null, loading = false, error = why)
+                sketch?.let { it.copyWith(loading = false, error = why) } ?: EatArea(centre, r, emptyList(), null, loading = false, local = local, error = why)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            out.value = EatArea(centre, r, out.value.places, out.value.origin, loading = false, error = e.message ?: e.toString())
+            out.value = EatArea(centre, r, out.value.places, out.value.origin, loading = false, local = local, error = e.message ?: e.toString())
         }
     }
 
-    private fun fromStore(centre: LatLon, r: Double): EatArea? {
+    private fun fromStore(centre: LatLon, r: Double, local: PlaceLocale): EatArea? {
         val store = services.placeStores
         if (store.size == 0) return null
         val found = store.inBox(BBox.around(centre, r))
@@ -119,14 +123,14 @@ class EatRepository internal constructor(private val services: Services) {
             .sortedBy { it.distanceM }
             .toList()
         if (found.isEmpty()) return null
-        return build(centre, r, found, PlaceOrigin.STORE, loading = false)
+        return build(centre, r, found, PlaceOrigin.STORE, loading = false, local)
     }
 
     /**
      * The places the map's packs and windows on the phone hold around [centre] (every tag), [more] when Overpass will be
      * asked after them; and whether they hold the whole circle. Null places when none has any.
      */
-    private fun fromPacks(centre: LatLon, r: Double, more: Boolean): Pair<EatArea?, Boolean> {
+    private fun fromPacks(centre: LatLon, r: Double, more: Boolean, local: PlaceLocale): Pair<EatArea?, Boolean> {
         val got = try {
             services.localData.inPacks(centre, r, EatKind.FILTER, limit = 5_000)
         } catch (e: CancellationException) {
@@ -134,11 +138,11 @@ class EatRepository internal constructor(private val services: Services) {
         } catch (e: Exception) {
             null
         } ?: return null to false
-        return packArea(centre, r, got, more)
+        return packArea(centre, r, got, more, local)
     }
 
     /** [fromPacks] once the map's windows the phone keeps no data for came from Atlas's packs ([LocalData.inWindowPacks]). */
-    private suspend fun fromWindowPacks(centre: LatLon, r: Double): Pair<EatArea?, Boolean> {
+    private suspend fun fromWindowPacks(centre: LatLon, r: Double, local: PlaceLocale): Pair<EatArea?, Boolean> {
         val got = try {
             services.localData.inWindowPacks(centre, r, EatKind.FILTER, limit = 5_000)
         } catch (e: CancellationException) {
@@ -146,17 +150,17 @@ class EatRepository internal constructor(private val services: Services) {
         } catch (e: Exception) {
             null
         } ?: return null to false
-        return packArea(centre, r, got, more = true)
+        return packArea(centre, r, got, more = true, local)
     }
 
-    private fun packArea(centre: LatLon, r: Double, got: app.atlas.services.LocalAnswer<List<app.atlas.model.Place>>, more: Boolean): Pair<EatArea?, Boolean> {
+    private fun packArea(centre: LatLon, r: Double, got: app.atlas.services.LocalAnswer<List<app.atlas.model.Place>>, more: Boolean, local: PlaceLocale): Pair<EatArea?, Boolean> {
         val whole = !got.partial
         val found = got.value.filter { Categories.isPlace(it.tags) }.mapNotNull { EatPlace.of(it, centre, lang) }.sortedBy { it.distanceM }
         if (found.isEmpty() && !whole) return null to false
-        return build(centre, r, found, PlaceOrigin.PACK, loading = more && !whole) to whole
+        return build(centre, r, found, PlaceOrigin.PACK, loading = more && !whole, local) to whole
     }
 
-    private suspend fun fromOverpass(centre: LatLon, r: Double): EatArea {
+    private suspend fun fromOverpass(centre: LatLon, r: Double, local: PlaceLocale): EatArea {
         val selectors = listOf(OverpassQl.oneOf("amenity", EatKind.amenityValues), OverpassQl.oneOf("shop", EatKind.shopValues))
         val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, r), timeoutSeconds = 30)
         val places = services.overpass.places(ql)
@@ -164,14 +168,13 @@ class EatRepository internal constructor(private val services: Services) {
             .distinctBy { it.key }
             .mapNotNull { EatPlace.of(it, centre, lang) }
             .sortedBy { it.distanceM }
-        return build(centre, r, places, PlaceOrigin.ONLINE, loading = false)
+        return build(centre, r, places, PlaceOrigin.ONLINE, loading = false, local)
     }
 
-    private fun build(centre: LatLon, r: Double, places: List<EatPlace>, origin: PlaceOrigin, loading: Boolean) =
-        EatArea(centre, r, places, origin, loading, country = EatArea.countryOf(places), zone = services.clock.zone)
+    private fun build(centre: LatLon, r: Double, places: List<EatPlace>, origin: PlaceOrigin, loading: Boolean, local: PlaceLocale) =
+        EatArea(centre, r, places, origin, loading, local)
 
-    private fun EatArea.copyWith(loading: Boolean, error: String?) =
-        EatArea(centre, radiusM, places, origin, loading, error, country, services.clock.zone)
+    private fun EatArea.copyWith(loading: Boolean, error: String?) = EatArea(centre, radiusM, places, origin, loading, local, error)
 
     companion object {
         private val all = WeakHashMap<Services, EatRepository>()

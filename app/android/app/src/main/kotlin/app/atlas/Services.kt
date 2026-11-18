@@ -469,6 +469,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         app.atlas.services.LocalData(
             stores = { placeStores },
             packs = shelf,
+            countryAt = { at -> app.atlas.ui.search.HereContext.country(this, at) },
             overpass = { if (config.offline) null else overpass },
             isOnline = { !config.offline && connectivity.online.value },
             onClose = shelf::close,

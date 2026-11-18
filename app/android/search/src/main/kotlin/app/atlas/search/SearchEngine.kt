@@ -39,10 +39,14 @@ data class SearchContext(
     val lang: String = "en",
     val now: ZonedDateTime = ZonedDateTime.now(),
     val online: Boolean = false,
-    /** ISO country of the searcher, for brands that trade there. */
-    val country: String? = null,
     val limit: Int = 20,
-    val hours: OpeningHoursContext = OpeningHoursContext.Default,
+    /**
+     * Holidays, the sun and the country of where the search is (the app's `HereContext`): for opening hours, for
+     * addresses, and for brands, a typed name being the brand of that country's (the reviewer, 17 November, finding 9:
+     * the country of its own this held was never given, so "jumbo" in Amsterdam was the widest spread of the Jumbos,
+     * the toy shops of Greece and its neighbours).
+     */
+    val hours: OpeningHoursContext,
     /** The town the searcher is in, when the app knows its bounds ("how many bins in this town"). */
     val town: BBox? = null,
 )
@@ -193,7 +197,7 @@ class SearchEngine(
     suspend fun answer(text: String, context: SearchContext): SearchResults? = withContext(Dispatchers.IO) {
         val started = System.nanoTime()
         val areas = Areas(context)
-        val parsed = known(QueryParser.parse(text.trim(), context.lang, context.now, context.country), context, areas)
+        val parsed = known(QueryParser.parse(text.trim(), context.lang, context.now, context.hours.country), context, areas)
         if (parsed.steps.isEmpty() || parsed.route != null) return@withContext null
         val eval = EvalContext(context.location, context.viewport, context.now, context.lang, context.limit, context.hours, areas = areas)
         structured(text, parsed, context, eval, areas, started, lines = false)
@@ -232,7 +236,7 @@ class SearchEngine(
         currentCoroutineContext().ensureActive()
 
         // A whole query: "café 200 m from a bike dock", "amenity=toilets wheelchair=yes open now"
-        val parsed = known(QueryParser.parse(t, ctx.lang, ctx.now, ctx.country), ctx, areas)
+        val parsed = known(QueryParser.parse(t, ctx.lang, ctx.now, ctx.hours.country), ctx, areas)
         // A way: its ends as the searcher would find them, the end's other candidates after
         parsed.route?.let { r -> route(text, r, parsed, ctx, started)?.let { return it } }
         if (parsed.isQuery) return structured(text, parsed, ctx, eval, areas, started)
@@ -273,8 +277,8 @@ class SearchEngine(
         // nor an ordinary word, asks for that chain: it leads, above the places it names, and the search key opens it
         // (the owner, 6 November: "appears when you clearly search for a specific brand")
         if (t.length >= 3) {
-            val named = Lexicon.brand(words.joinToString(" "), ctx.country)?.takeIf { kindsNamed.isEmpty() && !(words.size == 1 && Lexicon.ordinary(words[0])) }
-            for (b in brands(words, ctx.country)) {
+            val named = Lexicon.brand(words.joinToString(" "), ctx.hours.country)?.takeIf { kindsNamed.isEmpty() && !(words.size == 1 && Lexicon.ordinary(words[0])) }
+            for (b in brands(words, ctx.hours.country)) {
                 val q = Query.Brand(b.id)
                 val count = count(q, eval)
                 if (count == 0) continue
@@ -527,7 +531,7 @@ class SearchEngine(
      */
     private fun known(p: ParsedQuery, ctx: SearchContext, areas: Areas): ParsedQuery {
         val guess = p.guessedArea ?: return p
-        return if (areas.resolve(guess) != null) p else QueryParser.parse(p.text.trim(), ctx.lang, ctx.now, ctx.country, guessAreas = false)
+        return if (areas.resolve(guess) != null) p else QueryParser.parse(p.text.trim(), ctx.lang, ctx.now, ctx.hours.country, guessAreas = false)
     }
 
     /** True when [q] says where to look: a circle, a box or an area, a route. */
@@ -592,7 +596,7 @@ class SearchEngine(
         }
         return try {
             o.places("[out:json][timeout:25];\n$type(id:${id.id});\nout tags center;").firstOrNull()?.let { p ->
-                val r = PlaceRecord.of(p)
+                val r = PlaceRecord.of(p, ctx.hours.country)
                 Hit(r, 1.0, 1.0, ctx.location?.let { r.distanceTo(it) }, null)
             }
         } catch (e: IOException) {
@@ -715,7 +719,8 @@ class SearchEngine(
         val r = h.record
         val preset = r.preset?.let { Presets.byId(it) }
         val kindName = preset?.name(ctx.lang) ?: r.category?.let { Categories.byId(it)?.name(ctx.lang) }
-        val address = Localise.address(r.tags)
+        // as the country searched in writes it, where the place names none of its own
+        val address = Localise.address(r.tags, ctx.hours.country)
         // A place with no name nor address is titled by what it is ("Gift Shop"), and no line repeats it ("Gifts")
         val title = r.name(ctx.lang) ?: address ?: preset?.fullName(ctx.lang) ?: kindName ?: r.place.key
         val said = title == kindName || title == preset?.fullName(ctx.lang)

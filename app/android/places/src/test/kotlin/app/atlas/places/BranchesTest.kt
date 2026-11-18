@@ -31,6 +31,23 @@ class BranchesTest {
     }
 
     @Test
+    fun theBranchesTakeTheClosingTheirHoursState() {
+        // "16:00-02:00+" closes at 2:00 as far as its hours say, and then perhaps later: never at the guess of how long
+        assertEquals(List(7) { WeekDay(16 * 60, 26 * 60, openEnd = true) }, BrandHours.weekOf(OpeningHours.parse("Mo-Su 16:00-02:00+")))
+        assertEquals("Mo-Su 16:00-02:00+", BrandHours.infer(listOf("Mo-Su 16:00-02:00+"))!!.hours.raw)
+        // an open end where most of the branches give one, as a day is closed where most close it
+        assertEquals("Mo-Su 16:00-02:00+", BrandHours.infer(listOf("Mo-Su 16:00-02:00+", "Mo-Su 16:00-01:00", "Mo-Su 16:00-02:00+"))!!.hours.raw)
+        assertEquals("Mo-Su 16:00-02:00", BrandHours.infer(listOf("Mo-Su 16:00-02:00+", "Mo-Su 16:00-02:00", "Mo-Su 16:00-03:00"))!!.hours.raw)
+        // "17:00+" states no closing: it says nothing of a branch's week
+        assertNull(BrandHours.weekOf(OpeningHours.parse("Mo-Su 17:00+")))
+        assertNull(BrandHours.infer(listOf("Mo-Su 17:00+")))
+        // borrowed, an open end reads as the branch's own: open after midnight, and no closing time said
+        val night = BrandHours.infer(listOf("Mo-Su 12:00-22:00+"))!!.hours.status(LocalDateTime.of(2026, 11, 17, 0, 30), OpeningHoursContext.Default)
+        assertTrue(night.isOpen && night.openEnd)
+        assertNull(night.statedChangeAt)
+    }
+
+    @Test
     fun realBranchesInAmsterdam() {
         val byBrand = (Fixtures.pois("ams") + Fixtures.pois("eat")).map { it.place }.distinctBy { it.id }
             .filter { it.tags["brand"] != null }.groupBy { it.tags["brand"]!! }
@@ -48,14 +65,14 @@ class BranchesTest {
         }
         assertTrue(inferred >= 8)
         val sat = LocalDateTime.of(2026, 10, 10, 14, 30)
-        assertTrue(jamin.hours.isOpen(sat) == true)
+        assertTrue(jamin.hours.isOpen(sat, context = Nowhere) == true)
     }
 
     @Test
     fun aBranchWithoutAWebsiteShowsTheBrands() {
         fun site(vararg urls: String) = urls.map { mapOf("website" to it) }
-        assertEquals("https://jamin.nl", BrandSite.of(site("https://jamin.nl/winkel/amsterdam-nieuwendijk/", "https://jamin.nl/winkel/amsterdam-damrak/")))
-        assertEquals("https://www.febo.nl", BrandSite.of(site("https://www.febodelekkerste.nl", "https://bestellen.febo.nl/", "https://www.febo.nl/")))
+        assertEquals("https://jamin.nl", BrandSite.of(site("https://jamin.nl/winkel/amsterdam-nieuwendijk/", "https://jamin.nl/winkel/amsterdam-damrak/"), "NL"))
+        assertEquals("https://www.febo.nl", BrandSite.of(site("https://www.febodelekkerste.nl", "https://bestellen.febo.nl/", "https://www.febo.nl/"), "NL"))
         // the country's own site first
         val starbucks = site(
             "https://www.starbucks.co.uk/store-locator/15661-154449/amsterdam-leidsestraat",
@@ -64,12 +81,28 @@ class BranchesTest {
             "https://www.starbucks.nl",
         )
         assertEquals("https://www.starbucks.nl", BrandSite.of(starbucks, "NL"))
-        assertEquals("https://www.starbucks.com", BrandSite.of(starbucks))
+        assertEquals("https://www.starbucks.com", BrandSite.of(starbucks, null))
         // a brand:website mapped on a branch wins; social pages say nothing; one page alone is not a brand's
-        assertEquals("https://www.ah.nl", BrandSite.of(listOf(mapOf("brand:website" to "https://www.ah.nl/"), mapOf("website" to "https://ah.nl/winkel/1"))))
-        assertNull(BrandSite.of(site("https://www.facebook.com/a", "https://www.facebook.com/b")))
-        assertNull(BrandSite.of(site("https://pizzeria-one.nl/")))
-        assertNull(BrandSite.of(site("https://a.nl", "https://b.nl", "https://c.nl")))
+        assertEquals("https://www.ah.nl", BrandSite.of(listOf(mapOf("brand:website" to "https://www.ah.nl/"), mapOf("website" to "https://ah.nl/winkel/1")), "NL"))
+        assertNull(BrandSite.of(site("https://www.facebook.com/a", "https://www.facebook.com/b"), "NL"))
+        assertNull(BrandSite.of(site("https://pizzeria-one.nl/"), "NL"))
+        assertNull(BrandSite.of(site("https://a.nl", "https://b.nl", "https://c.nl"), "NL"))
+    }
+
+    /**
+     * One branch's page under the country's domain is not the brand's site (the reviewer, 17 November, finding 11: a
+     * shopping centre's .nl page became the site of every branch without one); Britain's domain is .uk, not .gb.
+     */
+    @Test
+    fun aCountrysDomainIsTheBrandsOnlyWhereItIsTheBrands() {
+        fun site(vararg urls: String) = urls.map { mapOf("website" to it) }
+        val inACentre = site("https://www.kalvertoren.nl/winkels/hunkemoller", "https://www.hunkemoller.com/nl/store/1", "https://www.hunkemoller.com/nl/store/2")
+        assertEquals("https://www.hunkemoller.com", BrandSite.of(inACentre, "NL"))
+        val britain = site(
+            "https://www.starbucks.co.uk/store/1", "https://www.starbucks.co.uk/store/2",
+            "https://www.starbucks.com/store/3", "https://www.starbucks.com/store/4", "https://www.starbucks.com/store/5",
+        )
+        assertEquals("https://www.starbucks.co.uk", BrandSite.of(britain, "GB"))
     }
 
     @Test

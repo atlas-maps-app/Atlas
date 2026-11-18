@@ -1,6 +1,7 @@
 package app.atlas.places
 
 import app.atlas.geo.Sun
+import app.atlas.geo.SunTimes
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -9,8 +10,19 @@ import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 import java.util.concurrent.ConcurrentHashMap
 
-/** One day's sun as opening_hours reads it: local times, null when the event does not happen (polar day or night). */
-data class DaySun(val dawn: LocalTime?, val sunrise: LocalTime?, val sunset: LocalTime?, val dusk: LocalTime?)
+/**
+ * One day's sun as opening_hours reads it: local times, null when the event does not happen. Then [upAllDay] says why
+ * there is no sunrise and no sunset (true in polar day, false in polar night) and [lightAllDay] why there is no dawn and
+ * no dusk (true when the sun never goes 6° below the horizon, the white nights; false when it never comes up to it).
+ */
+data class DaySun(
+    val dawn: LocalTime?,
+    val sunrise: LocalTime?,
+    val sunset: LocalTime?,
+    val dusk: LocalTime?,
+    val upAllDay: Boolean? = null,
+    val lightAllDay: Boolean? = null,
+)
 
 /** Sun times by date, for `sunrise`, `sunset`, `dawn` and `dusk` in opening hours. */
 fun interface SunClock {
@@ -26,28 +38,44 @@ fun interface SunClock {
             return SunClock { date ->
                 cache.getOrPut(date) {
                     val t = Sun.times(date, lat, lon, zone)
-                    DaySun(t.civilDawn?.toLocalTime(), t.sunrise?.toLocalTime(), t.sunset?.toLocalTime(), t.civilDusk?.toLocalTime())
+                    DaySun(
+                        t.civilDawn?.toLocalTime(), t.sunrise?.toLocalTime(), t.sunset?.toLocalTime(), t.civilDusk?.toLocalTime(),
+                        upAllDay = when (t.polar) { SunTimes.Polar.DAY -> true; SunTimes.Polar.NIGHT -> false; SunTimes.Polar.NONE -> null },
+                        // the sun crosses 6° below the horizon neither way: above it all day when it is above it at noon
+                        lightAllDay = if (t.civilDawn == null && t.civilDusk == null) t.noonAltitudeDeg > Sun.CIVIL else null,
+                    )
                 }
             }
         }
     }
 }
 
-/** What opening hours are read against: public holidays (`PH`), school holidays (`SH`) and the sun. */
+/**
+ * What opening hours are read against: public holidays (`PH`), school holidays (`SH`) and the sun; and the [country]
+ * they are of, where the place or the area is, which a place naming no country of its own is read in, its brand too
+ * ([Brands.forTags]).
+ */
 data class OpeningHoursContext(
     val publicHolidays: HolidayCalendar? = null,
     val schoolHolidays: HolidayCalendar? = null,
     val sun: SunClock = SunClock.Fixed,
+    /** ISO 3166 alpha-2, upper case; null nowhere in particular. */
+    val country: String? = null,
 ) {
     companion object {
-        /** No holidays (a `PH` rule never applies) and fixed sun times. */
+        /**
+         * No holidays (a `PH` rule never applies) and fixed sun times: for hours read nowhere in particular (a plain
+         * week, a brand's common tags). A place's hours are read in its own context, which every caller passes (the
+         * reviewer, 17 November, finding 7): `HereContext` in the app.
+         */
         val Default = OpeningHoursContext()
 
-        /** The public holidays of [country] (when Atlas has its rules) and, with a position, the real sun. */
+        /** The public holidays of [country] (when Atlas has its rules), the country itself and, with a position, the real sun. */
         fun forPlace(country: String?, zone: ZoneId, lat: Double? = null, lon: Double? = null, subdivision: String? = null) =
             OpeningHoursContext(
                 publicHolidays = country?.let { PublicHolidays.forCountry(it, subdivision) },
                 sun = if (lat != null && lon != null) SunClock.at(lat, lon, zone) else SunClock.Fixed,
+                country = PlaceCountry.code(country),
             )
     }
 }
@@ -68,6 +96,13 @@ data class OpenStatus(
     val comment: String? = null,
     val openEnd: Boolean = false,
 ) {
+    /**
+     * [changesAt] where the hours state it: null while open into an open end (`17:00+`, `16:00-02:00+`), whose end is
+     * only a guess. Whatever shows or speaks the time a place closes reads this: inside an open end a row says it is
+     * open and names no time it doesn't know.
+     */
+    val statedChangeAt: LocalDateTime? get() = if (openEnd) null else changesAt
+
     companion object {
         /** The status of hours that cannot be read. */
         val Unknown = OpenStatus(isOpen = false, changesAt = null, nextChangeKind = null, unknown = true)
@@ -82,6 +117,35 @@ data class OpenSpan(val start: Int, val end: Int, val state: OpenState, val comm
     val startTime: LocalTime get() = LocalTime.of((start / 60) % 24, start % 60)
     val endTime: LocalTime get() = LocalTime.of((end / 60) % 24, end % 60)
     val minutes: Int get() = end - start
+}
+
+/**
+ * A stretch of a day as its hours state it, for a row to show: from [start] to [end] (minutes since its day's
+ * midnight; [end] may pass 1440), [end] null where none is stated (`17:00+`), and [openEnd] where it runs on past
+ * [end], or past [start] when there is none, with no closing time (`16:00-02:00+`). A row shows "16:00–2:00+" and
+ * "17:00+", never the guess the evaluator makes of an open end's length.
+ */
+data class StatedSpan(val start: Int, val end: Int?, val state: OpenState, val comment: String? = null, val openEnd: Boolean = false) {
+    val startTime: LocalTime get() = LocalTime.of((start / 60) % 24, start % 60)
+    val endTime: LocalTime? get() = end?.let { LocalTime.of((it / 60) % 24, it % 60) }
+}
+
+/**
+ * [spans] (of [OpeningHours.spans] or a day of [OpeningHours.weekTable]) as their hours state them: an open end's
+ * guessed tail joined to the stretch it follows, which keeps its stated end; a tail that follows none (`17:00+`)
+ * keeps its start alone.
+ */
+fun statedSpans(spans: List<OpenSpan>): List<StatedSpan> {
+    val out = ArrayList<StatedSpan>()
+    for (s in spans) {
+        val before = out.lastOrNull()
+        if (s.openEnd && before != null && !before.openEnd && before.end == s.start && before.state == s.state) {
+            out[out.size - 1] = before.copy(openEnd = true)
+        } else {
+            out += StatedSpan(s.start, if (s.openEnd) null else s.end, s.state, s.comment, s.openEnd)
+        }
+    }
+    return out
 }
 
 /**
@@ -104,11 +168,11 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
     private val horizon: Int = if (rules.all { it.isWeekly }) 8 else MAX_DAYS
 
     /** Open at [at]: true or false, null when the hours do not say. */
-    fun isOpen(at: LocalDateTime, context: OpeningHoursContext = OpeningHoursContext.Default): Boolean? =
+    fun isOpen(at: LocalDateTime, context: OpeningHoursContext): Boolean? =
         status(at, context).let { if (it.unknown) null else it.isOpen }
 
     /** The state at [at] and its next change, looking up to a year ahead. */
-    fun status(at: LocalDateTime, context: OpeningHoursContext = OpeningHoursContext.Default): OpenStatus {
+    fun status(at: LocalDateTime, context: OpeningHoursContext): OpenStatus {
         val eval = Evaluation(DateContext(context, generic = false))
         var date = at.toLocalDate()
         var view = eval.view(date)
@@ -144,7 +208,7 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
     private fun unknownComment(state: OpenState): String? = if (state == OpenState.UNKNOWN) comments.firstOrNull() else null
 
     /** The open and unknown stretches of [date] from midnight to midnight, the night before's late hours included: the clock dial. */
-    fun spans(date: LocalDate, context: OpeningHoursContext = OpeningHoursContext.Default): List<OpenSpan> {
+    fun spans(date: LocalDate, context: OpeningHoursContext): List<OpenSpan> {
         val view = Evaluation(DateContext(context, generic = false)).view(date)
         return runs(view.state, view.commentIndex, 0, 1440)
     }
@@ -155,7 +219,7 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
      * holidays and nth weekdays left out, as a door plaque shows it; seasonal hours then need [weekOf]. With [weekOf]
      * it is that real week (Monday to Sunday), holidays and dates included.
      */
-    fun weekTable(weekOf: LocalDate? = null, context: OpeningHoursContext = OpeningHoursContext.Default): List<List<OpenSpan>> {
+    fun weekTable(weekOf: LocalDate?, context: OpeningHoursContext): List<List<OpenSpan>> {
         val eval = Evaluation(DateContext(context, generic = weekOf == null))
         val monday = (weekOf ?: GENERIC_MONDAY).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         return (0 until 7).map { d ->
@@ -234,7 +298,7 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
                             fill(a, b, code or OPEN_END)
                         } else {
                             fill(a, b, code)
-                            if (span.openEnd) fill(b, b + TimeSpan.openEndGuess(b % 1440), code or OPEN_END)
+                            if (span.openEnd) fill(b, b + TimeSpan.openEndGuess(b), code or OPEN_END)
                         }
                     }
                 }
@@ -290,7 +354,7 @@ class OpeningHours private constructor(val raw: String, internal val rules: List
             if (text.isNullOrBlank()) null else try { parse(text) } catch (e: OpeningHoursException) { null }
 
         /** The status of a raw value; [OpenStatus.Unknown] when it cannot be read. */
-        fun statusOf(text: String?, at: LocalDateTime, context: OpeningHoursContext = OpeningHoursContext.Default): OpenStatus =
+        fun statusOf(text: String?, at: LocalDateTime, context: OpeningHoursContext): OpenStatus =
             parseOrNull(text)?.status(at, context) ?: OpenStatus.Unknown
     }
 }

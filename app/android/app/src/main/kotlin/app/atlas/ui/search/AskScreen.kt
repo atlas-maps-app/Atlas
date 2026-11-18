@@ -133,8 +133,9 @@ class AskViewModel(private val services: Services, initial: String, private val 
                 val r = withContext(Dispatchers.Default) {
                     val now = ZonedDateTime.now(services.clock)
                     val from = here()
-                    val parsed = QueryParser.parse(s.text, lang, now)
                     val hours = HereContext.hours(services, from, now.zone)
+                    // a brand's name is the brand of the country here (the reviewer, 17 November, finding 9)
+                    val parsed = QueryParser.parse(s.text, lang, now, hours.country)
                     val evaluator = OfflineEvaluator(services.placeStores)
                     val plan = if (parsed.steps.isEmpty()) null else AskPlanner.plan(parsed, from, now.toLocalDateTime(), hours, s.refine) { q, at ->
                         evaluator.run(q, EvalContext(location = at, now = now, lang = lang, limit = 20, hours = hours))

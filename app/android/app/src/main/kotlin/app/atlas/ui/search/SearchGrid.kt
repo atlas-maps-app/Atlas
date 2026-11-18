@@ -543,7 +543,7 @@ private fun kindStates(s: SearchSheetState, now: LocalDateTime, lead: String?): 
         .filter { it.node.kind == NodeKind.CATEGORY && it.count > 0 && it.node.id != lead && it.node.category.id != CATCH_ALL }
         .sortedBy { rank[it.node.category.id] ?: Int.MAX_VALUE }
     val closing = kinds.mapNotNull { p ->
-        val closes = p.until?.takeIf { p.open > 0 && p.endless == 0 } ?: return@mapNotNull null
+        val closes = p.closes ?: return@mapNotNull null
         val left = Duration.between(now, closes).toMinutes().toInt()
         val spare = left - (p.minutes ?: 0)
         if (left > CLOSING_WINDOW || spare < MIN_SPARE) null else Closing(p, closes, spare)

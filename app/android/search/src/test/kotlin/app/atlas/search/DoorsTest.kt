@@ -19,12 +19,12 @@ import org.junit.Test
  */
 class DoorsTest {
     private val here = Fixtures.westerkerk
-    private val saturday = Moment(Fixtures.saturday)
+    private val saturday = Moment(Fixtures.saturday, hours = Nowhere)
     private var next = 0L
 
     /** A node [north] metres north of the Westerkerk. */
     private fun place(north: Double, vararg tags: Pair<String, String>) =
-        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++next), LatLon(here.lat + north / 111_320.0, here.lon), mapOf(*tags)))
+        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++next), LatLon(here.lat + north / 111_320.0, here.lon), mapOf(*tags)), country = null)
 
     private val playground = place(100.0, "leisure" to "playground")
     private val cinema = place(200.0, "amenity" to "cinema", "name" to "Kriterion")

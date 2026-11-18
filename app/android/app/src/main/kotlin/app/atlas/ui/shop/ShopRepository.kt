@@ -3,8 +3,11 @@ package app.atlas.ui.shop
 import app.atlas.Services
 import app.atlas.geo.LatLon
 import app.atlas.places.TagFilter
+import app.atlas.ui.search.HereContext
+import app.atlas.ui.search.PlaceLocale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -39,11 +42,15 @@ internal class ShopRepository(private val services: Services, prices: OpenPrices
      * The places that pass [filter] within [radiusM] of [centre], nearest first, as they become known. [key] names the
      * query for the memory (a screen's own name). Places without a name are left out unless [nameless].
      */
-    fun area(key: String, filter: TagFilter, centre: LatLon, radiusM: Double = ShopArea.DEFAULT_RADIUS_M, nameless: Boolean = false): Flow<ShopArea> =
-        finder.around(key, filter, centre, radiusM).map { a ->
-            val places = a.places.mapNotNull { ShopPlace.of(it, centre, lang, nameless) }
-            ShopArea(centre, radiusM, places, a.origin, a.loading, a.error, services.clock.zone)
-        }
+    fun area(key: String, filter: TagFilter, centre: LatLon, radiusM: Double = ShopArea.DEFAULT_RADIUS_M, nameless: Boolean = false): Flow<ShopArea> {
+        var local: PlaceLocale? = null
+        return finder.around(key, filter, centre, radiusM).map { a ->
+            // the country and clock here, once per area: the regions on the phone are asked, so off the main thread
+            val l = local ?: HereContext.localeAt(services, centre, HereContext.phoneAt(services), services.clock.zone).also { local = it }
+            val places = a.places.mapNotNull { ShopPlace.of(it, centre, lang, l.country, nameless) }
+            ShopArea(centre, radiusM, places, a.origin, a.loading, l, a.error)
+        }.flowOn(Dispatchers.Default)
+    }
 
     private val online: Boolean get() = !services.config.offline && services.connectivity.online.value
 

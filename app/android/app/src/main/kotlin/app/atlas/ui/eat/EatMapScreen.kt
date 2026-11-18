@@ -145,13 +145,13 @@ fun EatMapScreen(nav: Navigator) {
     }
     val mic = rememberSpeechInput(onText = { question = it; ask(it) })
 
-    val markers = remember(places, selected, view, ctx.at) {
+    val markers = remember(places, selected, view, ctx.at, ctx.area.country) {
         places.mapIndexed { i, p ->
             val rising = EatMapModel.trendOf(p, ctx.ratings)?.rising == true
             Marker(
                 id = p.key,
                 at = p.location,
-                symbol = markOf(p.place).first,
+                symbol = markOf(p.place, ctx.area.country).first,
                 colour = 0xFF14161B,
                 style = MarkerStyle.PIN,
                 badge = when {

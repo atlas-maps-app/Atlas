@@ -5,6 +5,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.Place
 import app.atlas.providers.Trend
 import app.atlas.services.PlaceOrigin
+import app.atlas.ui.search.PlaceLocale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -36,7 +37,7 @@ class EatLogicTest {
     private fun eat(p: Place) = EatPlace.of(p, centre, "en")!!
 
     private fun area(vararg places: Place) =
-        EatArea(centre, EatArea.RADIUS_M, places.map { eat(it) }.sortedBy { it.distanceM }, PlaceOrigin.STORE, loading = false, country = "NL", zone = zone)
+        EatArea(centre, EatArea.RADIUS_M, places.map { eat(it) }.sortedBy { it.distanceM }, PlaceOrigin.STORE, loading = false, local = PlaceLocale("NL", zone))
 
     @Test
     fun theTableMeansTomorrowForATimeLongPast() {
@@ -207,6 +208,18 @@ class EatLogicTest {
         assertEquals(LocalTime.of(9, 0), saturday.from)
         assertEquals(LocalTime.of(16, 0), saturday.to)
         assertEquals("Biologische Boerenmarkt", saturday.what)
+    }
+
+    @Test
+    fun aMarketWithAnOpenEndStatesNoClosingTime() {
+        val noorder = place(0.002, 0.0, "amenity" to "marketplace", "name" to "Noordermarkt", "opening_hours" to "Sa 09:00-16:00+; Su 10:00+")
+        val week = MarketModel.week(listOf(eat(noorder)), area(noorder), evening.toLocalDate())
+        // one session a day, its tail no session of its own, and no time it doesn't know
+        val saturday = week[5].sessions.single()
+        assertEquals(LocalTime.of(16, 0), saturday.to)
+        assertEquals("9–16+", sessionHours(saturday))
+        assertEquals("10+", sessionHours(week[6].sessions.single()))
+        assertEquals("9–13", sessionHours(MarketModel.week(listOf(eat(place(0.002, 0.0, "amenity" to "marketplace", "name" to "Markt", "opening_hours" to "Mo 09:00-13:00"))), area(noorder), evening.toLocalDate())[0].sessions.single()))
     }
 
     @Test

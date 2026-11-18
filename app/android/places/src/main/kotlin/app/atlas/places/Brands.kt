@@ -159,26 +159,57 @@ object Brands {
     fun byWikidata(qid: String): List<Brand> = data.byWikidata[qid] ?: emptyList()
 
     /**
-     * The brand of a mapped place: by `brand:wikidata`, else by its `brand` name with the same main key (amenity,
-     * shop…), else by its `name` when the main tag matches exactly. Among several, the one whose main tag matches
-     * and that trades in [country] wins.
+     * The brand of a mapped place in [country], the country of the map at it, its own `addr:country` first
+     * ([PlaceCountry]): by `brand:wikidata`, else by its `brand` name with the same main key (amenity, shop…), else by
+     * its `name` when the main tag matches exactly. Among several, the one whose main tag matches and that trades in the
+     * country wins. A name alone is a chain's only where the chain trades (the reviewer, 17 November, finding 9):
+     * "Farmacia" is any pharmacy in Italy and a chain in Ukraine; where the country is not known, only a chain that
+     * trades everywhere.
      */
-    fun forTags(tags: Map<String, String>, country: String? = null): Brand? {
-        val c = country ?: tags["addr:country"]
+    fun forTags(tags: Map<String, String>, country: String?): Brand? {
+        val c = PlaceCountry.of(tags, country)
+        val m = candidates(tags) ?: return null
+        val list = if (m.byName) m.brands.filter { tradesIn(it, c) } else m.brands
+        return if (list.isEmpty()) null else best(list, tags, c)
+    }
+
+    /** [forTags] knowing nothing of where the place is but its own tags. */
+    @Deprecated("A brand is matched in the country of the map at the place: pass it", ReplaceWith("forTags(tags, country)"))
+    fun forTags(tags: Map<String, String>): Brand? = forTags(tags, null)
+
+    /**
+     * True when [forTags] may answer otherwise in another country: the place names no country of its own, and its tags
+     * fit entries that trade apart, several of them or by its name alone. A store matches these once it knows the
+     * countries around them (`StoreWriter` in :search).
+     */
+    fun dependsOnCountry(tags: Map<String, String>): Boolean {
+        if (PlaceCountry.tagged(tags) != null) return false
+        val m = candidates(tags) ?: return false
+        val apart = m.brands.any { it.countries.isNotEmpty() || it.excludedCountries.isNotEmpty() }
+        return apart && (m.byName || m.brands.size > 1)
+    }
+
+    /** The entries a place's tags fit, and whether by its name alone. */
+    private class Candidates(val brands: List<Brand>, val byName: Boolean)
+
+    private fun candidates(tags: Map<String, String>): Candidates? {
         val qid = tags["brand:wikidata"]?.trim()?.takeIf { it.isNotEmpty() }
-        qid?.let { data.byWikidata[it] }?.let { list -> return best(list, tags, c) }
+        qid?.let { data.byWikidata[it] }?.let { list -> return Candidates(list, byName = false) }
         // a different Wikidata item means a different company, whatever the name
         fun sameItem(b: Brand) = qid == null || b.wikidata == null || b.wikidata == qid
         tags["brand"]?.let { b ->
             val list = data.byKey[key(b)]?.filter { sameKey(it, tags) && sameItem(it) }
-            if (!list.isNullOrEmpty()) return best(list, tags, c)
+            if (!list.isNullOrEmpty()) return Candidates(list, byName = false)
         }
         tags["name"]?.let { n ->
             val list = data.byKey[key(n)]?.filter { exactTag(it, tags) && sameItem(it) }
-            if (!list.isNullOrEmpty()) return best(list, tags, c)
+            if (!list.isNullOrEmpty()) return Candidates(list, byName = true)
         }
         return null
     }
+
+    /** Trades in [country]; where it is not known, everywhere (some countries aside). */
+    private fun tradesIn(b: Brand, country: String?) = if (country == null) b.countries.isEmpty() else b.availableIn(country)
 
     private fun exactTag(b: Brand, tags: Map<String, String>) = b.keyTags.isNotEmpty() && b.keyTags.all { (k, v) -> tags[k] == v }
     private fun sameKey(b: Brand, tags: Map<String, String>) = b.keyTags.isEmpty() || b.keyTags.keys.any { it in tags }

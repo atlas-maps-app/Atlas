@@ -171,7 +171,8 @@ internal fun HoursCard(h: HoursAnswer, now: LocalDateTime, modifier: Modifier = 
             val counts = h.days.any { it.open in 1 until h.known }
             val closed = stringResource(R.string.kit_closed)
             val labels = lines.map { it.label(Locale.getDefault()) }
-            val hours = lines.map { l -> l.opens?.let { o -> "${hm(o)}–${hm(l.closes!!)}" } ?: closed }
+            // where no place open those days states when it closes (`17:00+`): "17:00+"
+            val hours = lines.map { l -> l.opens?.let { o -> l.closes?.let { "${hm(o)}–${hm(it)}" } ?: "${hm(o)}+" } ?: closed }
             // the columns as wide as their widest words, so the bars line up
             val measurer = rememberTextMeasurer()
             val density = LocalDensity.current
@@ -312,9 +313,8 @@ private fun Ticks(from: Int, to: Int, start: Dp, end: Dp) {
 /** Today in words: when most are open, when the first opens and the last closes. */
 @Composable
 private fun todayWords(t: DaySpread): String {
-    val e = t.earliest
-    val l = t.latest
-    if (e == null || l == null) return stringResource(R.string.find_hours_today_none)
+    val e = t.earliest ?: return stringResource(R.string.find_hours_today_none)
+    val l = t.latest ?: return stringResource(R.string.find_hours_today_from, hm(t.opensMiddle ?: e))
     val o = t.opensMiddle ?: e
     val cl = t.closesMiddle ?: l
     return stringResource(R.string.find_hours_today, hm(o), hm(cl), hm(e), hm(l))

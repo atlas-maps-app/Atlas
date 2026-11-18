@@ -52,7 +52,7 @@ class StoreFilingTest {
             // found under its category, and no longer under the old one
             assertEquals(listOf(golf), s.byCategory(listOf("sports")).map { it.id })
             assertTrue(s.byCategory(listOf("other")).isEmpty())
-            assertEquals(listOf(golf), OfflineEvaluator(s).run(Query.Category("sports"), EvalContext(limit = 10)).hits.map { it.record.id })
+            assertEquals(listOf(golf), OfflineEvaluator(s).run(Query.Category("sports"), EvalContext(limit = 10, hours = Nowhere)).hits.map { it.record.id })
             // by its category's name: the kind token on its line of the text index moved with it, the counts too
             assertEquals(listOf(golf), s.text("sportvelden").map { it.id })
             assertTrue(s.text("overig").none { it.id == golf })

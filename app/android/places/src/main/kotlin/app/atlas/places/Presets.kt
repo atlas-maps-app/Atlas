@@ -58,7 +58,12 @@ class Preset internal constructor(
         return (countries.isEmpty() || c in countries) && c !in excludedCountries
     }
 
-    /** id's match score: each exact tag counts [matchScore], each "*" tag half, an `addTags` match adds more; -1 if any tag fails. */
+    /**
+     * id's match score: each exact tag counts [matchScore], each "*" tag half, an `addTags` match adds more; -1 if any
+     * tag fails. A value that lists several (`cuisine=italian;pizza`) matches by any of them, as a tag filter reads it
+     * ([TagFilter.Equals]; the reviewer, 17 November, finding 11), the first a little before the next: an Italian
+     * restaurant before a pizzeria, either before a plain restaurant.
+     */
     fun score(entity: Map<String, String>): Double {
         var s = 0.0
         for ((k, v) in tags) {
@@ -66,6 +71,7 @@ class Preset internal constructor(
             s += when {
                 e == v -> matchScore
                 v == "*" && e != null -> matchScore / 2
+                e != null && ';' in e -> partOf(e, v)?.let { matchScore * (1.0 - PART_STEP * (it + 1)).coerceAtLeast(0.5) } ?: return -1.0
                 else -> return -1.0
             }
         }
@@ -74,6 +80,14 @@ class Preset internal constructor(
     }
 
     override fun toString() = id
+
+    private companion object {
+        /** How much less each later value of a list counts than the one before it. */
+        const val PART_STEP = 0.01
+
+        /** Which of [value]'s `;` parts is [want], from 0; null when none is. */
+        fun partOf(value: String, want: String): Int? = value.split(';').map { it.trim() }.indexOf(want).takeIf { it >= 0 }
+    }
 }
 
 /** A search result: the preset, its score (higher is better), its name in the language and the text that matched. */

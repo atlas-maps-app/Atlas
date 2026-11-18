@@ -3,7 +3,9 @@ package app.atlas.search
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
+import app.atlas.places.Brands
 import app.atlas.places.Geometry
+import app.atlas.places.PlaceCountry
 import app.atlas.places.Units
 import app.atlas.providers.OverpassElement
 import java.io.Closeable
@@ -14,12 +16,17 @@ import kotlin.concurrent.withLock
  * Writes places into a [PlaceStore] in large transactions with prepared statements. Adding a place that is already
  * there replaces it (its tags, text and box), so an import can be repeated or resumed; an address point that is
  * already there (the same number on the same street) is replaced too. Call [finish] at the end: it commits, works out
- * the streets' boxes and text, the statistics and the typo vocabulary, and records the region's metadata.
+ * the streets' boxes and text, the statistics and the typo vocabulary, and records the region's metadata. A place's
+ * brand is the one of the country of the map at it, which the store's own places and addresses tell ([CountryTally]), else
+ * [country]: where the brand depends on the country ([Brands.dependsOnCountry]), it is matched again at [finish], when
+ * they are all in.
  */
 class StoreWriter internal constructor(
     internal val store: PlaceStore,
     private val langs: List<String>,
     private val regionName: String?,
+    /** The country the store is of, when its region is one country's (`packer places --country`); null when not known. */
+    private val country: String? = null,
 ) : Closeable {
     private val started = System.nanoTime()
     private var pending = 0
@@ -30,6 +37,10 @@ class StoreWriter internal constructor(
     private val sink = ByteSink(512)
     private val extraSink = ByteSink(64)
     private val outlineSink = ByteSink(1024)
+    private val countries = CountryTally()
+
+    /** The places whose brand depends on the country, matched again at [finish] ([rebrand]). */
+    private val unsure = HashSet<Long>()
 
     var elements = 0L
         private set
@@ -97,14 +108,18 @@ class StoreWriter internal constructor(
         val tags = StoredTags.filter(place.tags, place.source)
         if (place.source == "osm") Addresses.parts(tags)?.let { addAddress(it, place); return }
         val p = if (tags === place.tags) place else place.copy(tags = tags)
-        insert(PlaceRecord.of(p, geometry ?: PlaceRecord.geometryOf(p), store.filing.categoryOf(tags)), tags)
+        // its brand in the country it names, else in none for now: the store knows its countries at the end
+        val key = insert(PlaceRecord.of(p, geometry ?: PlaceRecord.geometryOf(p), store.filing.categoryOf(tags), country = null), tags)
+        if (Brands.dependsOnCountry(tags)) unsure += key
     }
 
-    private fun insert(r: PlaceRecord, tags: Map<String, String>) {
+    /** Writes [r] with [tags] as they are stored; returns its key. */
+    private fun insert(r: PlaceRecord, tags: Map<String, String>): Long {
         val p = r.place
         val key = p.id?.let(StoreSchema::pack) ?: StoreSchema.foreignKey(p.key)
         val lat = E7.of(p.location.lat)
         val lon = E7.of(p.location.lon)
+        PlaceCountry.tagged(tags)?.let { countries.add(lat, lon, it) }
         val box = p.bbox?.takeIf { it.west <= it.east && it.south <= it.north && (it.width > 0 || it.height > 0) }
         store.locked {
             remove(key)
@@ -182,6 +197,7 @@ class StoreWriter internal constructor(
         }
         places++
         tick()
+        return key
     }
 
     /** Takes a place out of the index tables (its row is then replaced): its lookup rows, its text and its box. */
@@ -240,6 +256,7 @@ class StoreWriter internal constructor(
     }
 
     private fun addAddress(a: AddressParts, lat: Int, lon: Int, osm: Long?, replace: Boolean = true): Boolean {
+        PlaceCountry.code(a.country)?.let { countries.add(lat, lon, it) }
         val cell = Addresses.cellOf(lat, lon)
         var added = true
         store.locked {
@@ -381,6 +398,7 @@ class StoreWriter internal constructor(
     fun finish(): ImportStats {
         check(!finished) { "This writer has finished" }
         store.locked {
+            rebrand()
             StoreFinish(store, langs).run()
             putMeta("langs", langs.joinToString(","))
             regionName?.let { putMeta("name", it) }
@@ -395,6 +413,35 @@ class StoreWriter internal constructor(
         }
         finished = true
         return ImportStats(elements, places, trees, skipped, (System.nanoTime() - started) / 1_000_000, addresses, filled, outlines, paths)
+    }
+
+    /**
+     * Matches again the brands that depend on the country, now that the store's countries are known: the country of the
+     * map at a place is the commonest its places and addresses name around it, else the store's own ([CountryTally]).
+     */
+    private fun rebrand() {
+        for (key in unsure) {
+            var lat = 0
+            var lon = 0
+            var tags: Map<String, String>? = null
+            var old: Int? = null
+            store.stmt("SELECT lat, lon, tags, brand FROM place WHERE id = ?1") { st ->
+                st.bindLong(1, key)
+                if (st.step()) {
+                    lat = st.getLong(0).toInt()
+                    lon = st.getLong(1).toInt()
+                    tags = TagBlob.decode(st.getBlob(2), dict)
+                    old = if (st.isNull(3)) null else st.getLong(3).toInt()
+                }
+            }
+            val t = tags ?: continue
+            val brand = Brands.forTags(t, countries.at(lat, lon, country))?.id?.let(dict::internValue)
+            if (brand == old) continue
+            store.stmt("UPDATE place SET brand = ?2 WHERE id = ?1") { st -> st.bindLong(1, key); bindId(st, 2, brand); st.step() }
+            old?.let { o -> store.stmt("DELETE FROM lookup WHERE k = ?1 AND v = ?2 AND place = ?3") { st -> lookupRow(st, StoreSchema.BRAND_KEY, o, key) } }
+            brand?.let { b -> store.stmt("INSERT OR IGNORE INTO lookup(k, v, place) VALUES (?1, ?2, ?3)") { st -> lookupRow(st, StoreSchema.BRAND_KEY, b, key) } }
+        }
+        unsure.clear()
     }
 
     internal fun putMeta(key: String, value: String) {

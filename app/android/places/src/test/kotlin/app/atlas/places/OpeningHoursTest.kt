@@ -19,24 +19,24 @@ class OpeningHoursTest {
     @Test
     fun weekdaysAndTimes() {
         val h = oh("Mo-Fr 08:00-18:00")
-        val s = h.status(t("2026-10-12T10:00")) // a Monday
+        val s = h.status(t("2026-10-12T10:00"), context = Nowhere) // a Monday
         assertTrue(s.isOpen)
         assertFalse(s.unknown)
         assertEquals(t("2026-10-12T18:00"), s.changesAt)
         assertEquals(ChangeKind.CLOSES, s.nextChangeKind)
-        val sat = h.status(t("2026-10-17T10:00"))
+        val sat = h.status(t("2026-10-17T10:00"), context = Nowhere)
         assertFalse(sat.isOpen)
         assertEquals(t("2026-10-19T08:00"), sat.changesAt)
         assertEquals(ChangeKind.OPENS, sat.nextChangeKind)
-        assertEquals(false, h.isOpen(t("2026-10-12T18:00")))
-        assertEquals(true, h.isOpen(t("2026-10-12T17:59")))
+        assertEquals(false, h.isOpen(t("2026-10-12T18:00"), context = Nowhere))
+        assertEquals(true, h.isOpen(t("2026-10-12T17:59"), context = Nowhere))
     }
 
     @Test
     fun alwaysOpen() {
         val h = oh("24/7")
         assertTrue(h.isAlwaysOpen)
-        val s = h.status(t("2026-10-12T03:00"))
+        val s = h.status(t("2026-10-12T03:00"), context = Nowhere)
         assertTrue(s.isOpen)
         assertNull(s.changesAt)
         assertFalse(oh("24/7; PH off").isAlwaysOpen)
@@ -46,9 +46,9 @@ class OpeningHoursTest {
     @Test
     fun splitShiftsAndOverrides() {
         val h = oh("Mo-Fr 08:00-12:00,13:00-17:30; Sa 10:00-14:00")
-        assertEquals(false, h.isOpen(t("2026-10-12T12:30")))
-        assertEquals(t("2026-10-12T13:00"), h.status(t("2026-10-12T12:30")).changesAt)
-        assertEquals(true, h.isOpen(t("2026-10-17T11:00")))
+        assertEquals(false, h.isOpen(t("2026-10-12T12:30"), context = Nowhere))
+        assertEquals(t("2026-10-12T13:00"), h.status(t("2026-10-12T12:30"), context = Nowhere).changesAt)
+        assertEquals(true, h.isOpen(t("2026-10-17T11:00"), context = Nowhere))
         // a later rule replaces an earlier one for its days
         assertEquals(false, open("Mo-Fr 10:00-20:00; We 10:00-16:00", "2026-10-14T17:00"))
         assertEquals(true, open("Mo-Fr 10:00-20:00; We 10:00-16:00", "2026-10-13T17:00"))
@@ -72,18 +72,18 @@ class OpeningHoursTest {
     @Test
     fun pastMidnightBelongsToTheDayItStarts() {
         val h = oh("Th 11:00-03:00")
-        val s = h.status(t("2026-10-16T01:30")) // Friday night
+        val s = h.status(t("2026-10-16T01:30"), context = Nowhere) // Friday night
         assertTrue(s.isOpen)
         assertEquals(t("2026-10-16T03:00"), s.changesAt)
         assertEquals(true, open("Fr 22:00-26:00", "2026-10-17T01:00"))
         assertEquals(false, open("Fr 22:00-26:00", "2026-10-17T02:00"))
         // Sunday is closed, but Saturday night runs into it
         val bar = oh("Mo-Sa 18:00-02:00; Su off")
-        assertEquals(true, bar.isOpen(t("2026-10-18T01:00")))
-        assertEquals(false, bar.isOpen(t("2026-10-18T20:00")))
-        assertEquals(false, bar.isOpen(t("2026-10-19T01:00")))
-        assertEquals(listOf(OpenSpan(0, 120, OpenState.OPEN)), oh("Fr 22:00-02:00").spans(LocalDate.of(2026, 10, 17)))
-        assertEquals(listOf(OpenSpan(1320, 1440, OpenState.OPEN)), oh("Fr 22:00-02:00").spans(LocalDate.of(2026, 10, 16)))
+        assertEquals(true, bar.isOpen(t("2026-10-18T01:00"), context = Nowhere))
+        assertEquals(false, bar.isOpen(t("2026-10-18T20:00"), context = Nowhere))
+        assertEquals(false, bar.isOpen(t("2026-10-19T01:00"), context = Nowhere))
+        assertEquals(listOf(OpenSpan(0, 120, OpenState.OPEN)), oh("Fr 22:00-02:00").spans(LocalDate.of(2026, 10, 17), context = Nowhere))
+        assertEquals(listOf(OpenSpan(1320, 1440, OpenState.OPEN)), oh("Fr 22:00-02:00").spans(LocalDate.of(2026, 10, 16), context = Nowhere))
         assertEquals(true, open("Mo-Su 00:00-24:00", "2026-10-12T23:59"))
     }
 
@@ -132,7 +132,7 @@ class OpeningHoursTest {
         assertEquals(false, open(easter, "2026-04-06T12:00"))
         assertEquals(true, open(easter, "2026-04-07T12:00"))
         val season = oh("Apr-Oct 10:00-18:00")
-        assertEquals(t("2027-04-01T10:00"), season.status(t("2026-11-15T12:00")).changesAt)
+        assertEquals(t("2027-04-01T10:00"), season.status(t("2026-11-15T12:00"), context = Nowhere).changesAt)
         assertEquals(true, open("Mar 01+ Mo-Su 09:00-17:00", "2026-03-02T12:00"))
         assertEquals(false, open("Mar 01+ Mo-Su 09:00-17:00", "2026-02-27T12:00"))
         assertEquals(true, open("2026-2028 Mo 10:00-12:00", "2026-10-12T11:00"))
@@ -182,49 +182,104 @@ class OpeningHoursTest {
     @Test
     fun fallbackRulesFillOnlyTheGaps() {
         val h = oh("Mo-Fr 08:00-12:00 || \"by appointment\"")
-        assertEquals(true, h.isOpen(t("2026-10-12T10:00")))
-        val after = h.status(t("2026-10-12T14:00"))
+        assertEquals(true, h.isOpen(t("2026-10-12T10:00"), context = Nowhere))
+        val after = h.status(t("2026-10-12T14:00"), context = Nowhere)
         assertTrue(after.unknown)
         assertEquals("by appointment", after.comment)
-        assertNull(h.isOpen(t("2026-10-17T10:00")))
+        assertNull(h.isOpen(t("2026-10-17T10:00"), context = Nowhere))
     }
 
     @Test
     fun commentsAndUnknown() {
-        val alone = oh("\"by appointment\"").status(t("2026-10-12T10:00"))
+        val alone = oh("\"by appointment\"").status(t("2026-10-12T10:00"), context = Nowhere)
         assertTrue(alone.unknown)
         assertEquals("by appointment", alone.comment)
-        val withTimes = oh("Mo-Fr 10:00-20:00 \"call ahead\"").status(t("2026-10-12T11:00"))
+        val withTimes = oh("Mo-Fr 10:00-20:00 \"call ahead\"").status(t("2026-10-12T11:00"), context = Nowhere)
         assertTrue(withTimes.isOpen)
         assertFalse(withTimes.unknown)
         assertEquals("call ahead", withTimes.comment)
         val mixed = oh("Tu-Fr \"on request\"; Sa-Su 13:00-17:00")
-        assertNull(mixed.isOpen(t("2026-10-13T10:00")))
-        assertEquals(true, mixed.isOpen(t("2026-10-17T14:00")))
+        assertNull(mixed.isOpen(t("2026-10-13T10:00"), context = Nowhere))
+        assertEquals(true, mixed.isOpen(t("2026-10-17T14:00"), context = Nowhere))
         assertNull(open("Mo-Fr 10:00-12:00 unknown", "2026-10-12T11:00"))
         val named = oh("Mo 09:00-13:00 open \"Brocante\"; Sa 09:00-16:00 open \"Organic market\"")
-        assertEquals("Organic market", named.status(t("2026-10-17T10:00")).comment)
-        assertEquals(OpenStatus.Unknown, OpeningHours.statusOf("not hours", t("2026-10-12T10:00")))
+        assertEquals("Organic market", named.status(t("2026-10-17T10:00"), context = Nowhere).comment)
+        assertEquals(OpenStatus.Unknown, OpeningHours.statusOf("not hours", t("2026-10-12T10:00"), context = Nowhere))
     }
 
     @Test
     fun openEnds() {
         val h = oh("Mo-Su 17:00+")
-        val s = h.status(t("2026-10-12T18:00"))
+        val s = h.status(t("2026-10-12T18:00"), context = Nowhere)
         assertTrue(s.isOpen)
         assertTrue(s.openEnd)
-        assertEquals(false, h.isOpen(t("2026-10-12T16:00")))
-        val lastOrders = oh("Mo-Sa 18:00-22:00+").status(t("2026-10-12T19:00"))
+        assertEquals(false, h.isOpen(t("2026-10-12T16:00"), context = Nowhere))
+        val lastOrders = oh("Mo-Sa 18:00-22:00+").status(t("2026-10-12T19:00"), context = Nowhere)
         assertTrue(lastOrders.isOpen)
         assertTrue(lastOrders.openEnd)
-        val plain = oh("Mo-Sa 18:00-22:00").status(t("2026-10-12T19:00"))
+        val plain = oh("Mo-Sa 18:00-22:00").status(t("2026-10-12T19:00"), context = Nowhere)
         assertFalse(plain.openEnd)
+    }
+
+    /**
+     * An open end after a stated end is guessed by the hour of that end: one at night (22:00 to 06:00) lasts to six the
+     * next morning and never past it, so a bar's hours are no longer open around the clock, nor on its closed day.
+     * Inside the guessed tail the place is open, with no closing time it knows (the reviewer, 17 November 2026: an end
+     * after midnight was taken for one by day, and its tail ran to the next midnight).
+     */
+    @Test
+    fun anOpenEndAtNightLastsTillMorning() {
+        // the reviewer's three, on a Monday at noon (16 November 2026)
+        for ((hours, opens) in listOf(
+            "Mo-Su 18:00-24:00+" to "2026-11-16T18:00",
+            "Mo-Su 17:00-01:00+" to "2026-11-16T17:00",
+            "Tu-Su 16:00-02:00+" to "2026-11-17T16:00",
+        )) {
+            val s = oh(hours).status(t("2026-11-16T12:00"), context = Nowhere)
+            assertFalse("$hours at noon", s.isOpen)
+            assertEquals(hours, ChangeKind.OPENS, s.nextChangeKind)
+            assertEquals(hours, t(opens), s.changesAt)
+        }
+        // the night after: open, an open end, till six at the latest
+        val night = oh("Mo-Su 18:00-24:00+").status(t("2026-11-17T03:00"), context = Nowhere)
+        assertTrue(night.isOpen)
+        assertTrue(night.openEnd)
+        assertEquals(t("2026-11-17T06:00"), night.changesAt)
+        // Sunday's night ends on Monday morning, the closed day
+        val sunday = oh("Tu-Su 16:00-02:00+")
+        assertTrue(sunday.status(t("2026-11-16T04:00"), context = Nowhere).let { it.isOpen && it.openEnd })
+        assertEquals(false, sunday.isOpen(t("2026-11-16T06:00"), context = Nowhere))
+        assertEquals(listOf(OpenSpan(0, 120, OpenState.OPEN), OpenSpan(120, 360, OpenState.OPEN, openEnd = true)), sunday.spans(LocalDate.of(2026, 11, 16), context = Nowhere))
+        // by the hour the open end begins: night, evening, day
+        assertEquals(listOf(480, 360, 240, 60, 300, 600), listOf(22 * 60, 24 * 60, 26 * 60, 5 * 60, 17 * 60, 14 * 60).map { TimeSpan.openEndGuess(it) })
+        // as before for an open end with no stated end
+        assertEquals(false, oh("Mo-Su 17:00+").isOpen(t("2026-11-16T22:00"), context = Nowhere))
+        assertEquals(true, oh("Mo-Su 22:00+").isOpen(t("2026-11-17T05:59"), context = Nowhere))
+    }
+
+    @Test
+    fun anOpenEndStatesNoClosingTime() {
+        val bar = oh("Tu-Su 16:00-02:00+")
+        // inside the stated hours and in the tail alike, the closing time is a guess, and none is stated
+        for (at in listOf("2026-11-17T20:00", "2026-11-18T03:00")) {
+            val s = bar.status(t(at), context = Nowhere)
+            assertTrue(at, s.isOpen && s.openEnd && s.changesAt != null)
+            assertNull(at, s.statedChangeAt)
+        }
+        // closed, or open to a stated end: the change as before
+        assertEquals(t("2026-11-17T16:00"), bar.status(t("2026-11-16T12:00"), context = Nowhere).statedChangeAt)
+        assertEquals(t("2026-11-16T18:00"), oh("Mo-Su 09:00-18:00").status(t("2026-11-16T12:00"), context = Nowhere).statedChangeAt)
+        // a day's spans as stated: the tail joined to the stretch it follows, or alone with no end
+        assertEquals(listOf(StatedSpan(960, 1560, OpenState.OPEN, openEnd = true)), statedSpans(bar.weekTable(weekOf = null, context = Nowhere)[6]))
+        assertEquals(listOf(StatedSpan(0, 120, OpenState.OPEN, openEnd = true)), statedSpans(bar.spans(LocalDate.of(2026, 11, 16), context = Nowhere)))
+        assertEquals(listOf(StatedSpan(600, 840, OpenState.OPEN), StatedSpan(1020, null, OpenState.OPEN, openEnd = true)), statedSpans(oh("Mo 10:00-14:00,17:00+").weekTable(weekOf = null, context = Nowhere)[0]))
+        assertEquals(listOf(StatedSpan(540, 1020, OpenState.OPEN)), statedSpans(oh("Mo-Fr 09:00-17:00").weekTable(weekOf = null, context = Nowhere)[0]))
     }
 
     @Test
     fun weekTableAndSpans() {
         val h = oh("Mo-Th 09:00-17:00; Fr 09:00-12:00,22:00-02:00; PH off; Dec 25 off")
-        val week = h.weekTable()
+        val week = h.weekTable(weekOf = null, context = Nowhere)
         assertEquals(7, week.size)
         assertEquals(listOf(OpenSpan(540, 1020, OpenState.OPEN)), week[0])
         assertEquals(listOf(OpenSpan(540, 720, OpenState.OPEN), OpenSpan(1320, 1560, OpenState.OPEN)), week[4])
@@ -233,9 +288,9 @@ class OpeningHoursTest {
         // a real week: Christmas on the Friday
         val xmas = h.weekTable(LocalDate.of(2026, 12, 23), nl)
         assertTrue(xmas[4].isEmpty())
-        val dial = h.spans(LocalDate.of(2026, 10, 17))
+        val dial = h.spans(LocalDate.of(2026, 10, 17), context = Nowhere)
         assertEquals(listOf(OpenSpan(0, 120, OpenState.OPEN)), dial)
-        val unknown = oh("Mo-Fr 08:00-12:00 || \"by appointment\"").spans(LocalDate.of(2026, 10, 12))
+        val unknown = oh("Mo-Fr 08:00-12:00 || \"by appointment\"").spans(LocalDate.of(2026, 10, 12), context = Nowhere)
         assertEquals(3, unknown.size)
         assertEquals(OpenState.UNKNOWN, unknown[0].state)
         assertEquals("by appointment", unknown[0].comment)
@@ -251,13 +306,13 @@ class OpeningHoursTest {
         for (v in variants) {
             val h = OpeningHours.parseOrNull(v)
             assertNotNull(v, h)
-            assertEquals(v, true, h!!.isOpen(t("2026-10-12T09:00")))
-            assertEquals(v, false, h.isOpen(t("2026-10-12T19:00")))
-            assertEquals(v, false, h.isOpen(t("2026-10-17T09:00")))
+            assertEquals(v, true, h!!.isOpen(t("2026-10-12T09:00"), context = Nowhere))
+            assertEquals(v, false, h.isOpen(t("2026-10-12T19:00"), context = Nowhere))
+            assertEquals(v, false, h.isOpen(t("2026-10-17T09:00"), context = Nowhere))
         }
         // a missing ";" between rules
         val missing = oh("Mo-Fr 08:30-17:00 Sa 09:00-12:00")
-        assertEquals(true, missing.isOpen(t("2026-10-17T10:00")))
+        assertEquals(true, missing.isOpen(t("2026-10-17T10:00"), context = Nowhere))
         assertEquals(true, open("Mo Closed; Tu-We 11:00-22:00 ; Th-Sa 11:00-24:00", "2026-10-13T12:00"))
         assertEquals(true, open("Su, Th 18:00-01:00", "2026-10-16T00:30"))
         assertEquals(true, open("Mo-Su,PH 00:00-24:00+", "2026-10-12T05:00"))
@@ -292,9 +347,9 @@ class OpeningHoursTest {
     @Test
     fun pointsInTime() {
         val post = oh("Mo-Fr 17:00; Sa 12:00")
-        assertEquals(true, post.isOpen(t("2026-10-12T17:00")))
-        assertEquals(false, post.isOpen(t("2026-10-12T17:01")))
-        assertEquals(t("2026-10-17T12:00"), post.status(t("2026-10-16T18:00")).changesAt)
+        assertEquals(true, post.isOpen(t("2026-10-12T17:00"), context = Nowhere))
+        assertEquals(false, post.isOpen(t("2026-10-12T17:01"), context = Nowhere))
+        assertEquals(t("2026-10-17T12:00"), post.status(t("2026-10-16T18:00"), context = Nowhere).changesAt)
     }
 
     @Test
@@ -331,14 +386,14 @@ class OpeningHoursTest {
         for (v in listOf("Mo-Fr 9am-5pm", "Mo-Fr 9:00 AM - 5:00 PM", "Mo-Fr 9 am - 5 pm", "Mo-Fr 09:00am-05:00pm")) {
             val h = OpeningHours.parseOrNull(v)
             assertNotNull(v, h)
-            assertEquals(v, false, h!!.isOpen(t("2026-10-12T08:59")))
-            assertEquals(v, true, h.isOpen(t("2026-10-12T09:00")))
-            assertEquals(v, true, h.isOpen(t("2026-10-12T16:59")))
-            assertEquals(v, false, h.isOpen(t("2026-10-12T17:00")))
+            assertEquals(v, false, h!!.isOpen(t("2026-10-12T08:59"), context = Nowhere))
+            assertEquals(v, true, h.isOpen(t("2026-10-12T09:00"), context = Nowhere))
+            assertEquals(v, true, h.isOpen(t("2026-10-12T16:59"), context = Nowhere))
+            assertEquals(v, false, h.isOpen(t("2026-10-12T17:00"), context = Nowhere))
         }
         // 12 pm is noon and 12 am midnight
-        assertEquals(listOf(OpenSpan(720, 1440, OpenState.OPEN)), oh("Sa 12pm-12am").spans(LocalDate.of(2026, 10, 17)))
-        assertEquals(listOf(OpenSpan(0, 360, OpenState.OPEN)), oh("Su 12am-6am").spans(LocalDate.of(2026, 10, 18)))
+        assertEquals(listOf(OpenSpan(720, 1440, OpenState.OPEN)), oh("Sa 12pm-12am").spans(LocalDate.of(2026, 10, 17), context = Nowhere))
+        assertEquals(listOf(OpenSpan(0, 360, OpenState.OPEN)), oh("Su 12am-6am").spans(LocalDate.of(2026, 10, 18), context = Nowhere))
         assertNull(OpeningHours.parseOrNull("Mo 13pm-14pm"))
         assertNull(OpeningHours.parseOrNull("Mo 0am-5am"))
     }
@@ -347,13 +402,13 @@ class OpeningHoursTest {
     fun allDayAfterOtherSelectors() {
         val summer = oh("Jun-Aug 24/7")
         assertFalse(summer.isAlwaysOpen)
-        assertEquals(true, summer.isOpen(t("2026-07-03T03:00")))
-        assertEquals(false, summer.isOpen(t("2026-10-13T12:00")))
-        assertEquals(t("2027-06-01T00:00"), summer.status(t("2026-10-13T12:00")).changesAt)
+        assertEquals(true, summer.isOpen(t("2026-07-03T03:00"), context = Nowhere))
+        assertEquals(false, summer.isOpen(t("2026-10-13T12:00"), context = Nowhere))
+        assertEquals(t("2027-06-01T00:00"), summer.status(t("2026-10-13T12:00"), context = Nowhere).changesAt)
         val weekdays = oh("Mo-Fr 24/7; Sa 10:00-16:00")
-        assertEquals(true, weekdays.isOpen(t("2026-10-12T03:00")))
-        assertEquals(false, weekdays.isOpen(t("2026-10-17T09:00")))
-        assertEquals(true, weekdays.isOpen(t("2026-10-17T11:00")))
+        assertEquals(true, weekdays.isOpen(t("2026-10-12T03:00"), context = Nowhere))
+        assertEquals(false, weekdays.isOpen(t("2026-10-17T09:00"), context = Nowhere))
+        assertEquals(true, weekdays.isOpen(t("2026-10-17T11:00"), context = Nowhere))
         assertEquals(true, open("Mo-Fr: 24/7", "2026-10-14T23:00"))
         assertTrue(oh("24/7").isAlwaysOpen)
     }
@@ -361,27 +416,27 @@ class OpeningHoursTest {
     @Test
     fun aWeeklyPatternIsSearchedOneWeekAhead() {
         // nothing ever changes: no next change (it used to walk 400 days to find out)
-        assertNull(oh("24/7").status(t("2026-10-12T10:00")).changesAt)
-        val off = oh("off").status(t("2026-10-12T10:00"))
+        assertNull(oh("24/7").status(t("2026-10-12T10:00"), context = Nowhere).changesAt)
+        val off = oh("off").status(t("2026-10-12T10:00"), context = Nowhere)
         assertFalse(off.isOpen)
         assertNull(off.changesAt)
         // the furthest change a weekly pattern can have is just under a week away
-        assertEquals(t("2026-10-25T10:00"), oh("Su 10:00-12:00").status(t("2026-10-18T12:30")).changesAt)
-        assertEquals(t("2026-10-25T22:00"), oh("Su 22:00-02:00").status(t("2026-10-19T03:00")).changesAt)
+        assertEquals(t("2026-10-25T10:00"), oh("Su 10:00-12:00").status(t("2026-10-18T12:30"), context = Nowhere).changesAt)
+        assertEquals(t("2026-10-25T22:00"), oh("Su 22:00-02:00").status(t("2026-10-19T03:00"), context = Nowhere).changesAt)
         // dated rules still look up to a year ahead
-        assertEquals(t("2027-12-25T10:00"), oh("Dec 25 10:00-12:00").status(t("2026-12-25T13:00")).changesAt)
+        assertEquals(t("2027-12-25T10:00"), oh("Dec 25 10:00-12:00").status(t("2026-12-25T13:00"), context = Nowhere).changesAt)
     }
 
     @Test
     fun wholeYearSelectorsStillMakeAWeeklyPlaque() {
         // "Jan-Dec" and "week 01-53" select every day: the door-plaque table used to come out empty
         for (v in listOf("Jan-Dec Mo-Fr 08:00-17:00", "week 01-53 Mo-Fr 08:00-17:00", "Dec-Nov Mo-Fr 08:00-17:00")) {
-            val week = oh(v).weekTable()
+            val week = oh(v).weekTable(weekOf = null, context = Nowhere)
             assertEquals(v, listOf(OpenSpan(480, 1020, OpenState.OPEN)), week[0])
             assertTrue(v, week[5].isEmpty())
         }
         // a season is still a dated rule
-        assertTrue(oh("Apr-Oct Mo-Fr 08:00-17:00").weekTable()[0].isEmpty())
+        assertTrue(oh("Apr-Oct Mo-Fr 08:00-17:00").weekTable(weekOf = null, context = Nowhere)[0].isEmpty())
     }
 
     @Test
@@ -397,5 +452,63 @@ class OpeningHoursTest {
         assertEquals(false, open("Feb 29 10:00-12:00", "2027-03-01T11:00"))
         assertEquals(false, open("Feb 29 10:00-12:00", "2027-02-28T11:00"))
         assertEquals(true, open("Feb 29 10:00-12:00", "2028-02-29T11:00"))
+    }
+
+    @Test
+    fun aSunEventThatDoesNotHappen() {
+        // the reviewer, 17 November, finding 11: an event the sun does not make that day shut the whole day
+        val oslo = java.time.ZoneId.of("Europe/Oslo")
+        // Trondheim at midsummer: the sun sets, but never 6° below the horizon; dawn and dusk do not come, light all night
+        val trondheim = OpeningHoursContext(sun = SunClock.at(63.4305, 10.3951, oslo))
+        assertEquals(true, oh("dawn-dusk").isOpen(t("2026-06-21T01:00"), trondheim))
+        assertEquals(true, oh("dawn-dusk").isOpen(t("2026-06-21T12:00"), trondheim))
+        assertEquals(false, oh("dusk-dawn").isOpen(t("2026-06-21T01:00"), trondheim))
+        // its sunrise and sunset still happen
+        assertEquals(false, oh("sunrise-sunset").isOpen(t("2026-06-21T01:00"), trondheim))
+        assertEquals(true, oh("sunrise-sunset").isOpen(t("2026-06-21T12:00"), trondheim))
+        // Tromsø: polar day in June, the sun up all day; polar night in December
+        val tromso = OpeningHoursContext(sun = SunClock.at(69.6492, 18.9553, oslo))
+        assertEquals(true, oh("sunrise-sunset").isOpen(t("2026-06-21T02:00"), tromso))
+        assertEquals(true, oh("(sunrise+01:00)-(sunset-01:00)").isOpen(t("2026-06-21T00:30"), tromso))
+        assertEquals(true, oh("10:00-sunset").isOpen(t("2026-06-21T23:30"), tromso))
+        assertEquals(false, oh("sunset-sunrise").isOpen(t("2026-06-21T02:00"), tromso))
+        assertEquals(false, oh("sunset-sunrise").isOpen(t("2026-06-21T12:00"), tromso))
+        assertEquals(false, oh("sunrise-sunset").isOpen(t("2026-12-21T12:00"), tromso))
+        assertEquals(true, oh("sunset-sunrise").isOpen(t("2026-12-21T12:00"), tromso))
+        // open all day says no closing at midnight: the next day is the same
+        val light = oh("dawn-dusk").status(t("2026-06-21T23:00"), trondheim)
+        assertTrue(light.isOpen)
+        assertTrue("changes ${light.changesAt}", light.changesAt == null || light.changesAt!!.isAfter(t("2026-06-28T00:00")))
+        // where the sun keeps its times, nothing changes: Amsterdam in October
+        val ams = OpeningHoursContext(sun = SunClock.at(52.3746, 4.8840, java.time.ZoneId.of("Europe/Amsterdam")))
+        assertEquals(false, oh("dawn-dusk").isOpen(t("2026-10-13T03:00"), ams))
+        assertEquals(true, oh("dawn-dusk").isOpen(t("2026-10-13T12:00"), ams))
+    }
+
+    @Test
+    fun allDayAndTimesWithoutTheirColons() {
+        // the reviewer, 17 November, finding 11: "24h" read as the moment 24:00, "closed, opens 0:00"; "Mo-Fr 1900-2200"
+        // as the years 1900 to 2200, open around the clock
+        val allDay = oh("24h")
+        assertEquals(true, allDay.isOpen(t("2026-10-12T03:00"), context = Nowhere))
+        assertEquals(true, allDay.isOpen(t("2026-10-17T23:59"), context = Nowhere))
+        assertEquals(true, open("Mo-Fr 24h", "2026-10-14T02:00"))
+        assertEquals(false, open("Mo-Fr 24h", "2026-10-17T12:00"))
+        assertEquals(true, open("Mo-Fr: 24h; Sa 10:00-16:00", "2026-10-17T11:00"))
+        assertEquals(false, open("Mo-Fr 24h; PH off", "2026-12-25T12:00", nl))
+        // "18h-24h" stays a span to midnight
+        assertEquals(true, open("Mo-Su 18h-24h", "2026-10-12T23:00"))
+        assertEquals(false, open("Mo-Su 18h-24h", "2026-10-12T17:00"))
+        val evenings = oh("Mo-Fr 1900-2200")
+        assertEquals(true, evenings.isOpen(t("2026-10-13T20:00"), context = Nowhere))
+        assertEquals(false, evenings.isOpen(t("2026-10-13T12:00"), context = Nowhere))
+        assertEquals(false, evenings.isOpen(t("2026-10-17T20:00"), context = Nowhere))
+        assertEquals(t("2026-10-13T22:00"), evenings.status(t("2026-10-13T20:00"), context = Nowhere).changesAt)
+        assertEquals(true, open("Mo-Fr 0830-1200,1300-1730", "2026-10-12T13:30"))
+        assertEquals(false, open("Mo-Fr 0830-1200 1300-1730", "2026-10-12T12:30"))
+        assertEquals(true, open("Mo-Fr 0830-1200 1300-1730", "2026-10-12T17:00"))
+        // a year before the days is still a year
+        assertEquals(true, open("2026 Mo-Fr 08:00-12:00", "2026-10-12T09:00"))
+        assertEquals(false, open("2025 Mo-Fr 08:00-12:00", "2026-10-12T09:00"))
     }
 }

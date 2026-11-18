@@ -147,6 +147,7 @@
     <string name="find_hours_known">%1$d sur %2$d indiquent leurs horaires</string>
     <string name="find_hours_today">Aujourd’hui la plupart ouverts %1$s–%2$s ; le premier à %3$s, le dernier jusqu’à %4$s</string>
     <string name="find_hours_today_none">Aucun ouvert aujourd’hui</string>
+    <string name="find_hours_today_from">Aujourd’hui la plupart ouverts dès %1$s</string>
     <string name="find_fact_none">La carte ne le dit pas</string>
     <string name="find_unknown_ask">Répondre : %1$s ?</string>
     <string name="find_unknown_title">%1$s ?</string>

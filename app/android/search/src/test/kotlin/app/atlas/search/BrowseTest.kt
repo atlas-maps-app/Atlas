@@ -10,15 +10,17 @@ import app.atlas.places.CategoryTree
 import app.atlas.places.NodeKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.LocalTime
 import java.time.ZonedDateTime
 
 class BrowseTest {
     private val here = Fixtures.westerkerk
     private val pool: List<PlaceRecord> by lazy { Fixtures.store.within(here, 1_500.0) }
-    private val saturday = Moment(Fixtures.saturday)
-    private val lateSaturday = Moment(Fixtures.saturday.withHour(23).withMinute(30))
+    private val saturday = Moment(Fixtures.saturday, hours = Nowhere)
+    private val lateSaturday = Moment(Fixtures.saturday.withHour(23).withMinute(30), hours = Nowhere)
     private val categories by lazy { CategoryTree.all().filter { it.kind == NodeKind.CATEGORY } }
 
     @Test
@@ -62,14 +64,14 @@ class BrowseTest {
         val drinks = CategoryTree.category("drinks")!!
         var id = 900_000L
         fun bar(dLat: Double, hours: String?) = PlaceRecord.of(
-            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), listOfNotNull("amenity" to "bar", "name" to "Bar $id", hours?.let { "opening_hours" to it }).toMap()),
+            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), listOfNotNull("amenity" to "bar", "name" to "Bar $id", hours?.let { "opening_hours" to it }).toMap()), country = null,
         )
         // three bars a little off keep late hours: the one that maps none goes by them
         val around = (1..3).map { bar(0.003 + 0.001 * it, "Mo-Su 12:00-03:00") }
         val early = bar(0.001, "Mo-Su 16:00-23:00")
         val guessed = bar(0.002, null)
         fun pulse(places: List<PlaceRecord>, hour: Int) = Browse.pulses(
-            listOf(drinks), places, here, Moment(Fixtures.saturday.withHour(hour).withMinute(0)), HoursBook(listOf(early, guessed) + around),
+            listOf(drinks), places, here, Moment(Fixtures.saturday.withHour(hour).withMinute(0), hours = Nowhere), HoursBook(listOf(early, guessed) + around),
         ).single()
         // the guess keeps the bar open till 3:00, the bar of its own hours till 23:00: the tile says 23:00
         val evening = pulse(listOf(early, guessed), 21)
@@ -87,6 +89,27 @@ class BrowseTest {
         val asleep = pulse(listOf(guessed), 10)
         assertEquals(12, asleep.opensAt!!.hour)
         assertTrue("only the guess says when it opens", asleep.opensGuessed)
+    }
+
+    @Test
+    fun aTileNamesNoClosingTimeWhereAnOpenEndStatesNone() {
+        val drinks = CategoryTree.category("drinks")!!
+        var id = 910_000L
+        fun bar(dLat: Double, hours: String) = PlaceRecord.of(
+            Place(OsmId(OsmType.NODE, id++), LatLon(here.lat + dLat, here.lon), mapOf("amenity" to "bar", "name" to "Bar $id", "opening_hours" to hours)), country = null,
+        )
+        val late = bar(0.001, "Mo-Su 17:00+")
+        val early = bar(0.002, "Mo-Su 16:00-22:30")
+        fun pulse(places: List<PlaceRecord>) = Browse.pulses(listOf(drinks), places, here, Moment(Fixtures.saturday.withHour(21).withMinute(0), hours = Nowhere), HoursBook(places)).single()
+        // at 21:00 both open: the time is the one the hours state, and the kind does not close as far as they say (no
+        // "closing soon" tile), nor is it open day and night
+        val both = pulse(listOf(late, early))
+        assertEquals(2 to 1, both.open to both.openEnded)
+        assertEquals(LocalTime.of(22, 30), both.until!!.toLocalTime())
+        assertNull(both.closes)
+        assertEquals(0, both.endless)
+        // the one of stated hours alone: as before
+        assertEquals(LocalTime.of(22, 30), pulse(listOf(early)).closes!!.toLocalTime())
     }
 
     /** The time picker's curve: how many are open each hour of the day asked about, over what the other filters keep. */
@@ -108,7 +131,7 @@ class BrowseTest {
         assertTrue(stepFree.byHour.indices.all { stepFree.byHour[it] <= res.byHour[it] })
         assertTrue(stepFree.byHour.sum() < res.byHour.sum())
         // in the small hours the day is still the evening's
-        val night = Browse.results(restaurants, pool, here, Moment(Fixtures.saturday.withHour(2)))
+        val night = Browse.results(restaurants, pool, here, Moment(Fixtures.saturday.withHour(2), hours = Nowhere))
         assertEquals(Fixtures.saturday.toLocalDate().minusDays(1).atTime(Browse.CURVE_FROM, 0), night.hoursFrom)
     }
 
@@ -230,7 +253,7 @@ class BrowseTest {
     @Test
     fun aTypedQuerysPlacesAreAKindsResults() {
         val engine = SearchEngine(Fixtures.store)
-        val ctx = SearchContext(location = here, now = Fixtures.saturday, limit = 400)
+        val ctx = SearchContext(location = here, now = Fixtures.saturday, limit = 400, hours = Nowhere)
         fun answer(text: String) = kotlinx.coroutines.runBlocking { engine.answer(text, ctx) }!!.items.filterIsInstance<SearchItem.Structured>().single()
         // what the query wants and tags may not say parts the results; each keeps what it is near
         val cafes = answer("cafe with toilets")
@@ -262,23 +285,23 @@ class BrowseTest {
     fun intentsFollowTheWeather() {
         val lake = mapOf("natural" to "water", "water" to "lake")
         assertTrue(Intents.of(lake).map { it.id }.containsAll(listOf("swim", "sunset")))
-        val summer = Moment(ZonedDateTime.of(2026, 7, 18, 15, 0, 0, 0, Fixtures.amsterdam), WeatherNow(tempC = 27.0, sunny = true))
+        val summer = Moment(ZonedDateTime.of(2026, 7, 18, 15, 0, 0, 0, Fixtures.amsterdam), WeatherNow(tempC = 27.0, sunny = true), hours = Nowhere)
         val swim = Intents.byId("swim")!!
         assertTrue(swim.fit(summer).first >= 0.9)
         assertEquals(0.0 to FitReason.STORM, swim.fit(summer.copy(weather = WeatherNow(tempC = 27.0, storm = true))))
         assertEquals(FitReason.COLD, swim.fit(summer.copy(weather = WeatherNow(tempC = 16.0))).second)
-        val rainy = Moment(Fixtures.saturday, WeatherNow(tempC = 12.0, rain = true))
+        val rainy = Moment(Fixtures.saturday, WeatherNow(tempC = 12.0, rain = true), hours = Nowhere)
         assertEquals(FitReason.SEASON, swim.fit(rainy).second)
         val now = Intents.now(rainy).map { it.first.id }
         println("a rainy October Saturday: $now")
         assertTrue("shelter" in now)
         assertFalse("picnic" in now)
         // somewhere dry is for the rain, a swim for a day known to be warm
-        assertFalse("shelter" in Intents.now(Moment(Fixtures.saturday)).map { it.first.id })
-        assertTrue(swim.fit(Moment(ZonedDateTime.of(2026, 7, 18, 15, 0, 0, 0, Fixtures.amsterdam))).first < 0.6)
+        assertFalse("shelter" in Intents.now(Moment(Fixtures.saturday, hours = Nowhere)).map { it.first.id })
+        assertTrue(swim.fit(Moment(ZonedDateTime.of(2026, 7, 18, 15, 0, 0, 0, Fixtures.amsterdam), hours = Nowhere)).first < 0.6)
         // the sunset fits in the hour and a half before it
         val sunset = Intents.byId("sunset")!!
-        val evening = Moment(Fixtures.saturday.withHour(18).withMinute(0), sunset = java.time.LocalTime.of(18, 50))
+        val evening = Moment(Fixtures.saturday.withHour(18).withMinute(0), sunset = java.time.LocalTime.of(18, 50), hours = Nowhere)
         assertEquals(FitReason.SUNSET, sunset.fit(evening).second)
     }
 

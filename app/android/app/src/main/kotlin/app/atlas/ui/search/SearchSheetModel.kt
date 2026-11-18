@@ -21,7 +21,6 @@ import app.atlas.places.Categories
 import app.atlas.places.CategoryNode
 import app.atlas.places.CategoryTree
 import app.atlas.places.NodeKind
-import app.atlas.places.PublicHolidays
 import app.atlas.places.SunClock
 import app.atlas.places.TagFilter
 import app.atlas.providers.BathingSite
@@ -554,7 +553,7 @@ class SearchSheetModel(
     fun reword(text: String) {
         val s = mutable.value
         val now = ZonedDateTime.now(services.clock)
-        val parsed = app.atlas.search.QueryParser.parse(text, lang, now)
+        val parsed = app.atlas.search.QueryParser.parse(text, lang, now, s.moment.hours.country)
         if (parsed.steps.isEmpty()) return close()
         if (parsed.isPlan) return plan(Asked.Outing(text, parsed, refine = (s.asked as? Asked.Outing)?.refine.orEmpty()))
         ask(Asked.Words(text, parsed))
@@ -862,7 +861,7 @@ class SearchSheetModel(
                     return@collect
                 }
                 found += id
-                val r = PlaceRecord.of(place)
+                val r = PlaceRecord.of(place, s.moment.hours.country)
                 val metres = r.distanceTo(s.centre)
                 val e = ours() ?: return@collect
                 val kinds = e.kinds.map { p -> if (p.node.id == id) p.copy(nearest = r, metres = metres, minutes = Travel.minutes(metres, s.moment.mode)) else p }
@@ -1004,8 +1003,9 @@ class SearchSheetModel(
         questsJob?.cancel()
         poolAt = c
         poolJob = viewModelScope.launch {
+            val country = withContext(Dispatchers.IO) { HereContext.country(services, c) }
             val (found, origin) = try {
-                withContext(Dispatchers.IO) { aroundOnPhone(c, POOL_RADIUS_M) }
+                withContext(Dispatchers.IO) { aroundOnPhone(c, POOL_RADIUS_M, country) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1022,7 +1022,7 @@ class SearchSheetModel(
                 } catch (e: Exception) {
                     null
                 }
-                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(c, more.value.map { PlaceRecord.of(it) }, PlaceOrigin.PACK)
+                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(c, more.value.map { PlaceRecord.of(it, country) }, PlaceOrigin.PACK)
             }
         }
     }
@@ -1054,11 +1054,12 @@ class SearchSheetModel(
     }
 
     /** The places within [r] of [c] on the phone: a region's store covering it, else the map's packs and windows. */
-    private fun aroundOnPhone(c: LatLon, r: Double): Pair<List<PlaceRecord>, PlaceOrigin?> {
+    /** The places within [r] of [c] on the phone, their brands as they trade in [country], the country of the map there. */
+    private fun aroundOnPhone(c: LatLon, r: Double, country: String?): Pair<List<PlaceRecord>, PlaceOrigin?> {
         val stores = services.placeStores
         if (stores.size > 0 && stores.covers(c)) return stores.within(c, r) to PlaceOrigin.STORE
         val packed = services.localData.inPacks(c, r, ANY_PLACE, POOL_LIMIT) ?: return emptyList<PlaceRecord>() to null
-        return packed.value.map { PlaceRecord.of(it) } to PlaceOrigin.PACK
+        return packed.value.map { PlaceRecord.of(it, country) } to PlaceOrigin.PACK
     }
 
     /**
@@ -1073,10 +1074,10 @@ class SearchSheetModel(
             .sortedWith(compareByDescending<BrandBranches> { it.branches.size }.thenBy { Geo.distance(c, it.branches.first().location) })
     }
 
-    /** True when today is a public holiday in the country at [c]. */
+    /** True when today is a public holiday at [c]: in its country, and in its state or nation (finding 10). */
     private fun holidayAt(c: LatLon): Boolean {
-        val country = HereContext.country(services, c) ?: return false
-        return PublicHolidays.forCountry(country)?.holiday(ZonedDateTime.now(services.clock).toLocalDate()) != null
+        val today = ZonedDateTime.now(services.clock).toLocalDate()
+        return HereContext.hours(services, c, services.clock.zone).publicHolidays?.holiday(today) != null
     }
 
     /**
@@ -1109,7 +1110,7 @@ class SearchSheetModel(
                 try {
                     val answers = if (brand != null) services.localData.branchesAsFound(brand, c, radius) else services.localData.placesAsFound(c, radius, takes, LIMIT)
                     answers.transformWhile<LocalAnswer<List<Place>>, Unit> { answer ->
-                        val records = withContext(Dispatchers.Default) { answer.value.map { PlaceRecord.of(it) } }
+                        val records = withContext(Dispatchers.Default) { HereContext.country(services, c).let { country -> answer.value.map { PlaceRecord.of(it, country) } } }
                         places = records
                         mutable.value = mutable.value.copy(radius = radius, origin = answer.origin, error = answer.error)
                         val serving = mutable.value.intent
@@ -1161,7 +1162,7 @@ class SearchSheetModel(
             return
         }
         if (answer.value.isEmpty()) return
-        val records = withContext(Dispatchers.Default) { answer.value.map { PlaceRecord.of(it) } }
+        val records = withContext(Dispatchers.Default) { HereContext.country(services, c).let { country -> answer.value.map { PlaceRecord.of(it, country) } } }
         places = records
         val reach = ceil(records.maxOf { it.distanceTo(c) } / FARTHER_STEP_M) * FARTHER_STEP_M
         mutable.value = mutable.value.copy(radius = max(reach, within), origin = answer.origin, error = answer.error, noneWithin = within)
@@ -1177,7 +1178,8 @@ class SearchSheetModel(
         val found = places
         val rated = withContext(Dispatchers.IO) { services.areaRatings.rate(found.map { it.place }) }
         if (rated.indices.none { rated[it] !== found[it].place }) return
-        places = withContext(Dispatchers.Default) { rated.map { PlaceRecord.of(it) } }
+        val country = mutable.value.moment.hours.country
+        places = withContext(Dispatchers.Default) { rated.map { PlaceRecord.of(it, country) } }
         // a query's places keep what the engine found of them, on their rated records
         if (askedHits.size == places.size) askedHits = askedHits.mapIndexed { i, h -> h.copy(record = places[i]) }
         hours = HoursBook(places + elsewhere)
@@ -1375,7 +1377,8 @@ class SearchSheetModel(
         val now = ZonedDateTime.now(services.clock)
         val sunset = runCatching { SunClock.at(c.lat, c.lon, now.zone).times(now.toLocalDate())?.sunset }.getOrNull()
         val outlook = forecast()?.let { f -> runCatching { Outlook.of(f, now) }.getOrNull() }
-        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday)
+        // the holidays and the sun at the centre, which every tile and row reads its places' hours in
+        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday, HereContext.hours(services, c, now.zone))
     }
 
     companion object {

@@ -2,6 +2,7 @@ package app.atlas.packer
 
 import app.atlas.geo.BBox
 import app.atlas.packer.pbf.PbfReader
+import app.atlas.places.PlaceCountry
 import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.PackReader
 import app.atlas.render.data.PackWriter
@@ -20,10 +21,12 @@ import kotlin.system.exitProcess
 private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap extracts
 
   packer places <in.osm.pbf> <out.db> [--name NAME] [--langs en,nl,de,fr] [--bbox W,S,E,N]
-                [--edit-times] [--addresses W,S,E,N] [--threads N] [--no-gzip] [--keep-db] [--no-vacuum]
+                [--edit-times] [--addresses W,S,E,N] [--country XX] [--threads N] [--no-gzip] [--keep-db]
+                [--no-vacuum]
       Builds the place store :search reads, writes <out.db>.gz (unless --no-gzip) and the
       sidecar <out>.json that `manifest` reads. --addresses fills in, over the network, the house
-      numbers OpenStreetMap lacks in that box from OpenAddresses.
+      numbers OpenStreetMap lacks in that box from OpenAddresses. --country is the country the
+      region is of: brands are matched there where the places around name none.
 
   packer manifest <dir> <release-url-base> [--regions regions.json] [--previous packs.json] [--out FILE]
                   [--split-bytes N]
@@ -107,6 +110,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
                 langs = a.value("--langs")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: PlaceStore.DEFAULT_LANGS,
                 clip = a.value("--bbox")?.let(::parseBox),
                 addresses = a.value("--addresses")?.let(::parseBox),
+                country = a.value("--country")?.let { PlaceCountry.code(it) ?: throw UsageException("bad --country '$it': want a two-letter code such as NL") },
                 editTimes = a.flag("--edit-times"),
                 threads = a.value("--threads")?.let { it.toIntOrNull()?.takeIf { n -> n in 1..64 } ?: throw UsageException("bad --threads '$it': want 1 to 64") }
                     ?: PbfReader.defaultThreads(),

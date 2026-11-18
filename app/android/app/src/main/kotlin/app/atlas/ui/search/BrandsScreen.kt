@@ -77,13 +77,13 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.TxLine
 import app.atlas.ui.kit.cssEl
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import app.atlas.ui.kit.rememberNow
 import app.atlas.ui.kit.txStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.LocalDateTime
-import java.time.ZonedDateTime
 import java.util.Locale
 
 /** How far around you Brands looks. */
@@ -134,9 +134,10 @@ fun BrandsScreen(args: Dest.Brands, nav: Navigator) {
     val filter = remember(args.category) { args.category?.let { Categories.byId(it) }?.let { LayeredPlaceFinder.filterOf(it) } }
     // the phone's chains at once, then what the network adds
     val around by produceState<Around?>(null, here, filter) {
+        val country = withContext(Dispatchers.Default) { HereContext.country(services, here) }
         BrandsAround.nearAsFound(services, here, BRANDS_RADIUS_M).collect { all ->
             val n = if (filter == null) all else BrandsAround.split(
-                (all.chains.flatMap { it.branches } + all.independents).filter { filter.matches(it.tags) }, here, BRANDS_RADIUS_M, all.origin,
+                (all.chains.flatMap { it.branches } + all.independents).filter { filter.matches(it.tags) }, here, BRANDS_RADIUS_M, all.origin, country,
             )
             value = Around(n, withContext(Dispatchers.Default) { BrandsAround.stacks(n.chains) })
         }
@@ -319,12 +320,11 @@ internal fun BranchRow(
     inks: BrandInks,
     onClick: () -> Unit,
 ) {
-    val services = LocalServices.current
     val lang = remember { Locale.getDefault().language }
     val t = now ?: rememberNow(place)
-    val ctx = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
-    val line = remember(place, here, t) {
-        PlaceLine.of(place, here, lang, t, open = OpeningHours.parseOrNull(place.tags["opening_hours"])?.status(t, ctx))
+    val ctx = rememberHoursAt(here)
+    val line = remember(place, here, t, ctx) {
+        PlaceLine.of(place, here, lang, t, open = OpeningHours.parseOrNull(place.tags["opening_hours"])?.status(t, ctx), country = ctx.country)
     }
     val street = listOfNotNull(place.tags["addr:street"], place.tags["addr:housenumber"]).joinToString(" ").ifEmpty { null }
     val branded = place.tags["brand"] != null || place.tags["brand:wikidata"] != null

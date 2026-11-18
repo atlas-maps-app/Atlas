@@ -132,9 +132,10 @@ object Symbols {
     /**
      * What a place's mark shows on its family's colour, on a pin, a row's disc, a card's badge or its page: its brand's
      * logo when the brand has one, so a chain is known at a glance, else its kind's symbol. The brand's own colours stay
-     * on its sign (the owner, 5 November: "think about how should brands be featured everywhere").
+     * on its sign (the owner, 5 November: "think about how should brands be featured everywhere"). The brand is the one
+     * of [country], the country of the map at the place ([Brands.forTags]).
      */
-    fun markFor(tags: Map<String, String>, geometry: Geometry = Geometry.POINT, country: String? = null): String =
+    fun markFor(tags: Map<String, String>, country: String?, geometry: Geometry = Geometry.POINT): String =
         Brands.forTags(tags, country)?.logoSlug?.let { "logo-$it" }?.takeIf { has(it) } ?: symbolFor(tags, geometry)
 
     /** The place's colour family: its category's, or null for what Atlas does not list. */

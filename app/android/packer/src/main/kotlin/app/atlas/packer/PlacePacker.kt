@@ -36,6 +36,11 @@ data class PackOptions(
     val threads: Int = PbfReader.defaultThreads(),
     /** Fill in the house numbers OpenStreetMap lacks in this box (the region's) from OpenAddresses, over the network. */
     val addresses: BBox? = null,
+    /**
+     * The country the region is of (packs/regions.json), ISO 3166 alpha-2: the places' brands are matched there wherever
+     * the store's own places and addresses name no country around them ([app.atlas.search.StoreWriter]).
+     */
+    val country: String? = null,
 )
 
 /** What a pack run read and kept. */
@@ -95,7 +100,7 @@ class PlacePacker(private val options: PackOptions = PackOptions()) {
         val needed = relations.neededWays()
         log("pass 1: ${relations.size} relations, ${needed.size} ways needed by kept relations (${seconds(started)} s)")
 
-        val pass = Pass(store.writer(options.langs, name), relations, needed) { log("$it (${seconds(started)} s)") }
+        val pass = Pass(store.writer(options.langs, name, options.country), relations, needed) { log("$it (${seconds(started)} s)") }
         pass.writer.use { w ->
             reader.read(pass)
             log("pass 2: ${pass.nodes} nodes (${pass.locations.bytes shr 20} MiB of locations), ${pass.ways} ways, ${pass.relationsRead} relations (${seconds(started)} s)")
