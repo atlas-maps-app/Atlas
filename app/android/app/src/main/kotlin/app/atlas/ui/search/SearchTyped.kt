@@ -32,6 +32,7 @@ import app.atlas.nav.Dest
 import app.atlas.ui.go.GoJson
 import app.atlas.nav.Navigator
 import app.atlas.places.OpenStatus
+import app.atlas.places.OpeningHours
 import app.atlas.search.SearchItem
 import app.atlas.search.SearchResults
 import app.atlas.search.Travel
@@ -39,6 +40,7 @@ import app.atlas.search.TravelMode
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.rememberCountryAt
+import app.atlas.ui.kit.rememberHoursAt
 import app.atlas.ui.kit.shortDistance
 import java.time.LocalDateTime
 import java.util.Locale
@@ -127,7 +129,13 @@ private fun TypedRow(
     when (item) {
         is SearchItem.PlaceResult -> TypedPlace(item.hit.place, item.title, item.subtitle, item.parts, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
         is SearchItem.Element -> TypedPlace(item.hit.place, null, item.hit.place.id?.toString(), 1, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
-        is SearchItem.Online -> TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place, rememberCountryAt(item.place.location)), 1, item.distance, null, here, mode, lang, now, seat, online = true) { open(item.place) }
+        is SearchItem.Online -> {
+            // an online find comes with no status: its hours read where it is, as its pin fades by them (the app
+            // maintainer, 18 November 2026: the row said nothing)
+            val hours = rememberHoursAt(item.place.location)
+            val status = remember(item.place, now, hours) { OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(now, hours) }
+            TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place, rememberCountryAt(item.place.location)), 1, item.distance, status, here, mode, lang, now, seat, online = true) { open(item.place) }
+        }
         is SearchItem.Kind -> {
             // kinds are nouns: lower case inside a sentence, except in German
             val label = if (lang == "de") item.label else item.label.lowercase(Locale.getDefault())
