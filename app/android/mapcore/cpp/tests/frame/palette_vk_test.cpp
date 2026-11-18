@@ -18,6 +18,7 @@
 #include "passes/Ground.hpp"
 #include "scene/Cover.hpp"
 #include "scene/Residency.hpp"
+#include "scene/SunGlobals.hpp"
 #include "scene/World.hpp"
 #include "scene/WorldTiles.hpp"
 #include "standin/Session.hpp"
@@ -40,6 +41,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -363,11 +365,12 @@ private:
 }
 
 /// Draws `camera` until the map's picture is complete (its tiles resident and drawn, every fade done) twice over the
-/// same tiles and the world wants nothing more (at most four minutes); false where it never is.
-[[nodiscard]] bool draw_still(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera) {
+/// same tiles and the world wants nothing more (at most `most` frames and four minutes); false where it never is.
+[[nodiscard]] bool draw_still(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
+                              int most = std::numeric_limits<int>::max()) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
     std::optional<std::vector<std::uint64_t>> complete;
-    while (std::chrono::steady_clock::now() < until) {
+    for (int frames = 0; frames < most && std::chrono::steady_clock::now() < until; ++frames) {
         const standin::Drawn d = session.draw(camera, {});
         if (d.stale) session.remake();
         scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
@@ -576,6 +579,36 @@ void measure(standin::Session& session, frame::MapFrame& map, KeptWindow& window
     return out.str();
 }
 
+/// The globe of world_vk_test.cpp's look in `dir`, for the frames beyond every pack.
+void write_globe(const fs::path& dir) {
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> globe = test::world_pack({lit_globe_tile()}, coarse);
+    std::ofstream file(dir / tiles::world_globe_file, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
+}
+
+/// The bundled packs of `tiles_dir` (1: the Westerkerk's, 2: the canal ring's) and the globe write_globe wrote in
+/// `dir` beyond them.
+[[nodiscard]] std::vector<frame::MapPack> ring_packs(const std::string& tiles_dir, const fs::path& dir) {
+    std::vector<frame::MapPack> packs;
+    std::uint64_t number = 0;
+    for (const char* id : {"amsterdam", "grachten"}) {
+        frame::MapPack p;
+        p.number = ++number;
+        p.ref.id = id;
+        p.ref.kind = tiles::PackKind::bundled;
+        p.ref.path = (fs::path(tiles_dir) / (std::string(id) + ".atlas")).string();
+        packs.push_back(std::move(p));
+    }
+    frame::MapPack base;
+    base.number = 102;
+    base.ref.id = std::string(tiles::world_globe_id);
+    base.ref.kind = tiles::PackKind::world_base;
+    base.ref.path = (dir / tiles::world_globe_file).string();
+    packs.push_back(std::move(base));
+    return packs;
+}
+
 } // namespace
 
 TEST_CASE("the map's palette: each slot changed alone moves a frame that shows its kind, in the bundled packs near "
@@ -591,34 +624,12 @@ TEST_CASE("the map's palette: each slot changed alone moves a frame that shows i
     const fs::path& dir = folder.path();
     std::optional<gpu::Started> started = start(dir);
     if (!started) return;
-    // the globe of world_vk_test.cpp's look, for the frames beyond every pack
-    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
-    const std::vector<std::byte> globe = test::world_pack({lit_globe_tile()}, coarse);
-    {
-        std::ofstream file(dir / tiles::world_globe_file, std::ios::binary);
-        file.write(reinterpret_cast<const char*>(globe.data()), static_cast<std::streamsize>(globe.size())); // NOLINT
-    }
+    write_globe(dir);
     Moves moves;
     {
         frame::MapFrame map(2, [] {}, {.cache_dir = dir});
         standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
-        std::vector<frame::MapPack> packs;
-        std::uint64_t number = 0;
-        for (const char* id : {"amsterdam", "grachten"}) {
-            frame::MapPack p;
-            p.number = ++number;
-            p.ref.id = id;
-            p.ref.kind = tiles::PackKind::bundled;
-            p.ref.path = (fs::path(tiles_dir) / (std::string(id) + ".atlas")).string();
-            packs.push_back(std::move(p));
-        }
-        frame::MapPack base;
-        base.number = 102;
-        base.ref.id = std::string(tiles::world_globe_id);
-        base.ref.kind = tiles::PackKind::world_base;
-        base.ref.path = (dir / tiles::world_globe_file).string();
-        packs.push_back(std::move(base));
-        (void)map.set_packs(std::move(packs));
+        (void)map.set_packs(ring_packs(tiles_dir, dir));
         CHECK(session.map(&map).empty());
         auto window = std::make_unique<KeptWindow>();
         KeptWindow* kept = window.get();
@@ -785,6 +796,55 @@ TEST_CASE("the reflections under the map's palette: the walls' and the leaves' c
         break;
     }
     CHECK_MESSAGE(found, "none of the canal views mirrors a tree");
+}
+
+TEST_CASE("a frame is called still only once the sun's shadows are in: the canal ring's board whose sun comes after "
+          "its tiles (its bits held back, as a slow build's run comes after the map is complete) does not settle, "
+          "and let go, its shadows fall in and stay") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("sun");
+    const fs::path& dir = folder.path();
+    std::optional<gpu::Started> started = start(dir);
+    if (!started) return;
+    write_globe(dir);
+    frame::MapFrame map(2, [] {}, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    (void)map.set_packs(ring_packs(tiles_dir, dir));
+    CHECK(session.map(&map).empty());
+    auto window = std::make_unique<KeptWindow>();
+    KeptWindow* kept = window.get();
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+    map.set_theme(sunny());
+    map.set_screen(true, false, false);
+    // the first test case's board; the map's world, and its sun, are made before any of its tiles is resident
+    const style::CameraState board = camera_at(52.3746, 4.884, 52.0, 46.0, 2300.0, 2);
+    for (int i = 0; i < 8 && map.world() == nullptr; ++i) {
+        if (session.draw(board, {}).stale) session.remake();
+    }
+    scene::SunGlobals* sun = map.world() != nullptr ? map.world()->sun() : nullptr;
+    ATLAS_REQUIRE(sun != nullptr, "the map has no sun");
+    // held, its runs' bits are made and published but every tile is drawn by day: the map's picture is complete
+    // without them (no frame waits for the sun), and a settled frame is not the board's yet
+    sun->hold(true);
+    CHECK_FALSE(draw_still(session, map, board, 120));
+    CHECK(map.complete());
+    CHECK(sun->stats().runs > 0);
+    auto by_day = kept->kept->read(kept->kept->latest());
+    ATLAS_REQUIRE(by_day.has_value(), by_day.error().text());
+    // let go, the shadows fall in, and the frame called still stays
+    sun->hold(false);
+    ATLAS_REQUIRE(draw_still(session, map, board), "the board never complete");
+    const gpu::Pixels base = settled(session, map, *kept, board, sunny());
+    const std::size_t fell = count(changed(*by_day, base));
+    MESSAGE("the board's shadows moved ", fell, " pixels as they fell in");
+    CHECK(fell > 0);
+    CHECK(count(changed(base, settled(session, map, *kept, board, sunny()))) == 0);
 }
 
 #endif
