@@ -9,7 +9,8 @@
 //!                       [--max-rides N] [--never W]… [--avoid W[=MIN]]… [--prefer W[=MIN]]… [--every-option]
 //!                       [--no-rules] [--scan]
 //!   atlas-transit fixed <file> <journeys.tsv> [--write]   the fixed journeys: checked against the scan, or written
-//!   atlas-transit bench <file> [--date D] [--pairs N]     times, and agreement with the scan, on random pairs
+//!   atlas-transit bench <file> [--date D] [--time HH:MM] [--pairs N] [--points] [--no-rules] [--quick]
+//!                                                         times, and agreement with the scan, on random pairs
 //!   atlas-transit fuzz  <file> <runs> [seed]              files a little wrong, and queries at their edges
 //!
 //! A place P is `lat,lon`, `id:<stop_id>`, or a name (every stop called exactly that; else the one station whose
@@ -17,7 +18,8 @@
 //! `box:<south>,<west>,<north>,<east>`, `line:<short name>`, `operator:<name>`, `mode:<rail|bus|tram|metro|ferry|…>`,
 //! `kind:<Intercity|Sprinter|…>`, `trip:<number>`, `no-wheelchair`, `wheelchair-unknown`, `no-bicycles`,
 //! `bicycles-unknown`; a stop, station or area with `+through` also counts for riding past. Times are the file's
-//! service-day times, read as the clock's (they differ on the two days a year the clock changes).
+//! service-day times (noon less twelve hours), read as the clock's: on the day the clock changes they are an hour
+//! off the clock, as the feed's own are (FORMAT.md, "Time").
 
 use atlas_transit::file::{LineText, OperatorText, StopText, TripText};
 use atlas_transit::reference::{Reference, impossible};
@@ -510,14 +512,12 @@ fn plan(tt: &Timetable, args: &[String]) -> Result<(), String> {
         let reference = Reference::new(&planner, q.day, q.time as i32 - 2 * 86_400, q.time as i32 + 2 * 86_400);
         let built = ms(t0);
         let t0 = Instant::now();
-        let mut q = q.clone();
-        q.limits.horizon = a.horizon;
         let said = if q.arrive_by {
             reference.latest_departure(&planner, &q, q.time as i32).map(|t| format!("latest departure {}", clock(t)))
         } else {
             reference.earliest_arrival(&planner, &q, q.time as i32).map(|t| format!("earliest arrival {}", clock(t)))
         };
-        println!("the scan ({} connections, built in {built:.0} ms; no rules, no cap on rides): {} in {:.2} ms", reference.connections(), said.unwrap_or("none".into()), ms(t0));
+        println!("the scan ({} connections, built in {built:.0} ms; no cap on rides): {} in {:.2} ms", reference.connections(), said.unwrap_or("none".into()), ms(t0));
     }
     Ok(())
 }
@@ -572,7 +572,7 @@ fn trip(tt: &Timetable, args: &[String]) -> Result<(), String> {
 }
 
 /// A fixed journey's line: name, from, to, date, time, what is asked (`depart`, `arrive`, or `window` and minutes),
-/// and what the scan answered. Tabs between. A line `#feed <version>` says which feed the answers are of. On a file
+/// and what the scan answered (asked as a query is by default: holding to the feed's rules, a day on). Tabs between. A line `#feed <version>` says which feed the answers are of. On a file
 /// of another feed (as the weekly workflow packs one) the kept answers are not compared: each journey is asked on
 /// the same weekday inside that file's days, the planner is held to the scan and to journeys that can be made, and
 /// three in four journeys must have an answer at all, or the journeys no longer fit the file and prove nothing.
@@ -615,7 +615,6 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
             }
         }
         let mut q = Query::new(place(tt, f[1])?, place(tt, f[2])?, day, parse_clock(f[4])?);
-        q.rules = false;
         q.max_rides = 16;
         let (asked, minutes) = f[5].split_once(' ').unwrap_or((f[5], "0"));
         q.arrive_by = asked == "arrive";
@@ -631,8 +630,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
                 bad.push(format!("a journey that can't be made: {why}"));
             }
         }
-        // the scan follows as far as the planner did
-        q.limits.horizon = a.horizon;
+        // (the scan is asked as the planner was: as far as the query's own horizon, with the feed's rules)
         let show = |v: &[(i32, i32)]| if v.is_empty() { "none".to_string() } else { v.iter().map(|(d, a)| format!("{}>{}", clock(*d), clock(*a))).collect::<Vec<_>>().join(" ") };
         let theirs = match asked {
             "depart" | "arrive" => {
@@ -747,26 +745,25 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     let (mut wish_cut, mut wish_options, mut every_options) = ([0u32; 3], [0usize; 3], [0usize; 3]);
     let (mut wish_wrong, mut compared, mut unsure) = (0, 0, 0);
     let every = !args.iter().any(|a| a == "--quick");
+    let rules = !args.iter().any(|a| a == "--no-rules");
     let mut most = 0usize;
+    let (mut many_rides, mut departures) = (0, 0);
+    let mut t_whole: [Vec<f64>; 2] = Default::default();
     for i in 0..n {
         let (a, b) = (served[rng.below(served.len() as u64) as usize], served[rng.below(served.len() as u64) as usize]);
         let spot = |s: u32| if points { Place::Point { lat: tt.stop(s).lat, lon: tt.stop(s).lon } } else { Place::Stop(s) };
         let mut q = Query::new(spot(a), spot(b), day, at);
-        q.rules = false;
+        q.rules = rules;
         q.max_rides = 16;
         let t0 = Instant::now();
         let one = planner.plan(&q);
         t_one.push(ms(t0));
         cut[0] += one.cut_short as u32;
-        // the scan follows as far as the planner did
-        let followed = |q: &Query, horizon: u32| {
-            let mut q = q.clone();
-            q.limits.horizon = horizon;
-            q
-        };
+        // the scan is asked as the planner was: as far as the query's own horizon, holding to the feed's rules
         let t0 = Instant::now();
-        let theirs = scan.earliest_arrival(&planner, &followed(&q, one.horizon), at as i32);
+        let scanned = scan.earliest_with_rides(&planner, &q, at as i32);
         t_scan.push(ms(t0));
+        let theirs = scanned.map(|s| s.0);
         let ours = one.journeys.iter().map(|j| j.arrive).min();
         // a journey on foot all the way is the planner's alone: the scan knows rides only
         let on_foot = one.journeys.iter().any(|j| j.rides == 0);
@@ -777,12 +774,45 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             }
         }
         if ours != theirs && !on_foot {
-            wrong += 1;
-            println!("WRONG  pair {i} ({a} to {b}) leaving {}: the planner {:?}, the scan {:?}", clock(at as i32), ours.map(clock), theirs.map(clock));
+            if scanned.is_some_and(|s| s.1 > q.max_rides) && ours.is_none_or(|o| theirs.is_some_and(|t| o > t)) {
+                many_rides += 1;
+                println!("RIDES  pair {i} ({a} to {b}) leaving {}: the planner {:?}, the scan {:?} with {} rides, more than a journey may have", clock(at as i32), ours.map(clock), theirs.map(clock), scanned.map_or(0, |s| s.1));
+            } else {
+                wrong += 1;
+                println!("WRONG  pair {i} ({a} to {b}) leaving {}: the planner {:?}, the scan {:?}", clock(at as i32), ours.map(clock), theirs.map(clock));
+            }
         }
         if let Some(best) = one.journeys.iter().min_by_key(|j| j.arrive) {
             found += 1;
             rides += best.rides;
+        }
+        if every {
+            // a patient search gives what a search as far as the horizon gives, one moment and two hours
+            for minutes in [0, 120] {
+                let mut whole = q.clone();
+                (whole.window, whole.limits.patient) = (minutes * 60, false);
+                let t0 = Instant::now();
+                let all = planner.plan(&whole);
+                t_whole[(minutes > 0) as usize].push(ms(t0));
+                whole.limits.patient = true;
+                let patient = if minutes == 0 { one.journeys.clone() } else { planner.plan(&whole).journeys };
+                let option = |j: &Journey| (j.depart, j.arrive, j.rides);
+                if !all.cut_short && patient.iter().map(option).collect::<Vec<_>>() != all.journeys.iter().map(option).collect::<Vec<_>>() {
+                    wrong += 1;
+                    println!("WRONG  pair {i} ({a} to {b}) over {minutes} min: a patient search gives {:?}, a whole one {:?}", patient.iter().map(option).collect::<Vec<_>>(), all.journeys.iter().map(option).collect::<Vec<_>>());
+                }
+            }
+            // and each option leaves as late as any way to its arrival with no more rides: asked back from there
+            for j in one.journeys.iter().filter(|j| j.rides > 0) {
+                let mut back = q.clone();
+                (back.arrive_by, back.time, back.max_rides) = (true, j.arrive as u32, j.rides);
+                let latest = planner.plan(&back).journeys.iter().map(|k| k.depart).max();
+                departures += 1;
+                if latest != Some(j.depart) {
+                    wrong += 1;
+                    println!("WRONG  pair {i} ({a} to {b}): an option leaves {} for {}, asked back from there one can leave {:?}", clock(j.depart), clock(j.arrive), latest.map(clock));
+                }
+            }
         }
         // arrive by the earliest arrival: the latest departure
         if let Some(arrive) = theirs {
@@ -792,7 +822,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             let t0 = Instant::now();
             let got = planner.plan(&back);
             t_back.push(ms(t0));
-            let (ours, theirs) = (got.journeys.iter().map(|j| j.depart).max(), scan.latest_departure(&planner, &followed(&back, got.horizon), arrive));
+            let (ours, theirs) = (got.journeys.iter().map(|j| j.depart).max(), scan.latest_departure(&planner, &back, arrive));
             for j in got.journeys.iter() {
                 if let Some(why) = impossible(&planner, &back, j) {
                     wrong += 1;
@@ -818,7 +848,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 println!("WRONG  pair {i} ({a} to {b}) over two hours: a journey that can't be made: {why}");
             }
         }
-        if let Some(how) = scan.window_differs(&planner, &followed(&window, got.horizon), &got.journeys).filter(|_| !on_foot) {
+        if let Some(how) = scan.window_differs(&planner, &window, &got.journeys).filter(|_| !on_foot) {
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) over two hours from {}: {how}", clock(at as i32));
         }
@@ -826,10 +856,17 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let mut never = q.clone();
         never.wishes.push(Wish { what: What::Mode(Mode::Rail), how: How::Never });
         let got = planner.plan(&never);
-        let (ours, theirs) = (got.journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&planner, &followed(&never, got.horizon), at as i32));
+        let scanned = scan.earliest_with_rides(&planner, &never, at as i32);
+        let (ours, theirs) = (got.journeys.iter().map(|j| j.arrive).min(), scanned.map(|s| s.0));
         if ours != theirs && !on_foot {
-            wrong += 1;
-            println!("WRONG  pair {i} ({a} to {b}) never by rail: the planner {:?}, the scan {:?}", ours.map(clock), theirs.map(clock));
+            // (the scan knows no cap on rides: its journey with more than a journey may have is no answer here)
+            if scanned.is_some_and(|s| s.1 > never.max_rides) && ours.is_none_or(|o| theirs.is_some_and(|t| o > t)) {
+                many_rides += 1;
+                println!("RIDES  pair {i} ({a} to {b}) never by rail: the planner {:?}, the scan {:?} with {} rides, more than a journey may have", ours.map(clock), theirs.map(clock), scanned.map_or(0, |s| s.1));
+            } else {
+                wrong += 1;
+                println!("WRONG  pair {i} ({a} to {b}) never by rail: the planner {:?}, the scan {:?}", ours.map(clock), theirs.map(clock));
+            }
         }
         // rail avoided, and buses avoided with Intercity trains preferred (the planner's alone): timed weighing
         // the wishes, and held to what every option comes to once the same rule is put to it afterwards
@@ -854,8 +891,8 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 later += (got.journeys.iter().any(|j| j.penalty > 0) && got.journeys.iter().any(|j| j.penalty == 0 && j.rides > 0)) as u32;
             }
             if every {
-                // (every option as far as the weighing search followed: patience ends it sooner)
-                let mut all = followed(&wished, got.horizon);
+                // (every option, which is always as far as the query's horizon)
+                let mut all = wished.clone();
                 all.weigh = false;
                 all.limits.options = 1024;
                 let t0 = Instant::now();
@@ -884,7 +921,14 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         }
     }
     let line = |name: &str, v: &mut Vec<f64>| println!("{name:<58} {:>8.2} {:>8.2} {:>8.2}", percentile(v, 0.5), percentile(v, 0.9), percentile(v, 1.0));
-    println!("{n} random pairs of {} on {} at {}: {found} have a journey, {:.1} rides each", if points { "points at stops" } else { "stops" }, tt.date_of(day), clock(at as i32), rides as f64 / found.max(1) as f64);
+    println!(
+        "{n} random pairs of {} on {} at {}, {}: {found} have a journey, {:.1} rides each",
+        if points { "points at stops" } else { "stops" },
+        tt.date_of(day),
+        clock(at as i32),
+        if rules { "holding to the feed's rules" } else { "without the feed's rules" },
+        rides as f64 / found.max(1) as f64
+    );
     println!("{:<58} {:>8} {:>8} {:>8}", "ms", "median", "90th", "worst");
     line("one departure (every best by arrival and rides)", &mut t_one);
     line("arrive by", &mut t_back);
@@ -898,8 +942,20 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             line(&format!("  the same, every option ({:.1})", every_options[k] as f64 / n as f64), &mut t_every[k]);
         }
     }
+    if every {
+        line("  one departure as far as the horizon (not patient)", &mut t_whole[0]);
+        line("  two hours as far as the horizon (not patient)", &mut t_whole[1]);
+    }
     line("the scan, one earliest arrival", &mut t_scan);
-    println!("{} of {} comparisons with the scan differ; cut short by a cap: {} single departures, {} windows", wrong, n * 4, cut[0], cut[1]);
+    println!(
+        "{} of {} comparisons differ (with the scan: {}{}); {many_rides} more where the scan's journey has more rides than a journey may have; cut short by a cap: {} single departures, {} windows",
+        wrong,
+        n * 4 + if every { n * 2 + departures } else { 0 },
+        n * 4,
+        if every { format!("; a patient search with a whole one: {}; an option's departure asked back from its arrival: {departures}", n * 2) } else { String::new() },
+        cut[0],
+        cut[1]
+    );
     println!(
         "with wishes: cut short {} single departures, {} and {} windows (the most options one gave: {most}); for {later} pairs avoiding rail offers both a way by rail and one without",
         wish_cut[0], wish_cut[1], wish_cut[2]

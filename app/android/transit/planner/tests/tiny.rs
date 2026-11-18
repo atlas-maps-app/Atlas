@@ -10,7 +10,7 @@
 //! The feed's rules: U1 waits for T1; from T1F to U1 no change is possible.
 
 use atlas_transit::file::{StopText, TripText};
-use atlas_transit::reference::impossible;
+use atlas_transit::reference::{Reference, impossible};
 use atlas_transit::{Area, How, Journey, Leg, Mode, Place, Planner, Query, Spot, Timetable, What, Wish};
 
 fn bytes() -> Vec<u8> {
@@ -31,7 +31,23 @@ fn ask(planner: &mut Planner, q: &Query) -> Vec<Journey> {
     for j in a.journeys.iter() {
         assert_eq!(impossible(planner, q, j), None, "{j:?}");
     }
+    held_to_the_scan(planner, q, &a.journeys);
     a.journeys
+}
+
+/// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way, and knows
+/// no cap on rides and no on-foot journey): the earliest arrival, the latest departure, or a window's best pairs.
+fn held_to_the_scan(planner: &Planner, q: &Query, journeys: &[Journey]) {
+    if q.max_rides < 8 || q.day < 0 || journeys.iter().any(|j| j.rides == 0) || q.wishes.iter().any(|w| !matches!(w.how, How::Never)) {
+        return;
+    }
+    let scan = Reference::new(planner, q.day, q.time as i32 - 86_400, q.time as i32 + 2 * 86_400);
+    match (q.window, q.arrive_by) {
+        (0, false) => assert_eq!(journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
+        (0, true) => assert_eq!(journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
+        (_, false) => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
+        _ => {}
+    }
 }
 
 fn numbers(tt: &Timetable, j: &Journey) -> Vec<String> {

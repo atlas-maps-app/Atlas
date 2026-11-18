@@ -180,12 +180,13 @@ pub struct Limits {
     /// How long after the asked moment a journey may still be under way, in seconds.
     pub horizon: u32,
     /// Whether the search first follows journeys only as far as one could sensibly take: twice the least time any
-    /// timetable could give it, and half an hour (an hour at least), past the asked moment and its window; and as
-    /// far as the horizon only when nothing is found by then. It makes a search many times shorter. What it leaves
-    /// out: an option with fewer rides that ends later than that although a faster one exists. With wishes that
-    /// cost, weighed, the search goes on past it as far as an option could still be worth its time (the latest
-    /// end, with its cost added, of the fastest journeys). With wishes that cost and every option asked for
-    /// ([`Query::weigh`] off) a search is never patient: the option that follows them best may be the slowest.
+    /// timetable could give it, and half an hour (an hour at least), past the asked moment and its window. It
+    /// makes a search many times shorter, and leaves nothing out: what could still be an option past that is
+    /// followed as far as the horizon all the same (the moments for which nothing was found by then, and journeys
+    /// with fewer rides than the first found). With wishes that cost, weighed, the first pass goes on as far as an
+    /// option could still be worth its time (the latest end, with its cost added, of the fastest journeys). With
+    /// wishes that cost and every option asked for ([`Query::weigh`] off) a search is never patient: the option
+    /// that follows them best may be the slowest.
     pub patient: bool,
 }
 
@@ -215,7 +216,9 @@ pub struct Query {
     pub reach_m: u32,
     /// For a [`Place::Point`]: walking speed in mm/s, over the straight line taken 30 % longer.
     pub walk_mm_s: u32,
-    /// What a change at one stop costs, in seconds; `None` takes the file's.
+    /// What a change at one stop costs, in seconds; `None` takes the file's: the stop's own where the feed gives
+    /// it one, else the file's for every stop. Asked for here, it holds at every stop, but never less than the
+    /// stop's own.
     pub change_s: Option<u32>,
     /// Whether the feed's transfer rules between trips hold (a change that is not possible, a vehicle that waits).
     pub rules: bool,
