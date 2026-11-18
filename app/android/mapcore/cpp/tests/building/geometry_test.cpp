@@ -58,6 +58,11 @@ struct Fixture {
     Fixture() { head.frame = tl::Frame{.lat0 = 52.374, .lon0 = 4.884, .kx = 67'908.9, .kz = 111'318.8}; }
 };
 
+/// A colour as 0xRRGGBB.
+[[nodiscard]] std::uint32_t hex_of(gm::Rgba c) {
+    return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
+}
+
 /// The kind of sun sample a primitive reads: a cell drawn as the wall's one cell reads the wall's.
 [[nodiscard]] atlas::sun::Kind sample_kind(const gm::Prim& p) {
     using K = atlas::sun::Kind;
@@ -752,6 +757,14 @@ TEST_CASE("buildings: a tradition's kit roof, its eaves over the walls, its gabl
         CHECK(rd.near_slot < g.items[rd.item].near_slots);
     }
     CHECK(ridges == std::array<int, 5>{1, 1, 0, 1, 1});
+    // each slope's courses a darker tone of its slope's colour, so the user's palette repaints them with it (repainted)
+    atlas::passes::BuildingTile layout;
+    CHECK_FALSE(atlas::passes::heap_words(g, 0.0, 0.0, layout).empty());
+    REQUIRE(layout.courses.size() == g.courses.size());
+    for (const atlas::passes::BuildingTile::Courses& cs : layout.courses) {
+        REQUIRE(cs.light < layout.lights.size());
+        CHECK(cs.rgb == hex_of(gm::darken(gm::rgba(layout.lights[cs.light].base), 0.55)));
+    }
     MESSAGE("a kit's roofs: ", g.beams.size(), " hoist beams, ", g.courses.size(), " slopes of courses, ",
             g.ridges.size(), " lit ridges; ", st.samples.crowns_first, " samples");
 }
@@ -899,6 +912,23 @@ TEST_CASE("buildings: a tradition's kit's walls, its stucco ground floor, its ti
     }
     CHECK(kit_walls == std::array<int, 5>{2, 4, 0, 2, 4});
     CHECK(shadows == kit_walls);
+    // a kit wall's boards' lines a darker tone of its wall's colour, so the user's palette repaints them with it
+    // (repainted); a wall not drawn in its own colour has them in the kit's neutral grey, which goes with no face
+    atlas::passes::BuildingTile layout;
+    CHECK_FALSE(atlas::passes::heap_words(g, 0.0, 0.0, layout).empty());
+    REQUIRE(layout.kit_walls.size() == g.kit_walls.size());
+    int own_lines = 0;
+    for (const atlas::passes::BuildingTile::KitWall& kw : layout.kit_walls) {
+        if (kw.boards == 0) continue; // no lines: a shadow alone
+        if (kw.light == atlas::passes::no_light) {
+            CHECK(kw.rgb == hex_of(gm::darken(gm::rgba(0x888888U), 0.62)));
+            continue;
+        }
+        REQUIRE(kw.light < layout.lights.size());
+        CHECK(kw.rgb == hex_of(gm::darken(gm::rgba(layout.lights[kw.light].base), 0.62)));
+        ++own_lines;
+    }
+    CHECK(own_lines > 0);
     // the cornice: the kit's on the banded house (its walls over 5 m), none on the first kit house
     bool cornice3 = false;
     bool cornice0 = false;
@@ -1466,6 +1496,54 @@ TEST_CASE("buildings: the flat greys give a guessed flat roof its mid grey, the 
     for (const BuildingLight& l : {bitumen, grey, gable, wall, boat}) CHECK(painted(&plain, l) == st::plain_building);
     CHECK(painted(&plain, mapped) == mapped.base);
     CHECK(painted(&plain, clay) == clay.base);
+}
+
+TEST_CASE(
+    "buildings: every wall's and roof's slot paints the faces drawn in it, and the darker tones built from them") {
+    using atlas::passes::BuildingLight;
+    using atlas::passes::painted;
+    using atlas::passes::repainted;
+    namespace st = atlas::style;
+    constexpr std::uint32_t magenta = 0xFF00FFU; // far from every slot's colour today
+    const st::PaletteBlock today{};
+    std::vector<st::SlotColour> slots(st::wall_slots.begin(), st::wall_slots.end());
+    slots.insert(slots.end(), st::roof_slots.begin(), st::roof_slots.end());
+    for (const st::SlotColour& s : slots) {
+        CAPTURE(s.code);
+        const auto slot = static_cast<std::uint16_t>(s.code);
+        st::PaletteBlock user{};
+        user.colours.at(s.code) = 0x01000000U | magenta;
+        const BuildingLight own{.base = s.today, .slot = slot};
+        const BuildingLight jittered{.base = s.today ^ 0x030303U, .slot = slot};
+        CHECK(painted(&today, own) == own.base);
+        CHECK(painted(&user, own) == magenta); // the user's colour exactly
+        CHECK(painted(&user, jittered) != jittered.base);
+        // a roof's courses, a metal wall's ribs, a kit wall's lines: darker tones of the face, moved with it
+        const std::uint32_t darker = hex_of(gm::darken(gm::rgba(s.today), 0.55));
+        CHECK(repainted(nullptr, &own, darker) == darker);
+        CHECK(repainted(&today, &own, darker) == darker);
+        CHECK(repainted(&user, nullptr, darker) == darker);
+        CHECK(repainted(&user, &own, darker) == st::palette_move(darker, s.today, magenta));
+        CHECK(repainted(&user, &own, darker) != darker);
+        // another slot's colour leaves it as it is
+        st::PaletteBlock other{};
+        other.colours.at(s.code == 48U ? 49U : 48U) = 0x01000000U | magenta;
+        CHECK(painted(&other, own) == own.base);
+        CHECK(repainted(&other, &own, darker) == darker);
+    }
+    // the three mid greys paint a guessed flat roof where the flat greys are on, its id picking which
+    for (std::uint32_t k = 0; k < 3; ++k) {
+        const std::size_t code = st::palette_slot::flat_grey_1 + k;
+        CAPTURE(code);
+        st::PaletteBlock user{};
+        user.flags = st::palette_flag::flat_greys;
+        user.colours.at(code) = 0x01000000U | magenta;
+        const BuildingLight bitumen{.base = 0x56585CU,
+                                    .slot = static_cast<std::uint16_t>(st::flat_roof_slot(87, 30 + k))};
+        CHECK(painted(&user, bitumen) == magenta);
+        user.flags = 0;
+        CHECK(painted(&user, bitumen) == bitumen.base); // without the switch, its own slot's (the bitumen's)
+    }
 }
 
 TEST_CASE(

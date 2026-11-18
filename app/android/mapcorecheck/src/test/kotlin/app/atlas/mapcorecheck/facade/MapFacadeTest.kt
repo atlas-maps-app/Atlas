@@ -239,7 +239,7 @@ class MapFacadeTest {
                 // registry's order
                 assertEquals(
                     listOf("composite", "frosted", "ground", "buildings", "house", "trees", "things", "items", "doors", "shopfronts",
-                        "ground_text", "routes", "markers", "labels", "overlays", "world"),
+                        "ground_text", "routes", "markers", "labels", "overlays", "world", "relief"),
                     Native.passCounts(handle).lines().filter { it.isNotBlank() }.map { it.substringBefore(' ') },
                 )
                 Native.publishRecords(handle) // VK bench's records handed on as a measurement ends: none drawn yet

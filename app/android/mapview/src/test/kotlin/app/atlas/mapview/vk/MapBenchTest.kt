@@ -234,7 +234,7 @@ class MapBenchTest {
         r.laps.presented = 200
         r.laps.seconds = 45.0
         for (i in 0 until 10) r.laps.hz += if (i == 0) 60.0 else 120.0
-        // the lap's stage F: two frames, the parts a frame first (3 + the 16 passes)
+        // the lap's stage F: two frames, the parts a frame first (3 + the 17 passes)
         val width = MapBench.STAGE_F_PARTS.size
         val f = DoubleArray(1 + 2 * width)
         f[0] = width.toDouble()

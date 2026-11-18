@@ -3,6 +3,7 @@
 
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Ground.hpp"
 #include "twin/building/BuildingShader.hpp"
 
 #include <algorithm>
@@ -386,6 +387,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
                                   .k = c.k,
                                   .rstep = c.rstep,
                                   .rgb = c.rgb,
+                                  .light = c.face,
                                   .near_slot = c.near_slot,
                                   .far_slot = c.far_slot});
     }
@@ -402,6 +404,11 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     // floats)
     layout.kit_walls.clear();
     layout.kit_walls.reserve(g.kit_walls.size());
+    // a wall not drawn in its own colour has its lines in the kit's neutral grey, darkened (geometry/Walls.cpp)
+    const std::uint32_t neutral_lines = [] {
+        const gm::Rgba c = gm::darken(gm::rgba(0x888888U), 0.62);
+        return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
+    }();
     for (const gm::KitWall& w : g.kit_walls) {
         if (w.face >= f) continue;
         const gm::Face& face = g.faces[w.face];
@@ -420,6 +427,7 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
              .boards = w.boards,
              .spacing = w.spacing,
              .rgb = w.rgb,
+             .light = w.rgb == neutral_lines ? no_light : w.face,
              .shadow = w.shadow,
              .shade = {floats(w.shade[0]), floats(w.shade[1]), floats(w.shade[2]), floats(w.shade[3])},
              .lines_near = w.lines_near,
@@ -463,6 +471,12 @@ std::uint32_t painted(const style::PaletteBlock* palette, const BuildingLight& l
     }
     if (mapped && !palette->has(style::palette_flag::mapped_follow)) return light.base;
     return style::paint(palette, code, own, light.base);
+}
+
+std::uint32_t repainted(const style::PaletteBlock* palette, const BuildingLight* light, std::uint32_t made) noexcept {
+    if (palette == nullptr || light == nullptr) return made;
+    const std::uint32_t to = painted(palette, *light);
+    return to == light->base ? made : style::palette_move(made, light->base, to);
 }
 
 void building_colours(const shaders::Theme& theme, const style::PaletteBlock* palette,
