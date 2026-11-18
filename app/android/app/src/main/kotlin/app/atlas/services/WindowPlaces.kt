@@ -63,12 +63,22 @@ class WindowPlaces(
 
     private class Window(val stamp: String, val places: List<Place>)
 
-    /** The windows held, by window: at most [HELD], those nearest [middle], never one of [mine]; the heap may take any back. */
+    /**
+     * The windows held, by window: at most [HELD], those nearest [middle], never one of [mine] nor one a lookup in flight
+     * waits for ([waited]), so more while lookups wait; the heap may take any back.
+     */
     private val cache = HashMap<Long, SoftReference<Window>>()
 
     /** The last lookup's middle, and the windows it used or waits for from the packs. Guarded by [cache]. */
     private var middle: LatLon? = null
     private var mine: Set<Long> = emptySet()
+
+    /**
+     * The windows each lookup in flight holds or waits for, with how many such lookups: none goes while one waits (the
+     * app maintainer, 18 November 2026, batch 4 B13: a second lookup made its middle and its own the ones held, and
+     * the first's windows went as they came). Guarded by [cache].
+     */
+    private val waited = HashMap<Long, Int>()
 
     /** The windows no pack holds, and when that was found: not asked again for [NONE_MS]. */
     private val none = HashMap<Long, Long>()
@@ -111,14 +121,22 @@ class WindowPlaces(
         val asked = missing.filter { it !in inNoPack }.take(FETCH_MAX)
         if (asked.isEmpty()) return held(box, centre, covered)
         val whole = range.count(own, HELD + 1) <= HELD && inNoPack.isEmpty() && missing.size <= FETCH_MAX && unread <= READ_MAX
-        // this lookup's windows, those still to come among them, are held when they come
+        // this lookup's windows, those still to come among them, are held when they come, whatever lookup comes between
         synchronized(cache) {
             middle = centre
             mine = windows.toSet()
+            for (k in windows) waited.merge(k, 1, Int::plus)
         }
-        val reads = asked.map(::read)
-        if (whole || waitForPart) withTimeoutOrNull(withinMs) { reads.awaitAll() }
-        return look(box, centre, waiting = asked.toSet(), covered)
+        try {
+            val reads = asked.map(::read)
+            if (whole || waitForPart) withTimeoutOrNull(withinMs) { reads.awaitAll() }
+            return look(box, centre, waiting = asked.toSet(), covered)
+        } finally {
+            synchronized(cache) {
+                for (k in windows) waited.computeIfPresent(k) { _, n -> (n - 1).takeIf { it > 0 } }
+                trim()
+            }
+        }
     }
 
     /** [held], [waiting] (windows of [box] asked of the packs) held as this lookup's own when they come; none [covered] holds whole. */
@@ -186,13 +204,16 @@ class WindowPlaces(
         trim()
     }
 
-    /** Over [HELD], the windows farthest from the last lookup's middle go, never one of its own; and those the heap took back. Under [cache]'s lock. */
+    /**
+     * Over [HELD], the windows farthest from the last lookup's middle go, never one of its own nor one a lookup in flight
+     * waits for; and those the heap took back. Under [cache]'s lock.
+     */
     private fun trim() {
         cache.values.removeAll { it.get() == null }
         val over = cache.size - HELD
         val c = middle ?: return
         if (over <= 0) return
-        for (k in cache.keys.filter { it !in mine }.sortedWith(nearest(c)).takeLast(over)) cache.remove(k)
+        for (k in cache.keys.filter { it !in mine && it !in waited }.sortedWith(nearest(c)).takeLast(over)) cache.remove(k)
     }
 
     /** The kept data files of the windows in [range], by window. */

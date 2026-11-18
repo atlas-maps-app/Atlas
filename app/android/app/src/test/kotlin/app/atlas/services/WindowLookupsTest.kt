@@ -13,6 +13,8 @@ import app.atlas.render.data.ElementType
 import app.atlas.render.data.MemoryBoxes
 import app.atlas.render.data.OsmElement
 import app.atlas.render.data.PackFeatures
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -478,6 +480,36 @@ class WindowLookupsTest {
         assertEquals(near, found.last().value.map { it.name() }.toSet())
     }
 
+    /**
+     * Two lookups at once each hold the windows they wait for (the app maintainer, 18 November 2026, batch 4 B13): a
+     * lookup far off, between the first's asking and its windows' coming, made its middle and its own windows the ones
+     * held, so as the first's came, over the eighteen held, each went as it came (the farthest from that middle), and
+     * the first held none of what it waited for.
+     */
+    @Test
+    fun twoLookupsAtOnceEachHoldWhatTheyWaitFor() = runBlocking {
+        val dir = tmp.newFolder("two")
+        val farOff = TileId(WindowPlaces.LEVEL, tile.x + 20, tile.y)
+        val beside = TileId(WindowPlaces.LEVEL, tile.x + 23, tile.y)
+        // the phone keeps the windows far off and those beside them; those around [tile] come from the packs
+        for (t in listOf(farOff, beside)) for (dx in -1..1) for (dy in -1..1) {
+            File(dir, "${WindowPlaces.LEVEL}-${t.x + dx}-${t.y + dy}.json.gz").writeBytes(cafeAt(t.x + dx, t.y + dy))
+        }
+        val started = CountDownLatch(1)
+        val gate = CountDownLatch(1)
+        val windows = WindowPlaces({ dir }, packed = { x, y -> started.countDown(); gate.await(20, TimeUnit.SECONDS); cafeAt(x, y) })
+        assertEquals(9, windows.held(nine(beside), beside.bbox.center)?.places?.size)
+        val first = async(Dispatchers.IO) { windows.fetched(nine(tile), here, 20_000) }
+        assertTrue(started.await(10, TimeUnit.SECONDS))
+        // the second, far off, while the first waits: what it holds is held beside what the first waits for
+        assertEquals(9, windows.held(nine(farOff), farOff.bbox.center)?.places?.size)
+        gate.countDown()
+        val got = first.await()
+        assertNotNull("the first holds what it waited for", got)
+        assertTrue(got!!.covers(nine(tile)))
+        assertEquals(block, got.places.map { it.name() }.toSet())
+    }
+
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
         val until = System.nanoTime() + 5_000_000_000L
@@ -510,6 +542,13 @@ class WindowLookupsTest {
     /** The window at [tile]'s middle and the eight around it, by the names [cafeAt] gives their cafés. */
     private val block: Set<String>
         get() = (-1..1).flatMap { dx -> (-1..1).map { dy -> "${tile.x + dx}/${tile.y + dy}" } }.toSet()
+
+    /** The box of the three by three windows around [t], a hair inside their edges. */
+    private fun nine(t: TileId): BBox {
+        val nw = TileId(t.z, t.x - 1, t.y - 1).bbox
+        val se = TileId(t.z, t.x + 1, t.y + 1).bbox
+        return BBox(nw.west + 1e-7, se.south + 1e-7, se.east - 1e-7, nw.north - 1e-7)
+    }
 
     /** Window ([x], [y])'s data, gzipped: one café at its middle, named "x/y". */
     private fun cafeAt(x: Int, y: Int): ByteArray {
