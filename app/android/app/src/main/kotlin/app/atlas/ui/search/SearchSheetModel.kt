@@ -345,6 +345,9 @@ class SearchSheetModel(
     private var furtherJob: Job? = null
     private var walkJob: Job? = null
 
+    /** The regions asked off the main thread what region the centre is in ([settleRegion]). */
+    private var regionJob: Job? = null
+
     /** The node's places around, the same kind further away, and their hours. */
     private var places: List<PlaceRecord> = emptyList()
     private var elsewhere: List<PlaceRecord> = emptyList()
@@ -368,6 +371,7 @@ class SearchSheetModel(
     @Volatile private var holiday = false
 
     init {
+        settleRegion(centre)
         viewModelScope.launch {
             services.settings.data.map(::prefsOf).distinctUntilChanged().collect { p ->
                 val s = mutable.value
@@ -380,6 +384,7 @@ class SearchSheetModel(
                 // a filter kept or let go applies at once to the kind open
                 val selection = if (s.inside) s.selection.minus(s.prefs.sticky - p.sticky) + FacetSelection.of(p.sticky - s.prefs.sticky) else s.selection
                 mutable.value = s.copy(prefs = p, moment = moment(s.centre, p), selection = selection)
+                settleRegion(s.centre)
                 refreshNow()
                 // another way of getting about looks again, a quarter of an hour of it around; the kind in view shown with
                 // its kin, or no longer, reads its places again
@@ -393,6 +398,7 @@ class SearchSheetModel(
     fun moveTo(c: LatLon) {
         val s = mutable.value
         mutable.value = s.copy(centre = c, moment = moment(c, s.prefs))
+        settleRegion(c)
         val last = poolAt
         if (last == null || Geo.distance(last, c) > POOL_MOVE_M) loadPool(c)
     }
@@ -401,6 +407,7 @@ class SearchSheetModel(
     fun skyChanged() {
         val s = mutable.value
         mutable.value = s.copy(moment = moment(s.centre, s.prefs))
+        settleRegion(s.centre)
         refreshNow()
         if (s.inside) rerank()
     }
@@ -1032,6 +1039,7 @@ class SearchSheetModel(
     private suspend fun showPool(c: LatLon, found: List<PlaceRecord>, origin: PlaceOrigin?) {
         pool = found
         mutable.value.node?.let { findAlso(it) }
+        // the region at the centre as known: the pool's country was asked off the main thread before it came
         mutable.value = mutable.value.let { it.copy(moment = moment(it.centre, it.prefs)) }
         val s = mutable.value
         val (pulses, served) = withContext(Dispatchers.Default) {
@@ -1374,12 +1382,35 @@ class SearchSheetModel(
         }
     }
 
-    private fun moment(c: LatLon, p: SearchPrefs): Moment {
+    /**
+     * Who searches at [c], now, with [p]: the holidays and the sun there read in [region], as far as it is known without
+     * asking the regions on the phone ([HereContext.regionNow]: it is made on the main thread), which [settleRegion] asks.
+     */
+    private fun moment(c: LatLon, p: SearchPrefs, region: HereRegion = HereContext.regionNow(services, c)): Moment {
         val now = ZonedDateTime.now(services.clock)
         val sunset = runCatching { SunClock.at(c.lat, c.lon, now.zone).times(now.toLocalDate())?.sunset }.getOrNull()
         val outlook = forecast()?.let { f -> runCatching { Outlook.of(f, now) }.getOrNull() }
         // the holidays and the sun at the centre, which every tile and row reads its places' hours in
-        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday, HereContext.hours(services, c, now.zone))
+        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday, region.hours(c, now.zone))
+    }
+
+    /**
+     * Asks the regions on the phone, off the main thread, what region [c] is in ([HereContext.region]); where they say
+     * otherwise than the moment read there, the moment again, with the tiles, the Now shelf and the results read in it
+     * (the app maintainer, 18 November 2026: the moment asked the regions' places around on the main thread, as the
+     * sheet was made in the home's first composition and at each setting, move, change of sky and grid).
+     */
+    private fun settleRegion(c: LatLon) {
+        val known = HereContext.regionNow(services, c)
+        regionJob?.cancel()
+        regionJob = viewModelScope.launch {
+            val region = withContext(Dispatchers.IO) { HereContext.region(services, c) }
+            val s = mutable.value
+            if (region == known || s.centre != c) return@launch
+            mutable.value = s.copy(moment = moment(c, s.prefs, region))
+            if (poolAt == c) showPool(c, pool, s.gridOrigin) else refreshNow()
+            if (s.inside) rerank()
+        }
     }
 
     companion object {

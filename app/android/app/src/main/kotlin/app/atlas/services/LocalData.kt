@@ -36,6 +36,7 @@ import app.atlas.search.walk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.last
@@ -496,8 +497,10 @@ class LocalData(
     /**
      * The branches of brand [id] within [radiusM] of [centre], nearest first, as they are found, as [placesAsFound]
      * gives places: the phone's at once, then online what completes them. A brand Atlas does not know is not asked online.
+     * The country there is asked in the flow, off the caller's thread (the app maintainer, 18 November 2026: the sheet
+     * made the flow on the main thread, and the regions' places were asked there).
      */
-    fun branchesAsFound(id: String, centre: LatLon, radiusM: Double): Flow<LocalAnswer<List<Place>>> {
+    fun branchesAsFound(id: String, centre: LatLon, radiusM: Double): Flow<LocalAnswer<List<Place>>> = flow {
         val box = BBox.around(centre, radiusM)
         val within = { p: Place -> Geo.distance(centre, p.location) <= radiusM }
         val country = countryAt(centre)
@@ -505,11 +508,13 @@ class LocalData(
         val order = { list: List<Place> -> nearest(list, centre, Int.MAX_VALUE) }
         val brand = Brands.byId(id)
         val filter = brand?.wikidata?.let { TagFilter.Equals("brand:wikidata", it) } ?: brand?.let { TagFilter.Equals("brand", it.brand) }
-        return asFound(centre, box, { s -> s.byBrand(listOf(id), box).map { it.place } }, ofBrand, within, order) {
-            if (filter == null) LocalAnswer(emptyList(), null)
-            else askOverpass(filter, box).let { got -> got.copy(value = got.value.filter { ofBrand(it.tags) }) }
-        }
-    }
+        emitAll(
+            asFound(centre, box, { s -> s.byBrand(listOf(id), box).map { it.place } }, ofBrand, within, order) {
+                if (filter == null) LocalAnswer(emptyList(), null)
+                else askOverpass(filter, box).let { got -> got.copy(value = got.value.filter { ofBrand(it.tags) }) }
+            },
+        )
+    }.flowOn(Dispatchers.IO)
 
     /**
      * The places in [box] a passer-by could be asked about (named, of a category, with every tag, so only what is
