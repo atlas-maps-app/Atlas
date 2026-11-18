@@ -22,7 +22,9 @@ object PlaceCountry {
 
     /**
      * The state or nation of [country] that [tags] put the place in, as ISO 3166-2, in the countries whose public
-     * holidays differ within them (the reviewer, 17 November, finding 10): the `ISO3166-2` tag itself; in Germany
+     * holidays differ within them (the reviewer, 17 November, finding 10): the `ISO3166-2` tag, where the calendar tells
+     * its code apart ([PublicHolidays.subdivisions]: not Edinburgh's council area, nor the Grand Est region, whose
+     * postcodes say; the app maintainer, 18 November 2026, batch 4 B21); in Germany
      * `addr:state`, by its code or its name; in France the department `addr:postcode` begins with ("FR-67"); in Britain
      * the area of `addr:postcode`: Northern Ireland's, Scotland's, else England and Wales's ("GB-EAW", whose days are
      * the same), or `addr:state` by the nation's name. [country] is the place's own ([of]). Null where the tags do not
@@ -30,7 +32,7 @@ object PlaceCountry {
      */
     fun subdivision(tags: Map<String, String>, country: String?): String? {
         val c = code(country) ?: return null
-        tags["ISO3166-2"]?.trim()?.uppercase()?.let { iso -> if (iso.startsWith("$c-") && iso.length in 4..6) return iso }
+        tags["ISO3166-2"]?.trim()?.uppercase()?.let { iso -> if (iso.startsWith("$c-") && iso in PublicHolidays.subdivisions) return iso }
         return when (c) {
             "DE" -> tags["addr:state"]?.let(::germanState)
             "FR" -> tags["addr:postcode"]?.let(::frenchDepartment)

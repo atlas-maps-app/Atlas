@@ -2,6 +2,7 @@ package app.atlas.places
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,6 +57,15 @@ class HolidaysTest {
             dates("BE", 2027),
         )
         assertTrue("2026-12-26" in dates("FR", 2026, "FR-67"))
+    }
+
+    /** Each subdivision the calendar tells apart keeps days its country's others do not (batch 4 B21). */
+    @Test
+    fun everySubdivisionToldApartKeepsDaysOfItsOwn() {
+        for (sub in PublicHolidays.subdivisions) {
+            val c = sub.substringBefore('-')
+            assertNotEquals(sub, PublicHolidays.list(c, 2026), PublicHolidays.list(c, 2026, sub))
+        }
     }
 
     @Test

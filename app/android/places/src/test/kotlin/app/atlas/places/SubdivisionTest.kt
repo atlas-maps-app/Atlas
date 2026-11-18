@@ -80,6 +80,26 @@ class SubdivisionTest {
         assertEquals("Q3403981", Brands.forTags(mapOf("amenity" to "fast_food", "name" to "Greggs", "addr:country" to "UK"), null)?.wikidata)
     }
 
+    /**
+     * An `ISO3166-2` tag says the place's state or nation only where the calendar tells it apart (the app maintainer, 18
+     * November 2026, batch 4 B21): Edinburgh's council area, GB-EDH, gave England's days, and the Grand Est region,
+     * FR-GES, lost Alsace-Moselle's. Any other code is passed by, and the postcode says.
+     */
+    @Test
+    fun anIsoCodeSaysOnlyWhatTheCalendarTellsApart() {
+        assertEquals("GB-SCT", of("GB", "ISO3166-2" to "GB-EDH", "addr:postcode" to "EH1 1YZ"))
+        assertEquals("FR-67", of("FR", "ISO3166-2" to "FR-GES", "addr:postcode" to "67000"))
+        assertNull(of("GB", "ISO3166-2" to "GB-EDH"))
+        assertNull(of("ES", "ISO3166-2" to "ES-CT"))
+        assertEquals("GB-NIR", of("GB", "ISO3166-2" to "GB-NIR"))
+        assertEquals("FR-6AE", of("FR", "ISO3166-2" to "FR-6AE"))
+        assertEquals("DE-BY", of("DE", "ISO3166-2" to "DE-BY", "addr:state" to "Berlin"))
+        val easterMonday = LocalDate.of(2026, 4, 6)
+        assertNull(PublicHolidays.forCountry("GB", of("GB", "ISO3166-2" to "GB-EDH", "addr:postcode" to "EH1 1YZ"))?.holiday(easterMonday))
+        val goodFriday = LocalDate.of(2026, 4, 3)
+        assertEquals("Good Friday", PublicHolidays.forCountry("FR", of("FR", "ISO3166-2" to "FR-GES", "addr:postcode" to "67000"))?.holiday(goodFriday)?.name)
+    }
+
     @Test
     fun onlyInItsOwnCountry() {
         assertNull("a French postcode in Germany", of("DE", "addr:postcode" to "67000"))
