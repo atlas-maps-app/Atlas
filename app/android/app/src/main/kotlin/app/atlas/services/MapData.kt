@@ -299,6 +299,8 @@ class MapData(private val services: Services) {
                     // which tiles this phone takes: none of its core's version means every window is built here, and
                     // no frame cell's levels are drawn (they come from those tiles alone)
                     val version = MapEngine.windowVersion()
+                    // each country's code first, so a frame that reads the country of the tiles there finds it
+                    services.packCountries.learn(list)
                     MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { p ->
                         CountryTiles(p.id, p.name, p.bbox, levels = version != null && p.tilesOf(version) != null)
                     }

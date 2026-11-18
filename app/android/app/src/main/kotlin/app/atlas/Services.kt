@@ -255,6 +255,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         unreadable.value = refused
     }
 
+    /**
+     * The country of each published pack, as the list names it: the country of the region whose store holds a point, or
+     * of the tiles that serve its windows, before the countries' boxes ([app.atlas.ui.search.HereContext]). The map
+     * tells it the list as it reads it; until then the copies Mine and the windows keep say.
+     */
+    val packCountries: app.atlas.services.PackCountries by lazy {
+        app.atlas.services.PackCountries(
+            app.atlas.ui.mine.offline.RegionFiles(dirs.regions, dirs.places, dirs.segments),
+            listOf(File(dirs.regions, "packs-latest.json"), File(dirs.engine, "windows/index/packs-latest.json")),
+        )
+    }
+
     /** The search box: offline over [placeStores]; online it adds Photon and Overpass. */
     val search: SearchEngine by lazy {
         SearchEngine(placeStores, geocoder = if (config.offline) null else geocoder, overpass = if (config.offline) null else overpass)
