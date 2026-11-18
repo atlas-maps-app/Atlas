@@ -154,6 +154,27 @@ def metres_mm(lat1, lon1, lat2, lon2):
     return isqrt_round(dx * dx + dy * dy)
 
 
+def odd_days(zone, first, ndays):
+    """The service days after which the next begins other than 86,400 s later: the clock changes between the one's
+    noon and the next's (FORMAT.md, "Time"). As (date, seconds to the next day's beginning); None where this Python
+    does not know the timezone."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(zone)
+    except Exception:
+        return None
+    utc, out = datetime.timezone.utc, []
+    for i in range(ndays):
+        d = first + datetime.timedelta(days=i)
+        n = d + datetime.timedelta(days=1)
+        a = datetime.datetime(d.year, d.month, d.day, 12, tzinfo=tz).astimezone(utc)
+        b = datetime.datetime(n.year, n.month, n.day, 12, tzinfo=tz).astimezone(utc)
+        secs = int((b - a).total_seconds())
+        if secs != 86400:
+            out.append((d, secs))
+    return out
+
+
 def walk_s(mm):
     return WALK_CHANGE_S + (mm * WALK_DETOUR_PERCENT // 100 + WALK_SPEED_MM_S - 1) // WALK_SPEED_MM_S
 
@@ -639,6 +660,17 @@ def main():
     tz = {x.get("agency_timezone", "") for x in agencies}
     if len(tz) > 1:
         meta.append(("timezones", " ".join(sorted(tz))))
+    # the days the clock changes: the next service day begins an hour sooner or later than 86,400 s after
+    zone = agencies[0].get("agency_timezone", "") if agencies else ""
+    odd = odd_days(zone, first, ndays) if zone else []
+    if odd is None:
+        if a.strict:
+            sys.exit("refused (--strict): this Python does not know the timezone %r (no tz database?), so the days the clock "
+                     "changes can't be written. Nothing was written." % zone)
+        print("left out: the days the clock changes (this Python does not know the timezone %r)" % zone)
+    elif odd:
+        meta.append(("odd_days", " ".join("%s:%d" % (d.strftime("%Y%m%d"), secs) for d, secs in odd)))
+        print("the clock changes: %s" % ", ".join("the day after %s begins %d s after it" % (d, secs) for d, secs in odd))
 
     # ---- sections
     def u32s(vals):
