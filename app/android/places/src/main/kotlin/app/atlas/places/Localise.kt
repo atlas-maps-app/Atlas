@@ -61,8 +61,9 @@ object Localise {
     /**
      * The postal address of a feature as lines, in the style of `addr:country`, else of [country], the country of the
      * map at the feature, which every caller gives (the reviewer, 17 November, finding 11): street and number, then
-     * postcode and place. Where the number comes first, a unit (`addr:unit`) follows the street: "1600 Pennsylvania
-     * Avenue NW, Suite 200". Empty when no address is mapped.
+     * postcode and place. Where the number comes first, a unit (`addr:unit`) follows the street in America, "1600
+     * Pennsylvania Avenue NW, Suite 200", and comes before it in Britain and France, "Flat 2, 10 Downing Street" (the
+     * app maintainer, 18 November 2026, batch 4 B23). Empty when no address is mapped.
      */
     fun addressLines(tags: Map<String, String>, country: String?): List<String> {
         fun t(k: String) = tags["addr:$k"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -78,7 +79,8 @@ object Localise {
             street == null -> number
             number == null -> street
             style == AddressStyle.STREET_FIRST -> "$street $number"
-            else -> listOfNotNull(t("housenumber")?.let { "$it $street" } ?: street, unit).joinToString(", ")
+            style == AddressStyle.AMERICAN -> listOfNotNull(t("housenumber")?.let { "$it $street" } ?: street, unit).joinToString(", ")
+            else -> listOfNotNull(unit, t("housenumber")?.let { "$it $street" } ?: street).joinToString(", ")
         }
         val second = when (style) {
             AddressStyle.STREET_FIRST, AddressStyle.NUMBER_FIRST -> listOfNotNull(postcode, city).joinToString(" ")

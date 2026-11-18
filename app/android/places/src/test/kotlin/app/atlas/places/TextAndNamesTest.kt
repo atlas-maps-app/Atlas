@@ -97,19 +97,21 @@ class TextAndNamesTest {
     }
 
     /**
-     * A unit follows the street where the number comes first (the reviewer, 17 November, finding 11: it stood between
-     * the number and the street, "1600 Suite 200 Pennsylvania Avenue NW"); where the street comes first, after the
-     * number, as before.
+     * A unit stands where its country writes it: after the street in America (the reviewer, 17 November, finding 11: it
+     * stood between the number and the street, "1600 Suite 200 Pennsylvania Avenue NW"); before the street line in
+     * Britain and France, "Flat 2, 10 Downing Street" (the app maintainer, 18 November 2026, batch 4 B23); where the
+     * street comes first, after the number, as before.
      */
     @Test
-    fun aUnitFollowsTheStreetWhereTheNumberLeads() {
+    fun aUnitStandsWhereItsCountryWritesIt() {
         val us = mapOf("addr:street" to "Pennsylvania Avenue NW", "addr:housenumber" to "1600", "addr:unit" to "Suite 200", "addr:postcode" to "20500",
             "addr:city" to "Washington", "addr:state" to "DC")
         assertEquals(listOf("1600 Pennsylvania Avenue NW, Suite 200", "Washington, DC 20500"), Localise.addressLines(us, "US"))
         val fr = mapOf("addr:street" to "Rue de Rivoli", "addr:housenumber" to "12", "addr:unit" to "Bâtiment B", "addr:postcode" to "75004", "addr:city" to "Paris")
-        assertEquals("12 Rue de Rivoli, Bâtiment B, 75004 Paris", Localise.address(fr, "FR"))
+        assertEquals("Bâtiment B, 12 Rue de Rivoli, 75004 Paris", Localise.address(fr, "FR"))
         val gb = mapOf("addr:street" to "Downing Street", "addr:housenumber" to "10", "addr:unit" to "Flat 2", "addr:city" to "London")
-        assertEquals("10 Downing Street, Flat 2, London", Localise.address(gb, "GB"))
+        assertEquals("Flat 2, 10 Downing Street, London", Localise.address(gb, "GB"))
+        assertEquals(listOf("Flat 2, Downing Street", "London"), Localise.addressLines(gb - "addr:housenumber", "GB"))
         val nl = mapOf("addr:street" to "Prinsengracht", "addr:housenumber" to "263", "addr:unit" to "A", "addr:city" to "Amsterdam")
         assertEquals("Prinsengracht 263 A, Amsterdam", Localise.address(nl, "NL"))
     }
