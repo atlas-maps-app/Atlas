@@ -1,6 +1,7 @@
 package app.atlas.places
 
 import app.atlas.geo.Sun
+import app.atlas.geo.SunTimes
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -9,8 +10,19 @@ import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 import java.util.concurrent.ConcurrentHashMap
 
-/** One day's sun as opening_hours reads it: local times, null when the event does not happen (polar day or night). */
-data class DaySun(val dawn: LocalTime?, val sunrise: LocalTime?, val sunset: LocalTime?, val dusk: LocalTime?)
+/**
+ * One day's sun as opening_hours reads it: local times, null when the event does not happen. Then [upAllDay] says why
+ * there is no sunrise and no sunset (true in polar day, false in polar night) and [lightAllDay] why there is no dawn and
+ * no dusk (true when the sun never goes 6° below the horizon, the white nights; false when it never comes up to it).
+ */
+data class DaySun(
+    val dawn: LocalTime?,
+    val sunrise: LocalTime?,
+    val sunset: LocalTime?,
+    val dusk: LocalTime?,
+    val upAllDay: Boolean? = null,
+    val lightAllDay: Boolean? = null,
+)
 
 /** Sun times by date, for `sunrise`, `sunset`, `dawn` and `dusk` in opening hours. */
 fun interface SunClock {
@@ -26,7 +38,12 @@ fun interface SunClock {
             return SunClock { date ->
                 cache.getOrPut(date) {
                     val t = Sun.times(date, lat, lon, zone)
-                    DaySun(t.civilDawn?.toLocalTime(), t.sunrise?.toLocalTime(), t.sunset?.toLocalTime(), t.civilDusk?.toLocalTime())
+                    DaySun(
+                        t.civilDawn?.toLocalTime(), t.sunrise?.toLocalTime(), t.sunset?.toLocalTime(), t.civilDusk?.toLocalTime(),
+                        upAllDay = when (t.polar) { SunTimes.Polar.DAY -> true; SunTimes.Polar.NIGHT -> false; SunTimes.Polar.NONE -> null },
+                        // the sun crosses 6° below the horizon neither way: above it all day when it is above it at noon
+                        lightAllDay = if (t.civilDawn == null && t.civilDusk == null) t.noonAltitudeDeg > Sun.CIVIL else null,
+                    )
                 }
             }
         }

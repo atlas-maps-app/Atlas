@@ -153,18 +153,37 @@ internal class DaySelector(val weekdays: List<WeekdayRange>, val holidays: List<
     }
 }
 
-/** A time of day: fixed minutes (up to 48:00), or a sun event moved by [offset] minutes. */
+/**
+ * A time of day: fixed minutes (up to 48:00), or a sun event moved by [offset] minutes. A sun event that does not happen
+ * that day, the sun on one side of it all day ([DaySun.upAllDay], [DaySun.lightAllDay]), has happened at midnight when
+ * the whole day is after it (dawn in the white nights, sunrise in polar day) and never comes, 24:00, when the whole day
+ * is before it (dusk in the white nights): `dawn-dusk` in Trondheim in June is open all day (the reviewer, 17
+ * November, finding 11: it read closed). Null when the clock does not say why.
+ */
 internal class TimePoint(val minutes: Int, val event: SunEvent? = null, val offset: Int = 0) {
     fun resolve(date: LocalDate, sun: SunClock): Int? {
         if (event == null) return minutes
         val t = sun.times(date) ?: return null
-        val at = when (event) {
-            SunEvent.DAWN -> t.dawn
-            SunEvent.SUNRISE -> t.sunrise
-            SunEvent.SUNSET -> t.sunset
-            SunEvent.DUSK -> t.dusk
+        eventTime(t)?.let { return it.hour * 60 + it.minute + offset }
+        val sideAfter = when (event) {
+            SunEvent.DAWN, SunEvent.DUSK -> t.lightAllDay
+            SunEvent.SUNRISE, SunEvent.SUNSET -> t.upAllDay
         } ?: return null
-        return at.hour * 60 + at.minute + offset
+        // a rising (dawn, sunrise) leads to light, a setting away from it: the whole day is after a rising when it is
+        // light. An offset moves nothing that is not there: "(sunset+01:00)" in polar day never comes either
+        val rising = event == SunEvent.DAWN || event == SunEvent.SUNRISE
+        return if (rising == sideAfter) 0 else 1440
+    }
+
+    /** True when this is a sun event that does not happen on [date]. */
+    fun missed(date: LocalDate, sun: SunClock): Boolean = event != null && sun.times(date)?.let { eventTime(it) } == null
+
+    private fun eventTime(t: DaySun) = when (event) {
+        SunEvent.DAWN -> t.dawn
+        SunEvent.SUNRISE -> t.sunrise
+        SunEvent.SUNSET -> t.sunset
+        SunEvent.DUSK -> t.dusk
+        null -> null
     }
 }
 
@@ -178,7 +197,12 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
         val a = from.resolve(date, sun) ?: return null
         if (to == null) return if (openEnd) a to a + openEndGuess(a) else a to a + 1
         var b = to.resolve(date, sun) ?: return null
-        if (b <= a) b += 1440
+        if (b <= a) {
+            // past midnight; but where a sun event did not happen, a span that ends before it starts never begins
+            // (`sunset-sunrise` in polar day: no night)
+            if (from.missed(date, sun) || to.missed(date, sun)) return null
+            b += 1440
+        }
         return a to b.coerceAtMost(a + 2880).coerceAtMost(2880)
     }
 

@@ -453,4 +453,35 @@ class OpeningHoursTest {
         assertEquals(false, open("Feb 29 10:00-12:00", "2027-02-28T11:00"))
         assertEquals(true, open("Feb 29 10:00-12:00", "2028-02-29T11:00"))
     }
+
+    @Test
+    fun aSunEventThatDoesNotHappen() {
+        // the reviewer, 17 November, finding 11: an event the sun does not make that day shut the whole day
+        val oslo = java.time.ZoneId.of("Europe/Oslo")
+        // Trondheim at midsummer: the sun sets, but never 6° below the horizon; dawn and dusk do not come, light all night
+        val trondheim = OpeningHoursContext(sun = SunClock.at(63.4305, 10.3951, oslo))
+        assertEquals(true, oh("dawn-dusk").isOpen(t("2026-06-21T01:00"), trondheim))
+        assertEquals(true, oh("dawn-dusk").isOpen(t("2026-06-21T12:00"), trondheim))
+        assertEquals(false, oh("dusk-dawn").isOpen(t("2026-06-21T01:00"), trondheim))
+        // its sunrise and sunset still happen
+        assertEquals(false, oh("sunrise-sunset").isOpen(t("2026-06-21T01:00"), trondheim))
+        assertEquals(true, oh("sunrise-sunset").isOpen(t("2026-06-21T12:00"), trondheim))
+        // Tromsø: polar day in June, the sun up all day; polar night in December
+        val tromso = OpeningHoursContext(sun = SunClock.at(69.6492, 18.9553, oslo))
+        assertEquals(true, oh("sunrise-sunset").isOpen(t("2026-06-21T02:00"), tromso))
+        assertEquals(true, oh("(sunrise+01:00)-(sunset-01:00)").isOpen(t("2026-06-21T00:30"), tromso))
+        assertEquals(true, oh("10:00-sunset").isOpen(t("2026-06-21T23:30"), tromso))
+        assertEquals(false, oh("sunset-sunrise").isOpen(t("2026-06-21T02:00"), tromso))
+        assertEquals(false, oh("sunset-sunrise").isOpen(t("2026-06-21T12:00"), tromso))
+        assertEquals(false, oh("sunrise-sunset").isOpen(t("2026-12-21T12:00"), tromso))
+        assertEquals(true, oh("sunset-sunrise").isOpen(t("2026-12-21T12:00"), tromso))
+        // open all day says no closing at midnight: the next day is the same
+        val light = oh("dawn-dusk").status(t("2026-06-21T23:00"), trondheim)
+        assertTrue(light.isOpen)
+        assertTrue("changes ${light.changesAt}", light.changesAt == null || light.changesAt!!.isAfter(t("2026-06-28T00:00")))
+        // where the sun keeps its times, nothing changes: Amsterdam in October
+        val ams = OpeningHoursContext(sun = SunClock.at(52.3746, 4.8840, java.time.ZoneId.of("Europe/Amsterdam")))
+        assertEquals(false, oh("dawn-dusk").isOpen(t("2026-10-13T03:00"), ams))
+        assertEquals(true, oh("dawn-dusk").isOpen(t("2026-10-13T12:00"), ams))
+    }
 }
