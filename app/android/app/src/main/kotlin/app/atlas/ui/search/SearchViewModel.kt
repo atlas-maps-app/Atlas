@@ -172,7 +172,6 @@ class SearchViewModel(
             lang = lang,
             now = now,
             online = online(),
-            country = null,
             limit = LIMIT,
             hours = HereContext.hours(services, at, now.zone),
         )

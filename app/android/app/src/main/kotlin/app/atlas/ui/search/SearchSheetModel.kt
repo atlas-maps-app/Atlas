@@ -553,7 +553,7 @@ class SearchSheetModel(
     fun reword(text: String) {
         val s = mutable.value
         val now = ZonedDateTime.now(services.clock)
-        val parsed = app.atlas.search.QueryParser.parse(text, lang, now)
+        val parsed = app.atlas.search.QueryParser.parse(text, lang, now, s.moment.hours.country)
         if (parsed.steps.isEmpty()) return close()
         if (parsed.isPlan) return plan(Asked.Outing(text, parsed, refine = (s.asked as? Asked.Outing)?.refine.orEmpty()))
         ask(Asked.Words(text, parsed))
