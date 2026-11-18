@@ -205,6 +205,22 @@ class FactsTest {
         assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
     }
 
+    /**
+     * A bottle refill is named in each language Atlas bundles (the app maintainer, 18 November 2026, batch 4 B22): it
+     * was English in fourteen of the eighteen. A language tag falls back as the others do ("pt-BR", "zh-Hans", "no").
+     */
+    @Test
+    fun aRefillIsNamedInEachLanguage() {
+        fun label(lang: String) = facts("amenity" to "cafe", "bottle" to "yes", lang = lang).one(FactKind.BOTTLE_REFILL).label
+        val names = Langs.bundled.associateWith(::label)
+        for ((lang, name) in names) if (lang != "en") assertTrue("$lang: $name", name != "Bottle refill")
+        assertEquals("one name a language: $names", Langs.bundled.size, names.values.toSet().size)
+        assertEquals(names["pt"], label("pt-BR"))
+        assertEquals(names["zh-CN"], label("zh-Hans"))
+        assertEquals(names["nb"], label("no"))
+        assertEquals("Bottle refill", label("ko"))
+    }
+
     @Test
     fun aRefillAndTheDietQuestionSayWhatTheyAre() {
         // the reviewer, 17 November, finding 11: a refill read "Drinkable: No", and the diet question asked "Dietary
@@ -213,7 +229,7 @@ class FactsTest {
         assertEquals(FactState.NO, refill.state)
         assertEquals("Bottle refill", refill.label)
         assertEquals("Fles bijvullen", facts("amenity" to "cafe", "bottle" to "yes", lang = "nl").one(FactKind.BOTTLE_REFILL).label)
-        assertEquals("Bottle refill", facts("amenity" to "cafe", "bottle" to "yes", lang = "ja").one(FactKind.BOTTLE_REFILL).label)
+        assertEquals("ボトル給水", facts("amenity" to "cafe", "bottle" to "yes", lang = "ja").one(FactKind.BOTTLE_REFILL).label)
         val diet = facts("amenity" to "restaurant", "name" to "Nowhere").single { !it.mapped && it.kind == FactKind.DIET }
         assertEquals("diet:vegetarian", diet.key)
         assertEquals("Vegetarian", diet.label)

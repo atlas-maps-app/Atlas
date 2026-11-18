@@ -151,11 +151,18 @@ object Facts {
 
     /**
      * A bottle refill's name (the reviewer, 17 November, finding 11): the fields Atlas bundles have none of their own,
-     * and their drinking_water's "Drinkable" is the water's; in the app's languages, else English.
+     * and their drinking_water's "Drinkable" is the water's; in each language Atlas bundles ([Langs.bundled]; the app
+     * maintainer, 18 November 2026, batch 4 B22: fourteen read English), else English.
      */
-    private val REFILL = mapOf("en" to "Bottle refill", "nl" to "Fles bijvullen", "de" to "Flasche auffüllen", "fr" to "Remplissage de gourde")
+    private val REFILL = mapOf(
+        "en" to "Bottle refill", "nl" to "Fles bijvullen", "de" to "Flasche auffüllen", "fr" to "Remplissage de gourde",
+        "es" to "Rellenado de botellas", "it" to "Ricarica borracce", "pt" to "Recarga de garrafas", "pl" to "Napełnianie butelek",
+        "sv" to "Påfyllning av flaskor", "da" to "Påfyldning af flasker", "nb" to "Påfylling av flasker", "fi" to "Pullon täyttö",
+        "cs" to "Plnění lahví", "ja" to "ボトル給水", "zh-CN" to "水瓶加水", "ru" to "Наполнение бутылок",
+        "ar" to "إعادة تعبئة الزجاجات", "tr" to "Şişe doldurma",
+    )
 
-    internal fun refillLabel(lang: String?): String = REFILL[lang?.substringBefore('-')?.substringBefore('_')?.lowercase()] ?: REFILL.getValue("en")
+    internal fun refillLabel(lang: String?): String = REFILL[Langs.resolve(lang)] ?: REFILL.getValue("en")
 
     /** Asks for these when the preset lists them first and they are not mapped. */
     private val ASKABLE = mapOf(
