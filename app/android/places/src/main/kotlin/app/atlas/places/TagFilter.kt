@@ -1,5 +1,7 @@
 package app.atlas.places
 
+import app.atlas.num.Digits
+
 /** A numeric comparison in a [TagFilter.Compare]. */
 enum class CompareOp(val symbol: String) {
     LT("<"), LE("<="), GT(">"), GE(">=");
@@ -376,16 +378,18 @@ internal class TagFilterParser(private val s: String) {
 
     private fun compare(key: String, op: CompareOp): TagFilter {
         val start = i
-        val text = value()
+        // a number in any script's digits is that number ("capacity>٥"): on Android `\d` took them and `toDouble`
+        // threw (the reviewer, 17 November, finding 12)
+        val text = Digits.ascii(value())
         if ('\'' in text) {
             // feet and inches, 12'6": kept in metres
             val m = Units.parse(text)?.takeIf { it.dimension == Dimension.LENGTH }
                 ?: throw TagFilterException("length expected after ${op.symbol}", start)
             return TagFilter.Compare(key, op, Math.round(m.value * 1000) / 1000.0, "m")
         }
-        val m = Regex("""^([-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*([A-Za-z/'"]*)$""").matchEntire(text)
+        val m = Regex("""^([-+]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+))\s*([A-Za-z/'"]*)$""").matchEntire(text)
             ?: throw TagFilterException("number expected after ${op.symbol}", start)
-        val n = m.groupValues[1].replace(',', '.').toDouble()
+        val n = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: throw TagFilterException("number expected after ${op.symbol}", start)
         var unit = m.groupValues[2].ifEmpty { null }
         if (unit == null) {
             // "4.2 m": a unit written after a space

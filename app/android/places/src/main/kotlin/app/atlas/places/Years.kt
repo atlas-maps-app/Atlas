@@ -1,5 +1,6 @@
 package app.atlas.places
 
+import app.atlas.num.Digits
 import java.util.Locale
 
 /**
@@ -9,9 +10,13 @@ import java.util.Locale
  * built before 1900), or the bound of "before" and "after".
  */
 object Years {
-    /** The first and last year [value] could be (either open for "before" and "after"), or null when it says none. */
+    /**
+     * The first and last year [value] could be (either open for "before" and "after"), or null when it says none. Any
+     * script's digits are read as theirs ("١٩٢٠s"): on Android `\d` took them and `toDouble` threw (the reviewer, 17
+     * November, finding 12).
+     */
     fun of(value: String): Pair<Double, Double>? {
-        val v = value.trim().lowercase(Locale.ROOT).removePrefix("~").removePrefix("ca.").removePrefix("circa").removePrefix("c.").trim()
+        val v = Digits.ascii(value).trim().lowercase(Locale.ROOT).removePrefix("~").removePrefix("ca.").removePrefix("circa").removePrefix("c.").trim()
         if (v.isEmpty()) return null
         RANGE.matchEntire(v)?.let { m -> return of(m.groupValues[1])?.first?.let { a -> of(m.groupValues[2])?.second?.let { b -> a to b } } }
         BEFORE.matchEntire(v)?.let { m -> return of(m.groupValues[1])?.let { Double.NEGATIVE_INFINITY to it.first - 1 } }
