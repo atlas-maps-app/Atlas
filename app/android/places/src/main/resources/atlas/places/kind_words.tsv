@@ -1,0 +1,9 @@
+# key=value	names, | between
+amenity=fuel	Station-service
+amenity=pharmacy	Farmacia|Farmácia
+shop=kiosk	Kiosk
+shop=lottery	Kolektura
+shop=shoe_repair	Ремонт обуви
+shop=supermarket	Supermarket|Süpermarket
+shop=ticket	售票处
+shop=variety_store	Dollar Store

@@ -71,6 +71,18 @@ object Brands {
 
     private val data: Data by lazy { load() }
 
+    /**
+     * The names a kind has in a bundled language that are also its brands' names ([key]s, by the kind's main tag:
+     * "shop=kiosk" to "kiosk"), from `kind_words.tsv`: by its name alone such a place is no brand's.
+     */
+    private val kindWords: Map<String, Set<String>> by lazy {
+        val text = Resources.text("kind_words.tsv") ?: return@lazy emptyMap()
+        text.lineSequence().filter { it.isNotBlank() && !it.startsWith('#') }.mapNotNull { line ->
+            val tab = line.indexOf('\t')
+            if (tab < 0) null else line.substring(0, tab) to line.substring(tab + 1).split('|').map(::key).filter { it.isNotEmpty() }.toSet()
+        }.toMap()
+    }
+
     private fun load(): Data {
         val text = Resources.text("brands.tsv") ?: error("missing brands.tsv")
         val all = ArrayList<Brand>(15000)
@@ -202,11 +214,17 @@ object Brands {
             if (!list.isNullOrEmpty()) return Candidates(list, byName = false)
         }
         tags["name"]?.let { n ->
-            val list = data.byKey[key(n)]?.filter { exactTag(it, tags) && sameItem(it) }
+            val k = key(n)
+            // a kind's own word is no brand by itself: "Kiosk" at a kiosk, "Station-service" at a fuel station (the app
+            // maintainer, 18 November 2026, batch 4 B16), whatever brand of that kind is so called
+            val list = data.byKey[k]?.filter { exactTag(it, tags) && sameItem(it) && !kindsWord(it, k) }
             if (!list.isNullOrEmpty()) return Candidates(list, byName = true)
         }
         return null
     }
+
+    /** Whether the name keyed [k] is a name of [b]'s kind in a bundled language ([kindWords]). */
+    private fun kindsWord(b: Brand, k: String) = b.keyTags.entries.any { (tk, tv) -> kindWords["$tk=$tv"]?.contains(k) == true }
 
     /** Trades in [country]; where it is not known, everywhere (some countries aside). */
     private fun tradesIn(b: Brand, country: String?) = if (country == null) b.countries.isEmpty() else b.availableIn(country)

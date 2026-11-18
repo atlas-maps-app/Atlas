@@ -17,9 +17,10 @@ import java.io.File
  * A store's brands are those of the country of the map where its places are (the reviewer, 17 November, finding 9),
  * which the store's own places and addresses tell, as the app reads the regions on the phone: a supermarket tagged only
  * `brand=Jumbo` among Dutch addresses is the Dutch Jumbo, not the Chilean one, and its chain's search finds it; a
- * pharmacy named "Farmacia" among Italian addresses is no chain's, though a chain trades under that name in Ukraine;
+ * chemist named "Etos" among Italian addresses is no chain's, though a chain trades under that name in the Netherlands;
  * where nothing around names a country, the country the store's region is of says, else a name alone is a worldwide
- * chain's only.
+ * chain's only. ("Farmacia", the Ukrainian and the Croatian chains' name, is a pharmacy's own word in Spanish: by
+ * the name alone no chain's anywhere since batch 4 B16.)
  */
 class StoreBrandsTest {
     @get:Rule
@@ -28,7 +29,7 @@ class StoreBrandsTest {
     private val amsterdam = LatLon(52.3745, 4.8838)
     private val santiago = LatLon(-33.4372, -70.6506)
     private val rome = LatLon(41.9028, 12.4964)
-    private val kyiv = LatLon(50.4501, 30.5234)
+    private val etos = mapOf("shop" to "chemist", "name" to "Etos")
     private var next = 1L
 
     private fun place(at: LatLon, tags: Map<String, String>) = Place(OsmId(OsmType.NODE, next++), at, tags)
@@ -64,11 +65,10 @@ class StoreBrandsTest {
 
     @Test
     fun aNameAloneIsAChainOnlyWhereItTrades() {
-        val farmacia = mapOf("amenity" to "pharmacy", "name" to "Farmacia")
-        val roman = place(rome, farmacia)
+        val roman = place(rome, etos)
         store(street(rome, "IT") + roman).use { s -> assertNull(s.get(roman.id!!)!!.brand) }
-        val ukrainian = place(kyiv, farmacia)
-        store(street(kyiv, "UA") + ukrainian).use { s -> assertEquals("farmacia-996e17", s.get(ukrainian.id!!)!!.brand) }
+        val dutch = place(amsterdam, etos)
+        store(street(amsterdam, "NL") + dutch).use { s -> assertEquals("etos-994f1e", s.get(dutch.id!!)!!.brand) }
     }
 
     @Test
@@ -84,14 +84,13 @@ class StoreBrandsTest {
     @Test
     fun wherePlacesNameNoCountryTheRegionsOwnSays() {
         // a pack of one country's region (packer places --country): its places name none, the region does
-        val farmacia = mapOf("amenity" to "pharmacy", "name" to "Farmacia")
-        val ukrainian = place(kyiv, farmacia)
-        store(listOf(ukrainian), country = "UA").use { s -> assertEquals("farmacia-996e17", s.get(ukrainian.id!!)!!.brand) }
-        val roman = place(rome, farmacia)
+        val dutch = place(amsterdam, etos)
+        store(listOf(dutch), country = "NL").use { s -> assertEquals("etos-994f1e", s.get(dutch.id!!)!!.brand) }
+        val roman = place(rome, etos)
         store(listOf(roman), country = "IT").use { s -> assertNull(s.get(roman.id!!)!!.brand) }
         // and where they name one around them, theirs comes first: a border's other side in a country's extract
-        val across = place(kyiv, farmacia)
-        store(street(kyiv, "UA") + across, country = "IT").use { s -> assertEquals("farmacia-996e17", s.get(across.id!!)!!.brand) }
+        val across = place(amsterdam, etos)
+        store(street(amsterdam, "NL") + across, country = "BE").use { s -> assertEquals("etos-994f1e", s.get(across.id!!)!!.brand) }
     }
 
     @Test

@@ -30,16 +30,30 @@ class BrandCountryTest {
 
     @Test
     fun aNameAloneIsAChainOnlyWhereItTrades() {
-        // "farmacia" is any pharmacy in Italy and Spain, a chain in Ukraine and another in Croatia
+        // Etos trades in the Netherlands alone
+        val etos = mapOf("shop" to "chemist", "name" to "Etos")
+        assertEquals("etos-994f1e", Brands.forTags(etos, "NL")?.id)
+        assertNull(Brands.forTags(etos, "DE"))
+    }
+
+    /**
+     * A kind's own word is no brand by itself (the app maintainer, 18 November 2026, batch 4 B16): a fuel station named
+     * "Station Service" was E.Leclerc's everywhere but Poland, a kiosk named "Kiosk" the Dutch stations' Kiosk at home and
+     * a pharmacy named "Farmacia" a chain in Ukraine and another in Croatia. A name that is its kind's in any bundled
+     * language (French "Station-service", English "Kiosk", Spanish "Farmacia") matches no brand; by its brand it is the
+     * brand, and a brand's own name matches as before.
+     */
+    @Test
+    fun aKindsOwnWordIsNoBrand() {
+        assertNull(Brands.forTags(mapOf("amenity" to "fuel", "name" to "Station Service"), "FR"))
+        assertNull(Brands.forTags(mapOf("amenity" to "fuel", "name" to "Station-service"), "BE"))
+        assertNull(Brands.forTags(mapOf("shop" to "kiosk", "name" to "Kiosk"), "NL"))
         val farmacia = mapOf("amenity" to "pharmacy", "name" to "Farmacia")
+        assertNull(Brands.forTags(farmacia, "UA"))
+        assertNull(Brands.forTags(farmacia, "HR"))
         assertNull(Brands.forTags(farmacia, "IT"))
-        assertNull(Brands.forTags(farmacia, "ES"))
-        assertEquals("farmacia-996e17", Brands.forTags(farmacia, "UA")?.id)
-        assertEquals("farmacia-e8d74c", Brands.forTags(farmacia, "HR")?.id)
-        // a kiosk named Kiosk is the Dutch railway's at home only
-        val kiosk = mapOf("shop" to "kiosk", "name" to "Kiosk")
-        assertNull(Brands.forTags(kiosk, "DE"))
-        assertEquals("kiosk-c47323", Brands.forTags(kiosk, "NL")?.id)
+        assertEquals("kiosk-c47323", Brands.forTags(mapOf("shop" to "kiosk", "name" to "Kiosk", "brand" to "Kiosk"), "NL")?.id)
+        assertEquals("stationserviceeleclerc-16b3c2", Brands.forTags(mapOf("amenity" to "fuel", "name" to "E.Leclerc"), "FR")?.id)
     }
 
     @Test
