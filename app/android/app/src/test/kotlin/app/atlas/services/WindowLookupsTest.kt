@@ -216,19 +216,31 @@ class WindowLookupsTest {
      * A circle of more windows than [WindowPlaces] holds at once keeps the windows at its middle, whichever lookup asks:
      * here the nine a kilometre around, from Atlas's packs, then five by five (the reviewer, 17 November 2026: held by
      * when they were last read, the windows a wide circle fetched pushed out those nearest the user, and the lookups of
-     * one circle held 9, 7, 5 and 5 of the nine).
+     * one circle held 9, 7, 5 and 5 of the nine). Each lookup waits for what it asks of the packs, and asks for the
+     * nearest it lacks: the first the nine around the nine, the rest none (the app maintainer, 18 November 2026, batch 4
+     * C25: not waited for, the circle's lookups were counted before anything they asked for came, so nothing they
+     * fetched could push the nine out).
      */
     @Test
     fun aWideCircleKeepsTheWindowAtItsMiddle() = runBlocking {
         val empty = tmp.newFolder("wide")
-        val windows = WindowPlaces({ empty }, packed = { x, y -> cafeAt(x, y) })
+        val sent = AtomicInteger()
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
         val near = BBox.around(here, 1_000.0)
         val first = windows.fetched(near, here, 10_000L)!!
         assertTrue("the nine come from the packs whole", first.covers(near))
         assertEquals(block, first.places.map { it.name() }.toSet())
+        assertEquals(9, sent.get())
         val box = BBox.around(here, 3_500.0)
         assertTrue("more windows than are held at once", Mercator.tilesIn(box, WindowPlaces.LEVEL).size > WindowPlaces.HELD)
-        val holds = (1..4).map { windows.fetched(box, here, 10_000L)!!.places.count { it.name() in block } }
+        val asked = ArrayList<Int>()
+        val holds = (1..4).map {
+            val before = sent.get()
+            val held = windows.fetched(box, here, 10_000L, waitForPart = true)!!
+            asked += sent.get() - before
+            held.places.count { it.name() in block }
+        }
+        assertEquals("the first lookup asks the packs for the nine nearest it lacks, the rest for none", listOf(9, 0, 0, 0), asked)
         assertEquals("each lookup of the same circle holds the nine windows nearest its middle", listOf(9, 9, 9, 9), holds)
     }
 
