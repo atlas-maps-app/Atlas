@@ -314,6 +314,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         for (std::uint32_t k = 0; k < c.lines; ++k) course_segments.push_back((run << 14U) | k);
         ++run;
     }
+    words_->run_count = run;
     words_->woods_split = woods_split.value_or(static_cast<std::uint32_t>(segments[0].size()));
     for (std::size_t phase = 0; phase < 2; ++phase) {
         instances[phase] = static_cast<std::uint32_t>(words.size());
@@ -335,6 +336,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         }
     }
 }
+
+std::uint32_t Ground::line_runs() const noexcept { return words_ != nullptr ? words_->run_count : 0; }
 
 void Ground::record_lines(const frame::Recording& r, std::uint32_t phase) {
     const std::size_t k = phase == phase_over ? 0 : 1;
