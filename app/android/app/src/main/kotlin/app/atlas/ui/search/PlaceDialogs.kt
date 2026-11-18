@@ -52,7 +52,6 @@ import app.atlas.places.OpenSpan
 import app.atlas.places.OpenState
 import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
-import app.atlas.places.PublicHolidays
 import app.atlas.places.statedSpans
 import app.atlas.providers.Service
 import app.atlas.ui.kit.Atlas
@@ -164,15 +163,15 @@ internal fun WeekTableDialog(
     raw: String,
     today: LocalDate,
     ctx: OpeningHoursContext,
-    country: String?,
     guessed: String? = null,
     onCorrect: (() -> Unit)? = null,
     onDismiss: () -> Unit,
 ) {
     val c = Atlas.colors
     val locale = Locale.getDefault()
-    val days = remember(hours, today) { (0 until 7).map { d -> today.plusDays(d.toLong()).let { it to hours.spans(it, ctx) } } }
-    val holidays = remember(country) { country?.let { PublicHolidays.forCountry(it) } }
+    val days = remember(hours, today, ctx) { (0 until 7).map { d -> today.plusDays(d.toLong()).let { it to hours.spans(it, ctx) } } }
+    // the holidays the bars are read with: the place's country's, and its state's or nation's (finding 10)
+    val holidays = ctx.publicHolidays
     SearchDialog((if (guessed != null) "≈ " else "") + stringResource(R.string.place_hours), onDismiss) {
         for ((date, spans) in days) {
             val isToday = date == today

@@ -21,7 +21,6 @@ import app.atlas.places.Categories
 import app.atlas.places.CategoryNode
 import app.atlas.places.CategoryTree
 import app.atlas.places.NodeKind
-import app.atlas.places.PublicHolidays
 import app.atlas.places.SunClock
 import app.atlas.places.TagFilter
 import app.atlas.providers.BathingSite
@@ -1075,10 +1074,10 @@ class SearchSheetModel(
             .sortedWith(compareByDescending<BrandBranches> { it.branches.size }.thenBy { Geo.distance(c, it.branches.first().location) })
     }
 
-    /** True when today is a public holiday in the country at [c]. */
+    /** True when today is a public holiday at [c]: in its country, and in its state or nation (finding 10). */
     private fun holidayAt(c: LatLon): Boolean {
-        val country = HereContext.country(services, c) ?: return false
-        return PublicHolidays.forCountry(country)?.holiday(ZonedDateTime.now(services.clock).toLocalDate()) != null
+        val today = ZonedDateTime.now(services.clock).toLocalDate()
+        return HereContext.hours(services, c, services.clock.zone).publicHolidays?.holiday(today) != null
     }
 
     /**

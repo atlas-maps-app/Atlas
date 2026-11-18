@@ -37,7 +37,7 @@ class OpenEndWeekTest {
     private val amsterdam = OpeningHoursContext.forPlace("NL", ZoneId.of("Europe/Amsterdam"), 52.374, 4.884)
 
     private fun week(raw: String, shot: String) {
-        compose.setContent { AtlasTheme(dark = false) { WeekTableDialog(OpeningHours.parse(raw), raw, monday, amsterdam, "NL") {} } }
+        compose.setContent { AtlasTheme(dark = false) { WeekTableDialog(OpeningHours.parse(raw), raw, monday, amsterdam) {} } }
         compose.waitForIdle()
         val f = File(shotsDir, "find_$shot.png")
         compose.onRoot().captureRoboImage(f.absolutePath)

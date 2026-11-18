@@ -107,7 +107,7 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
     if (week && state.hours != null) {
         // borrowed hours lead on to the real ones: What's here on the place, where a note leaves them for the mappers
         val correct = place.id?.takeIf { guessed != null }?.let { id -> { week = false; nav.go(Dest.WhatsHere(place.location.lat, place.location.lon, id.toString())) } }
-        WeekTableDialog(state.hours, place.tags["opening_hours"].orEmpty(), state.now.toLocalDate(), state.hoursContext, state.country, guessed, correct) { week = false }
+        WeekTableDialog(state.hours, place.tags["opening_hours"].orEmpty(), state.now.toLocalDate(), state.hoursContext, guessed, correct) { week = false }
     }
     if (review) {
         val eatery = Categories.groupOf(place.tags)?.id == "eat"
