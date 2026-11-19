@@ -48,6 +48,10 @@ import java.util.zip.GZIPInputStream
  * levels`, load::build_levels), each a pack of one tile stored as a window's is and listed in the index by its level
  * ([TilesIndex]). A cell whose levels the tool cannot build is named on a line beginning "levels not built" and left
  * without them: the phone draws its windows to their own reach there.
+ *
+ * The tool says of each window what its stage P counted of the buildings ([Buildings]), which the report sums over the
+ * country in a line of its own, the cleaning's counts and the most windows a tile can hold (the Architect's audit of
+ * 19 November, 7.3: no gate yet; the Netherlands' first numbers say where one can sit).
  */
 object CountryTiles {
     const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N] [--allow-failed N]
@@ -110,6 +114,10 @@ object CountryTiles {
         val levelMillis: Long = 0,
         /** The cells whose levels the tool could not build, with why ("10/x/y: why"), left without them. */
         val levelsFailed: List<String> = emptyList(),
+        /** What stage P counted of the built windows' buildings, summed ([Buildings.plus]). */
+        val buildings: Buildings = Buildings(),
+        /** The windows whose cleaning left a count the yardstick wants 0 ([Buildings.uneasy]), "14/x/y: the counts". */
+        val uneasy: List<String> = emptyList(),
     ) {
         val empty: Int get() = windows - drawn - failed.size
     }
@@ -150,13 +158,83 @@ object CountryTiles {
         return 0
     }
 
-    /** The report's four lines for [r]. */
+    /**
+     * What stage P counted of a country's buildings, a built window's or summed over them (`atlas_stagep windows`' line).
+     * The cleaning's counts are its window's scene's (load::BuildingCounts, after the buildings were cleaned): of the
+     * window's own buildings and of those in the 200 m about it, which the windows beside it count again, so their sum
+     * over a country is more than its buildings'; a 0 is a 0. [records] and [windows] are of the window's tile alone.
+     */
+    data class Buildings(
+        /** The scene's buildings and parts. */
+        val footprints: Long = 0,
+        /**
+         * Drawn footprints that still overlap, over 1 m² in plan and 0.1 m in height: a floor where [unsettled] is not
+         * 0, as a cleaning that did not settle counts no pairs.
+         */
+        val pairs: Long = 0,
+        /** Outlines of which more than 5 m² draws nothing. */
+        val uncovered: Long = 0,
+        /** Cleanings whose arrangement did not settle: their footprints as mapped. */
+        val unsettled: Long = 0,
+        /** Outlines whose uncovered area could not be measured (past the 6,000 edges an arrangement takes). */
+        val unmeasured: Long = 0,
+        /** Roofs with a shape that stage T draws flat. */
+        val flat: Long = 0,
+        /** Outlines their parts cover whole. */
+        val hidden: Long = 0,
+        /** A relation's outer ring that is a building's own way, loaded once. */
+        val doubles: Long = 0,
+        /** The buildings and parts of the window's tile, or of every window's. */
+        val records: Long = 0,
+        /** The most windows stage T's walls can give the tile's buildings (load::most_windows); summed, the most of a tile. */
+        val windows: Long = 0,
+        /** Where [windows] is, "14/x/y", and the tiles whose [windows] pass the most a frame draws ([TILE_WINDOWS]). */
+        val windowsAt: String = "",
+        val past: Long = 0,
+    ) {
+        /** The yardstick's counts that should be 0 and are not, "pairs 1, unsettled 1", or null where all are 0. */
+        val uneasy: String?
+            get() = listOf("pairs" to pairs, "uncovered" to uncovered, "unsettled" to unsettled, "unmeasured" to unmeasured)
+                .filter { it.second != 0L }.takeIf { it.isNotEmpty() }?.joinToString { "${it.first} ${it.second}" }
+
+        operator fun plus(o: Buildings) = Buildings(
+            footprints + o.footprints, pairs + o.pairs, uncovered + o.uncovered, unsettled + o.unsettled, unmeasured + o.unmeasured,
+            flat + o.flat, hidden + o.hidden, doubles + o.doubles, records + o.records,
+            maxOf(windows, o.windows), if (o.windows > windows) o.windowsAt else windowsAt, past + o.past,
+        )
+
+        companion object {
+            /** The counts a line of the tool names, in its order. */
+            val NAMES = listOf("footprints", "pairs", "uncovered", "unsettled", "unmeasured", "flat", "hidden", "doubles", "buildings", "windows")
+
+            /** The counts of window 14/[x]/[y] from its line's `name=count` words, all of [NAMES] in their order, or null. */
+            fun of(words: List<String>, x: Int, y: Int): Buildings? {
+                if (words.size != NAMES.size) return null
+                val n = words.mapIndexed { i, w -> w.removePrefix(NAMES[i] + "=").takeIf { w.startsWith(NAMES[i] + "=") }?.toLongOrNull() ?: return null }
+                return Buildings(n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9], "$LEVEL/$x/$y", if (n[9] > TILE_WINDOWS) 1 else 0)
+            }
+        }
+    }
+
+    /** The most windows a tile holds, the most a frame draws (tiles::building::most_tile_windows): past them stage T gives a wall none. */
+    const val TILE_WINDOWS = 1L shl 20
+
+    /** The report's line of [b], the country's buildings, which packs.yml writes into the run's summary. */
+    fun buildingsLine(b: Buildings): String =
+        "  the buildings: ${b.footprints} footprints in the windows' scenes, each with the 200 m about its window " +
+            "(${b.records} in the tiles), ${b.pairs} overlapping pairs, ${b.uncovered} outlines uncovered, ${b.unsettled} unsettled, " +
+            "${b.unmeasured} unmeasured, ${b.flat} flat roofs, ${b.hidden} hidden, ${b.doubles} doubles; " +
+            "at most ${b.windows} windows in a tile" + (if (b.windowsAt.isEmpty()) "" else " (${b.windowsAt})") +
+            ", ${b.past} tiles that can pass the ${TILE_WINDOWS} a frame draws"
+
+    /** The report's lines for [r]. */
     fun report(r: Result, out: (String) -> Unit) {
         out(
             "${r.tiles.name}: ${r.windows} windows (${r.drawn} with a tile, ${r.empty} empty, listed with no bytes" +
                 (if (r.failed.isEmpty()) "" else ", ${r.failed.size} not built, left out") + "), ${r.tilesBytes} bytes " +
                 "from the ${r.coreBytes} the core wrote (${percent(r.tilesBytes, r.coreBytes)}); ${r.features} features; data of ${r.date}",
         )
+        out(buildingsLine(r.buildings))
         out(
             "  the chunks ${r.chunkBytes} bytes from ${r.chunkRaw} of tiles, the styles ${r.styleBytes} (${percent(r.styleBytes, r.tilesBytes)} of the file) " +
                 "from ${r.styleRaw}, the rest ${r.tilesBytes - r.chunkBytes - r.styleBytes}",
@@ -240,6 +318,8 @@ object CountryTiles {
         var levelBytes = 0L
         var levelMillis = 0L
         val levelsFailed = ArrayList<String>()
+        var buildings = Buildings()
+        val uneasy = ArrayList<String>()
         try {
             FileChannel.open(data.toPath(), StandardOpenOption.READ).use { channel ->
                 part.outputStream().buffered(1 shl 20).use { file ->
@@ -298,6 +378,8 @@ object CountryTiles {
                                 failed += "$LEVEL/${e.x}/${e.y}: ${built.failed}"
                                 continue
                             }
+                            buildings += built.buildings
+                            built.buildings.uneasy?.let { uneasy += "$LEVEL/${e.x}/${e.y}: $it" }
                             val keep = cellDir(cellOf(e))
                             ahead.addLast(pool.submit(Callable { pack(File(packs, "$LEVEL-${e.x}-${e.y}.atlas"), e, built, keep) }))
                             if (ahead.size >= threads * 4) take(result(ahead.removeFirst()))
@@ -348,6 +430,12 @@ object CountryTiles {
             }
             // left out of the index: the phone builds them from their data, and its core (the same) refuses them as this one did
             for (f in failed) log("not built, left out: $f")
+            if (uneasy.isNotEmpty()) {
+                log(
+                    "the cleaning left counts that should be 0 in ${uneasy.size} windows: " + uneasy.take(20).joinToString("; ") +
+                        if (uneasy.size > 20) "; and ${uneasy.size - 20} more" else "",
+                )
+            }
             if (version == null) throw IOException("the core's tool built none of the ${windows.size} windows")
         } catch (x: Throwable) {
             part.delete()
@@ -365,7 +453,7 @@ object CountryTiles {
         return Result(
             tiles, tilesIndex, windows.date, version!!, windows.size, drawn, features, coreBytes, offset, chunkRaw, chunkBytes, styleRaw, styleBytes,
             jsonBytes, batchJsonBytes, ms(), unzipMillis, buildMillis, packMillis, failed.toList(),
-            levels, levelBytes, levelMillis, levelsFailed.toList(),
+            levels, levelBytes, levelMillis, levelsFailed.toList(), buildings, uneasy.toList(),
         )
     }
 
@@ -384,21 +472,25 @@ object CountryTiles {
         return to.length()
     }
 
-    /** What the core's tool said of one window: its features and its pack's bytes, or why it could not build it. */
-    private class Built(val features: Long, val bytes: Long, val failed: String?)
+    /** What the core's tool said of one window: its features, its pack's bytes and its buildings, or why it could not build it. */
+    private class Built(val features: Long, val bytes: Long, val failed: String?, val buildings: Buildings = Buildings())
 
-    /** A line's words after the window's column and row (`<features> <bytes> <ms>` or `failed <why>`), or null. */
-    private fun built(said: String): Built? {
+    /**
+     * A line's words after window 14/[x]/[y]'s column and row (`<features> <bytes> <ms>` and its counts, each
+     * `name=count` in [Buildings.NAMES]' order, or `failed <why>`), or null.
+     */
+    private fun built(said: String, x: Int, y: Int): Built? {
         if (said.startsWith("failed ")) return Built(0, 0, said.removePrefix("failed "))
         val n = said.split(' ')
         val features = n.getOrNull(0)?.toLongOrNull()
         val bytes = n.getOrNull(1)?.toLongOrNull()
-        return if (n.size == 3 && features != null && bytes != null && n[2].toDoubleOrNull() != null) Built(features, bytes, null) else null
+        if (n.size < 3 || features == null || bytes == null || n[2].toDoubleOrNull() == null) return null
+        return Buildings.of(n.drop(3), x, y)?.let { Built(features, bytes, null, it) }
     }
 
     /**
      * The windows of [batch] that [list] names built by the core's tool into [packs] on [threads] threads: what it said
-     * of each (`x y <features> <bytes> <ms>` or `x y failed <why>`), by [key]. Throws where it failed otherwise or said
+     * of each (`x y <features> <bytes> <ms>` and its counts, or `x y failed <why>`), by [key]. Throws where it failed otherwise or said
      * nothing of a window.
      */
     private fun buildBatch(core: File, list: File, packs: File, threads: Int, batch: List<WindowsIndex.Entry>): Map<Long, Built> {
@@ -412,8 +504,10 @@ object CountryTiles {
             val v = line.split(' ', limit = 3)
             val x = v.getOrNull(0)?.toIntOrNull()
             val y = v.getOrNull(1)?.toIntOrNull()
-            val built = v.getOrNull(2)?.let(::built)
-            if (x == null || y == null || built == null) throw IOException("${core.name} windows printed '$line', not x y features bytes ms or x y failed why")
+            val built = if (x == null || y == null) null else v.getOrNull(2)?.let { built(it, x, y) }
+            if (x == null || y == null || built == null) {
+                throw IOException("${core.name} windows printed '$line', not x y features bytes ms and its counts (${Buildings.NAMES.joinToString(" ") { "$it=N" }}) or x y failed why")
+            }
             if (said.put(key(x, y), built) != null) throw IOException("${core.name} windows spoke of window $x/$y twice")
         }
         val missing = batch.filter { key(it.x, it.y) !in said }

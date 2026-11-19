@@ -1,6 +1,7 @@
 // A window of the map the phone builds itself (load/Window.hpp).
 #include "load/Window.hpp"
 
+#include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "gen/data/tradition_fr_paris.hpp"
 #include "gen/data/tradition_gb_terrace.hpp"
@@ -12,11 +13,14 @@
 #include "load/PackHead.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
+#include "tiles/Container.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/PackWriter.hpp"
 #include "tiles/SectionWriter.hpp"
+#include "tiles/Source.hpp"
 #include "tiles/TileWriter.hpp"
+#include "tiles/layers/Buildings.hpp"
 
 #include <algorithm>
 #include <array>
@@ -25,9 +29,12 @@
 #include <cmath>
 #include <cstdio>
 #include <format>
+#include <initializer_list>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
 
 namespace atlas::load {
@@ -238,6 +245,8 @@ std::expected<BuiltWindow, WindowError> build_window(const osm::Document& doc, c
     }
     auto base = loaded(0.0);
     if (!base) return std::unexpected(base.error());
+    out.counts = base->counts;
+    out.footprints = static_cast<std::uint32_t>(base->buildings.size() + base->parts.size());
     const auto t1 = clock::now();
     const auto cut = steps.cut(*base);
     if (!cut) return std::unexpected(WindowError{"the scene does not cut: " + cut.error().what});
@@ -313,6 +322,77 @@ std::expected<BuiltWindow, WindowError> build_window(std::span<const std::byte> 
             std::format("the data does not read: {} at byte {}", osm::name_of(doc.error().fault), doc.error().at)});
     }
     return build_window(*doc, tl::Sha256::of(json), tile, place);
+}
+
+std::uint64_t most_windows(const tiles::Tile& tile, const tiles::Frame& frame) {
+    namespace bd = tl::building;
+    constexpr std::uint8_t variant_levels = tl::slot_of(tl::variant::columns, "levels");
+    constexpr std::uint8_t variant_hidden = tl::slot_of(tl::variant::columns, "hidden");
+    constexpr double closest_bay = 2.1; // geometry/Walls.cpp's window_cols: 2.9 m for Paris's, 3.4 for modern ones
+    const auto storeys = [](std::optional<std::int64_t> levels) -> std::uint64_t {
+        return levels && *levels >= 1 && *levels <= bd::most_levels ? static_cast<std::uint64_t>(*levels) : 0;
+    };
+    // what a record's variants (each at a level of the ladder) give it: the most storeys, and whether one draws it
+    struct Varied {
+        std::uint64_t storeys = 0;
+        bool shown = false;
+    };
+    std::unordered_map<std::uint64_t, Varied> varied;
+    if (const tl::Layer* var = tile.layer(tl::LayerId::variant)) {
+        for (std::uint32_t i = 0; i < var->count; ++i) {
+            const auto layer = static_cast<std::uint64_t>(var->integer(tl::variant::layer, i));
+            const auto index = static_cast<std::uint64_t>(var->integer(tl::variant::index, i));
+            Varied& v = varied[(layer << 56U) | index];
+            v.storeys = std::max(v.storeys, storeys(var->nullable_integer(variant_levels, i)));
+            v.shown = v.shown || !var->boolean(variant_hidden, i).value_or(false);
+        }
+    }
+    std::uint64_t most = 0;
+    for (const tl::LayerId id : {tl::LayerId::building, tl::LayerId::part}) {
+        const tl::Layer* l = tile.layer(id);
+        if (l == nullptr) continue;
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            const auto index = static_cast<std::uint64_t>(l->integer(bd::index, i));
+            const auto it = varied.find((static_cast<std::uint64_t>(id) << 56U) | index);
+            const bool hidden = l->boolean(bd::hidden, i).value_or(false);
+            if (hidden && (it == varied.end() || !it->second.shown)) continue;
+            const std::uint64_t floors =
+                std::max(storeys(l->nullable_integer(bd::levels, i)), it == varied.end() ? 0 : it->second.storeys);
+            if (floors == 0) continue;
+            const tl::RingView ring = l->ring(bd::ring, i);
+            double length = 0.0;
+            for (std::size_t k = 0; k < ring.size(); ++k) {
+                const std::size_t next = (k + 1) % ring.size();
+                length += pymath::hypot(frame.x(ring.lon[next]) - frame.x(ring.lon[k]),
+                                        frame.z(ring.lat[next]) - frame.z(ring.lat[k]));
+            }
+            most += floors * static_cast<std::uint64_t>(length / closest_bay);
+        }
+    }
+    return most;
+}
+
+std::expected<PackBuildings, WindowError> buildings_of(std::span<const std::byte> pack) {
+    auto opened = tl::Pack::open(std::make_unique<tl::MemorySource>(pack));
+    if (!opened) return std::unexpected(WindowError{"the pack does not open: " + tl::describe(opened.error())});
+    const tl::RenderHead* head = opened->head();
+    if (head == nullptr) return std::unexpected(WindowError{"the pack has no head"});
+    PackBuildings out;
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    for (const tl::ChunkRef& c : opened->chunks().chunks()) {
+        if (c.tile.z != window_level) continue;
+        atlas::Arena arena(std::size_t{1} << 20U, atlas::Growth::grows, "a window's buildings");
+        const auto tile = opened->decode(c, zstd, decoder, arena, raw, scratch);
+        if (!tile) return std::unexpected(WindowError{"the tile does not decode: " + tl::describe(tile.error())});
+        for (const tl::LayerId id : {tl::LayerId::building, tl::LayerId::part}) {
+            if (const tl::Layer* l = tile->layer(id)) out.records += l->count;
+        }
+        out.most_windows += most_windows(*tile, head->frame);
+    }
+    return out;
 }
 
 } // namespace atlas::load
