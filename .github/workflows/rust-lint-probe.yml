@@ -1,0 +1,26 @@
+# A probe on the branch secondcrate-probe alone, never landed: rustfmt and clippy on the core's Rust as the tidy job
+# runs them (.github/scripts/rust-lint.sh), without the rest of Core, while condition 1 of the four before a second
+# crate is built (tagsafe, for the engine maintainer). Nothing on this machine has rustfmt or clippy.
+name: Rust lint probe
+
+on:
+  push:
+    branches: [secondcrate-probe]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust with rustfmt and clippy
+        run: .github/scripts/rust.sh lint
+      - name: rustfmt and clippy
+        run: .github/scripts/rust-lint.sh app/android/mapcore/rust/clean
