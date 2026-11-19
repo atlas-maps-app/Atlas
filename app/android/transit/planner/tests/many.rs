@@ -2,7 +2,8 @@
 //! here the hand-written feed (tests/data/edges.tt, see tests/edges.rs for its islands) is given tens of thousands
 //! of rules more, built in the test, and the answers worked out on paper must stay what they are. So must they
 //! with thousands of stops more than a search begins at, and with a trip that is under way for twelve days: what
-//! the format allows and no timetable has.
+//! the format allows and no timetable has. And a walk must be as long as the ground says wherever the feed lies: the
+//! same feed moved to seven latitudes, the seconds on foot held to paper.
 //!
 //! - Wacht: the bus A to B is in at 08:10, and the bus C to Z leaves 08:12 and waits for it (the feed's rule);
 //!   no walk joins B and C. The one way is 08:00 to 08:30.
@@ -10,7 +11,7 @@
 //!   08:12 one. The one way is 08:00 to 08:28.
 
 use atlas_transit::file::{StopText, TripText};
-use atlas_transit::reference::impossible;
+use atlas_transit::reference::{between_mm, impossible, places};
 use atlas_transit::{Journey, Leg, Place, Planner, Query, Timetable};
 
 const NONE: u32 = u32::MAX;
@@ -304,3 +305,58 @@ fn a_trip_of_many_days_hides_no_other() {
     assert_eq!(ask(&mut p, &q), []);
 }
 
+/// A walk is as long as the ground says, at any latitude. The hand-written feed lies at 52 degrees north, and a
+/// degree of longitude is as long there as nowhere else: here the whole feed is moved, so that Lopen's stop A lies on
+/// the equator, at 30, 52.1, 59.95, 70 and 80 degrees north and at 45 south, and a point is put a hundredth of a
+/// degree east of it, half a hundredth north, and both the other way. The seconds are paper's: a degree of latitude
+/// 111,194.93 m, a degree of longitude that times the cosine of the latitude, the way 1.3 times the line, 1.25 m/s,
+/// rounded up.
+///
+/// Held to them: what the search takes from the point to the stop (within a second and half a per cent: its cosine
+/// is from a table by the tenth of a degree); what the scan allows for it by its own distance (reference::between_mm:
+/// paper lies between its least and its most), and that the scan has no word against the search's stops for the
+/// place (reference::places); the walk all the way between the point and the stop's own place; and every journey
+/// (reference::impossible, which reads the walks' seconds from the scan's places).
+#[test]
+fn a_walk_is_as_long_as_the_ground_says_at_any_latitude() {
+    let b = bytes();
+    let home = Timetable::open(&b).unwrap();
+    let (pa, pz) = (stop(&home, "PA"), stop(&home, "PZ"));
+    let mut journeys = 0;
+    for (lat, east, north, both) in [(0, 1157u32, 579u32, 1293u32), (300_000_000, 1002, 579, 1157), (-450_000_000, 818, 579, 1002), (521_000_000, 711, 579, 916), (599_500_000, 580, 579, 819), (700_000_000, 396, 579, 701), (800_000_000, 201, 579, 613)] {
+        let mut stops = section(&b, b"STOP");
+        let shift = lat - home.stop(pa).lat;
+        for s in stops.chunks_exact_mut(12) {
+            s[0] = (s[0] as i32 + shift) as u32;
+        }
+        let moved = with_section(&b, b"STOP", &stops, stops.len() as u32 / 12);
+        let tt = Timetable::open(&moved).unwrap();
+        tt.verify().unwrap();
+        let mut p = Planner::new(tt);
+        let at = tt.stop(pa);
+        assert_eq!(at.lat, lat);
+        for (dlat, dlon, paper) in [(0, 100_000, east), (50_000, 0, north), (-50_000, -100_000, both)] {
+            let close = |secs: u32| secs.abs_diff(paper) <= 1 + paper / 200;
+            let point = Place::Point { lat: at.lat + dlat, lon: at.lon + dlon };
+            let mut q = Query::new(point.clone(), Place::Stop(pz), 0, hm(7, 30));
+            q.reach_m = 2000;
+            let secs = p.ends(&q).from.iter().find(|e| e.0 == pa).map(|e| e.1);
+            assert!(secs.is_some_and(close), "at {lat}, {dlat} north and {dlon} east: the search has {secs:?} s, paper {paper}");
+            let mm = between_mm(at.lat + dlat, at.lon + dlon, at.lat, at.lon);
+            assert!((mm.0 * 13 / 10 / 1250) as u32 <= paper && paper <= (mm.1 * 13 / 10).div_ceil(1250) as u32, "at {lat}: the scan has {mm:?} mm, paper {paper} s");
+            assert!(mm.1 - mm.0 <= mm.1 / 20 + 4 || lat >= 800_000_000, "at {lat}: the scan allows {mm:?} mm");
+            assert_eq!(places(&p, &q).wrong, None, "at {lat}, {dlat} north and {dlon} east");
+            journeys += ask(&mut p, &q).len();
+            // all the way on foot, to the stop's own place
+            let mut q = Query::new(point, Place::Point { lat: at.lat, lon: at.lon }, 0, hm(7, 30));
+            q.reach_m = 2000;
+            let a = p.plan(&q);
+            let walk: Vec<u32> = a.journeys.iter().filter(|j| j.rides == 0).map(|j| (j.arrive - j.depart) as u32).collect();
+            assert!(walk.len() == 1 && close(walk[0]), "at {lat}, {dlat} north and {dlon} east: on foot all the way {walk:?} s, paper {paper}");
+            for j in a.journeys.iter() {
+                assert_eq!(impossible(&p, &q, j), None, "at {lat}: {j:?}");
+            }
+        }
+    }
+    assert!(journeys > 20, "{journeys}");
+}

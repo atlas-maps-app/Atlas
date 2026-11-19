@@ -853,7 +853,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 println!("WRONG  pair {i} ({a} to {b}) over two hours: a journey that can't be made: {why}");
             }
         }
-        if let Some(how) = scan.window_differs(&planner, &window, &got.journeys).filter(|_| !on_foot) {
+        if let Some(how) = scan.window_differs(&planner, &window, &got.journeys) {
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) over two hours from {}: {how}", clock(at as i32));
         }

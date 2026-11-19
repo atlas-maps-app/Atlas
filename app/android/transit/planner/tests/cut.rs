@@ -9,7 +9,7 @@
 //! platform; and no file a little wrong, and no query, panics.
 
 use atlas_transit::geo::distance_mm;
-use atlas_transit::reference::{Reference, impossible};
+use atlas_transit::reference::{Reference, impossible, places};
 use atlas_transit::{Area, How, Journey, Leg, Mode, Place, Planner, Query, Timetable, What, Wish, fuzz};
 
 fn bytes(name: &str) -> Vec<u8> {
@@ -387,7 +387,8 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
         v
     };
     let on_foot = |js: &[Journey]| js.iter().filter(|j| j.rides == 0).map(|j| (j.depart, j.arrive)).collect::<Vec<_>>();
-    let (mut cuts, mut options, mut slower) = (0, 0, 0);
+    let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
+    let (mut cuts, mut options, mut slower, mut too_far, mut held) = (0, 0, 0, 0, 0);
     for i in 0..200usize {
         // two stops 600 m to 1.9 km apart, and a point beside each
         let a = stops[rng.below(stops.len() as u64) as usize];
@@ -407,7 +408,22 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
         }
         let all = ask(&mut p, &q);
         let (whole, walk) = (rides(&all), on_foot(&all));
+        // Whether one can walk all the way is the scan's to say, from the coordinates by its own distance: where
+        // the points are near enough by any measure the walk must be there, where they are too far apart by any
+        // it must not be (reference::places), and the window's rides are the scan's best pairs, less those that
+        // take no less time than the walk (window_differs).
+        let read = places(&p, &q);
+        assert_eq!(read.wrong, None, "pair {i}: {q:?}");
+        match read.on_foot {
+            None => assert!(walk.is_empty(), "pair {i}: a walk between points too far apart: {q:?}"),
+            Some((least, most, must)) => assert!(walk.len() == 1 && (least as i32..=most as i32).contains(&(walk[0].1 - walk[0].0)) || walk.is_empty() && !must, "pair {i}: {walk:?} where the scan has {least} to {most} s: {q:?}"),
+        }
+        if q.wishes.is_empty() {
+            assert_eq!(scans[q.day as usize].window_differs(&p, &q, &all), None, "pair {i}: {q:?}");
+            held += 1;
+        }
         if walk.is_empty() {
+            too_far += 1;
             continue; // further apart than twice the reach
         }
         // the walk is there once, from the asked moment
@@ -415,9 +431,8 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
         assert_eq!(walk, [if q.arrive_by { (q.time as i32 - secs, q.time as i32) } else { (q.time as i32, q.time as i32 + secs) }], "pair {i}: {q:?}");
         // what the walk leaves out: of the rides the same query finds between the two points' stops with their
         // seconds on foot (where nobody walks all the way), exactly those that take no less time than the walk
-        let ends = p.ends(&q);
         let mut by_stops = q.clone();
-        (by_stops.from, by_stops.to) = (Place::Walks(ends.from), Place::Walks(ends.to));
+        (by_stops.from, by_stops.to) = (Place::Walks(read.from), Place::Walks(read.to));
         let without = rides(&ask(&mut p, &by_stops));
         assert_eq!(whole, without.iter().copied().filter(|o| o.1 - o.0 < secs).collect::<Vec<_>>(), "pair {i}: {q:?}");
         slower += without.len() - whole.len();
@@ -440,8 +455,8 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
             options += whole.len();
         }
     }
-    println!("{cuts} cuts, {options} options, {slower} rides no faster than the walk");
-    assert!(cuts > 150 && options > 600 && slower > 100, "{cuts} {options} {slower}");
+    println!("{cuts} cuts, {options} options, {slower} rides no faster than the walk; {too_far} pairs too far apart to walk, {held} windows held to the scan");
+    assert!(cuts > 150 && options > 600 && slower > 100 && too_far > 10 && held > 100, "{cuts} {options} {slower} {too_far} {held}");
 }
 
 /// The search that weighs wishes gives what the rule leaves of every option: asked without weighing (and so as far

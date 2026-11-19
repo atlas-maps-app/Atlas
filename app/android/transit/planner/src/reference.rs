@@ -1,11 +1,15 @@
 //! The second opinion: a connection scan (Dibbelt, Pajor, Strasser and Wagner) over the same file, with the same
-//! places, walks and closed stops and lines, and nothing else in common with the search by rounds. It answers two
+//! closed stops and lines, and nothing else in common with the search by rounds. It answers two
 //! questions only (the earliest arrival, the latest departure) and holds a whole day's connections in memory, so it
 //! is the tests' and the tool's, not the phone's.
 //!
 //! What a search could get wrong it reads from the file by itself, in its own way: when each service day begins
-//! (the days the clock changes, `day_start`), which days' trips reach into the seconds asked for, and what a
-//! change at one stop costs (the stop's own time where the feed gives one, `own_change`).
+//! (the days the clock changes, `day_start`), which days' trips reach into the seconds asked for, what a
+//! change at one stop costs (the stop's own time where the feed gives one, `own_change`), the file's walks turned
+//! round (`walks_turned`), and the stops a query's places stand for with the seconds on foot (`places`): a stop's
+//! and a station's from the file, a point's from the coordinates by a distance of its own (`between_mm`: no table,
+//! and the search's number must lie within what a tenth of a degree of latitude changes), and whether two points
+//! are near enough to walk all the way, and how long that takes.
 //!
 //! What the wishes cost it works out from the wish list, a wish and a ride at a time (`wished`), where the search
 //! adds up tables made beforehand; and a scan of its own carries that cost (`cheapest`), so the options of a
@@ -25,7 +29,7 @@ use crate::NONE;
 use crate::file::{Rule, Timetable, TripText};
 use crate::journey::{Journey, Leg, Spot};
 use crate::plan::Planner;
-use crate::query::{How, Mode, Query, What, Wish, bit};
+use crate::query::{How, Mode, Place, Prefs, Query, What, Wish, bit};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -141,6 +145,201 @@ pub fn change_time(tt: &Timetable, q: &Query, stop: u32) -> i32 {
         (Some(own), None) => own,
         (None, _) => general,
     }
+}
+
+/// cos of a latitude given in 1e-7 degree, times 10^18: by its series, in whole numbers.
+fn cos_e18(lat: i64) -> i128 {
+    const ONE: i128 = 1_000_000_000_000_000_000;
+    const PI: i128 = 3_141_592_653_589_793_238;
+    let x = lat.clamp(-900_000_000, 900_000_000) as i128 * PI / 1_800_000_000;
+    let xx = x * x / ONE;
+    let (mut term, mut sum) = (ONE, ONE);
+    for k in 0..14 {
+        term = -term * xx / ONE / ((2 * k + 1) * (2 * k + 2));
+        sum += term;
+    }
+    sum.clamp(0, ONE)
+}
+
+/// Millimetres between two points given in 1e-7 degree, as the scan works them out by itself: on the plane at their
+/// mean latitude, a degree 111,194.9266 m long (a sphere of 6,371,008.8 m), the cosine by its series. The search
+/// has the cosine from a table by the tenth of a degree and a degree of 111,195 m, so two numbers are given: the
+/// least and the most the distance is with the cosine taken anywhere within a tenth of a degree of that latitude,
+/// a thousandth and 2 mm more to either side. What the search measures must lie between them: at Utrecht that
+/// holds it within a third of a per cent, and no walk twice too long or too short passes at any latitude.
+pub fn between_mm(lat1: i32, lon1: i32, lat2: i32, lon2: i32) -> (u64, u64) {
+    const NM: i128 = 11_119_493; // nanometres to 1e-7 degree
+    let mean = ((lat1 as i64 + lat2 as i64) / 2).abs();
+    let (dy, dx) = ((lat2 as i128 - lat1 as i128) * NM, (lon2 as i128 - lon1 as i128) * NM);
+    let with = |cos: i128| {
+        let dx = dx * cos / 1_000_000_000_000_000_000;
+        let n = (dx * dx + dy * dy) as u128;
+        // the whole part of the root: from a power of two above it, down while the mean of x and n / x is less
+        let mut x = 1u128 << (128 - n.leading_zeros()).div_ceil(2);
+        while n > 0 {
+            let y = (x + n / x) / 2;
+            if y >= x {
+                break;
+            }
+            x = y;
+        }
+        (if n == 0 { 0 } else { x } / 1_000_000) as u64
+    };
+    let (least, most) = (with(cos_e18((mean + 1_000_000).min(900_000_000))), with(cos_e18((mean - 1_000_000).max(0))));
+    (least.saturating_sub(least / 1000 + 2), most + most / 1000 + 2)
+}
+
+/// A query's two places as the scan reads them: the stops each stands for with the seconds on foot, what the
+/// search has otherwise (`wrong`), and the walk all the way.
+pub struct Places {
+    pub from: Vec<(u32, u32)>,
+    pub to: Vec<(u32, u32)>,
+    /// Where the search's stops for a place are not the scan's, in words.
+    pub wrong: Option<String>,
+    /// Between two points: the least and the most seconds the walk all the way may take, and whether there must
+    /// be one (the points are near enough by any measure). `None`: there is none, or may be none.
+    pub on_foot: Option<(u32, u32, bool)>,
+}
+
+/// What the scan makes of a query before it scans, read once for every scan of one question: its places, and what
+/// its wishes close.
+pub struct Asked {
+    places: Places,
+    prefs: Prefs,
+}
+
+/// How far on foot a point reaches at the most, how much longer a way is than the line between its ends (in
+/// hundredths), the bounds of a walking speed and of a time: the planner's rules for a place, said here once more.
+const REACH_MOST_M: u32 = 50_000;
+const DETOUR: u64 = 130;
+const SPEED: (u32, u32) = (100, 100_000);
+const TIME_MOST: u64 = (1 << 20) - 1;
+
+/// The seconds a walk of so many millimetres takes at a speed: the least and the most, for a distance known as
+/// two numbers.
+fn seconds_on_foot(mm: (u64, u64), speed: u32) -> (u32, u32) {
+    let speed = speed.clamp(SPEED.0, SPEED.1) as u64;
+    ((mm.0 * DETOUR / 100 / speed).min(TIME_MOST) as u32, (mm.1 * DETOUR / 100).div_ceil(speed).min(TIME_MOST) as u32)
+}
+
+/// The stops one place stands for, `leaving` it or reaching it, as the scan reads the file and the query; `theirs`
+/// is the search's list, and `cut` its word that it kept the nearest of too many.
+///
+/// A stop is itself and every stop a walk of the file leads to (or comes from); a station is its stops; a list of
+/// walks is the list, each stop once by its shortest. These must be the search's, stop for stop and second for
+/// second. A point is every stop within its reach where something calls, by the scan's own distance: a stop the
+/// scan has within the reach by any measure must be the search's, one it has outside by any measure must not be,
+/// and the seconds must lie between the scan's least and most (`between_mm`). Within that the search's number is
+/// taken, so that the two compare journeys to the second; outside it the scan keeps its own, and they differ.
+fn stops_of(tt: &Timetable, q: &Query, leaving: bool, theirs: &[(u32, u32)], cut: bool, into: &dyn Fn(&[u32]) -> Vec<(u32, u32)>) -> (Vec<(u32, u32)>, Option<String>) {
+    let place = if leaving { &q.from } else { &q.to };
+    let side = if leaving { "origin" } else { "destination" };
+    let mut out: Vec<(u32, u32)> = Vec::new();
+    let mut wrong = None;
+    let around = |these: Vec<u32>, out: &mut Vec<(u32, u32)>| {
+        out.extend(these.iter().map(|s| (*s, 0)));
+        if leaving {
+            for &s in these.iter() {
+                let (lo, hi) = tt.walks_from(s);
+                out.extend((lo..hi).map(|w| tt.walk(w)).filter(|w| w.0 < tt.stops()));
+            }
+        } else {
+            out.extend(into(&these));
+        }
+    };
+    match place {
+        Place::Stop(s) if *s < tt.stops() => around(vec![*s], &mut out),
+        Place::Stop(_) => {}
+        Place::Station(station) => around((0..tt.stops()).filter(|s| s == station || tt.stop(*s).parent == *station).collect(), &mut out),
+        Place::Walks(list) => out.extend(list.iter().filter(|w| w.0 < tt.stops() && (w.1 as u64) <= TIME_MOST)),
+        Place::Point { lat, lon } => {
+            let reach = q.reach_m.min(REACH_MOST_M) as u64 * 1000;
+            let mut said = |words: String| wrong = wrong.take().or(Some(words));
+            let mut theirs_at = theirs.iter().peekable();
+            // Most stops are far off, and are seen to be so cheaply: by the latitude alone, then with the least
+            // cosine there is within the reach and a tenth of a degree of the point. The others are measured.
+            let span = (reach / 11) as i64 + 1_000_000;
+            let least_cos = cos_e18(((*lat as i64).abs() + span).min(900_000_000));
+            let far = (reach as i128 + reach as i128 / 100 + 10) * 1_000_000;
+            for s in 0..tt.stops() {
+                let st = tt.stop(s);
+                // (the search's list is by stop)
+                while theirs_at.peek().is_some_and(|e| e.0 < s) {
+                    theirs_at.next();
+                }
+                let has = theirs_at.peek().filter(|e| e.0 == s).map(|e| e.1);
+                // too far north or south by the latitude alone (11.1 mm to 1e-7 degree, and a hundredth more)
+                if has.is_none() && (st.lat as i64 - *lat as i64).unsigned_abs() * 11 > reach + reach / 100 + 10 {
+                    continue;
+                }
+                let (dy, dx) = ((st.lat as i128 - *lat as i128) * 11_119_493, (st.lon as i128 - *lon as i128) * 11_119_493 * least_cos / 1_000_000_000_000_000_000);
+                if has.is_none() && dx * dx + dy * dy > far * far {
+                    continue;
+                }
+                let calls = st.kind == 0 && st.place != 2 && tt.routes_at(s).0 != tt.routes_at(s).1;
+                let mm = between_mm(*lat, *lon, st.lat, st.lon);
+                let (least, most) = seconds_on_foot(mm, q.walk_mm_s);
+                match has {
+                    Some(_) if !calls => said(format!("the {side} has stop {s}, where nothing calls or which is no stop")),
+                    Some(_) if mm.0 > reach => said(format!("the {side} has stop {s}, {} m from the point and past its reach", mm.0 / 1000)),
+                    Some(secs) if secs < least || secs > most => {
+                        said(format!("the {side} has stop {s} at {secs} s on foot, and by the scan it is {least} to {most}"));
+                        out.push((s, most));
+                    }
+                    Some(secs) => out.push((s, secs)),
+                    None if calls && mm.1 <= reach => {
+                        if !cut {
+                            said(format!("the {side} lacks stop {s}, {} m from the point and within its reach", mm.1 / 1000));
+                        }
+                        out.push((s, most));
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out.dedup_by_key(|e| e.0);
+    if !matches!(place, Place::Point { .. }) {
+        let differs = if cut { theirs.iter().any(|e| !out.contains(e)) } else { theirs != &out[..] };
+        if differs {
+            let only = |a: &[(u32, u32)], b: &[(u32, u32)]| a.iter().filter(|e| !b.contains(e)).take(4).copied().collect::<Vec<_>>();
+            wrong = Some(format!("the {side}'s stops and seconds: the search alone has {:?}, the scan alone {:?}", only(theirs, &out), only(&out, theirs)));
+        }
+    }
+    (out, wrong)
+}
+
+/// A query's places as the scan reads them (`stops_of`), given the walks that lead to a stop.
+fn places_with(planner: &Planner, q: &Query, into: &dyn Fn(&[u32]) -> Vec<(u32, u32)>) -> Places {
+    let tt = planner.timetable();
+    let theirs = planner.ends(q);
+    let (from, wrong_from) = stops_of(tt, q, true, &theirs.from, theirs.cut, into);
+    let (to, wrong_to) = stops_of(tt, q, false, &theirs.to, theirs.cut, into);
+    // on foot all the way: between two points no farther apart than twice the reach
+    let on_foot = match (&q.from, &q.to) {
+        (Place::Point { lat: a, lon: b }, Place::Point { lat: c, lon: d }) => {
+            let (mm, reach) = (between_mm(*a, *b, *c, *d), 2 * q.reach_m.min(REACH_MOST_M) as u64 * 1000);
+            let (least, most) = seconds_on_foot(mm, q.walk_mm_s);
+            (mm.0 <= reach).then_some((least, most, mm.1 <= reach))
+        }
+        _ => None,
+    };
+    Places { from, to, wrong: wrong_from.or(wrong_to), on_foot }
+}
+
+/// A query's places as the scan reads them, with nothing made beforehand: the walks that lead to a stop are looked
+/// for through the whole file.
+pub fn places(planner: &Planner, q: &Query) -> Places {
+    let tt = planner.timetable();
+    places_with(planner, q, &|these| {
+        let mut v = Vec::new();
+        for s in 0..tt.stops() {
+            let (lo, hi) = tt.walks_from(s);
+            v.extend((lo..hi).map(|w| tt.walk(w)).filter(|w| these.contains(&w.0)).map(|w| (s, w.1)));
+        }
+        v
+    })
 }
 
 /// The most a wish's seconds count for, and the most a journey's cost comes to (query.rs).
@@ -361,6 +560,16 @@ impl Reference {
         Reference { day, connections, by_arrival, rides, ride_day, into, into_first, out, out_first, arrivals_kept, departures_kept, own, back, back_first }
     }
 
+    /// What the scan makes of a query before it scans.
+    pub fn asked(&self, planner: &Planner, q: &Query) -> Asked {
+        Asked { places: self.places(planner, q), prefs: planner.prefs(q) }
+    }
+
+    /// A query's places as the scan reads them (`stops_of`).
+    pub fn places(&self, planner: &Planner, q: &Query) -> Places {
+        places_with(planner, q, &|these| these.iter().flat_map(|s| self.walks_into(*s).iter().copied()).collect())
+    }
+
     /// The walks that lead to a stop, each as the stop it comes from and its seconds.
     fn walks_into(&self, stop: u32) -> &[(u32, u32)] {
         match (self.back_first.get(stop as usize), self.back_first.get(stop as usize + 1)) {
@@ -495,9 +704,13 @@ impl Reference {
     /// The same, with the rides of the journey the scan made for it. That arrival may be made with fewer: the scan
     /// does not look for them. It says whether a search with a cap on rides could have found this journey.
     pub fn earliest_with_rides(&self, planner: &Planner, q: &Query, time: i32) -> Option<(i32, u32)> {
+        self.earliest_in(planner, q, &self.asked(planner, q), time)
+    }
+
+    fn earliest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Option<(i32, u32)> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
-        let (ends, prefs) = (planner.ends(q), planner.prefs(q));
+        let (ends, prefs) = (&asked.places, &asked.prefs);
         let stops = tt.stops() as usize;
         let (mut ready, mut arrived, mut last) = (vec![i32::MAX; stops], vec![i32::MAX; stops], vec![NONE; stops]);
         let mut on = vec![false; self.rides.len()];
@@ -618,9 +831,13 @@ impl Reference {
     /// and the cost so far that no other beats in both, aboard a vehicle the least cost (the time is the
     /// vehicle's), and what each wish costs it takes from `of_ride` and `of_stop`, a wish at a time.
     pub fn cheapest(&self, planner: &Planner, q: &Query, time: i32) -> Vec<(i32, u32)> {
+        self.cheapest_in(planner, q, &self.asked(planner, q), time)
+    }
+
+    fn cheapest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Vec<(i32, u32)> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
-        let (ends, prefs) = (planner.ends(q), planner.prefs(q));
+        let (ends, prefs) = (&asked.places, &asked.prefs);
         let stops = tt.stops() as usize;
         let wishes: Vec<&Wish> = q.wishes.iter().take(64).filter(|w| w.how != How::Never).collect();
         let sum = |costs: &mut dyn Iterator<Item = u32>| costs.fold(0u32, |a, b| a.saturating_add(b)).min(COST_MOST);
@@ -720,6 +937,7 @@ impl Reference {
             return None;
         }
         let time = q.time as i32;
+        let asked = self.asked(planner, q);
         let best = |all: &mut Vec<(i32, u32)>, weigh: bool| {
             all.sort_unstable();
             all.dedup();
@@ -728,7 +946,7 @@ impl Reference {
         };
         if !q.arrive_by {
             let ours = best(&mut journeys.iter().map(|j| (j.arrive, j.penalty)).collect(), q.weigh);
-            let theirs = best(&mut self.cheapest(planner, q, time), q.weigh);
+            let theirs = best(&mut self.cheapest_in(planner, q, &asked, time), q.weigh);
             if ours != theirs {
                 let only = |a: &[(i32, u32)], b: &[(i32, u32)]| a.iter().filter(|p| !b.contains(p)).copied().collect::<Vec<_>>();
                 return Some(format!("arrival and cost: the planner alone has {:?}, the scan alone {:?}", only(&ours, &theirs), only(&theirs, &ours)));
@@ -746,7 +964,7 @@ impl Reference {
         moments.dedup();
         for m in moments {
             let ours = journeys.iter().filter(|j| j.depart >= m).map(|j| j.penalty).min();
-            let theirs = self.cheapest(planner, q, m).iter().filter(|p| p.0 <= time).map(|p| p.1).min();
+            let theirs = self.cheapest_in(planner, q, &asked, m).iter().filter(|p| p.0 <= time).map(|p| p.1).min();
             if ours != theirs {
                 return Some(format!("leaving at {m} or later to arrive by {time}: the least cost among the planner's options is {ours:?}, the scan's {theirs:?}"));
             }
@@ -756,9 +974,13 @@ impl Reference {
 
     /// The latest departure from the query's origin that reaches its destination by `time`.
     pub fn latest_departure(&self, planner: &Planner, q: &Query, time: i32) -> Option<i32> {
+        self.latest_in(planner, q, &self.asked(planner, q), time)
+    }
+
+    fn latest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Option<i32> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
-        let (ends, prefs) = (planner.ends(q), planner.prefs(q));
+        let (ends, prefs) = (&asked.places, &asked.prefs);
         let stops = tt.stops() as usize;
         // by when one must be at a stop, off a ride; when the latest useful ride leaves it; the walk from the origin
         let (mut due, mut left, mut first) = (vec![i32::MIN; stops], vec![i32::MIN; stops], vec![NONE; stops]);
@@ -832,13 +1054,17 @@ impl Reference {
     /// holds arrivals: the same from its late end, back for the latest departure, forward for the earliest arrival
     /// that departure gives, and on from a second before that.
     pub fn options(&self, planner: &Planner, q: &Query) -> Vec<(i32, i32)> {
+        self.options_in(planner, q, &self.asked(planner, q))
+    }
+
+    fn options_in(&self, planner: &Planner, q: &Query, asked: &Asked) -> Vec<(i32, i32)> {
         let mut out = Vec::new();
         let mut time = q.time as i32;
         if q.arrive_by {
             let begin = time - q.window as i32;
             while time >= begin && out.len() < 4096 {
-                let Some(depart) = self.latest_departure(planner, q, time) else { break };
-                let Some(arrive) = self.earliest_arrival(planner, q, depart) else { break };
+                let Some(depart) = self.latest_in(planner, q, asked, time) else { break };
+                let Some(arrive) = self.earliest_in(planner, q, asked, depart).map(|a| a.0) else { break };
                 if arrive < begin || arrive > time {
                     break;
                 }
@@ -850,8 +1076,8 @@ impl Reference {
         }
         let end = time + q.window as i32;
         while time <= end && out.len() < 4096 {
-            let Some(arrive) = self.earliest_arrival(planner, q, time) else { break };
-            let Some(depart) = self.latest_departure(planner, q, arrive) else { break };
+            let Some(arrive) = self.earliest_in(planner, q, asked, time).map(|a| a.0) else { break };
+            let Some(depart) = self.latest_in(planner, q, asked, arrive) else { break };
             if depart > end || depart < time {
                 break;
             }
@@ -869,19 +1095,31 @@ impl Reference {
     /// fewer rides than the later one). Asked to arrive by, the same turned round: a further pair leaves no later
     /// than the scan's best for that arrival, and what arrives sooner and leaves no earlier arrives before the
     /// window.
+    ///
+    /// Between two points near enough to walk all the way, the walk must be among the journeys, once, from the
+    /// asked moment (`walk_of`), and a ride that takes no less time than it is none: the scan's pairs are those
+    /// that take less.
     pub fn window_differs(&self, planner: &Planner, q: &Query, journeys: &[Journey]) -> Option<String> {
-        let (ours, theirs) = (pairs(journeys), self.options(planner, q));
+        let asked = self.asked(planner, q);
+        let walk = match walk_of(&asked.places, q, journeys) {
+            Ok(walk) => walk,
+            Err(wrong) => return Some(wrong),
+        };
+        let (ours, mut theirs) = (pairs(journeys), self.options_in(planner, q, &asked));
+        if let Some(secs) = walk {
+            theirs.retain(|p| p.1 - p.0 < secs);
+        }
         if let Some(missing) = theirs.iter().find(|p| !ours.contains(p)) {
             return Some(format!("the scan has leaving {} arriving {}, the planner has not ({} pairs against {})", missing.0, missing.1, ours.len(), theirs.len()));
         }
         if q.arrive_by {
             let begin = q.time as i32 - q.window as i32;
             for p in ours.iter().filter(|p| !theirs.contains(p)) {
-                let best = self.latest_departure(planner, q, p.1);
+                let best = self.latest_in(planner, q, &asked, p.1);
                 if best.is_none_or(|d| d < p.0) {
                     return Some(format!("the planner has leaving {} arriving {}, which the scan says can't be done: {:?}", p.0, p.1, best));
                 }
-                if best == Some(p.0) && self.earliest_arrival(planner, q, p.0).is_none_or(|a| a >= begin) {
+                if best == Some(p.0) && self.earliest_in(planner, q, &asked, p.0).is_none_or(|a| a.0 >= begin) {
                     return Some(format!("the planner has leaving {} arriving {}, which the scan should list and does not", p.0, p.1));
                 }
             }
@@ -891,15 +1129,43 @@ impl Reference {
         for p in ours.iter().filter(|p| !theirs.contains(p)) {
             // A further pair may arrive later than the scan's best from then: the better journey then leaves after
             // the window, or the planner would have had the scan's pair for it and dropped this one.
-            let best = self.earliest_arrival(planner, q, p.0);
+            let best = self.earliest_in(planner, q, &asked, p.0).map(|a| a.0);
             if best.is_none_or(|a| a > p.1) {
                 return Some(format!("the planner has leaving {} arriving {}, which the scan says can't be done: {:?}", p.0, p.1, best));
             }
-            if best == Some(p.1) && self.latest_departure(planner, q, p.1).is_none_or(|d| d <= end) {
+            if best == Some(p.1) && self.latest_in(planner, q, &asked, p.1).is_none_or(|d| d <= end) {
                 return Some(format!("the planner has leaving {} arriving {}, which the scan should list and does not", p.0, p.1));
             }
         }
         None
+    }
+}
+
+/// The walk all the way among an answer's journeys, as its seconds, held to what the scan reads of the query's
+/// places: where the search begins at other stops than the scan, that is said; where two points are near enough by
+/// any measure the walk must be there, where they are not points or too far apart by any measure it must not be;
+/// and it is there once, as long as the scan has it, from the asked moment (arriving by: ending at it).
+pub fn walk_of(places: &Places, q: &Query, journeys: &[Journey]) -> Result<Option<i32>, String> {
+    if let Some(wrong) = &places.wrong {
+        return Err(wrong.clone());
+    }
+    let walks: Vec<&Journey> = journeys.iter().filter(|j| j.rides == 0).collect();
+    match (places.on_foot, &walks[..]) {
+        (None, []) | (Some((_, _, false)), []) => Ok(None),
+        (Some(_), []) => Err("two points near enough to walk all the way, and no walk among the journeys".into()),
+        (None, _) => Err("a walk all the way between places that are not two points near enough".into()),
+        (Some(_), [_, _, ..]) => Err("more than one walk all the way".into()),
+        (Some((least, most, _)), [walk]) => {
+            let secs = walk.arrive - walk.depart;
+            let begins = if q.arrive_by { q.time as i32 - secs } else { q.time as i32 };
+            if secs < least as i32 || secs > most as i32 {
+                Err(format!("a walk all the way of {secs} s, and by the scan it is {least} to {most}"))
+            } else if walk.depart != begins {
+                Err(format!("the walk all the way begins at {}, not at {begins}", walk.depart))
+            } else {
+                Ok(Some(secs))
+            }
+        }
     }
 }
 
@@ -917,10 +1183,17 @@ pub fn pairs(journeys: &[Journey]) -> Vec<(i32, i32)> {
 /// needs no time), the ends are the query's with their seconds on foot, no wish of "never" is broken and the cost
 /// it says is what its wishes come to (`wished`). What is wrong, in words.
 ///
-/// It reads the file and the query's two places, and nothing of how the journey was found.
+/// It reads the file and the query, and nothing of how the journey was found. The stops a place stands for and
+/// the seconds on foot to them it works out by itself (`places`), a point's from the coordinates by the scan's own
+/// distance; where the search begins at other stops, or has a walk longer or shorter than that distance allows,
+/// that is what is wrong, of whatever journey. So is a walk all the way that is not between two points near enough,
+/// or not as long as their distance says.
 pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
     let tt: &Timetable = planner.timetable();
-    let ends = planner.ends(q);
+    let ends = places(planner, q);
+    if let Some(wrong) = &ends.wrong {
+        return Some(wrong.clone());
+    }
     let Some((first, last)) = j.legs.first().zip(j.legs.last()) else { return Some("no legs".into()) };
     if (j.depart, j.arrive) != (first.depart(), last.arrive()) {
         return Some(format!("it says {} to {}, its legs {} to {}", j.depart, j.arrive, first.depart(), last.arrive()));
@@ -1023,7 +1296,12 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                         let whole_gap = Some((depart, arrive)) == i.checked_sub(1).and_then(|k| j.legs.get(k)).zip(j.legs.get(i + 1)).map(|(x, y)| (x.arrive(), y.depart()));
                         if around.is_some_and(|(x, y)| ruled(x, y).1) && whole_gap { Some(secs) } else { walk_between(a, b) }
                     }
-                    (Spot::Origin, Spot::Destination) => Some(secs),
+                    // all the way: between two points near enough, in the seconds the scan has for it
+                    (Spot::Origin, Spot::Destination) => match ends.on_foot {
+                        Some((least, most, _)) if j.legs.len() == 1 && (least as i32..=most as i32).contains(&secs) => Some(secs),
+                        Some((least, most, _)) => return Some(format!("leg {i}: a walk all the way of {secs} s, and by the scan it is {least} to {most}")),
+                        None => return Some(format!("leg {i}: a walk all the way between places that are not two points near enough")),
+                    },
                     _ => None,
                 };
                 if known != Some(secs) {
