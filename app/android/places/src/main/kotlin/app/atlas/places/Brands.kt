@@ -198,10 +198,17 @@ object Brands {
         return apart && (m.byName || (m.brands.size > 1 && PlaceCountry.tagged(tags) == null))
     }
 
-    /** The entries [tags] name by `brand:wikidata` or `brand`, not by the name alone: the chain a place says it is of. */
+    /**
+     * The entries [tags] name by `brand:wikidata`, that item's alone, or by `brand` where one entry alone bears the name
+     * for a place of its kind, not by the name alone: the chain a place says it is of (the app maintainer, 18 November
+     * 2026, batch 5 B10: `brand=Coop` named each of the eleven chains called Coop, so in a Belgian store a supermarket
+     * named only "Coop" became Coop Italia's).
+     */
     fun named(tags: Map<String, String>): List<Brand> {
-        if (tags["brand:wikidata"].isNullOrBlank() && tags["brand"].isNullOrBlank()) return emptyList()
-        return candidates(tags)?.takeIf { !it.byName }?.brands.orEmpty()
+        val qid = tags["brand:wikidata"]?.trim()?.takeIf { it.isNotEmpty() }
+        if (qid != null) return data.byWikidata[qid].orEmpty()
+        if (tags["brand"].isNullOrBlank()) return emptyList()
+        return candidates(tags)?.takeIf { !it.byName }?.brands?.takeIf { it.size == 1 }.orEmpty()
     }
 
     /** The entries a place's tags fit, and whether by its name alone. */
