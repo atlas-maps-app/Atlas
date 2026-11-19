@@ -11,5 +11,16 @@
 *  211280  17  780
 # Stages alpha 15 already shipped larger, unchanged since, which the phone ran: held at their alpha 15 bytes until they
 # are split under the line above.
-item_draw:items_cs  418600  17  780
 tree_draw:things_cs  234116  17  780
+# The region items' decide stages, a stage a kind (the audit of 17 November 2026, change 7): items_cs, 418,600 bytes
+# from alpha 14 to alpha 38, split by kind (its records the same, byte for byte: tests/item/items_vk_test.cpp), each
+# held to its bytes at the split; roof_masts_cs, already a stage of its own, under "*".
+item_draw:towers_cs  47008  0  0
+item_draw:turbines_cs  83176  0  0
+item_draw:cranes_cs  85064  0  0
+item_draw:masts_cs  79204  0  0
+item_draw:gantries_cs  71324  0  0
+item_draw:conveyors_cs  71332  0  0
+item_draw:power_lines_cs  35908  1  80
+item_draw:coasters_cs  52356  0  0
+item_draw:woods_cs  35716  0  0
