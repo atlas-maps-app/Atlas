@@ -338,7 +338,6 @@ Placed Ladder::exact(const Knot& k, std::int32_t width_dp, std::int32_t height_d
     c.set("W", integer(width_dp));
     c.set("H", integer(height_dp));
     if (living_) return c;
-    c.set("no_fin", boolean(true));
     c.set("obj_split", integer(obj_split));
     if (c.find("haze0") == nullptr) c.set("haze0", real(c.number("dist").value_or(0.0) * 0.85));
     if (c.find("haze1") == nullptr) c.set("haze1", real(c.number("dist").value_or(0.0) * 2.2));
@@ -394,7 +393,6 @@ Placed Ladder::place(const LiveView& v) const {
         c.set("W", integer(v.width_dp));
         c.set("H", integer(v.height_dp));
         if (!living_) {
-            c.set("no_fin", boolean(true));
             c.set("obj_split", integer(obj_split));
             c.set("haze0", real(dist * 0.85));
             c.set("haze1", real(dist * 2.2));
@@ -433,7 +431,6 @@ Placed Ladder::place(const LiveView& v) const {
     c.set("W", integer(v.width_dp));
     c.set("H", integer(v.height_dp));
     if (!living_) {
-        c.set("no_fin", boolean(true));
         c.set("obj_split", integer(obj_split));
     }
     c.dist_ = dist;
