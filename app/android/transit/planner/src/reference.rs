@@ -1,23 +1,32 @@
 //! The second opinion: a connection scan (Dibbelt, Pajor, Strasser and Wagner) over the same file, with the same
-//! places, walks, change time and closed stops and lines, and nothing else in common with the search by rounds. It
-//! answers two questions only (the earliest arrival, the latest departure) and holds a whole day's connections in
-//! memory, so it is the tests' and the tool's, not the phone's.
+//! places, walks and closed stops and lines, and nothing else in common with the search by rounds. It answers two
+//! questions only (the earliest arrival, the latest departure) and holds a whole day's connections in memory, so it
+//! is the tests' and the tool's, not the phone's.
 //!
-//! It knows no cost of wishes, no cap on rides and none of the feed's rules between trips: a query it is compared on
-//! sets `rules` off and `max_rides` high. It does keep to the seconds the query's search follows ([`Query::followed`]):
-//! what ends past them is no answer to either.
+//! What a search could get wrong it reads from the file by itself, in its own way: when each service day begins
+//! (the days the clock changes, `day_start`), which days' trips reach into the seconds asked for, and what a
+//! change at one stop costs (the stop's own time where the feed gives one, `own_change`).
+//!
+//! What the wishes cost it works out from the wish list, a wish and a ride at a time (`wished`), where the search
+//! adds up tables made beforehand; and a scan of its own carries that cost (`cheapest`), so the options of a
+//! query with wishes are held to it too (`costs_differ`).
+//!
+//! It knows no cap on rides: a query it is compared on sets `max_rides` high. It keeps to the
+//! seconds the query follows ([`Query::followed`]): what ends past them is no answer to either. And it holds to the
+//! feed's rules between trips where the query does, in its own way: where a rule speaks of the trip to be boarded, it
+//! goes through the arrivals one by one, each with the trip it came by, where the search by rounds holds such an
+//! arrival apart in its stop's bag.
 
 use crate::NONE;
-use crate::file::Timetable;
+use crate::file::{Rule, Timetable, TripText};
 use crate::journey::{Journey, Leg, Spot};
 use crate::plan::Planner;
-use crate::query::{Query, bit};
+use crate::query::{How, Mode, Query, What, Wish, bit};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-const DAY: i32 = 86_400;
 
 #[derive(Clone, Copy)]
 struct Connection {
@@ -40,13 +49,181 @@ pub struct Reference {
     by_arrival: Vec<u32>,
     /// A ride's trip and line.
     rides: Vec<(u32, u32)>,
+    /// The feed's rules that name a trip or a line: their numbers by the stop the change leads to, and by the stop
+    /// it comes from, with where each stop's begin.
+    into: Vec<u32>,
+    into_first: Vec<u32>,
+    out: Vec<u32>,
+    out_first: Vec<u32>,
+    /// The stops whose arrivals (scanning forward) and whose departures (back) are kept one by one, since a rule
+    /// may tell one from another: a rule's two stops and the stops a walk away.
+    arrivals_kept: Vec<bool>,
+    departures_kept: Vec<bool>,
+    /// By stop: what the feed says of changing there (`own_change`), read once.
+    own: Vec<Option<i32>>,
+}
+
+/// When the service day `off` days from day `day` begins, in seconds from the beginning of `day`: day by day, each
+/// as long as the file says (`odd_days` in its META: the days the clock changes are 82,800 or 90,000 s long, every
+/// other 86,400).
+pub fn day_start(tt: &Timetable, day: i32, off: i32) -> i32 {
+    let length = |d: i32| {
+        let said = tt.meta("odd_days").unwrap_or("").split_whitespace().find_map(|word| {
+            let (date, secs) = word.split_once(':')?;
+            (tt.day_of(date.parse().ok()?)? == d).then(|| secs.parse::<i32>().ok()).flatten()
+        });
+        said.filter(|secs| (79_200..=93_600).contains(secs)).unwrap_or(86_400)
+    };
+    let off = off.clamp(-64, 64);
+    if off >= 0 { (day..day + off).map(length).sum() } else { -(day + off..day).map(length).sum::<i32>() }
+}
+
+/// What the feed says of changing at one stop, for everyone: `Some(seconds)` where it gives the stop its own time
+/// (a rule of type 2 from the stop to itself that names no trip and no line; the longest of several), `None` where
+/// it says nothing, and `Some(i32::MAX / 4)` where it says nobody changes there (type 3).
+pub fn own_change(tt: &Timetable, stop: u32) -> Option<i32> {
+    // the rules are sorted by the stop they lead from
+    let (mut lo, mut hi) = (0u32, tt.rules());
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if tt.rule(mid).from_stop < stop { lo = mid + 1 } else { hi = mid }
+    }
+    let mut own = None;
+    for r in (lo..tt.rules()).map(|i| tt.rule(i)).take_while(|r| r.from_stop == stop) {
+        if r.to_stop != stop || named(&r) {
+            continue;
+        }
+        let says = match r.kind {
+            2 if r.min_time != NONE => r.min_time.min((1 << 20) - 1) as i32,
+            3 => i32::MAX / 4,
+            _ => continue,
+        };
+        own = Some(own.map_or(says, |o: i32| o.max(says)));
+    }
+    own
+}
+
+/// What a change at one stop costs for a query there: the stop's own time where the feed gives one, else the
+/// file's for every stop; the query's own in their place where it asks for one, but never less than the stop's.
+pub fn change_time(tt: &Timetable, q: &Query, stop: u32) -> i32 {
+    let general = q.change_s.unwrap_or(tt.change_seconds()).min((1 << 20) - 1) as i32;
+    match (own_change(tt, stop), q.change_s) {
+        (Some(own), Some(_)) => general.max(own),
+        (Some(own), None) => own,
+        (None, _) => general,
+    }
+}
+
+/// The most a wish's seconds count for, and the most a journey's cost comes to (query.rs).
+const WISH_MOST: u32 = 86_400;
+const COST_MOST: u32 = 64 * 86_400;
+
+/// What a wish that costs makes of one use: avoided, the thing itself costs; preferred, anything else does.
+fn worth(how: How, is: bool) -> u32 {
+    match how {
+        How::Avoid(secs) if is => secs.min(WISH_MOST),
+        How::Prefer(secs) if !is => secs.min(WISH_MOST),
+        _ => 0,
+    }
+}
+
+/// Whether a ride on a trip of a line is what a wish speaks of; `None` for a wish that speaks of stops only.
+fn of_ride(tt: &Timetable, wish: &Wish, trip: u32, line: u32) -> Option<bool> {
+    Some(match &wish.what {
+        What::Line(l) => line == *l,
+        What::Operator(o) => tt.line_operator(line) == *o,
+        What::Mode(m) => Mode::of(tt.line_type(line)) == *m,
+        What::Kind(k) => tt.trip_text(trip, TripText::Kind).eq_ignore_ascii_case(k),
+        What::Trip(t) => trip == *t,
+        What::NoWheelchair => tt.trip(trip).wheelchair == 2,
+        What::WheelchairUnknown => tt.trip(trip).wheelchair == 0,
+        What::NoBicycles => tt.trip(trip).bicycles == 2,
+        What::BicyclesUnknown => tt.trip(trip).bicycles == 0,
+        What::Stop { .. } | What::Station { .. } | What::Area { .. } => return None,
+    })
+}
+
+/// Whether a stop is what a wish speaks of, and whether riding past it counts as boarding and alighting there do;
+/// `None` for a wish that speaks of rides only.
+fn of_stop(tt: &Timetable, wish: &Wish, stop: u32) -> Option<(bool, bool)> {
+    let st = tt.stop(stop);
+    Some(match &wish.what {
+        What::Stop { stop: s, through } => (stop == *s, *through),
+        What::Station { station, through } => (stop == *station || st.parent == *station, *through),
+        What::Area { area, through } => (st.place != 2 && area.contains(st.lat, st.lon), *through),
+        What::NoWheelchair | What::WheelchairUnknown => {
+            // a stop that doesn't say takes its station's word
+            let says = if st.wheelchair == 0 && st.parent != NONE { tt.stop(st.parent).wheelchair } else { st.wheelchair };
+            (says == if wish.what == What::NoWheelchair { 2 } else { 0 }, false)
+        }
+        _ => return None,
+    })
+}
+
+/// What a journey costs in the query's wishes, in seconds, or which wish of "never" it breaks: wish by wish and
+/// ride by ride, as query.rs's head says it. A ride on what a wish speaks of counts once; a stop counts at each
+/// boarding and each alighting there, and where riding past counts too, at each call from the boarding to the
+/// alighting, both among them. A walk costs nothing.
+pub fn wished(tt: &Timetable, q: &Query, j: &Journey) -> Result<u32, String> {
+    let mut cost = 0u32;
+    for (n, wish) in q.wishes.iter().take(64).enumerate() {
+        for leg in j.legs.iter() {
+            let Leg::Ride { trip, route, board, alight, from, to, .. } = *leg else { continue };
+            let r = tt.route(route);
+            // each use, and whether it is what the wish speaks of
+            let mut uses: Vec<bool> = Vec::new();
+            uses.extend(of_ride(tt, wish, trip, r.line));
+            match of_stop(tt, wish, from) {
+                Some((_, true)) => uses.extend((board..=alight.min(r.stops.saturating_sub(1))).filter_map(|pos| of_stop(tt, wish, tt.pattern_stop(r.first_stop + pos).stop).map(|is| is.0))),
+                Some((_, false)) => uses.extend([from, to].iter().filter_map(|s| of_stop(tt, wish, *s).map(|is| is.0))),
+                None => {}
+            }
+            for is in uses {
+                if is && wish.how == How::Never {
+                    return Err(format!("wish {n} says never, and the ride on trip {trip} from stop {from} to stop {to} is or uses what it speaks of"));
+                }
+                cost = cost.saturating_add(worth(wish.how, is)).min(COST_MOST);
+            }
+        }
+    }
+    Ok(cost)
+}
+
+/// Adds a pair to those of which none is no better in both: whether it was added.
+fn offer(bag: &mut Vec<(i32, u32)>, new: (i32, u32)) -> bool {
+    if bag.iter().any(|l| l.0 <= new.0 && l.1 <= new.1) {
+        return false;
+    }
+    bag.retain(|l| !(new.0 <= l.0 && new.1 <= l.1));
+    bag.push(new);
+    true
+}
+
+fn named(r: &Rule) -> bool {
+    r.from_trip != NONE || r.to_trip != NONE || r.from_line != NONE || r.to_line != NONE
+}
+
+fn fits(want: u32, is: u32) -> bool {
+    want == NONE || want == is
 }
 
 impl Reference {
     /// The connections that leave at `earliest` or later and arrive by `latest`, in seconds of service day `day`.
     pub fn new(planner: &Planner, day: i32, earliest: i32, latest: i32) -> Reference {
         let tt = planner.timetable();
-        let (lo, hi) = planner.offsets(earliest, latest);
+        // The service days whose trips can reach into these seconds: from the day a trip as long as the file's
+        // longest would have had to begin, to the day the last second lies in; two hours more at either end,
+        // for the days that are not 86,400 s long.
+        let mut longest = 0i32;
+        for r in 0..tt.routes() {
+            let route = tt.route(r);
+            for trip in route.first_trip..route.first_trip + route.trips {
+                longest = longest.max(tt.time(tt.trip_times(trip), route.stops.saturating_sub(1)).0 as i32);
+            }
+        }
+        let lo = (earliest - 7200 - longest).div_euclid(86_400);
+        let hi = (latest + 7200).div_euclid(86_400).min(lo + 31);
+        let begins: Vec<i32> = (lo..=hi).map(|off| day_start(tt, day, off)).collect();
         let (mut connections, mut rides) = (Vec::new(), Vec::new());
         for r in 0..tt.routes() {
             let route = tt.route(r);
@@ -56,11 +233,12 @@ impl Reference {
                     if !tt.runs(tt.trip(trip).service, day + off) {
                         continue;
                     }
+                    let zero = begins[(off - lo) as usize];
                     let ride = rides.len() as u32;
                     let mut any = false;
                     for pos in 0..route.stops.saturating_sub(1) {
                         let (a, b) = (tt.pattern_stop(route.first_stop + pos), tt.pattern_stop(route.first_stop + pos + 1));
-                        let (depart, arrive) = (off * DAY + tt.time(times, pos).1 as i32, off * DAY + tt.time(times, pos + 1).0 as i32);
+                        let (depart, arrive) = (zero + tt.time(times, pos).1 as i32, zero + tt.time(times, pos + 1).0 as i32);
                         if depart >= earliest && arrive <= latest {
                             connections.push(Connection { depart, arrive, from: a.stop, to: b.stop, ride, pos, board: a.pickup != 1, alight: b.drop_off != 1 });
                             any = true;
@@ -78,7 +256,148 @@ impl Reference {
             let c = &connections[*i as usize];
             (core::cmp::Reverse(c.arrive), c.ride, core::cmp::Reverse(c.pos))
         });
-        Reference { day, connections, by_arrival, rides }
+        // the feed's rules, by either stop
+        let stops = tt.stops() as usize;
+        let all: Vec<u32> = (0..tt.rules()).filter(|i| named(&tt.rule(*i)) && (tt.rule(*i).from_stop as usize) < stops && (tt.rule(*i).to_stop as usize) < stops).collect();
+        let by = |key: &dyn Fn(&Rule) -> u32| {
+            let mut list = all.clone();
+            list.sort_by_key(|i| key(&tt.rule(*i)));
+            let mut first = vec![0u32; stops + 1];
+            for i in list.iter() {
+                first[key(&tt.rule(*i)) as usize + 1] += 1;
+            }
+            for s in 0..stops {
+                first[s + 1] += first[s];
+            }
+            (list, first)
+        };
+        let ((into, into_first), (out, out_first)) = (by(&|r| r.to_stop), by(&|r| r.from_stop));
+        let (mut arrivals_kept, mut departures_kept) = (vec![false; stops], vec![false; stops]);
+        for &i in all.iter() {
+            let r = tt.rule(i);
+            for s in [r.from_stop, r.to_stop] {
+                (arrivals_kept[s as usize], departures_kept[s as usize]) = (true, true);
+            }
+            for &(y, _) in planner.walks_into(r.to_stop) {
+                arrivals_kept[y as usize] = true;
+            }
+            let (lo, hi) = tt.walks_from(r.from_stop);
+            for w in lo..hi {
+                if let Some(kept) = departures_kept.get_mut(tt.walk(w).0 as usize) {
+                    *kept = true;
+                }
+            }
+        }
+        let own = (0..tt.stops()).map(|s| own_change(tt, s)).collect();
+        Reference { day, connections, by_arrival, rides, into, into_first, out, out_first, arrivals_kept, departures_kept, own }
+    }
+
+    /// What a change at one stop costs for a query (`change_time`, from what was read once).
+    fn change(&self, tt: &Timetable, q: &Query, stop: u32) -> i32 {
+        let general = q.change_s.unwrap_or(tt.change_seconds()).min((1 << 20) - 1) as i32;
+        match (self.own[stop as usize], q.change_s) {
+            (Some(own), Some(_)) => general.max(own),
+            (Some(own), None) => own,
+            (None, _) => general,
+        }
+    }
+
+    /// The named rules for a change that leads to a stop, and for one that comes from it.
+    fn rules_into(&self, stop: u32) -> &[u32] {
+        &self.into[self.into_first[stop as usize] as usize..self.into_first[stop as usize + 1] as usize]
+    }
+
+    fn rules_out_of(&self, stop: u32) -> &[u32] {
+        &self.out[self.out_first[stop as usize] as usize..self.out_first[stop as usize + 1] as usize]
+    }
+
+    /// What the feed's rules say of a change from one ride to another, each as (stop, trip, line): whether it is
+    /// barred, whether the second vehicle waits, and the least seconds it needs.
+    fn ruled(&self, tt: &Timetable, from: (u32, u32, u32), to: (u32, u32, u32)) -> (bool, bool, i32) {
+        let (mut barred, mut waits, mut least) = (false, false, 0i32);
+        for &i in self.rules_into(to.0) {
+            let r = tt.rule(i);
+            if r.from_stop != from.0 || !(fits(r.from_trip, from.1) && fits(r.from_line, from.2) && fits(r.to_trip, to.1) && fits(r.to_line, to.2)) {
+                continue;
+            }
+            match r.kind {
+                1 | 4 => waits = true,
+                2 if r.min_time != NONE => least = least.max(r.min_time.min(1 << 20) as i32),
+                3 => barred = true,
+                _ => {}
+            }
+        }
+        (barred, waits, least)
+    }
+
+    /// Whether a ride (trip, line) leaving `stop` at `depart` can be boarded, where a rule speaks of boarding it
+    /// there: from the origin on foot, or from one of the arrivals kept, by what the rules say of that change. The
+    /// rides of the journey so far, or `None`.
+    #[allow(clippy::too_many_arguments)]
+    fn boards(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32)>], took: &[u32], stop: u32, to: (u32, u32), depart: i32) -> Option<u32> {
+        if origin[stop as usize] <= depart {
+            return Some(0);
+        }
+        let tt = planner.timetable();
+        // an arrival at `s`, with the seconds the change from there needs when no rule speaks (`None`: no way but a
+        // vehicle that waits)
+        let from_there = |s: u32, base: Option<i32>| -> Option<u32> {
+            for &(t, x) in arrivals[s as usize].iter().filter(|a| a.0 <= depart) {
+                let (trip, line) = self.rides[x as usize];
+                let (barred, waits, least) = self.ruled(tt, (s, trip, line), (stop, to.0, to.1));
+                let needs = match (waits, base) {
+                    (true, _) => 0,
+                    (false, Some(base)) => base.max(least),
+                    (false, None) => continue,
+                };
+                if !barred && depart >= t + needs {
+                    return Some(took[x as usize]);
+                }
+            }
+            None
+        };
+        let mut found = from_there(stop, Some(self.change(tt, q, stop)));
+        for &(y, secs) in planner.walks_into(stop) {
+            found = found.or_else(|| from_there(y, Some(secs as i32)));
+        }
+        // and from where the feed says this vehicle waits, though no walk leads here from there
+        for &i in self.rules_into(stop) {
+            let r = tt.rule(i);
+            if found.is_none() && matches!(r.kind, 1 | 4) && r.from_stop != stop && !planner.walks_into(stop).iter().any(|w| w.0 == r.from_stop) {
+                found = from_there(r.from_stop, None);
+            }
+        }
+        found
+    }
+
+    /// The same turned round: whether a ride (trip, line) that arrives at `stop` at `arrive` leads on, where a rule
+    /// speaks of changing from it there: to the destination on foot, or to one of the departures kept.
+    #[allow(clippy::too_many_arguments)]
+    fn leads_on(&self, planner: &Planner, q: &Query, destination: &[i32], departures: &[Vec<(i32, u32)>], stop: u32, from: (u32, u32), arrive: i32) -> bool {
+        if destination[stop as usize] >= arrive {
+            return true;
+        }
+        let tt = planner.timetable();
+        let to_there = |s: u32, base: Option<i32>| -> bool {
+            departures[s as usize].iter().filter(|d| d.0 >= arrive).any(|&(d, y)| {
+                let (trip, line) = self.rides[y as usize];
+                let (barred, waits, least) = self.ruled(tt, (stop, from.0, from.1), (s, trip, line));
+                let needs = match (waits, base) {
+                    (true, _) => 0,
+                    (false, Some(base)) => base.max(least),
+                    (false, None) => return false,
+                };
+                !barred && d >= arrive + needs
+            })
+        };
+        if to_there(stop, Some(self.change(tt, q, stop))) {
+            return true;
+        }
+        let (lo, hi) = tt.walks_from(stop);
+        if (lo..hi).map(|w| tt.walk(w)).any(|(y, secs)| (y as usize) < departures.len() && to_there(y, Some(secs as i32))) {
+            return true;
+        }
+        self.rules_out_of(stop).iter().map(|i| tt.rule(*i)).any(|r| matches!(r.kind, 1 | 4) && r.to_stop != stop && !(lo..hi).any(|w| tt.walk(w).0 == r.to_stop) && to_there(r.to_stop, None))
     }
 
     pub fn connections(&self) -> usize {
@@ -88,16 +407,30 @@ impl Reference {
     /// The earliest arrival at the query's destination, leaving its origin at `time` or later. The query's own
     /// moment, window and direction are not read.
     pub fn earliest_arrival(&self, planner: &Planner, q: &Query, time: i32) -> Option<i32> {
+        self.earliest_with_rides(planner, q, time).map(|a| a.0)
+    }
+
+    /// The same, with the rides of the journey the scan made for it. That arrival may be made with fewer: the scan
+    /// does not look for them. It says whether a search with a cap on rides could have found this journey.
+    pub fn earliest_with_rides(&self, planner: &Planner, q: &Query, time: i32) -> Option<(i32, u32)> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
         let (ends, prefs) = (planner.ends(q), planner.prefs(q));
         let stops = tt.stops() as usize;
-        let change = q.change_s.unwrap_or(tt.change_seconds()) as i32;
         let (mut ready, mut arrived, mut last) = (vec![i32::MAX; stops], vec![i32::MAX; stops], vec![NONE; stops]);
         let mut on = vec![false; self.rides.len()];
+        // the rides of the journey that is ready at a stop soonest, and of the one that boarded a ride (it counted)
+        let (mut via, mut took) = (vec![0u32; stops], vec![0u32; self.rides.len()]);
+        // holding to the feed's rules: the origin's stops apart, and the arrivals where a rule may tell them apart
+        let ruled = q.rules && !self.into.is_empty();
+        let mut origin = vec![i32::MAX; if ruled { stops } else { 0 }];
+        let mut arrivals: Vec<Vec<(i32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
         for &(s, secs) in ends.from.iter() {
             if !bit(&prefs.closed, s) {
                 ready[s as usize] = ready[s as usize].min(time + secs as i32);
+                if ruled {
+                    origin[s as usize] = ready[s as usize];
+                }
             }
         }
         for &(s, secs) in ends.to.iter() {
@@ -105,7 +438,7 @@ impl Reference {
                 last[s as usize] = secs;
             }
         }
-        let mut best = i32::MAX;
+        let (mut best, mut best_rides) = (i32::MAX, 0u32);
         let until = q.followed().1.max(time);
         let start = self.connections.partition_point(|c| c.depart < time);
         for c in &self.connections[start..] {
@@ -114,10 +447,19 @@ impl Reference {
             }
             if !on[c.ride as usize] {
                 let (trip, line) = self.rides[c.ride as usize];
-                if !c.board || ready[c.from as usize] > c.depart || bit(&prefs.closed, c.from) || bit(&prefs.line_closed, line) || bit(&prefs.trip_closed, trip) {
+                if !c.board || bit(&prefs.closed, c.from) || bit(&prefs.line_closed, line) || bit(&prefs.trip_closed, trip) {
                     continue;
                 }
+                // where a rule speaks of boarding this trip here, the arrivals one by one; else the stop's soonest
+                let spoken_of = ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line));
+                let so_far = if spoken_of {
+                    self.boards(planner, q, &origin, &arrivals, &took, c.from, (trip, line), c.depart)
+                } else {
+                    (ready[c.from as usize] <= c.depart).then_some(via[c.from as usize])
+                };
+                let Some(so_far) = so_far else { continue };
                 on[c.ride as usize] = true;
+                took[c.ride as usize] = so_far + 1;
             }
             if bit(&prefs.closed_through, c.to) {
                 on[c.ride as usize] = false;
@@ -126,22 +468,209 @@ impl Reference {
             if !c.alight || bit(&prefs.closed, c.to) || c.arrive > until {
                 continue;
             }
-            if last[c.to as usize] != NONE && c.arrive + last[c.to as usize] as i32 <= until {
-                best = best.min(c.arrive + last[c.to as usize] as i32);
+            let rides = took[c.ride as usize];
+            if last[c.to as usize] != NONE && c.arrive + last[c.to as usize] as i32 <= until && c.arrive + (last[c.to as usize] as i32) < best {
+                (best, best_rides) = (c.arrive + last[c.to as usize] as i32, rides);
+            }
+            if ruled && self.arrivals_kept[c.to as usize] {
+                arrivals[c.to as usize].push((c.arrive, c.ride));
             }
             if c.arrive < arrived[c.to as usize] {
                 arrived[c.to as usize] = c.arrive;
-                ready[c.to as usize] = ready[c.to as usize].min(c.arrive + change);
+                let mut sooner = |stop: u32, at: i32| {
+                    if at < ready[stop as usize] {
+                        (ready[stop as usize], via[stop as usize]) = (at, rides);
+                    }
+                };
+                sooner(c.to, c.arrive.saturating_add(self.change(tt, q, c.to)));
                 let (lo, hi) = tt.walks_from(c.to);
                 for i in lo..hi {
                     let (y, secs) = tt.walk(i);
                     if !bit(&prefs.closed, y) {
-                        ready[y as usize] = ready[y as usize].min(c.arrive + secs as i32);
+                        sooner(y, c.arrive + secs as i32);
                     }
                 }
             }
         }
-        (best != i32::MAX).then_some(best)
+        (best != i32::MAX).then_some((best, best_rides))
+    }
+
+    /// The least cost so far with which a ride (trip, line) leaving `stop` at `depart` can be boarded, where a
+    /// rule speaks of boarding it there: `boards` with a cost, over every arrival the rules let change and not the
+    /// first found.
+    #[allow(clippy::too_many_arguments)]
+    fn boards_at_cost(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32, u32)>], stop: u32, to: (u32, u32), depart: i32) -> Option<u32> {
+        let tt = planner.timetable();
+        let mut best = (origin[stop as usize] <= depart).then_some(0u32);
+        let mut from_there = |s: u32, base: Option<i32>| {
+            for &(t, x, cost) in arrivals[s as usize].iter().filter(|a| a.0 <= depart) {
+                let (trip, line) = self.rides[x as usize];
+                let (barred, waits, least) = self.ruled(tt, (s, trip, line), (stop, to.0, to.1));
+                let needs = match (waits, base) {
+                    (true, _) => 0,
+                    (false, Some(base)) => base.max(least),
+                    (false, None) => continue,
+                };
+                if !barred && depart >= t.saturating_add(needs) {
+                    best = Some(best.map_or(cost, |b| b.min(cost)));
+                }
+            }
+        };
+        from_there(stop, Some(self.change(tt, q, stop)));
+        for &(y, secs) in planner.walks_into(stop) {
+            from_there(y, Some(secs as i32));
+        }
+        for &i in self.rules_into(stop) {
+            let r = tt.rule(i);
+            if matches!(r.kind, 1 | 4) && r.from_stop != stop && !planner.walks_into(stop).iter().any(|w| w.0 == r.from_stop) {
+                from_there(r.from_stop, None);
+            }
+        }
+        best
+    }
+
+    /// With wishes that cost: every best pair of arrival and cost among the journeys with a ride that leave the
+    /// query's origin at `time` or later (no other arrives no later at no more cost), by arrival. The query's own
+    /// moment, window and direction are not read; the feed's rules are held to as in `earliest_arrival`.
+    ///
+    /// The scan with a cost beside the time: at a stop it keeps every pair of the moment one is ready to board
+    /// and the cost so far that no other beats in both, aboard a vehicle the least cost (the time is the
+    /// vehicle's), and what each wish costs it takes from `of_ride` and `of_stop`, a wish at a time.
+    pub fn cheapest(&self, planner: &Planner, q: &Query, time: i32) -> Vec<(i32, u32)> {
+        debug_assert_eq!(self.day, q.day);
+        let tt = planner.timetable();
+        let (ends, prefs) = (planner.ends(q), planner.prefs(q));
+        let stops = tt.stops() as usize;
+        let wishes: Vec<&Wish> = q.wishes.iter().take(64).filter(|w| w.how != How::Never).collect();
+        let sum = |costs: &mut dyn Iterator<Item = u32>| costs.fold(0u32, |a, b| a.saturating_add(b)).min(COST_MOST);
+        // a ride; a boarding or an alighting at a stop; a call there
+        let ride_costs: Vec<u32> = self.rides.iter().map(|&(trip, line)| sum(&mut wishes.iter().filter_map(|w| of_ride(tt, w, trip, line).map(|is| worth(w.how, is))))).collect();
+        let stop_costs = |through: bool| -> Vec<u32> { (0..tt.stops()).map(|s| sum(&mut wishes.iter().filter_map(|w| of_stop(tt, w, s).filter(|is| is.1 == through).map(|is| worth(w.how, is.0))))).collect() };
+        let (used, called) = (stop_costs(false), stop_costs(true));
+        let (mut ready, mut arrived): (Vec<Vec<(i32, u32)>>, Vec<Vec<(i32, u32)>>) = (vec![Vec::new(); stops], vec![Vec::new(); stops]);
+        let mut last = vec![NONE; stops];
+        let mut aboard: Vec<Option<u32>> = vec![None; self.rides.len()];
+        let ruled = q.rules && !self.into.is_empty();
+        let mut origin = vec![i32::MAX; if ruled { stops } else { 0 }];
+        let mut arrivals: Vec<Vec<(i32, u32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
+        for &(s, secs) in ends.from.iter() {
+            if !bit(&prefs.closed, s) {
+                let at = time + secs as i32;
+                if ready[s as usize].first().is_none_or(|l| at < l.0) {
+                    ready[s as usize] = vec![(at, 0)];
+                }
+                if ruled {
+                    origin[s as usize] = origin[s as usize].min(at);
+                }
+            }
+        }
+        for &(s, secs) in ends.to.iter() {
+            if !bit(&prefs.closed, s) {
+                last[s as usize] = secs;
+            }
+        }
+        let mut front: Vec<(i32, u32)> = Vec::new();
+        let until = q.followed().1.max(time);
+        let start = self.connections.partition_point(|c| c.depart < time);
+        for c in &self.connections[start..] {
+            // (what leaves once a way that costs nothing is in can only be later and no cheaper)
+            if c.depart > until || front.iter().any(|f| f.1 == 0 && f.0 <= c.depart) {
+                break;
+            }
+            let (trip, line) = self.rides[c.ride as usize];
+            if c.board && !bit(&prefs.closed, c.from) && !bit(&prefs.line_closed, line) && !bit(&prefs.trip_closed, trip) {
+                let spoken_of = ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line));
+                let so_far = if spoken_of {
+                    self.boards_at_cost(planner, q, &origin, &arrivals, c.from, (trip, line), c.depart)
+                } else {
+                    ready[c.from as usize].iter().filter(|l| l.0 <= c.depart).map(|l| l.1).min()
+                };
+                if let Some(so_far) = so_far {
+                    let cost = sum(&mut [so_far, used[c.from as usize], called[c.from as usize], ride_costs[c.ride as usize]].into_iter());
+                    aboard[c.ride as usize] = Some(aboard[c.ride as usize].map_or(cost, |a| a.min(cost)));
+                }
+            }
+            let Some(riding) = aboard[c.ride as usize] else { continue };
+            if bit(&prefs.closed_through, c.to) {
+                aboard[c.ride as usize] = None;
+                continue;
+            }
+            let riding = sum(&mut [riding, called[c.to as usize]].into_iter());
+            aboard[c.ride as usize] = Some(riding);
+            if !c.alight || bit(&prefs.closed, c.to) || c.arrive > until {
+                continue;
+            }
+            let cost = sum(&mut [riding, used[c.to as usize]].into_iter());
+            if last[c.to as usize] != NONE && c.arrive + last[c.to as usize] as i32 <= until {
+                offer(&mut front, (c.arrive + last[c.to as usize] as i32, cost));
+            }
+            if ruled && self.arrivals_kept[c.to as usize] {
+                arrivals[c.to as usize].push((c.arrive, c.ride, cost));
+            }
+            if offer(&mut arrived[c.to as usize], (c.arrive, cost)) {
+                offer(&mut ready[c.to as usize], (c.arrive.saturating_add(self.change(tt, q, c.to)), cost));
+                let (lo, hi) = tt.walks_from(c.to);
+                for i in lo..hi {
+                    let (y, secs) = tt.walk(i);
+                    if (y as usize) < stops && !bit(&prefs.closed, y) {
+                        offer(&mut ready[y as usize], (c.arrive + secs as i32, cost));
+                    }
+                }
+            }
+        }
+        front.sort_unstable();
+        front
+    }
+
+    /// How the answer to a query with wishes that cost, asked for one moment, differs from what the scan with a
+    /// cost finds, in words; `None` when they agree, and for a window, which it does not judge.
+    ///
+    /// Leaving at a moment: of the answer's pairs of arrival and cost, those that no other beats in both are the
+    /// scan's, pair for pair. Weighed ([`Query::weigh`]), the same of what the rule leaves of each: a pair goes
+    /// where another arrives no later and is no later with its cost added.
+    ///
+    /// Arriving by a moment, every option asked for: the scan is asked forward from each option's departure and
+    /// from the second after it, and from as early as the query follows: the least cost that still arrives in
+    /// time must be the least among the options that leave no earlier. So an option between two of the answer's
+    /// that it lacks is found, and one that costs more than it need. (Weighed, arriving by: not judged; the
+    /// tests hold that answer to the rule put to every option.)
+    pub fn costs_differ(&self, planner: &Planner, q: &Query, journeys: &[Journey]) -> Option<String> {
+        if q.window > 0 || journeys.iter().any(|j| j.rides == 0) {
+            return None;
+        }
+        let time = q.time as i32;
+        let best = |all: &mut Vec<(i32, u32)>, weigh: bool| {
+            all.sort_unstable();
+            all.dedup();
+            let beaten = |a: &(i32, u32)| all.iter().any(|b| b != a && b.0 <= a.0 && if weigh { b.0 as i64 + b.1 as i64 <= a.0 as i64 + a.1 as i64 } else { b.1 <= a.1 });
+            all.iter().filter(|a| !beaten(a)).copied().collect::<Vec<_>>()
+        };
+        if !q.arrive_by {
+            let ours = best(&mut journeys.iter().map(|j| (j.arrive, j.penalty)).collect(), q.weigh);
+            let theirs = best(&mut self.cheapest(planner, q, time), q.weigh);
+            if ours != theirs {
+                let only = |a: &[(i32, u32)], b: &[(i32, u32)]| a.iter().filter(|p| !b.contains(p)).copied().collect::<Vec<_>>();
+                return Some(format!("arrival and cost: the planner alone has {:?}, the scan alone {:?}", only(&ours, &theirs), only(&theirs, &ours)));
+            }
+            return None;
+        }
+        if q.weigh {
+            return None;
+        }
+        let mut moments = vec![q.followed().0];
+        for j in journeys.iter() {
+            moments.extend([j.depart, j.depart + 1]);
+        }
+        moments.sort_unstable();
+        moments.dedup();
+        for m in moments {
+            let ours = journeys.iter().filter(|j| j.depart >= m).map(|j| j.penalty).min();
+            let theirs = self.cheapest(planner, q, m).iter().filter(|p| p.0 <= time).map(|p| p.1).min();
+            if ours != theirs {
+                return Some(format!("leaving at {m} or later to arrive by {time}: the least cost among the planner's options is {ours:?}, the scan's {theirs:?}"));
+            }
+        }
+        None
     }
 
     /// The latest departure from the query's origin that reaches its destination by `time`.
@@ -150,13 +679,19 @@ impl Reference {
         let tt = planner.timetable();
         let (ends, prefs) = (planner.ends(q), planner.prefs(q));
         let stops = tt.stops() as usize;
-        let change = q.change_s.unwrap_or(tt.change_seconds()) as i32;
         // by when one must be at a stop, off a ride; when the latest useful ride leaves it; the walk from the origin
         let (mut due, mut left, mut first) = (vec![i32::MIN; stops], vec![i32::MIN; stops], vec![NONE; stops]);
         let mut on = vec![false; self.rides.len()];
+        // holding to the feed's rules: the destination's stops apart, and the departures where a rule may tell them apart
+        let ruled = q.rules && !self.out.is_empty();
+        let mut destination = vec![i32::MIN; if ruled { stops } else { 0 }];
+        let mut departures: Vec<Vec<(i32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
         for &(s, secs) in ends.to.iter() {
             if !bit(&prefs.closed, s) {
                 due[s as usize] = due[s as usize].max(time - secs as i32);
+                if ruled {
+                    destination[s as usize] = due[s as usize];
+                }
             }
         }
         for &(s, secs) in ends.from.iter() {
@@ -174,7 +709,12 @@ impl Reference {
             }
             if !on[c.ride as usize] {
                 let (trip, line) = self.rides[c.ride as usize];
-                if !c.alight || due[c.to as usize] < c.arrive || bit(&prefs.closed, c.to) || bit(&prefs.line_closed, line) || bit(&prefs.trip_closed, trip) {
+                if !c.alight || bit(&prefs.closed, c.to) || bit(&prefs.line_closed, line) || bit(&prefs.trip_closed, trip) {
+                    continue;
+                }
+                let spoken_of = ruled && self.rules_out_of(c.to).iter().any(|i| fits(tt.rule(*i).from_trip, trip) && fits(tt.rule(*i).from_line, line));
+                let leads_on = if spoken_of { self.leads_on(planner, q, &destination, &departures, c.to, (trip, line), c.arrive) } else { due[c.to as usize] >= c.arrive };
+                if !leads_on {
                     continue;
                 }
                 on[c.ride as usize] = true;
@@ -189,9 +729,12 @@ impl Reference {
             if first[c.from as usize] != NONE && c.depart - first[c.from as usize] as i32 >= since {
                 best = best.max(c.depart - first[c.from as usize] as i32);
             }
+            if ruled && self.departures_kept[c.from as usize] {
+                departures[c.from as usize].push((c.depart, c.ride));
+            }
             if c.depart > left[c.from as usize] {
                 left[c.from as usize] = c.depart;
-                due[c.from as usize] = due[c.from as usize].max(c.depart - change);
+                due[c.from as usize] = due[c.from as usize].max(c.depart.saturating_sub(self.change(tt, q, c.from)));
                 for &(y, secs) in planner.walks_into(c.from) {
                     if !bit(&prefs.closed, y) {
                         due[y as usize] = due[y as usize].max(c.depart - secs as i32);
@@ -204,10 +747,26 @@ impl Reference {
 
     /// Every best pair of departure and arrival for leaving inside the query's window: no other leaves later and
     /// arrives no later. By scanning forward for the earliest arrival, back for the latest departure that still
-    /// makes it, and on from a second after that.
+    /// makes it, and on from a second after that. Asked to arrive by, the window lies before the asked moment and
+    /// holds arrivals: the same from its late end, back for the latest departure, forward for the earliest arrival
+    /// that departure gives, and on from a second before that.
     pub fn options(&self, planner: &Planner, q: &Query) -> Vec<(i32, i32)> {
         let mut out = Vec::new();
         let mut time = q.time as i32;
+        if q.arrive_by {
+            let begin = time - q.window as i32;
+            while time >= begin && out.len() < 4096 {
+                let Some(depart) = self.latest_departure(planner, q, time) else { break };
+                let Some(arrive) = self.earliest_arrival(planner, q, depart) else { break };
+                if arrive < begin || arrive > time {
+                    break;
+                }
+                out.push((depart, arrive));
+                time = arrive - 1;
+            }
+            out.reverse();
+            return out;
+        }
         let end = time + q.window as i32;
         while time <= end && out.len() < 4096 {
             let Some(arrive) = self.earliest_arrival(planner, q, time) else { break };
@@ -226,13 +785,28 @@ impl Reference {
     /// They agree when every pair of the scan is among the planner's best pairs, and every further pair of the
     /// planner's is one the scan can't list: it is no faster than the scan's best from that moment, and what
     /// leaves later and arrives no later leaves after the window (the planner keeps such a journey when it has
-    /// fewer rides than the later one).
+    /// fewer rides than the later one). Asked to arrive by, the same turned round: a further pair leaves no later
+    /// than the scan's best for that arrival, and what arrives sooner and leaves no earlier arrives before the
+    /// window.
     pub fn window_differs(&self, planner: &Planner, q: &Query, journeys: &[Journey]) -> Option<String> {
         let (ours, theirs) = (pairs(journeys), self.options(planner, q));
-        let end = q.time as i32 + q.window as i32;
         if let Some(missing) = theirs.iter().find(|p| !ours.contains(p)) {
             return Some(format!("the scan has leaving {} arriving {}, the planner has not ({} pairs against {})", missing.0, missing.1, ours.len(), theirs.len()));
         }
+        if q.arrive_by {
+            let begin = q.time as i32 - q.window as i32;
+            for p in ours.iter().filter(|p| !theirs.contains(p)) {
+                let best = self.latest_departure(planner, q, p.1);
+                if best.is_none_or(|d| d < p.0) {
+                    return Some(format!("the planner has leaving {} arriving {}, which the scan says can't be done: {:?}", p.0, p.1, best));
+                }
+                if best == Some(p.0) && self.earliest_arrival(planner, q, p.0).is_none_or(|a| a >= begin) {
+                    return Some(format!("the planner has leaving {} arriving {}, which the scan should list and does not", p.0, p.1));
+                }
+            }
+            return None;
+        }
+        let end = q.time as i32 + q.window as i32;
         for p in ours.iter().filter(|p| !theirs.contains(p)) {
             // A further pair may arrive later than the scan's best from then: the better journey then leaves after
             // the window, or the planner would have had the scan's pair for it and dropped this one.
@@ -259,13 +833,13 @@ pub fn pairs(journeys: &[Journey]) -> Vec<(i32, i32)> {
 /// Whether a journey can be made as it says: every ride is a trip of the file on its day with those times and
 /// stops, boarding and alighting are allowed there, every walk is one of the file's with its seconds, every change
 /// leaves the time it needs and is none the feed's rules bar (where the query holds to them; a vehicle that waits
-/// needs no time), and the ends are the query's with their seconds on foot. What is wrong, in words.
+/// needs no time), the ends are the query's with their seconds on foot, no wish of "never" is broken and the cost
+/// it says is what its wishes come to (`wished`). What is wrong, in words.
 ///
 /// It reads the file and the query's two places, and nothing of how the journey was found.
 pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
     let tt: &Timetable = planner.timetable();
     let ends = planner.ends(q);
-    let change = q.change_s.unwrap_or(tt.change_seconds()) as i32;
     let Some((first, last)) = j.legs.first().zip(j.legs.last()) else { return Some("no legs".into()) };
     if (j.depart, j.arrive) != (first.depart(), last.arrive()) {
         return Some(format!("it says {} to {}, its legs {} to {}", j.depart, j.arrive, first.depart(), last.arrive()));
@@ -331,7 +905,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                 }
                 let (a, b) = (tt.pattern_stop(r.first_stop + board), tt.pattern_stop(r.first_stop + alight));
                 let times = tt.trip_times(trip);
-                let base = (day - q.day) * DAY;
+                let base = day_start(tt, q.day, day.saturating_sub(q.day));
                 if (a.stop, b.stop) != (from, to) || depart != base + tt.time(times, board).1 as i32 || arrive != base + tt.time(times, alight).0 as i32 {
                     return Some(format!("leg {i}: its stops or times are not the trip's"));
                 }
@@ -345,7 +919,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                     if barred {
                         return Some(format!("leg {i}: the feed says no change is possible from the ride before"));
                     }
-                    let needs = if waits { 0 } else if stop == from { change.max(least) } else { walk_between(stop, from).unwrap_or(i32::MAX / 2).max(least) };
+                    let needs = if waits { 0 } else if stop == from { change_time(tt, q, stop).max(least) } else { walk_between(stop, from).unwrap_or(i32::MAX / 2).max(least) };
                     if depart < at + needs {
                         return Some(format!("leg {i}: the change from the ride before leaves {} s and needs {needs}", depart - at));
                     }
@@ -387,6 +961,11 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
     }
     if (rides, walking) != (j.rides, j.walking) {
         return Some(format!("it says {} rides and {} s on foot, its legs {rides} and {walking}", j.rides, j.walking));
+    }
+    match wished(tt, q, j) {
+        Err(never) => return Some(never),
+        Ok(cost) if cost != j.penalty => return Some(format!("it says its wishes cost {} s, they cost {cost}", j.penalty)),
+        Ok(_) => {}
     }
     None
 }

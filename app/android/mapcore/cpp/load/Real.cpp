@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <iterator>
 #include <limits>
 #include <string>
+#include <utility>
 
 namespace atlas::load {
 
@@ -157,6 +159,57 @@ std::optional<std::int64_t> leading_year(std::string_view text) noexcept {
         year = year * 10 + *d;
     }
     return year;
+}
+
+namespace {
+
+/// Python's tuple equality of two (lat, lon).
+[[nodiscard]] bool same(const osm::LatLon& a, const osm::LatLon& b) noexcept {
+    return a.lat == b.lat && a.lon == b.lon;
+}
+
+} // namespace
+
+std::vector<std::vector<osm::LatLon>> join_rings(const std::vector<std::span<const osm::LatLon>>& ways) {
+    using LL = osm::LatLon;
+    std::vector<std::vector<LL>> segs;
+    for (const auto& w : ways) {
+        if (w.size() > 1) segs.emplace_back(w.begin(), w.end());
+    }
+    std::vector<std::vector<LL>> rings;
+    while (!segs.empty()) {
+        std::vector<LL> cur = std::move(segs.front());
+        segs.erase(segs.begin());
+        bool changed = true;
+        while (!same(cur.front(), cur.back()) && changed) {
+            changed = false;
+            for (std::size_t i = 0; i < segs.size(); ++i) {
+                const std::vector<LL>& s = segs[i];
+                std::vector<LL> next;
+                if (same(s.front(), cur.back())) {
+                    next = cur;
+                    next.insert(next.end(), s.begin() + 1, s.end());
+                } else if (same(s.back(), cur.back())) {
+                    next = cur;
+                    next.insert(next.end(), s.rbegin() + 1, s.rend());
+                } else if (same(s.back(), cur.front())) {
+                    next = s;
+                    next.insert(next.end(), cur.begin() + 1, cur.end());
+                } else if (same(s.front(), cur.front())) {
+                    next.assign(s.rbegin(), s.rend());
+                    next.insert(next.end(), cur.begin() + 1, cur.end());
+                } else {
+                    continue;
+                }
+                cur = std::move(next);
+                segs.erase(segs.begin() + static_cast<std::ptrdiff_t>(i));
+                changed = true;
+                break;
+            }
+        }
+        if (cur.size() > 3 && same(cur.front(), cur.back())) rings.push_back(std::move(cur));
+    }
+    return rings;
 }
 
 } // namespace atlas::load

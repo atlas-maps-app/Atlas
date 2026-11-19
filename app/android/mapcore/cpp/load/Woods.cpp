@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
+#include "geometry/BigRoad.hpp"
 #include "geometry/RoofShapes.hpp"
 #include "load/Amsterdam.hpp"
 
@@ -129,8 +130,11 @@ std::vector<WoodTree> plant_woods(const Scene& s, double cx, double cz, double r
             if (near(b.poly)) g.mark_poly(b.poly, 3.0);
         }
     }
+    // a road's width as `r.w or 2.0` has it, but one no road has (past 0 to geometry::widest_road, or not a number)
+    // as none, as the ground draws a road
     for (const Road& r : s.roads) {
-        if (near(r.pts)) g.mark_line(r.pts, ((r.w != 0.0 ? r.w : 2.0) / 2) + 1.6);
+        const double w = r.w > 0.0 && r.w <= geometry::widest_road ? r.w : 2.0;
+        if (near(r.pts)) g.mark_line(r.pts, (w / 2) + 1.6);
     }
     for (const std::vector<V2>& w : s.water) {
         if (near(w)) g.mark_poly(w, 1.5);

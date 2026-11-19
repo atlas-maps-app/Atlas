@@ -214,6 +214,14 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     val unreadableStores: StateFlow<Map<File, UnreadableStore>> = unreadable.asStateFlow()
 
+    /**
+     * How many places and addresses the downloaded regions held when [app.atlas.ui.search.HereContext] last asked them,
+     * off the main thread; -1 before it has. What a frame that cannot wait reads their answers by, so it touches no
+     * store: the first to read [placeStores] opens every region's file (the app maintainer, 18 November 2026, batch 5 A5).
+     */
+    @Volatile
+    internal var regionsCounted: Int = -1
+
     /** The offline place stores of the downloaded regions (`places/<region>.db`), all searched at once. */
     val placeStores: Regions by lazy {
         Regions(config.placeStores.orEmpty()).also { if (config.placeStores == null) syncPlaceStores(it) }

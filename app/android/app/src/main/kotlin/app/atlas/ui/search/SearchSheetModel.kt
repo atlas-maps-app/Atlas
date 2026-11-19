@@ -335,7 +335,10 @@ class SearchSheetModel(
     private val mutable = MutableStateFlow(SearchSheetState(centre, moment(centre, SearchPrefs())))
     val state: StateFlow<SearchSheetState> = mutable.asStateFlow()
 
-    private var pool: List<PlaceRecord> = emptyList()
+    /** The grid's places as shown ([showPool]): none before the first come. */
+    private var pool: Pool? = null
+
+    /** The centre the grid's places are being read around, or were: from the moment their reading begins ([loadPool]). */
     private var poolAt: LatLon? = null
     private var poolJob: Job? = null
     private var questsJob: Job? = null
@@ -500,12 +503,11 @@ class SearchSheetModel(
      * last line asks as it comes into view, so the facts of every place near are read only for those who scroll there.
      */
     fun countQuests() {
-        val c = poolAt ?: return
+        val shown = pool ?: return
         if (mutable.value.quests != null || questsJob?.isActive == true) return
-        val places = pool
         questsJob = viewModelScope.launch {
-            val n = withContext(Dispatchers.Default) { runCatching { QuestFinder.countAround(services, places.map { it.place }, c, lang) }.getOrDefault(0) }
-            if (pool === places) mutable.value = mutable.value.copy(quests = n)
+            val n = withContext(Dispatchers.Default) { runCatching { QuestFinder.countAround(services, shown.places.map { it.place }, shown.at, lang) }.getOrDefault(0) }
+            if (pool === shown) mutable.value = mutable.value.copy(quests = n)
         }
     }
 
@@ -659,7 +661,7 @@ class SearchSheetModel(
         val serving = s.intent ?: return
         walkJob = viewModelScope.launch {
             val greens = withContext(Dispatchers.Default) {
-                (places + pool).filter { serving.takes(it) && serving.goesRound(it) }.distinctBy { it.place.key }.mapNotNull { r ->
+                (places + pool?.places.orEmpty()).filter { serving.takes(it) && serving.goesRound(it) }.distinctBy { it.place.key }.mapNotNull { r ->
                     r.place.bbox?.takeIf { Laps.metres(it) != null }?.let { Green(it, r.name(lang) ?: r.place.name()) }
                 }
             }
@@ -1019,7 +1021,7 @@ class SearchSheetModel(
                 emptyList<PlaceRecord>() to null
             }
             holiday = withContext(Dispatchers.IO) { runCatching { holidayAt(c) }.getOrDefault(false) }
-            showPool(c, found, origin)
+            showPool(Pool(c, found, origin))
             // online, where the phone holds part of the circle: the map's windows it keeps no data for, from Atlas's packs,
             // waited for however much of it they make, as nothing is asked after them
             if (origin != PlaceOrigin.STORE && !services.config.offline && services.connectivity.online.value) {
@@ -1030,14 +1032,22 @@ class SearchSheetModel(
                 } catch (e: Exception) {
                     null
                 }
-                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(c, more.value.map { PlaceRecord.of(it, country) }, PlaceOrigin.PACK)
+                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(Pool(c, more.value.map { PlaceRecord.of(it, country) }, PlaceOrigin.PACK))
             }
         }
     }
 
-    /** The grid's tiles, the Now shelf, the kinds around and the chains around, from [found], the places around [c]. */
-    private suspend fun showPool(c: LatLon, found: List<PlaceRecord>, origin: PlaceOrigin?) {
-        pool = found
+    /**
+     * The places read around a centre, with where they came from, as the grid shows them ([showPool]): a region settled
+     * at a centre shows them again only where they are that centre's (the app maintainer, 18 November 2026, batch 5 A4).
+     */
+    private class Pool(val at: LatLon, val places: List<PlaceRecord>, val origin: PlaceOrigin?)
+
+    /** The grid's tiles, the Now shelf, the kinds around and the chains around, from [shown]'s places, read around its centre. */
+    private suspend fun showPool(shown: Pool) {
+        val c = shown.at
+        val found = shown.places
+        pool = shown
         mutable.value.node?.let { findAlso(it) }
         // the region at the centre as known: the pool's country was asked off the main thread before it came
         mutable.value = mutable.value.let { it.copy(moment = moment(it.centre, it.prefs)) }
@@ -1046,7 +1056,7 @@ class SearchSheetModel(
             val book = HoursBook(found)
             Browse.pulses(GRID, found, c, s.moment, book) to Intents.all.mapNotNull { i -> nodeOf(i)?.let { n -> i.id to Browse.pulse(i, n, found, c, s.moment, book) } }.toMap()
         }
-        mutable.value = mutable.value.copy(pulses = pulses.associateBy { it.node.id }, served = served, gridOrigin = origin)
+        mutable.value = mutable.value.copy(pulses = pulses.associateBy { it.node.id }, served = served, gridOrigin = shown.origin)
         refreshNow()
         // the families' kinds on the list, everything else on the map (a road, a canal) behind its row, as on the grid
         val (all, chains) = withContext(Dispatchers.Default) {
@@ -1248,8 +1258,10 @@ class SearchSheetModel(
         val online = !services.config.offline && services.connectivity.online.value
         return SearchContext(
             location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone),
-            // each result's address as the country at it writes it (asked off the main thread, as the search is)
+            // each result's address as the country at it writes it (asked off the main thread, as the search is): a
+            // downloaded region's own place's by the region, each region asked once (batch 5 A6)
             countryAt = { p -> HereContext.country(services, p) },
+            countryOf = { r -> HereContext.regionOf(services, r) },
         )
     }
 
@@ -1295,7 +1307,7 @@ class SearchSheetModel(
         alsoJob?.cancel()
         if (node.preset == null && node.links.isEmpty()) return
         alsoJob = viewModelScope.launch {
-            val (also, see) = withContext(Dispatchers.Default) { alsoSold(node, pool).let { it to seeAlso(node, pool, it) } }
+            val (also, see) = withContext(Dispatchers.Default) { pool?.places.orEmpty().let { p -> alsoSold(node, p).let { it to seeAlso(node, p, it) } } }
             val s = mutable.value
             if (s.node?.id == node.id && s.asked == null) mutable.value = s.copy(alsoSold = also, seeAlso = see)
         }
@@ -1402,7 +1414,8 @@ class SearchSheetModel(
      * Asks the regions on the phone, off the main thread, what region [c] is in ([HereContext.region]); where they say
      * otherwise than the moment read there, the moment again, with the tiles, the Now shelf and the results read in it
      * (the app maintainer, 18 November 2026: the moment asked the regions' places around on the main thread, as the
-     * sheet was made in the home's first composition and at each setting, move, change of sky and grid).
+     * sheet was made in the home's first composition and at each setting, move, change of sky and grid). The tiles are
+     * counted again only from places read around [c]: those of the last centre wait for its own (batch 5 A4).
      */
     private fun settleRegion(c: LatLon) {
         val known = HereContext.regionNow(services, c)
@@ -1412,7 +1425,8 @@ class SearchSheetModel(
             val s = mutable.value
             if (region == known || s.centre != c) return@launch
             mutable.value = s.copy(moment = moment(c, s.prefs, region))
-            if (poolAt == c) showPool(c, pool, s.gridOrigin) else refreshNow()
+            val shown = pool
+            if (shown != null && shown.at == c) showPool(shown) else refreshNow()
             if (s.inside) rerank()
         }
     }

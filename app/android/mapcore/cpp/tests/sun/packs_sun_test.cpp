@@ -8,6 +8,7 @@
 #include "sun/Buckets.hpp"
 #include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
+#include "tests/load/westerkerk.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Checksums.hpp"
 #include "tiles/Container.hpp"
@@ -272,13 +273,9 @@ TEST_CASE(
             " tiles, ", decks.size(), " decks");
 }
 
-TEST_CASE("sun: the bundled packs' bits are the host build's") {
-    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
-    if (dir.empty()) {
-        MESSAGE("ATLAS_TILES_DIR is not set: the real packs are not checked here");
-        return;
-    }
-    const std::string westerkerk = (std::filesystem::path(dir) / "amsterdam.atlas").string();
+TEST_CASE("sun: the Westerkerk's bits, over the app's pack the core cuts, are the host build's") {
+    const std::string westerkerk = atlas::test::westerkerk_core_pack();
+    ATLAS_REQUIRE(!westerkerk.empty(), "the Westerkerk's pack is made");
     auto pack = atlas::test::open_pack(westerkerk);
     ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
     const auto t0 = std::chrono::steady_clock::now();
@@ -306,9 +303,12 @@ TEST_CASE("sun: the bundled packs' bits are the host build's") {
         (void)::close(fd);
         std::filesystem::remove(copy);
     }
+    // the boards' scenes, over the bundled packs (ATLAS_TILES_DIR)
     const std::string expect = atlas::test::environment("ATLAS_SUN_EXPECT");
-    if (expect.empty()) {
-        MESSAGE("ATLAS_SUN_EXPECT is not set: the boards' scenes are not held to the JVM's bits here");
+    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
+    if (expect.empty() || dir.empty()) {
+        MESSAGE(
+            "ATLAS_SUN_EXPECT or ATLAS_TILES_DIR is not set: the boards' scenes are not held to the JVM's bits here");
         return;
     }
     std::ifstream in(expect);

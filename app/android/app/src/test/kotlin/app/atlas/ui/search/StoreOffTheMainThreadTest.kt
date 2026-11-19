@@ -1,6 +1,8 @@
 package app.atlas.ui.search
 
 import android.os.Looper
+import app.atlas.Services
+import app.atlas.ServicesConfig
 import app.atlas.geo.BBox
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
@@ -9,17 +11,22 @@ import app.atlas.search.MemoryPlaces
 import app.atlas.search.PlaceOutline
 import app.atlas.search.PlaceRecord
 import app.atlas.search.PlaceSource
+import app.atlas.search.PlaceStore
 import app.atlas.search.TravelMode
 import app.atlas.services.SettingsKeys
+import app.atlas.testing.TempFiles
 import app.atlas.testing.testServices
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.io.File
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -44,6 +51,9 @@ class StoreOffTheMainThreadTest {
     private val augsburg = LatLon(48.3705, 10.8978)
     private val regensburg = LatLon(49.0134, 12.1016)
 
+    /** A third, for the regions' own files. */
+    private val nuremberg = LatLon(49.4521, 11.0767)
+
     /** Epiphany 2026, a Tuesday, at 10:00 in Bavaria: a holiday there, not in Germany as a whole. */
     private val epiphany: Clock = Clock.fixed(Instant.parse("2026-01-06T09:00:00Z"), ZoneId.of("Europe/Berlin"))
 
@@ -58,8 +68,8 @@ class StoreOffTheMainThreadTest {
             return answer()
         }
 
-        override val size: Int get() = inner.size
-        override val bounds: BBox? get() = inner.bounds
+        override val size: Int get() = asked("size") { inner.size }
+        override val bounds: BBox? get() = asked("bounds") { inner.bounds }
         override fun get(id: OsmId): PlaceRecord? = asked("get") { inner.get(id) }
         override fun inBox(box: BBox, limit: Int): List<PlaceRecord> = asked("inBox") { inner.inBox(box, limit) }
         override fun byTag(key: String, value: String?, box: BBox?, limit: Int): List<PlaceRecord> = asked("byTag") { inner.byTag(key, value, box, limit) }
@@ -110,6 +120,35 @@ class StoreOffTheMainThreadTest {
         assertEquals("DE", m.state.value.moment.hours.country)
         assertTrue("Epiphany in Bavaria", m.state.value.moment.hours.publicHolidays?.isHoliday(LocalDate.of(2026, 1, 6)) == true)
         assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
+        s.close()
+    }
+
+    /**
+     * The home's first frame opens no region's store (the app maintainer, 18 November 2026, batch 5 A5): the sheet's
+     * moment and the rows' clocks read [HereContext.regionNow] in the first composition, which read the stores' count,
+     * and the first to read the stores opens every region's file (`Services.placeStores`), on the main thread. The app's
+     * own way here, no stores by the config: a file that does not open shows when they were opened.
+     */
+    @Test
+    fun theHomesFirstFrameOpensNoRegionsStore() {
+        val root = TempFiles.dir("atlas-cold")
+        val places = File(root, "places").apply { mkdirs() }
+        PlaceStore.open(File(places, "bavaria.db")).apply { importPlaces(quarter(nuremberg), regionName = "Bavaria") }.close()
+        val damaged = File(places, "damaged.db").apply { writeText("not a database, though named as one") }
+        val s = Services(RuntimeEnvironment.getApplication(), ServicesConfig(root = root, offline = true, mapEngine = false, clock = epiphany))
+        assertTrue(Looper.myLooper() == Looper.getMainLooper())
+        // what the home's first frame reads: the sheet's moment, the rows' countries and clocks
+        HereContext.regionNow(s, nuremberg)
+        HereContext.countryNow(s, nuremberg)
+        HereContext.localeNow(s, place(7101, nuremberg), nuremberg, epiphany.zone)
+        assertEquals("the regions' files were opened on the main thread", emptySet<File>(), s.unreadableStores.value.keys)
+        // off it they are, and say Bavaria
+        val region = runBlocking(Dispatchers.IO) { HereContext.region(s, nuremberg) }
+        assertEquals("DE", region.country)
+        assertTrue("Epiphany in Bavaria", region.hours(nuremberg, epiphany.zone).publicHolidays?.isHoliday(LocalDate.of(2026, 1, 6)) == true)
+        assertEquals(setOf(damaged), s.unreadableStores.value.keys)
+        // and the main thread reads what they said
+        assertEquals("DE", HereContext.regionNow(s, nuremberg).country)
         s.close()
     }
 

@@ -4,13 +4,14 @@
 # in place by the planner in app/android/transit/planner. Nothing in the app reads it yet.
 #
 # Three jobs, each needing the one before:
-#   checks   the packer's check and the planner's tests on Linux: among them the answers that must be the same on
-#            every platform (tests/cut.rs keeps their number, written down on an arm64 Mac), the library without std,
-#            and files a little wrong.
-#   pack     fetches the feed, packs it strictly (a table or column the packer does not read is a refusal, with the
-#            packer's words in the summary), checks the file, runs the 46 fixed journeys against it (on a new feed:
-#            each on its weekday inside the file's days, the planner held to the connection scan), gzips it and
-#            writes the list.
+#   checks   transit.yml's, called from here: the packer's check and the planner's tests on x86_64 and arm64 Linux
+#            (among them the answers that must be the same on every platform), the library without std, and files a
+#            little wrong.
+#   pack     fetches the feed (the log says what OVapi's server answered), packs it strictly (a table or column the
+#            packer does not read is a refusal, with the packer's words in the summary; the packer says its time and
+#            its most memory), checks the file, says how full its days are, runs the 46 fixed journeys against it (on
+#            a new feed: each on its weekday inside the file's days, the planner held to the connection scan), gzips
+#            it and writes the list.
 #   publish  the only job that may write: uploads the file and the list timetable.json to a dated release
 #            timetable-YYYYMMDD, then puts the list on the fixed release timetable-latest, as packs.yml does with
 #            packs.json. It runs no code of the repository.
@@ -72,36 +73,11 @@ env:
     Atlas speaks for none of them.
 
 jobs:
+  # transit.yml's checks, as a push to app/android/transit runs them: the weekly file is packed only by a tree that
+  # passes them, on x86_64 and arm64 Linux.
   checks:
-    name: the packer's check and the planner's tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Rust, as rust-toolchain.toml pins it
-        run: |
-          set -euo pipefail
-          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$DIR/rust-toolchain.toml")" --profile minimal --no-self-update
-          cd "$DIR/planner" && cargo --version
-      - name: The packer's check
-        run: python3 -I "$DIR/pack/test_ttpack.py"
-      # tests/cut.rs's "the answers are the same everywhere" is among them: its number was written down on an arm64
-      # Mac, and this is where an x86_64 Linux comes to the same.
-      - name: The planner's tests
-        working-directory: app/android/transit/planner
-        run: cargo test --locked
-      - name: The library without std
-        working-directory: app/android/transit/planner
-        run: cargo build --locked --lib --no-default-features
-      - name: Files a little wrong, and queries at their edges
-        working-directory: app/android/transit/planner
-        run: |
-          set -euo pipefail
-          cargo build --locked --profile fuzz
-          target/fuzz/atlas-transit fuzz tests/data/tiny.tt 1000000
-          target/fuzz/atlas-transit fuzz tests/data/utrecht-20261117.tt 20000
+    name: checks
+    uses: ./.github/workflows/transit.yml
 
   pack:
     name: fetch, pack and check
@@ -161,7 +137,12 @@ jobs:
             rm -f "$F"/*
             ARGS=(-sS --retry 5 --retry-delay 30 -A "$USER_AGENT" --compressed -D "$F/headers.txt" -o "$F/gtfs-nl.zip.part" -w '%{http_code}')
             if [ -n "$SINCE" ]; then ARGS+=(-H "If-Modified-Since: $SINCE"); fi
+            echo "asking $FEED_URL with If-Modified-Since: ${SINCE:-(not sent: the feed is wanted whole)}"
             CODE=$(curl "${ARGS[@]}" "$FEED_URL")
+            # what the server said of the file, in the log: the summary and the list hold it too, but a log is what is read first
+            echo "OVapi answered $CODE, with:"
+            { grep -i -E '^(last-modified|etag|content-length|content-type|content-encoding|date|age|expires|cache-control):' "$F/headers.txt" || true; } | tr -d '\r' | sed 's/^/  /'
+            if [ "$CODE" = 200 ] && ! grep -q -i '^last-modified:' "$F/headers.txt"; then echo "  (no Last-Modified: without one the feed is fetched whole each time)"; fi
             if [ "$CODE" = 304 ]; then
               rm -f "$F"/*
               echo "fetched=false" >> "$GITHUB_OUTPUT"
@@ -179,6 +160,7 @@ jobs:
             { grep -i '^last-modified:' "$F/headers.txt" || true; } | tail -1 | cut -d' ' -f2- | tr -d '\r' > "$F/last-modified.txt"
             if [ ! -s "$F/last-modified.txt" ]; then echo "(the server gave no Last-Modified)" > "$F/last-modified.txt"; fi
             date -u +%Y-%m-%dT%H:%M:%SZ > "$F/fetched.txt"
+            echo "fetched at $(cat "$F/fetched.txt"); the feed was last changed: $(cat "$F/last-modified.txt")"
             rm -f "$F/headers.txt"
             echo "fetched=true" >> "$GITHUB_OUTPUT"
           fi
@@ -227,6 +209,8 @@ jobs:
           "$T" info "$RUNNER_TEMP/out/nl.tt" > "$RUNNER_TEMP/info.txt"
           head -4 "$RUNNER_TEMP/info.txt"
           "$T" check "$RUNNER_TEMP/out/nl.tt"
+          # how full the days are, week by week: the operators hand in their timetables to different days
+          "$T" days "$RUNNER_TEMP/out/nl.tt" | tee "$RUNNER_TEMP/days.txt"
           if ! "$T" fixed "$RUNNER_TEMP/out/nl.tt" tests/data/journeys-nl-9696.tsv > "$RUNNER_TEMP/fixed.txt"; then
             cat "$RUNNER_TEMP/fixed.txt"
             {
@@ -241,7 +225,17 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/fixed.txt"
-          { echo; echo "- $(tail -1 "$RUNNER_TEMP/fixed.txt")"; } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "<details><summary>How the file's days are filled</summary>"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/days.txt"
+            echo '```'
+            echo "</details>"
+            echo
+            echo "- $(tail -1 "$RUNNER_TEMP/fixed.txt")"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Compress, and the list
         if: ${{ steps.fetch.outputs.new == 'true' }}
         env:

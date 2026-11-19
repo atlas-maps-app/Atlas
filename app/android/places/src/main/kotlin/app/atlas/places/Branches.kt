@@ -106,30 +106,30 @@ object BrandHours {
  * specific parameter for the location. If there is no website mapped the brands website without that parameter can
  * be displayed instead"), from the tags of the brand's other branches: a `brand:website` mapped on them, else the
  * site their own websites share, the page of one branch left out. The site of [country], the branches' country, comes
- * first ("starbucks.nl" in the Netherlands, where branches link .nl, .com and .co.uk pages; ".uk" Britain's), when it
- * is the brand's name under another of its domains, or what most of the branches that link a site link, two at least:
- * a shopping centre's pages under the country's domain are not the brand's (the reviewer, 17 November, finding 11; the
- * app maintainer, 18 November 2026, batch 4 B24: two branches on one centre's beat forty on the brand's .com). Else
- * most of the branches with a website must share one, two at least. Social pages and booking sites say nothing about
- * the brand.
+ * first where it is the brand's own [name] under the country's domain ("starbucks.nl" in the Netherlands, where
+ * branches link .nl, .com and .co.uk pages; ".uk" Britain's), however few link it: a shopping centre's pages under the
+ * country's domain are not the brand's (the reviewer, 17 November, finding 11; the app maintainer, 18 November 2026,
+ * batch 4 B24: two branches on one centre's beat forty on the brand's .com). Else the site most of the branches that
+ * link one link, two at least and no other as often, though fewer than half link it (the app maintainer, 18 November
+ * 2026, batch 5 A9: hema.nl, three times beside seven pages of one link each, was no site; and the name was read from
+ * the domains alone, so a centre's name under two of them was the brand's). Social pages and booking sites say nothing
+ * about the brand.
  */
 object BrandSite {
-    fun of(branches: List<Map<String, String>>, country: String?): String? {
+    fun of(branches: List<Map<String, String>>, country: String?, name: String?): String? {
         branches.mapNotNull { t -> t["brand:website"]?.let(::origin)?.takeIf { it.domain !in ELSEWHERE } }
             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.let { return it.key.origin }
         val sites = branches.mapNotNull { mapped(it)?.let(::origin) }.filter { it.domain !in ELSEWHERE }
         if (sites.isEmpty()) return null
         val byDomain = sites.groupBy { it.domain }
         val tld = country?.lowercase()?.let { if (it == "gb") "uk" else it }
-        val names = byDomain.keys.groupingBy { it.substringBefore('.') }.eachCount()
-        val local = tld?.let { t ->
-            byDomain.keys.filter { d ->
-                val n = byDomain.getValue(d).size
-                d.endsWith(".$t") && (names.getValue(d.substringBefore('.')) >= 2 || (n >= 2 && n * 2 > sites.size))
-            }
-                .maxByOrNull { byDomain.getValue(it).size }
-        }
-        val domain = local ?: byDomain.maxByOrNull { it.value.size }?.takeIf { it.value.size >= 2 && it.value.size * 2 >= sites.size }?.key ?: return null
+        val own = name?.let(Brands::key)?.takeIf { it.isNotEmpty() }
+        val local = if (tld == null || own == null) null else byDomain.keys
+            .filter { d -> d.endsWith(".$tld") && Brands.key(d.substringBefore('.')) == own }
+            .maxByOrNull { byDomain.getValue(it).size }
+        val counts = byDomain.mapValues { it.value.size }
+        val most = counts.values.maxOrNull() ?: return null
+        val domain = local ?: counts.entries.singleOrNull { it.value == most }?.takeIf { it.value >= 2 }?.key ?: return null
         // the form they write it in most, the domain itself or its www before a subdomain, https before http
         return byDomain.getValue(domain).groupingBy { it.origin }.eachCount().entries.sortedWith(
             compareByDescending<Map.Entry<String, Int>> { it.value }

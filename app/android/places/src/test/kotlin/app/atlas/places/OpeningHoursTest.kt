@@ -284,6 +284,45 @@ class OpeningHoursTest {
      * and after a stated end two hours, whatever the hour. An early start was open for minutes (`Mo-Sa 05:30+` till
      * six), and an end after six filled the day (`Fr,Sa 23:00-07:00+` open all Saturday).
      */
+    /**
+     * A start by sunrise or dawn is a morning's, whatever its minute (the app maintainer, 18 November 2026, batch 5 A7):
+     * open to midnight, and all day where the sun does not set or the light does not go. Before 04:00 (Stockholm,
+     * Helsinki and Oslo in June) it closed at six as a written early start does, and in polar day it was open from
+     * midnight to six. A written `03:30+` and the evening's starts stay as decided.
+     */
+    @Test
+    fun aStartBySunriseOrDawnIsOpenTillMidnight() {
+        fun sun(lat: Double, lon: Double, zone: String) = OpeningHoursContext(sun = SunClock.at(lat, lon, java.time.ZoneId.of(zone)))
+        // 21 June 2026: Stockholm's dawn 01:58, sunrise 03:30; Helsinki's 02:01 and 03:54; Oslo's 02:09 and 03:53
+        val stockholm = sun(59.3293, 18.0686, "Europe/Stockholm")
+        val helsinki = sun(60.1699, 24.9384, "Europe/Helsinki")
+        val oslo = sun(59.9139, 10.7522, "Europe/Oslo")
+        for (ctx in listOf(stockholm, helsinki, oslo)) for (h in listOf("sunrise+", "dawn+", "Mo-Su sunrise+", "(sunrise-00:30)+")) {
+            assertEquals(h, true, oh(h).isOpen(t("2026-06-21T12:00"), ctx))
+            assertEquals(h, true, oh(h).isOpen(t("2026-06-21T23:59"), ctx))
+            // to midnight, not past it
+            assertEquals(h, false, oh(h).isOpen(t("2026-06-22T00:30"), ctx))
+        }
+        val s = oh("sunrise+").status(t("2026-06-21T12:00"), stockholm)
+        assertTrue(s.isOpen && s.openEnd)
+        assertNull(s.statedChangeAt)
+        assertEquals(t("2026-06-22T00:00"), s.changesAt)
+        // where the sun does not set (Tromsø's polar day) or the light does not go (Trondheim's white night): all day
+        val tromso = sun(69.6492, 18.9553, "Europe/Oslo")
+        val trondheim = sun(63.4305, 10.3951, "Europe/Oslo")
+        assertEquals(true, oh("sunrise+").isOpen(t("2026-06-21T12:00"), tromso))
+        assertEquals(true, oh("sunrise+").isOpen(t("2026-06-21T23:59"), tromso))
+        assertEquals(true, oh("dawn+").isOpen(t("2026-06-21T12:00"), tromso))
+        assertEquals(true, oh("dawn+").isOpen(t("2026-06-21T12:00"), trondheim))
+        // as decided before: a written early start, the evening's start, polar night, a sunset that never comes
+        assertEquals(true, oh("03:30+").isOpen(t("2026-06-21T05:59"), stockholm))
+        assertEquals(false, oh("03:30+").isOpen(t("2026-06-21T06:00"), stockholm))
+        assertEquals(true, oh("sunset+").isOpen(t("2026-06-22T05:59"), stockholm))
+        assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T06:00"), stockholm))
+        assertEquals(false, oh("sunrise+").isOpen(t("2026-12-22T12:00"), tromso))
+        assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T00:30"), tromso))
+    }
+
     @Test
     fun anOpenEndLastsAsDecided() {
         // a start alone: early, by day, in the evening, at night (Monday 16 November 2026)

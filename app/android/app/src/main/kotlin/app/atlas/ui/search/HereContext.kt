@@ -10,6 +10,8 @@ import app.atlas.places.OpeningHoursContext
 import app.atlas.places.PlaceCountry
 import app.atlas.render.data.Countries
 import app.atlas.search.PlaceRecord
+import app.atlas.services.PackCountries
+import app.atlas.tiles.WindowTiles
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDateTime
@@ -58,11 +60,21 @@ object HereContext {
     private const val LOOK_M = 2_000.0
     private const val SAMPLE = 400
 
+    /**
+     * How many points' answers are kept ([said]): a list of saved places across a country is asked once, not at each
+     * opening (the app maintainer, 18 November 2026, batch 5 B12: past 256 they were all let go, so a list of 500
+     * cafés across the Netherlands asked every one of its kilometres again each time it opened).
+     */
+    private const val KEPT = 4_096
+
     /** Within this far of the phone a place keeps the phone's clock (the same zone, in practice). */
     internal const val NEAR_PHONE_M = 300_000.0
 
     /** What the regions said, per point ([key]): the country and the state or nation most of the places there name. */
     private val said = ConcurrentHashMap<String, HereRegion>()
+
+    /** The points being asked now, each with the turn those asking it take: the rows of one kilometre ask once. */
+    private val asking = ConcurrentHashMap<String, Any>()
 
     /** Where the phone is, as the screens that need "here" take it: its fix, else where the map started, else the Westerkerk. */
     fun phoneAt(services: Services): LatLon =
@@ -72,19 +84,35 @@ object HereContext {
     fun country(services: Services, at: LatLon): String? = region(services, at).country
 
     /**
+     * The country of the downloaded region whose store [r] is a place of, by its pack ([PackCountries.ofStore], each
+     * region's file read once): a region answers for every point its store covers, and a place of its own is one, so a
+     * typed search's hits across the country ask no 2 km query, region file or covers query for each kilometre cell (the
+     * app maintainer, 18 November 2026, batch 5 A6). Null where [r] is no region's place, where two regions hold it (on
+     * their border: [country] weighs them there), or where its region names no country; the point's country is asked
+     * then. Reads the stores: off the main thread.
+     */
+    fun regionOf(services: Services, r: PlaceRecord): String? {
+        val id = r.id ?: return null
+        val holding = services.placeStores.stores.filter { s -> runCatching { s.get(id) }.getOrNull() != null }
+        return holding.singleOrNull()?.let(services.packCountries::ofStore)
+    }
+
+    /**
      * The country at [at] ([country]) and its state or nation there: the one most of the places around name
      * ([PlaceCountry.subdivision]: their `ISO3166-2`, a German `addr:state`, a French or British postcode), when it is
      * of that country; none when they name none. Asks the regions: off the main thread.
      */
-    fun region(services: Services, at: LatLon): HereRegion = settled(regionsSay(services, at), at, services.packCountries::of)
+    fun region(services: Services, at: LatLon): HereRegion = settled(services, regionsSay(services, at), at, services.packCountries::of)
 
     /**
      * [region] as far as it is known without asking the regions, for a frame that cannot wait: what they said at [at]
-     * before, else the country of the tiles there as the list read so far names it, else the map's own country there.
+     * before (by the count of places they held when last asked, so no store is touched: the first touch opens every
+     * region's file; the app maintainer, 18 November 2026, batch 5 A5), else the country of the tiles there as the list
+     * read so far names it, else the map's own country there.
      */
     fun regionNow(services: Services, at: LatLon): HereRegion {
-        val store = services.placeStores
-        return settled(if (store.size == 0) null else said[key(store.size, at)], at, services.packCountries::now)
+        val counted = services.regionsCounted
+        return settled(services, if (counted <= 0) null else said[key(counted, at)], at, services.packCountries::now)
     }
 
     /** [country] as far as it is known without asking the regions ([regionNow]). */
@@ -128,42 +156,74 @@ object HereContext {
      * What the regions said ([said]) made whole: their country, else the tiles' there ([tilesCountry], each pack's country
      * by [pack]), else the map's own; their state or nation if of it.
      */
-    private fun settled(said: HereRegion?, at: LatLon, pack: (String) -> String?): HereRegion {
-        val country = said?.country ?: tilesCountry(at, pack) ?: Countries.of(at)
+    private fun settled(services: Services, said: HereRegion?, at: LatLon, pack: (String) -> String?): HereRegion {
+        val country = said?.country ?: tilesCountry(services, at, pack) ?: Countries.of(at)
         return HereRegion(country, said?.subdivision?.takeIf { country != null && it.startsWith("$country-") })
     }
 
     /**
-     * The country whose published tiles serve the windows at [at], as [pack] names a pack's: the first of the map's
-     * countries whose box holds the point and whose tiles' index lists it, as the map takes it (MapEngine.levelsAt); never
-     * by its box alone, which reaches past its border (the Netherlands' holds Antwerp). Null where no tiles' index on the
-     * phone lists it. Neither blocks nor reads a store: the map asks the same at each camera.
+     * The country whose published tiles serve the windows at [at], as [pack] names a pack's: of the map's countries whose
+     * box holds the point, the one whose tiles' index lists it the most finely ([PackCountries.Tiles]: its window before
+     * a frame cell's level tile, which reaches past a border: Maastricht's L12 holds Lanaken), the boxes saying where two
+     * list it as finely (the app maintainer, 18 November 2026, batch 5 A3), and where a country whose box holds the point
+     * has no index in memory, which may list it more finely than another's level tile does; never by a box alone (the
+     * Netherlands' holds Antwerp). Null where no index in memory lists it. Reads memory alone: no index is read or
+     * fetched for the asking (the camera has them read), no store is asked, and it never blocks.
      */
-    private fun tilesCountry(at: LatLon, pack: (String) -> String?): String? {
-        val holds = MapEngine.countryHolds ?: return null
-        return MapEngine.countries.firstNotNullOfOrNull { c ->
-            if (c.holds(at.lat, at.lon) && holds.at(c, at.lat, at.lon) == true) pack(c.id) else null
+    private fun tilesCountry(services: Services, at: LatLon, pack: (String) -> String?): String? {
+        val tiles = services.packCountries.tiles ?: return null
+        var finest = 0
+        var unread = false
+        val holding = ArrayList<String>(2)
+        for (c in MapEngine.countries) {
+            if (!c.holds(at.lat, at.lon)) continue
+            val level = tiles.level(c.id, at.lat, at.lon)
+            if (level == null) {
+                unread = true
+                continue
+            }
+            if (level <= 0 || level < finest) continue
+            if (level > finest) {
+                finest = level
+                holding.clear()
+            }
+            holding += c.id
         }
+        if (finest == 0 || (unread && finest < WindowTiles.LEVEL)) return null
+        return holding.map(pack).distinct().singleOrNull()
     }
 
     /**
      * What the regions on the phone say at [at]: the `addr:country` most of the places around name, else the country of
      * the region whose store holds the point ([app.atlas.services.PackCountries.ofRegionAt], its pack's), and the state or
      * nation most name, each read in its place's country; null with no region downloaded. Kept per kilometre and per
-     * count of regions (a download changes it).
+     * count of regions (a download changes it), [KEPT] at most. A point is asked once at a time: the rows of a list in
+     * one kilometre, read together, take the first one's answer (the app maintainer, 18 November 2026, batch 5 B12: 500
+     * saved places in 14 kilometres asked 136 times, the store's lock 64 deep).
      */
     private fun regionsSay(services: Services, at: LatLon): HereRegion? {
         val store = services.placeStores
-        if (store.size == 0) return null
-        val key = key(store.size, at)
+        val size = store.size
+        services.regionsCounted = size
+        if (size == 0) return null
+        val key = key(size, at)
         said[key]?.let { return it }
-        val sample = runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull().orEmpty()
-        val country = commonest(sample) { PlaceCountry.tagged(it.tags) } ?: services.packCountries.ofRegionAt(store.stores, at)
-        val around = country ?: tilesCountry(at, services.packCountries::of) ?: Countries.of(at)
-        val found = HereRegion(country, commonest(sample) { PlaceCountry.subdivision(it.tags, PlaceCountry.of(it.tags, around)) })
-        if (said.size > 256) said.clear()
-        said[key] = found
-        return found
+        val turn = asking.computeIfAbsent(key) { Any() }
+        try {
+            return synchronized(turn) {
+                said[key] ?: run {
+                    val sample = runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull().orEmpty()
+                    val country = commonest(sample) { PlaceCountry.tagged(it.tags) } ?: services.packCountries.ofRegionAt(store.stores, at)
+                    val around = country ?: tilesCountry(services, at, services.packCountries::of) ?: Countries.of(at)
+                    val found = HereRegion(country, commonest(sample) { PlaceCountry.subdivision(it.tags, PlaceCountry.of(it.tags, around)) })
+                    if (said.size >= KEPT) said.clear()
+                    said[key] = found
+                    found
+                }
+            }
+        } finally {
+            asking.remove(key, turn)
+        }
     }
 
     private inline fun commonest(records: List<PlaceRecord>, of: (PlaceRecord) -> String?): String? {
@@ -178,25 +238,39 @@ object HereContext {
 /** Which clock a far-away place keeps, worked out without a network: its country's, else the sun's hour. */
 object PlaceZone {
     /**
-     * The clock at [p] in [country]: the country's own ([Countries.timezone], by longitude where it spans several), the
-     * Canaries' and the Azores' their own (the app maintainer, 18 November 2026, batch 4 B15: the zone nearest the sun's
-     * hour put Madrid on the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's); for a country it does not
-     * name, the country's zone nearest the sun's hour there; the sun's whole hour itself where the country is unknown.
+     * The clock at [p] in [country]: the islands far off their country's own their own ([islands]); in a country of
+     * several clocks ([SEVERAL]) the country's zone nearest the sun's hour there, as before batch 4 (the app maintainer,
+     * 18 November 2026, batch 5 A8: the engine's table cuts them by longitude, or gives them one zone, and put Halifax on
+     * Toronto's clock, Manaus on São Paulo's, Tijuana on Mexico City's, Nashville on New York's and Kaliningrad on
+     * Moscow's); in every other its own ([Countries.timezone]; batch 4 B15: the zone nearest the sun's hour put Madrid on
+     * the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's), else the one nearest the sun's hour there; the
+     * sun's whole hour itself where the country is unknown.
      */
     fun guess(country: String?, p: LatLon, at: Instant = Instant.now()): ZoneId {
         islands(country, p)?.let { return ZoneId.of(it) }
-        Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull()?.let { return it } }
+        if (country !in SEVERAL) Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull()?.let { return it } }
         val sun = p.lon / 15.0
         val best = zonesOf(country).minByOrNull { id -> abs(ZoneId.of(id).rules.getStandardOffset(at).totalSeconds / 3600.0 - sun) }
         return best?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.ofHours(sun.roundToInt().coerceIn(-12, 14))
     }
 
-    /** The islands far off their country's own clock: the Canaries west of 12° W, the Azores west of 20° W. */
+    /**
+     * The islands far off their country's own clock: the Canaries west of 12° W, the Azores west of 20° W, Easter Island
+     * west of 100° W (Chile's, two hours behind Santiago: batch 5 A8, right on 38ddafa1).
+     */
     private fun islands(country: String?, p: LatLon): String? = when {
         country == "ES" && p.lon < -12.0 -> "Atlantic/Canary"
         country == "PT" && p.lon < -20.0 -> "Atlantic/Azores"
+        country == "CL" && p.lon < -100.0 -> "Pacific/Easter"
         else -> null
     }
+
+    /**
+     * The countries of several clocks, read by the sun's hour (batch 5 A8): those the engine's table cuts by longitude
+     * (the United States, Canada, Australia, Russia, Indonesia), those it gives one zone (Mexico, Brazil), and those it
+     * names none for (Kazakhstan, Mongolia, both Congos), so they stay so if it ever does.
+     */
+    private val SEVERAL = setOf("US", "CA", "MX", "BR", "RU", "AU", "ID", "KZ", "MN", "CD", "CG")
 
     /** The zone ids of [country] (ISO 3166 alpha-2), from the system's ICU data; none when unknown. */
     private fun zonesOf(country: String?): List<String> {
