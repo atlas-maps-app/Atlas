@@ -35,28 +35,19 @@ fn ask(planner: &mut Planner, q: &Query) -> Vec<Journey> {
     a.journeys
 }
 
-/// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way): the
-/// earliest arrival, the latest departure, or a window's best pairs of departure and arrival, whatever they cost.
-/// And with wishes that cost, for one moment, the answer whole: every option by its time, its cost and its rides,
-/// each leaving as late as it can, and the walk all the way where there is one (`moment_differs`).
+/// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way). For one
+/// moment, every option by its time, its cost and its rides, each leaving as late as it can, with wishes or
+/// without, and the walk all the way where there is one (`moment_differs`). For a window, its best pairs of
+/// departure and arrival, whatever they cost (`window_differs`: those pairs know no cap on rides).
 fn held_to_the_scan(planner: &Planner, q: &Query, journeys: &[Journey]) {
     if q.day < 0 {
         return;
     }
     let scan = Reference::new(planner, q.day, q.time as i32 - 86_400, q.time as i32 + 2 * 86_400);
-    if q.window == 0 && q.wishes.iter().any(|w| !matches!(w.how, How::Never)) {
+    if q.window == 0 {
         assert_eq!(scan.moment_differs(planner, q, journeys), None, "{q:?}");
-        return;
-    }
-    // (the earliest arrival, the latest departure and a window's pairs know no cap on rides; the first two know
-    // no walk all the way either)
-    if q.max_rides < 8 || (q.window == 0 && journeys.iter().any(|j| j.rides == 0)) {
-        return;
-    }
-    match (q.window, q.arrive_by) {
-        (0, false) => assert_eq!(journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
-        (0, true) => assert_eq!(journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
-        _ => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
+    } else if q.max_rides >= 8 {
+        assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}");
     }
 }
 

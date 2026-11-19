@@ -51,6 +51,7 @@ fn the_planner_and_the_scan_agree() {
     let mut p = Planner::new(tt);
     let (mut compared, mut latest, mut arriving, mut stepped, mut most_later) = (0, 0, 0, 0, 0);
     let (mut as_late, mut later_with_more) = (0, 0);
+    let (mut moments, mut on_foot, mut fewer) = (0, 0, 0);
     for (day, time, seed) in [(0, 8 * 3600, 1u64), (0, 17 * 3600 + 1800, 2), (1, 23 * 3600, 3), (0, 600, 4)] {
         let scan = Reference::new(&p, day, time as i32 - 86_400, time as i32 + 2 * 86_400);
         for (i, (a, z)) in pairs(&tt, 40, seed).into_iter().enumerate() {
@@ -67,8 +68,14 @@ fn the_planner_and_the_scan_agree() {
             // as far as the query's own horizon
             q.limits.patient = i % 2 == 0;
             let one = ask(&mut p, &q);
+            // The answer whole, by the scan that counts rides: every option by its arrival and its rides (the
+            // ones with fewer rides than the fastest too), each leaving as late as it can, and the walk all the
+            // way where the two points are near enough.
+            assert_eq!(scan.moment_differs(&p, &q, &one), None, "{q:?}");
+            (moments, fewer) = (moments + 1, fewer + one.iter().filter(|j| j.rides > 0).count().saturating_sub(1));
             if one.iter().any(|j| j.rides == 0) {
-                continue; // on foot all the way: the scan knows rides only
+                on_foot += 1;
+                continue; // (what follows asks the scans that know rides only)
             }
             let later = p.plan(&q).later;
             (stepped, most_later) = (stepped + if later > 12 { one.len() } else { 0 }, most_later.max(later));
@@ -87,12 +94,17 @@ fn the_planner_and_the_scan_agree() {
                 (back.arrive_by, back.time) = (true, arrive as u32);
                 let got = ask(&mut p, &back);
                 assert_eq!(got.iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "{back:?}");
+                assert_eq!(scan.moment_differs(&p, &back, &got), None, "{back:?}");
+                moments += 1;
             }
-            // each option leaves as late as any way to its arrival with no more rides: asked back from there
+            // each option leaves as late as any way to its arrival with no more rides: asked back from there, with
+            // no more rides than it has (the scan that counts rides knows the cap)
             for j in one.iter() {
                 let mut back = q.clone();
                 (back.arrive_by, back.time, back.max_rides) = (true, j.arrive as u32, j.rides);
-                assert_eq!(ask(&mut p, &back).iter().map(|k| k.depart).max(), Some(j.depart), "{q:?}\n{j:?}");
+                let capped = ask(&mut p, &back);
+                assert_eq!(capped.iter().map(|k| k.depart).max(), Some(j.depart), "{q:?}\n{j:?}");
+                assert_eq!(scan.moment_differs(&p, &back, &capped), None, "{back:?}");
                 // The scan's latest departure for that arrival knows no cap on rides, and a way with more rides
                 // may leave later than the option. Asked back with rides enough, the planner's latest departure
                 // is the scan's. And where that is later than the option's, the scan that counts rides says of
@@ -133,14 +145,17 @@ fn the_planner_and_the_scan_agree() {
                 if !got.iter().any(|j| j.rides == 0) {
                     assert_eq!(got.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&p, &never, time as i32), "{never:?}");
                 }
+                assert_eq!(scan.moment_differs(&p, &never, &got), None, "{never:?}");
+                moments += 1;
             }
             compared += 1;
         }
     }
     println!("{compared} pairs compared, {latest} options asked back ({stepped} of them from an answer that stepped through its later moments, the most {most_later}), {arriving} options of windows asked to arrive in");
     println!("of the options asked back, {as_late} leave when the scan's latest way to their arrival does, and for {later_with_more} the scan's leaves later, with more rides by the scan's own count");
+    println!("{moments} answers for one moment held whole to the scan that counts rides: {on_foot} with a walk all the way, {fewer} options beside an answer's first");
     assert_eq!(as_late + later_with_more, latest);
-    assert!(later_with_more > 10, "{later_with_more}");
+    assert!(moments > 500 && on_foot >= 4 && fewer > 30 && later_with_more > 10, "{moments} {on_foot} {fewer} {later_with_more}");
     // (the options asked back are the proof that stepping through the later moments finds the latest: enough of
     // them come from an answer that stepped)
     assert!(compared > 100 && latest > 100 && arriving > 100 && stepped > 40, "{compared} {latest} {arriving} {stepped}");
@@ -195,10 +210,15 @@ fn the_feeds_rules_are_held_to_the_best_answer() {
         }
         let earliest = scan.earliest_arrival(&p, &q, time as i32);
         assert_eq!(one.iter().map(|j| j.arrive).min(), earliest, "rule {i} {r:?}: {q:?}");
+        // and every option by its rides, each leaving as late as it can: the scan that counts rides holds to the
+        // rules arrival by arrival too
+        assert_eq!(scan.moment_differs(&p, &q, &one), None, "rule {i} {r:?}: {q:?}");
         if let Some(arrive) = earliest {
             let mut back = q.clone();
             (back.arrive_by, back.time) = (true, arrive as u32);
-            assert_eq!(ask(&mut p, &back).iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "rule {i} {r:?}: {back:?}");
+            let got = ask(&mut p, &back);
+            assert_eq!(got.iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "rule {i} {r:?}: {back:?}");
+            assert_eq!(scan.moment_differs(&p, &back, &got), None, "rule {i} {r:?}: {back:?}");
         }
         let mut window = q.clone();
         window.window = 1800;

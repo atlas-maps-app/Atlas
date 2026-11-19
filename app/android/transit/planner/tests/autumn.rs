@@ -29,8 +29,8 @@ fn query(tt: &Timetable, from: &str, to: &str, day: i32, time: u32) -> Query {
     Query::new(Place::Stop(stop(from)), Place::Stop(stop(to)), day, time)
 }
 
-/// The planner's answer, each journey one that can be made, and the scan's word on it: the earliest arrival, the
-/// latest departure, or a window's best pairs.
+/// The planner's answer, each journey one that can be made, and the scan's word on it: for one moment every option
+/// by its time and its rides, each leaving as late as it can; for a window its best pairs.
 fn ask(planner: &mut Planner, q: &Query) -> Vec<(u32, u32, String)> {
     let a = planner.plan(q);
     assert!(!a.cut_short);
@@ -39,9 +39,8 @@ fn ask(planner: &mut Planner, q: &Query) -> Vec<(u32, u32, String)> {
         assert_eq!(impossible(planner, q, j), None, "{j:?}");
     }
     let scan = Reference::new(planner, q.day, q.time as i32 - 86_400, q.time as i32 + 2 * 86_400);
-    match (q.window, q.arrive_by) {
-        (0, false) => assert_eq!(a.journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
-        (0, true) => assert_eq!(a.journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
+    match q.window {
+        0 => assert_eq!(scan.moment_differs(planner, q, &a.journeys), None, "{q:?}"),
         _ => assert_eq!(scan.window_differs(planner, q, &a.journeys), None, "{q:?}"),
     }
     let said = |j: &Journey| {
