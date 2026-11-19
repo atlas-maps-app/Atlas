@@ -42,6 +42,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberLocaleOf
 import app.atlas.ui.kit.shortDistance
+import app.atlas.ui.kit.signOf
 import java.time.LocalDateTime
 import java.util.Locale
 
@@ -201,7 +202,7 @@ internal fun routeTo(item: SearchItem.Route): Dest.Route {
 internal fun viaOf(stops: List<Pair<LatLon, String>>): String? =
     stops.joinToString("|") { (at, name) -> String.format(Locale.ROOT, "%.6f,%.6f,%s", at.lat, at.lon, name.replace('|', ' ')) }.ifEmpty { null }
 
-/** A place among typed results, a row of their panel: its kind's tile with the open light, its name, open or not, its kind and how far. */
+/** A place among typed results, a row of their panel: its chain's sign ([signOf], its own country's chain) or else its kind's tile, with the open light, its name, open or not, its kind and how far. */
 @Composable
 private fun TypedPlace(
     place: Place,
@@ -232,7 +233,7 @@ private fun TypedPlace(
     IndexLine(
         line.summary.name, statusOf(words, tone, null, listOfNotNull(stepFree, subtitle ?: line.summary.kind, more, metres?.let(::shortDistance)?.takeIf { minutes != null && minutes < 100 })), onClick, Modifier.testTag(PLACE_TAG),
         reach = { Reach(minutes, metres) },
-        lead = { KindTile(line.summary.symbol, line.summary.colour, tone) },
+        lead = { remember(place, country) { signOf(place, country) }?.let { SignTile(it, tone) } ?: KindTile(line.summary.symbol, line.summary.colour, tone) },
         trailing = if (online) ({ Symbol("ui-cloud", tint = c.faint, size = 14.dp) }) else null,
         seat = seat,
     )
