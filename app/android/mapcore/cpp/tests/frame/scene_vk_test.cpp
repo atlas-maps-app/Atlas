@@ -4711,11 +4711,11 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
     CHECK(kept.stats.parts_made < whole.stats.parts_made);
     CHECK(whole.stats.parts_kept == 0);
     CHECK(whole.stats.parts_remade == 0);
-    MESSAGE(std::format("{} steps, {} drawn tiles' bits equal over them; kept: {} scenes, {} parts kept, {} made ({} of "
-                        "them made again for the decks near their quays), {:.0f} ms; whole: {} scenes, {} parts made, "
-                        "{:.0f} ms",
-                        steps, tiles, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made,
-                        kept.stats.parts_remade, kept.stats.scenes_ms, whole.stats.scenes, whole.stats.parts_made,
-                        whole.stats.scenes_ms));
+    MESSAGE(std::format(
+        "{} steps, {} drawn tiles' bits equal over them; kept: {} scenes, {} parts kept, {} made ({} of "
+        "them made again for the decks near their quays), {:.0f} ms; whole: {} scenes, {} parts made, "
+        "{:.0f} ms",
+        steps, tiles, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made, kept.stats.parts_remade,
+        kept.stats.scenes_ms, whole.stats.scenes, whole.stats.parts_made, whole.stats.scenes_ms));
     (void)session->take_messages();
 }
