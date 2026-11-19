@@ -281,10 +281,12 @@ TEST_CASE("the canal names drawn: the glyphs' pixels are the CPU's coverage, on 
 TEST_CASE("the names from the pack whole: at the Main board the pass's names are the renders' rule over the pack's") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
     const std::filesystem::path grachten = std::filesystem::path(dir) / "grachten.atlas";
-    if (dir.empty() || !std::filesystem::exists(grachten)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR names no canal ring's pack: the Main board's names are not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(grachten), "ATLAS_TILES_DIR has no " << grachten.string());
     auto session = test::open_session();
     if (!session) return;
     const gpu::Device& device = *session->device;

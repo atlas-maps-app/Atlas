@@ -140,7 +140,8 @@ jobs:
   # the canal ring's element pack is fetched from packs-renders and checked against its SHA-256), and cached by their
   # inputs, so a push that leaves the port, the render tiles' compiler, the engine's style file and the packer alone
   # takes them from the cache in seconds. The APK carries none of them for a map (ENGINE.md step 3, one pack per
-  # country). A failure here leaves the host jobs to run without them, as before.
+  # country). A failure here fails the host jobs, once their tests have run: a pack test that skips for want of its
+  # packs would pass without a word.
   tiles:
     needs: core-changes
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
@@ -293,6 +294,11 @@ jobs:
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | sed -n 1p
 
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with
+      # the Android ABIs' targets where the NDK builds
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ${{ (matrix.task == 'android' || matrix.task == 'tidy-android') && 'android' || '' }}
       - name: CMake ${{ env.CMAKE_VERSION }} and Ninja ${{ env.NINJA_VERSION }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
@@ -448,7 +454,8 @@ jobs:
           cat "$RUNNER_TEMP/vulkan.env"
 
       # ---- host-debug, host-tsan, host-release: build, unit tests (Vulkan on lavapipe), the feature probe, benchmarks.
-      # The pack tests' render packs (the tiles job's): ATLAS_TILES_DIR beside the Vulkan variables.
+      # The pack tests' render packs (the tiles job's): ATLAS_TILES_DIR beside the Vulkan variables. Without them the
+      # pack tests skip and count as passed, so the job still runs its tests and then fails (the step after Test).
       - id: tiles
         if: startsWith(matrix.task, 'host-') && needs.tiles.outputs.key != ''
         uses: actions/cache/restore@v6
@@ -456,13 +463,30 @@ jobs:
           path: ${{ runner.temp }}/tiles
           key: ${{ needs.tiles.outputs.key }}
       - name: The pack tests' render packs
+        id: packs
         if: startsWith(matrix.task, 'host-')
         run: |
           if [ -e "$RUNNER_TEMP/tiles/amsterdam.atlas" ] && [ -e "$RUNNER_TEMP/tiles/grachten.atlas" ]; then
             echo "ATLAS_TILES_DIR=$RUNNER_TEMP/tiles" >> "$RUNNER_TEMP/vulkan.env"
             ls -la "$RUNNER_TEMP/tiles"
           else
-            echo "::warning::no render packs from the tiles job: the pack tests skip"
+            echo "::error::no render packs from the tiles job: the pack tests skip, and this job fails once its tests have run"
+            echo "missing=render packs from the tiles job" >> "$GITHUB_OUTPUT"
+          fi
+      # The world's cases (frame/world_vk_test, tiles/world_test, load/pack_style_test): ATLAS_WORLD_DIR, a cut of the
+      # world the release world-latest names, as a phone takes it (tools/world/cut.py: world.idx and the globe whole,
+      # and the packs under the cases' views read by range, each checked against its SHA-256, about 1 GB of the 12).
+      # Without it, as without the render packs, the job runs its tests and then fails.
+      - name: The world's packs, from world-latest
+        id: world
+        if: startsWith(matrix.task, 'host-')
+        run: |
+          if python3 -I "$CP/tools/world/cut.py" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/world-latest" "$RUNNER_TEMP/world"; then
+            echo "ATLAS_WORLD_DIR=$RUNNER_TEMP/world" >> "$RUNNER_TEMP/vulkan.env"
+            ls -la "$RUNNER_TEMP/world"
+          else
+            echo "::error::no world from world-latest: the world's cases skip, and this job fails once its tests have run"
+            echo "missing=the world from world-latest" >> "$GITHUB_OUTPUT"
           fi
       # Each test entry runs under GNU time, so its peak memory is in its output (core-tests sums them up): what tells
       # how many entries a runner can run at once, TSan's above all.
@@ -550,6 +574,16 @@ jobs:
               done
             fi
           fi
+      # The data the tests read, when a step above found it missing: the tests ran without it, and the job fails.
+      - name: The tests' data
+        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && (steps.packs.outputs.missing != '' || steps.world.outputs.missing != '') }}
+        env:
+          PACKS: ${{ steps.packs.outputs.missing }}
+          WORLD: ${{ steps.world.outputs.missing }}
+        run: |
+          missing=$(printf '%s\n' "$PACKS" "$WORLD" | sed '/^$/d' | paste -sd ';' - | sed 's/;/; /g')
+          echo "::error::the tests ran without their data ($missing): the cases that need it skipped"
+          exit 1
       # The test entries' JUnit files and the shard's plan, for core-tests.
       - name: Keep the shard's test results
         if: startsWith(matrix.task, 'host-') && always()
@@ -997,6 +1031,15 @@ jobs:
           python3 -I "$CP/tools/ctest/shards.py" costs --junit ctest --costs "$CP/tools/ctest/costs.tsv" \
             --into measured/costs.tsv --summary measured/summary.md
           { echo "### The host jobs' shards"; echo; cat measured/summary.md; } >> "$GITHUB_STEP_SUMMARY"
+      # The cases that skipped for a data folder CI does not set (tools/ctest/skips.py): they count as passed, so the
+      # run's summary names each, once for all the host jobs, as each job's own summary names the cases that skipped
+      # their Vulkan work.
+      - name: The cases that skipped for data
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p measured
+          python3 -I "$CP/tools/ctest/skips.py" --junit ctest --summary measured/skips.md
+          { echo "### The cases that skipped for data CI does not set"; echo; cat measured/skips.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

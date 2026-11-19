@@ -3,9 +3,11 @@
 // pavements and lines, a stand's lead-in line and a national park's dashed edge, each in the over group's order; and
 // the line stage's dashes along the screen (shaders/ground/lines.slangh's in_dash) as Skia dashes a contour.
 #include "base/arena.hpp"
+#include "base/pymath/PyMath.hpp"
 #include "geometry/Ground.hpp"
 #include "load/Window.hpp"
 #include "tests/base/require.hpp"
+#include "tests/ground/big_roads.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/Grid.hpp"
@@ -14,7 +16,9 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <span>
 #include <string>
@@ -171,4 +175,95 @@ TEST_CASE("ground: a dashed line's samples lie in its dashes, each segment from 
     CHECK(sh::in_dash(g, from_start, {40.5F, 0.8F})); // 40 = 4 into its period
     // a solid run is never cut
     CHECK(sh::in_dash(g, {0.0F, 0.0F, 0.0F, 0.0F}, {8.0F, 0.0F}));
+}
+
+namespace {
+
+/// A window about the Westerkerk with a big road for each of the cases, each a motorway with one bend (300 m east,
+/// then 200 m north), its pack written to the tests' scratch folder.
+[[nodiscard]] std::string motorway_window(const std::vector<atlas::test::BigRoadCase>& cases) {
+    const tl::TileKey k = tl::tile_of(14, 523'746'000, 48'840'000);
+    std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [)";
+    for (std::size_t i = 0; i < cases.size(); ++i) {
+        const double lat = 52.3640 + (0.0008 * static_cast<double>(i)); // the bend, the middle vertex, in the tile
+        data += std::format(R"({}{{"type": "way", "id": {}, "tags": {{"highway": "motorway"{}}}, "geometry": [)"
+                            R"({{"lat": {:.4f}, "lon": 4.8800}}, {{"lat": {:.4f}, "lon": 4.8844}}, )"
+                            R"({{"lat": {:.4f}, "lon": 4.8844}}]}})",
+                            i == 0 ? "" : ",", 40 + i, atlas::test::overpass_tags(cases[i]), lat, lat, lat + 0.0018);
+    }
+    data += "]}";
+    const auto built =
+        atlas::load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, atlas::load::place_of(k));
+    ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "motorway-window";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / "window.atlas";
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+              static_cast<std::streamsize>(built->pack.size()));
+    return file.string();
+}
+
+/// What a big road drew: its lane lines' dashes and its edge lines' distance from its centre line at its first point.
+struct BigRoad {
+    std::size_t dashes = 0;
+    double edge = 0.0;
+};
+
+} // namespace
+
+TEST_CASE("ground: a big road's lanes and width that no road has, or that cannot be read, draw as unmapped") {
+    const std::vector<atlas::test::BigRoadCase> cases = atlas::test::big_road_cases();
+    const std::string path = motorway_window(cases);
+    ATLAS_REQUIRE(!path.empty());
+    auto pack = atlas::test::open_pack(path);
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    const tl::RenderHead& head = *pack->head();
+    ATLAS_REQUIRE(pack->style() != nullptr);
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    atlas::Arena arena(4U << 20U, atlas::Growth::grows, "motorway test");
+    const auto chunks = pack->chunks().level(head.levels.front());
+    ATLAS_REQUIRE(!chunks.empty());
+    auto tile = pack->decode(chunks.front(), zstd, decoder, arena, raw, scratch);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const geo::P2 origin{.x = head.frame.x(tile->header.west), .z = head.frame.z(tile->header.south)};
+    const geo::GroundTile g = geo::build_ground(*tile, head, *pack->style(), 0, origin);
+    std::vector<BigRoad> roads(cases.size());
+    std::vector<bool> seen(cases.size(), false);
+    for (const geo::Stroke& s : g.strokes) {
+        if (s.kind != geo::StrokeKind::lanes && s.kind != geo::StrokeKind::edges) continue;
+        const std::uint64_t id = (s.key.element >> 18U) & ((std::uint64_t{1} << 44U) - 1);
+        REQUIRE((id >= 40 && id < 40 + cases.size()));
+        BigRoad& r = roads.at(id - 40);
+        seen.at(id - 40) = true;
+        if (s.kind == geo::StrokeKind::edges) {
+            const geo::P2 c = g.points[s.line];
+            const geo::P2 e = g.points[g.polylines[s.first].first];
+            r.edge = atlas::pymath::hypot(e.x - c.x, e.z - c.z);
+            continue;
+        }
+        r.dashes = s.count;
+    }
+    // each road as wide as drawn, its edge lines 0.5 m in; its lane lines as many as its lanes less one: two lanes'
+    // one line lies where the untagged road's does (-w / 2 + 2 + (w - 3) / 2 = 0.5), and a value past a road's or
+    // that cannot be read draws as untagged, its work as bounded (before: the abort, 99,999 lane lines 350 km wide, a
+    // negative road, a 500,000 km one that dashed without end, a negative width, an infinity's abort)
+    const BigRoad& untagged = roads[0];
+    CHECK(untagged.dashes > 0);
+    for (std::size_t i = 0; i < cases.size(); ++i) {
+        const atlas::test::BigRoadCase& c = cases[i];
+        INFO("way " << 40 + i << ": " << c.what);
+        CHECK(seen[i]);
+        CHECK(roads[i].edge == doctest::Approx((c.drawn_width / 2) - 0.5));
+        if (c.drawn_lanes <= 1) {
+            CHECK(roads[i].dashes == 0);
+        } else if (c.drawn_lanes == 2) {
+            CHECK(roads[i].dashes == untagged.dashes);
+        } else {
+            CHECK(roads[i].dashes > static_cast<std::size_t>(c.drawn_lanes - 2) * untagged.dashes);
+        }
+    }
 }

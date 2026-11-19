@@ -209,7 +209,11 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
                           .g = th.shadow.g,
                           .b = th.shadow.b,
                           .a = static_cast<std::uint8_t>(std::lround(printed(th.shadow_opacity * 0.9, 2) * 255.0))};
+    // an instance word holds 18 bits of its run (and 14 of its segment): the runs past them are left out, never
+    // wrapped onto another run's words
+    constexpr std::uint32_t max_runs = 1U << 18U;
     for (const Drawn& d : drawn) {
+        if (run >= max_runs) break;
         if (!d.marks && !woods_split && d.slot > woods_slot) {
             woods_split = static_cast<std::uint32_t>(segments[0].size());
         }
@@ -250,7 +254,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
                          (static_cast<std::uint32_t>(std::lround(px_cut(s.kind) * 100.0)) << shaders::LINE_DASH_SHIFT)
                    : 0U;
         const auto width = static_cast<float>(metres ? s.width.metres : frame_.stroke_width[tile.strokes + d.stroke]);
-        for (std::uint32_t p = s.first; p < s.first + s.count; ++p) {
+        for (std::uint32_t p = s.first; p < s.first + s.count && run < max_runs; ++p) {
             const geo::Polyline& pl = g.polylines[p];
             // its segments: a polyline's between its points, a pair polyline's lines
             const std::uint32_t n = pl.pairs ? pl.count / 2 : (pl.count < 2 ? 0 : pl.count - 1);
@@ -293,7 +297,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
     // lines lie apart, a course from each other: they blend as one layer would)
     std::vector<std::uint32_t> course_segments;
     for (const CoursePath& c : courses) {
-        if (run >= (1U << 18U)) break; // an instance word holds 18 bits of its run
+        if (run >= max_runs) break;
         const QuayFace& e = frame_.quays[c.face];
         const geo::Rgba joints{.r = static_cast<std::uint8_t>((e.colour >> 16U) & 0xFFU),
                                .g = static_cast<std::uint8_t>((e.colour >> 8U) & 0xFFU),
@@ -310,6 +314,7 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         for (std::uint32_t k = 0; k < c.lines; ++k) course_segments.push_back((run << 14U) | k);
         ++run;
     }
+    words_->run_count = run;
     words_->woods_split = woods_split.value_or(static_cast<std::uint32_t>(segments[0].size()));
     for (std::size_t phase = 0; phase < 2; ++phase) {
         instances[phase] = static_cast<std::uint32_t>(words.size());
@@ -331,6 +336,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
         }
     }
 }
+
+std::uint32_t Ground::line_runs() const noexcept { return words_ != nullptr ? words_->run_count : 0; }
 
 void Ground::record_lines(const frame::Recording& r, std::uint32_t phase) {
     const std::size_t k = phase == phase_over ? 0 : 1;

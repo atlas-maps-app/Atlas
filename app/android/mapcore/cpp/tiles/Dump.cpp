@@ -2,10 +2,12 @@
 
 #include "tiles/Bytes.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <charconv>
 #include <string_view>
+#include <utility>
 
 namespace atlas::tiles {
 namespace {
@@ -330,6 +332,51 @@ Sha256Digest canonical_hash(const Tile& tile) {
     HashSink sink;
     write_tile(sink, tile);
     return sink.finish();
+}
+
+void compare_layers(const Tile& a, const Tile& b, std::vector<LayerLines>& into) {
+    // each side's lines by layer, in the text's order
+    struct Side {
+        std::string text;
+        std::vector<std::pair<std::string_view, std::vector<std::string_view>>> layers;
+    };
+    const auto split = [](const Tile& tile) {
+        Side s;
+        s.text = canonical_dump(tile);
+        const std::string_view text = s.text;
+        for (std::size_t at = 0; at < text.size();) {
+            const std::size_t end = std::min(text.find('\n', at), text.size());
+            const std::string_view line = text.substr(at, end - at);
+            at = end + 1;
+            const std::string_view label = line.substr(0, line.find(' '));
+            if (label == "tile" || label == "cell") continue;
+            auto it = std::ranges::find(s.layers, label, [](const auto& l) { return l.first; });
+            if (it == s.layers.end()) it = s.layers.insert(s.layers.end(), {label, {}});
+            it->second.push_back(line);
+        }
+        return s;
+    };
+    const Side x = split(a);
+    const Side y = split(b);
+    const std::vector<std::string_view> none;
+    const auto lines_of = [&](const Side& s, std::string_view label) -> const std::vector<std::string_view>& {
+        const auto it = std::ranges::find(s.layers, label, [](const auto& l) { return l.first; });
+        return it == s.layers.end() ? none : it->second;
+    };
+    const auto add = [&](std::string_view label) {
+        const auto& p = lines_of(x, label);
+        const auto& q = lines_of(y, label);
+        auto it = std::ranges::find(into, label, &LayerLines::layer);
+        if (it == into.end()) it = into.insert(into.end(), LayerLines{.layer = std::string(label)});
+        it->lines += std::max(p.size(), q.size());
+        for (std::size_t i = 0; i < std::max(p.size(), q.size()); ++i) {
+            if (i >= p.size() || i >= q.size() || p[i] != q[i]) ++it->differ;
+        }
+    };
+    for (const auto& l : x.layers) add(l.first);
+    for (const auto& l : y.layers) {
+        if (lines_of(x, l.first).empty()) add(l.first);
+    }
 }
 
 } // namespace atlas::tiles

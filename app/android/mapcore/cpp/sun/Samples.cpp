@@ -2,6 +2,7 @@
 
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Seams.hpp"
 #include "tiles/Simplify.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "tiles/layers/Ground.hpp"
@@ -36,6 +37,13 @@ struct V2 {
     constexpr V2() noexcept = default;
     constexpr V2(double px, double pz) noexcept : x(px), z(pz) {}
 };
+
+/// geometry::seams of a ring of these V2s (two doubles, x then z, as geometry's).
+[[nodiscard]] std::vector<std::uint8_t> seams_of(std::span<const V2> poly) {
+    static_assert(sizeof(V2) == 2 * sizeof(double), "V2 is x then z, two doubles");
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): V2 is two doubles, x then z
+    return geometry::seams_xz({reinterpret_cast<const double*>(poly.data()), 2 * poly.size()});
+}
 
 /// A point or a direction in space (the port's V3).
 struct V3 {
@@ -453,9 +461,11 @@ struct Values {
     v.h = h.value_or(0.0);
     v.min = l.decimal(s.min, i).value_or(0.0);
     v.roof_h = l.decimal(s.roof_h, i).value_or(0.0);
+    // its levels outside what a building holds (tl::building::most_levels) read as unmapped, as stage P reads such a
+    // tag, and as geometry/Walls.cpp's values_of reads them
     const std::optional<std::int64_t> levels = l.nullable_integer(s.levels, i);
-    v.has_levels = levels.has_value();
-    v.levels = levels.value_or(0);
+    v.has_levels = levels && *levels >= 1 && *levels <= tl::building::most_levels;
+    v.levels = v.has_levels ? *levels : 0;
     v.roof = l.string(s.roof, i);
     v.orient = l.string(s.orient, i);
     v.mat_draw = l.string(s.mat_draw, i);
@@ -514,9 +524,9 @@ using Variants = std::unordered_map<std::uint64_t, std::uint32_t>;
     return v;
 }
 
-/// Whether a record is a solid: a building not hidden with a height, a part with a height (render's `solids`).
-[[nodiscard]] bool is_solid(Source source, const Values& v, const std::vector<V2>& poly) noexcept {
-    return (source == Source::part || !v.hidden) && v.h != 0.0 && !poly.empty();
+/// Whether a record is a solid: a building or a part not hidden, with a height (render's `solids`).
+[[nodiscard]] bool is_solid(Source /*source*/, const Values& v, const std::vector<V2>& poly) noexcept {
+    return !v.hidden && v.h != 0.0 && !poly.empty(); // a part below the ground is hidden too (core-p14)
 }
 
 /// Whether the water mirrors a record (Amsterdam.reflections): within 16 m of a quay edge, not hidden, with a height
@@ -531,7 +541,6 @@ constexpr std::array<std::pair<tl::LayerId, Source>, 2> record_layers{
 
 // ---------------------------------------------------------------- the samples of one building
 
-constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
 constexpr std::array<std::string_view, 5> reflected = {"gabled", "hipped", "skillion", "quadruple_saltbox",
                                                        "pyramidal"};
 constexpr std::array<std::string_view, 4> paris_fronts = {"limestone", "plaster", "stone", "sandstone"};
@@ -545,14 +554,16 @@ template <std::size_t N>
 class BuildingSamples {
 public:
     /// `lean`: a frame cell's level's tile, whose walls are their one cell each, without a kit's band or windows
-    /// (geometry::Builder's lean).
+    /// (geometry::Builder's lean). `windows_before`: the tile's windows before this record's (its window group's
+    /// samples), which its own follow.
     BuildingSamples(TileSamples& out, const Region& region, Source source, std::uint32_t record, std::uint32_t solid,
-                    bool lean = false) noexcept
-        : out_(out), region_(region), source_(source), record_(record), solid_(solid), lean_(lean) {}
+                    bool lean = false, std::uint32_t windows_before = 0) noexcept
+        : out_(out), region_(region), source_(source), record_(record), solid_(solid), lean_(lean),
+          windows_before_(windows_before) {}
 
     /// Everything the renders can draw of the building with `v` over footprint `poly`.
     void all(const Values& v, std::span<const V2> poly) {
-        if (v.hidden && source_ == Source::building) return; // an outline drawn by its parts: never drawn
+        if (v.hidden) return;                 // an outline drawn by its parts, or what is below the ground: never drawn
         if (!v.has_h || poly.empty()) return; // draw_building reads h: a building without one is not drawn
         if ((v.flags & tl::building::flag_houseboat) != 0) houseboat(v, poly);
         building(v, poly);
@@ -568,38 +579,113 @@ public:
     std::uint32_t mirror = no_face;
 
 private:
-    void add(Kind k, std::uint32_t edge, std::uint32_t part, const V3& p, std::uint32_t face) {
-        out_.add(k, source_, record_, edge, part, p.x, p.y, p.z, face, solid_);
+    /// The record's ring's number of edge `edge` of the piece being sampled (edges_), as geometry::Builder's.
+    [[nodiscard]] std::uint32_t ring_edge(std::uint32_t edge) const noexcept {
+        return edge < edges_.size() ? edges_[edge] : edge;
     }
 
-    /// _draw_building's walls, windows and roof (the lens off).
-    void building(const Values& v, std::span<const V2> poly) {
-        const double h = v.h;
-        const double y0 = v.min;
-        std::optional<std::string_view> roof = v.roof;
-        if (is(roof, "quadruple_saltbox")) roof = "hipped"; // closest shape this renderer draws
-        const double rh = in(roof, pitched) && v.roof_h != 0.0 ? v.roof_h : 0.0;
-        const double wall_top = h - rh;
-        const bool modern = (v.flags & tl::building::flag_modern) != 0;
-        const bool church = (v.flags & tl::building::flag_church) != 0;
-        const bool part = v.part_tag && !church;
-        // skillion: the downhill direction and the slope's span along it
+    void add(Kind k, std::uint32_t edge, std::uint32_t part, const V3& p, std::uint32_t face) {
+        out_.add(k, source_, record_, ring_edge(edge), part, p.x, p.y, p.z, face, solid_);
+    }
+
+    /// A ring's roof as drawn (geometry/Walls.cpp's lay_roof): its shape, its height where it is pitched (else 0), the
+    /// walls' top under it, and a skillion's downhill direction and the slope's span along it.
+    struct Laid {
+        std::optional<std::string_view> roof;
+        double rh = 0.0;
+        double wall_top = 0.0;
+        bool skillion = false;
         V2 dirv{0.0, 0.0};
         double p0 = 0.0;
         double span = 1.0;
-        const bool skillion = is(roof, "skillion") && rh != 0.0;
-        if (skillion) {
-            dirv = roof_dir(v, poly);
-            double lo = (poly[0].x * dirv.x) + (poly[0].z * dirv.z);
+    };
+
+    [[nodiscard]] static Laid lay(const Values& v, std::span<const V2> poly,
+                                  const std::optional<std::string_view>& roof, double rh) {
+        Laid l{.roof = roof, .rh = rh, .wall_top = v.h - rh, .skillion = is(roof, "skillion") && rh != 0.0};
+        if (l.skillion) {
+            l.dirv = roof_dir(v, poly);
+            double lo = (poly[0].x * l.dirv.x) + (poly[0].z * l.dirv.z);
             double hi = lo;
             for (std::size_t i = 1; i < poly.size(); ++i) {
-                const double pr = (poly[i].x * dirv.x) + (poly[i].z * dirv.z);
+                const double pr = (poly[i].x * l.dirv.x) + (poly[i].z * l.dirv.z);
                 lo = pm::min(lo, pr);
                 hi = pm::max(hi, pr);
             }
-            p0 = lo;
-            span = pm::max(0.5, hi - p0);
+            l.p0 = lo;
+            l.span = pm::max(0.5, hi - l.p0);
         }
+        return l;
+    }
+
+    /// _draw_building's walls, windows and roof (the lens off). A ring without seams as it is; one with seams piece by
+    /// piece, as geometry/Walls.cpp's draw has it (geometry/Seams.hpp): every piece's walls in the ring's order, then
+    /// every piece's roof, a piece without a courtyard under the building's roof by itself, one with a courtyard
+    /// flat; a sample keeps its edge's number on the ring.
+    void building(const Values& v, std::span<const V2> poly) {
+        std::optional<std::string_view> roof = v.roof;
+        if (is(roof, "quadruple_saltbox")) roof = "hipped"; // closest shape this renderer draws
+        const double rh = geometry::drawn_pitched(roof, v.roof_h, false) ? v.roof_h : 0.0;
+        const std::vector<std::uint8_t> seam = seams_of(poly);
+        if (seam.empty()) {
+            const Laid l = lay(v, poly, roof, rh);
+            walls(v, poly, {}, l);
+            roof_of(v, poly, l);
+            return;
+        }
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): V2 is two doubles, x then z
+        const auto edges = geometry::pieces_xz({reinterpret_cast<const double*>(poly.data()), 2 * poly.size()}, seam);
+        struct Piece {
+            std::vector<V2> poly;
+            std::vector<std::uint8_t> seam;
+            Laid laid;
+        };
+        std::vector<Piece> pieces(edges.size());
+        for (std::size_t k = 0; k < edges.size(); ++k) {
+            Piece& p = pieces[k];
+            p.poly.reserve(edges[k].size());
+            for (const std::uint32_t e : edges[k]) p.poly.push_back(poly[e]);
+            const bool courtyard = geometry::has_courtyard(edges[k], seam);
+            if (courtyard) {
+                p.seam.reserve(edges[k].size());
+                for (const std::uint32_t e : edges[k]) p.seam.push_back(seam[e]);
+            }
+            p.laid = lay(v, p.poly, roof, courtyard || p.poly.size() < 3 ? 0.0 : rh);
+            edges_ = edges[k];
+            walls(v, p.poly, p.seam, p.laid);
+        }
+        for (std::size_t k = 0; k < edges.size(); ++k) {
+            edges_ = edges[k];
+            roof_of(v, pieces[k].poly, pieces[k].laid);
+        }
+        edges_ = {};
+    }
+
+    /// The roof of a ring laid as `l`, and after it the plain box's flat top where its shape is a guess.
+    void roof_of(const Values& v, std::span<const V2> poly, const Laid& l) {
+        roofs(v, poly, l.roof, v.h, l.rh, l.wall_top, l.skillion, l.dirv, l.span);
+        // a guessed shape drawn pitched: the plain box's flat top in its place after it, seen from above
+        // (geometry/Roofs.cpp's plain_top; its walls up to it take their cells' samples)
+        if (v.shape_guessed && l.rh != 0.0) {
+            const V2 ce = centroid(poly);
+            add(Kind::plain_top, 0, 0, {ce.x, v.h + 0.05, ce.z}, no_face);
+        }
+    }
+
+    /// The walls of a ring laid as `l`, and their windows: a seam (`seam`, empty where the ring has none) draws
+    /// nothing.
+    void walls(const Values& v, std::span<const V2> poly, std::span<const std::uint8_t> seam, const Laid& l) {
+        const double h = v.h;
+        const double y0 = v.min;
+        const double rh = l.rh;
+        const double wall_top = l.wall_top;
+        const bool modern = (v.flags & tl::building::flag_modern) != 0;
+        const bool church = (v.flags & tl::building::flag_church) != 0;
+        const bool part = v.part_tag && !church;
+        const bool skillion = l.skillion;
+        const V2 dirv = l.dirv;
+        const double p0 = l.p0;
+        const double span = l.span;
         const auto sk_top = [&](const V2& p) { return h - ((rh * (((p.x * dirv.x) + (p.z * dirv.z)) - p0)) / span); };
         const std::size_t n = poly.size();
         const bool windowed = !lean_ && !part && !is(v.btype, "houseboat") && !v.no_win && v.has_levels;
@@ -614,7 +700,7 @@ private:
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3) continue;
+            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
             const V3 nrm = vnorm({ez, 0.0, -ex});
             const std::uint32_t face = out_.add_face(nrm.x, nrm.y, nrm.z);
             const auto e = static_cast<std::uint32_t>(i);
@@ -655,22 +741,21 @@ private:
             }
             if (windowed && elen > 2.2) wall_windows(v, a, ex, ez, elen, nrm, e, y0, wall_top, modern);
         }
-        roofs(v, poly, roof, h, rh, wall_top, skillion, dirv, span);
-        // a guessed shape drawn pitched: the plain box's flat top in its place after it, seen from above
-        // (geometry/Roofs.cpp's plain_top; its walls up to it take their cells' samples)
-        if (v.shape_guessed && rh != 0.0) {
-            const V2 ce = centroid(poly);
-            add(Kind::plain_top, 0, 0, {ce.x, h + 0.05, ce.z}, no_face);
-        }
     }
 
     /// The windows of one wall: a row per level (the shop floor's row too), bays by the wall's length.
     void wall_windows(const Values& v, const V2& a, double ex, double ez, double elen, const V3& nrm, std::uint32_t e,
                       double y0, double wall_top, bool modern) {
-        const int lv = static_cast<int>(v.levels); // Kotlin's Long.toInt()
+        const int lv = static_cast<int>(v.levels); // within tl::building::most_levels (values_of)
         const double fh = (wall_top - y0) / std::max(1, lv);
         const bool paris = region_.paris && !modern && in(v.mat_draw, paris_fronts);
         const int wcols = std::max(1, kt_int(elen / (paris ? 2.9 : modern ? 3.4 : 2.1)));
+        // none where its bays pass what its record holds, or where its windows would take the tile past the most a
+        // frame draws, as geometry::Builder's walls and number_windows have them (a window's sample is found by its
+        // place in the tile's window group)
+        if (wcols > tl::building::most_window_cols) return;
+        const std::uint64_t own = static_cast<std::uint64_t>(std::max(0, lv)) * static_cast<std::uint64_t>(wcols);
+        if (std::uint64_t{windows_before_} + windows.size() + own > tl::building::most_tile_windows) return;
         const std::uint32_t wall = windows.add_face(nrm.x, nrm.y, nrm.z); // the wall's face, in the window group's list
         std::uint32_t k = 0;
         for (int r = 0; r < lv; ++r) {
@@ -683,8 +768,9 @@ private:
             for (int c = 0; c < wcols; ++c) {
                 const double u0 = (c + (modern ? 0.1 : paris ? 0.31 : 0.28)) / wcols;
                 const double u1 = (c + (modern ? 0.9 : paris ? 0.69 : 0.72)) / wcols;
-                windows.add(Kind::window, source_, record_, e, k++, (a.x + ((ex * (u0 + u1)) / 2)) + (nrm.x * 0.2),
-                            (ya + yb) / 2, (a.z + ((ez * (u0 + u1)) / 2)) + (nrm.z * 0.2), wall, solid_);
+                windows.add(Kind::window, source_, record_, ring_edge(e), k++,
+                            (a.x + ((ex * (u0 + u1)) / 2)) + (nrm.x * 0.2), (ya + yb) / 2,
+                            (a.z + ((ez * (u0 + u1)) / 2)) + (nrm.z * 0.2), wall, solid_);
             }
         }
     }
@@ -968,7 +1054,8 @@ private:
         const bool boat = is(v.btype, "houseboat");
         const double y0 = boat ? wy + 0.3 : v.min;
         const double h = boat ? (v.h + wy) + 0.3 : v.h;
-        const double rh = in(v.roof, reflected) && v.roof_h != 0.0 ? v.roof_h : 0.0;
+        const std::vector<std::uint8_t> seam = seams_of(poly);
+        const double rh = in(v.roof, reflected) && v.roof_h != 0.0 && seam.empty() ? v.roof_h : 0.0;
         const double top = h - rh;
         const std::size_t n = poly.size();
         for (std::size_t i = 0; i < n; ++i) {
@@ -977,7 +1064,7 @@ private:
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3) continue;
+            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
             const V3 nrm = vnorm({ez, 0.0, -ex});
             add(Kind::reflection, static_cast<std::uint32_t>(i), 0,
                 {((a.x + bb.x) / 2) + (nrm.x * .2), (y0 + top) / 2, ((a.z + bb.z) / 2) + (nrm.z * .2)},
@@ -991,6 +1078,9 @@ private:
     std::uint32_t record_;
     std::uint32_t solid_;
     bool lean_;
+    std::uint32_t windows_before_;
+    /// Where a piece of the record's ring is being sampled: each of its edges' number on the ring.
+    std::span<const std::uint32_t> edges_;
 };
 
 // ---------------------------------------------------------------- quay walls (Amsterdam.waterLayer)
@@ -1310,12 +1400,13 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
             if (!is_mirror(v, poly)) continue;
             // the reflections' values: rh where the roof's shape is one they draw, the longest edge (the last of
             // the longest, as max over (dist, k) picks it)
+            const std::vector<std::uint8_t> seam = seams_of(poly);
             Mirror m{.solid = c.solids.size() - 1,
                      .source = source,
                      .record = i,
                      .h = v.h,
                      .min = v.min,
-                     .rh = in(v.roof, reflected) && v.roof_h != 0.0 ? v.roof_h : 0.0,
+                     .rh = in(v.roof, reflected) && v.roof_h != 0.0 && seam.empty() ? v.roof_h : 0.0,
                      .levels = v.levels,
                      .wall = v.wall_rgb,
                      .wall_slot = v.wall_slot,
@@ -1328,6 +1419,7 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
             double longest = -1.0;
             const std::size_t n = poly.size();
             for (std::size_t k = 0; k < n; ++k) {
+                if (!seam.empty() && seam[k] != 0) continue;
                 const double d = dist(poly[k], poly[(k + 1) % n]);
                 if (d >= longest) {
                     longest = d;
@@ -1381,7 +1473,7 @@ TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, con
                 ATLAS_ASSERT(st.solids.source[solid] == source && st.solids.record[solid] == i,
                              "solids_of lists the solids in make_tile's order");
             }
-            BuildingSamples b(st.samples, region, source, i, solid, lean);
+            BuildingSamples b(st.samples, region, source, i, solid, lean, windows.size());
             b.all(v, poly);
             append(windows, b.windows);
             if (b.mirror != no_face) reflections.push_back(b.mirror);
@@ -1471,7 +1563,7 @@ Tallest tile_tallest(const tiles::Tile& tile, std::uint8_t level) {
             const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
             const Values v =
                 it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
-            if ((layer_id == tl::LayerId::part || !v.hidden) && v.h != 0.0) {
+            if (!v.hidden && v.h != 0.0) {
                 if (!out.any) out.first = v.h;
                 out.any = true;
                 if (!std::isnan(v.h)) {

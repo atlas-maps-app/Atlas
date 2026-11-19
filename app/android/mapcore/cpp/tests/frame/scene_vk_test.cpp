@@ -845,7 +845,8 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
     w.set_wake([&wakes] { wakes.fetch_add(1); });
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
-        if (!std::filesystem::exists(path)) continue;
+        // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+        ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
         auto added = w.store().add({.id = name, .kind = tiles::PackKind::bundled, .path = path.string()});
         ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
     }
@@ -1033,10 +1034,12 @@ TEST_CASE("the world builds the cover's tiles on its workers, draws their visibl
 TEST_CASE("a tile of the sun's halo that comes resident gets its bits, though the sun's scene keeps its tiles") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(path)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk: the sun's halo is not checked over the bundled packs here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -1154,10 +1157,13 @@ TEST_CASE("a tile of the sun's halo that comes resident gets its bits, though th
 
 TEST_CASE("a fling's landing asks for its tiles after the frame's own, in the prefetch lane (gain 26)") {
     const std::string dir = environment("ATLAS_TILES_DIR");
-    if (dir.empty() || !std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas")) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no canal ring: the landing is not checked over the bundled packs here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas"),
+                  "ATLAS_TILES_DIR has no " << (std::filesystem::path(dir) / "grachten.atlas").string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -1233,10 +1239,12 @@ TEST_CASE("a coarser pack is drawn around the active one, its items in the frame
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
     const std::filesystem::path canals = std::filesystem::path(dir) / "grachten.atlas";
-    if (dir.empty() || !std::filesystem::exists(canals)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the coarser pack is not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(canals), "ATLAS_TILES_DIR has no " << canals.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -1387,10 +1395,12 @@ TEST_CASE("a pass whose parts are all left out builds nothing of a tile, and is 
           "one comes back, each drawn throughout under its handle (ENGINE.md's parts)") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the parts' stage T is not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -1665,10 +1675,12 @@ TEST_CASE("a part left out while another's top-ups are under way: they are taken
           "and the passes after those let go of keep their items (ENGINE.md's parts)") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the parts' top-ups are not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -1783,10 +1795,12 @@ TEST_CASE("the cover reckons each tile with every pass, whatever the parts drawn
           "built without it, the plan takes the room they take with it; a pass never built, none (ENGINE.md's parts)") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the cover's sizes are not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -1905,10 +1919,12 @@ TEST_CASE("an item kind whose parts are all left out is not placed: its items go
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
     const std::filesystem::path canals = std::filesystem::path(dir) / "grachten.atlas";
-    if (dir.empty() || !std::filesystem::exists(canals)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the items' placing by parts is not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(canals), "ATLAS_TILES_DIR has no " << canals.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -2030,10 +2046,12 @@ TEST_CASE("the sun left out, or every part that reads its bits: no scene, no buc
           "drawn again, its scenes and runs come again") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's switch is not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -2146,9 +2164,11 @@ TEST_CASE("the sun left out and drawn again: every tile drawn without bits, by d
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
     if constexpr (!ByDayPath<sun::TileBits>) {
         MESSAGE("the by-day path (standcheck) is not merged in: the sun's return is not checked here");
-    } else if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+    } else if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's return is not checked here");
     } else {
+        // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+        ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
         auto session = test::open_session();
         if (!session) return;
         auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -2292,10 +2312,12 @@ TEST_CASE("a frame cell's windows are drawn beside the active pack, where it has
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::string regions = environment("ATLAS_REGIONS_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || regions.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty() || regions.empty()) {
         MESSAGE("ATLAS_TILES_DIR or ATLAS_REGIONS_DIR is not set: no windows are drawn here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     // The nine windows of the canal ring around the Westerkerk's (its own tiles among them), built anywhere's way from
     // the canal ring's raw.json and written to files.
     std::ifstream in(std::filesystem::path(regions) / "grachten" / "raw.json", std::ios::binary);
@@ -4485,10 +4507,12 @@ TEST_CASE("the sun left out while a run is under way: once it is out, no bits of
     // the bits of a sun left out.
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's rest under a run is not checked here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);

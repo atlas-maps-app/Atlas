@@ -633,7 +633,7 @@ vk_phase() {
     # each setup's lap drew frames, and the core took every setup's passes
     awk '/^vkbench real (full|full60|nosun|flat) lap: p50 / { for (i = 1; i < NF; i++) if ($i == "frames" && $(i + 1) + 0 == 0) { print; bad = 1 } }
          END { exit bad }' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: a setup's lap of the real map drew no frame"; FAIL=1; }
-    grep -q '^vkbench real [a-z]*: the passes not set' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: the core refused a setup's passes"; FAIL=1; }
+    grep -q '^vkbench real [a-z0-9]*: the passes not set' "$OUT/vkbench.txt" && { echo "VK BENCH FAILED: the core refused a setup's passes"; FAIL=1; }
     grep -q '^vkbench table: Atlas real-map bench · ' "$OUT/vkbench.txt" || { echo "VK BENCH FAILED: no table of the real map"; FAIL=1; }
     # The triangle governor (ENGINE.md step 5): its bias 0 on every path of the map up to the governor's own view, as
     # each line says (the bias as the path ends and the highest any frame of the map had); world72, the view the
