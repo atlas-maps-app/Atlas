@@ -171,14 +171,20 @@ class SourcesTruthTest {
     @Test
     fun everyHostTheShippedCodeAsksIsAListedSources() {
         assertTrue("the Android sources at $android", File(android, "providers/src/main").isDirectory)
-        // a host is listed as the gate asks: a source holds it, by its name or below its pattern
-        val listed = SourcesModel.ALL + Catalogue.NOT_WIRED
+        // a host is listed as the gate asks: a source holds it, by its name or below its pattern; an unwired source's
+        // only in the file that declares it, its own client's, as no switch holds it and no screen names it
+        val listed = SourcesModel.ALL
+        val unwired = Catalogue.NOT_WIRED.associateWith { s ->
+            sources(listOf("providers")).filter { f -> f.readText().let { t -> "ProviderInfo(" in t && "const val ID = \"${s.id}\"" in t && s.hosts.all { "\"$it\"" in t } } }
+                .map { "${it.relativeTo(android)}" }.single()
+        }
         // a source's website is excused only where the code declares it so, as the `url` of its declaration: named
         // anywhere else (a client's base, a request) it is asked, and must be listed
         val websites = (SourcesModel.ALL + Catalogue.NOT_WIRED + Catalogue.BUNDLED).mapNotNull { java.net.URI(it.url).host }.toSet()
         val addresses = addressesIn(sources(shipped))
         fun page(a: Address) = pages.keys.any { (file, code) -> a.file == file && code in a.code }
-        val unknown = addresses.filter { a -> !(a.declared && a.host in websites) && a.host !in links && !page(a) && listed.none { it.holds(a.host) } }
+        val unknown = addresses.filter { a -> !(a.declared && a.host in websites) && a.host !in links && !page(a) && listed.none { it.holds(a.host) } &&
+            unwired.none { (s, file) -> a.file == file && s.holds(a.host) } }
         assertTrue("hosts the code names that no source lists: $unknown", unknown.isEmpty())
         // every page pinned is one address the code still names: a pin cannot outlive its line
         for ((file, code) in pages.keys) {
