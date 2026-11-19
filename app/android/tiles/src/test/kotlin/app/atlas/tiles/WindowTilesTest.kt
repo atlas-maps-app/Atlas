@@ -327,7 +327,7 @@ class WindowTilesTest {
     @Test
     fun theIndexSaysHowFinelyItsTilesHoldAPlace() {
         val list = listOf(publish("levelled", country(levels = listOf(Triple(13, 4207, 2693), Triple(12, 2103, 1346))), date))
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         val (lat, lon) = middle(westerkerk.first, westerkerk.second)
         // nothing is known before the index is read, and asking reads nothing
         assertNull(tiles.level("levelled", version, lat, lon))
