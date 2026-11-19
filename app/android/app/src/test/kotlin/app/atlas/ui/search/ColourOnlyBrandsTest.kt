@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import app.atlas.Services
 import app.atlas.geo.LatLon
@@ -180,6 +181,67 @@ class ColourOnlyBrandsTest {
         val shown = pictureOf("McDonald's")
         capture("chain_card_logo")
         assertEquals("fascia:mcdonalds-d35a75", shown)
+    }
+
+    /** Four eateries of the fast-food view: two chains whose kind and cuisine have one word, two places whose differ. */
+    private val eateries = arrayOf(
+        place(40, 0.001, mapOf("amenity" to "fast_food", "cuisine" to "pizza", "name" to "New York Pizza", "brand" to "New York Pizza", "brand:wikidata" to "Q2639128")),
+        place(41, 0.0016, mapOf("amenity" to "fast_food", "cuisine" to "burger", "name" to "McDonald's", "brand" to "McDonald's", "brand:wikidata" to "Q38076")),
+        place(42, -0.001, mapOf("amenity" to "fast_food", "cuisine" to "kebab", "name" to "Snackbar Ali")),
+        place(43, -0.0016, mapOf("amenity" to "fast_food", "cuisine" to "sandwich", "name" to "Broodje Bert")),
+        place(44, 0.0022, mapOf("amenity" to "fast_food", "cuisine" to "italian;pizza", "name" to "Pizzeria Roma")),
+        place(45, -0.0022, mapOf("amenity" to "fast_food", "name" to "Snackbar De Hoek", "takeaway" to "only")),
+    )
+
+    /** The text of the one place [name] names, as its merged semantics carry it: its name, its line, its minutes. */
+    private fun textOf(name: String): String {
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag(PLACE_TAG)).fetchSemanticsNodes().isNotEmpty() }
+        if (compose.onAllNodes(hasTestTag(CARDS_TAG)).fetchSemanticsNodes().isNotEmpty()) compose.onNode(hasTestTag(CARDS_TAG)).performScrollToNode(row(name))
+        compose.waitUntil(20_000) { compose.onAllNodes(row(name)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        return compose.onNode(row(name)).fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)!!.joinToString(" / ") { it.text }
+    }
+
+    private val eaterNames = listOf("New York Pizza", "McDonald's", "Snackbar Ali", "Broodje Bert", "Pizzeria Roma", "Snackbar De Hoek")
+
+    /**
+     * A card's line does not say one word twice: where a fact in words is the kind's own word, as a pizza place's cuisine
+     * is, the kind says it once in its place (pictures 9 and 10 read "Pizza · Pizza", "Burger · Burger"). A card whose
+     * kind and facts differ reads as before, to the letter.
+     */
+    @Test
+    fun aCardsLineSaysAWordOnce() {
+        open(Dest.Category("preset:amenity/fast_food"), *eateries, cards = true)
+        val lines = eaterNames.map { textOf(it) }
+        assertEquals(
+            listOf(
+                "New York Pizza / New York Pizza / Pizza",
+                "McDonald's / Burger",
+                "Snackbar Ali / Kebab",
+                "Broodje Bert / Sandwich",
+                "Pizzeria Roma / Pizza · Italian",
+                "Snackbar De Hoek / takeaway only",
+            ).joinToString("\n"),
+            lines.joinToString("\n"),
+        )
+    }
+
+    /** A row's line the same: its facts in words, then its kind, the kind's own word said once. */
+    @Test
+    fun aRowsLineSaysAWordOnce() {
+        open(Dest.Category("preset:amenity/fast_food"), *eateries)
+        val lines = eaterNames.map { textOf(it) }
+        assertEquals(
+            listOf(
+                "New York Pizza / Pizza · 110 m / 2′",
+                "McDonald's / Burger · 180 m / 3′",
+                "Snackbar Ali / Kebab · 110 m / 2′",
+                "Broodje Bert / Sandwich · 180 m / 3′",
+                "Pizzeria Roma / Italian · Pizza · 240 m / 4′",
+                "Snackbar De Hoek / takeaway only · 240 m / 4′",
+            ).joinToString("\n"),
+            lines.joinToString("\n"),
+        )
     }
 
     @Test

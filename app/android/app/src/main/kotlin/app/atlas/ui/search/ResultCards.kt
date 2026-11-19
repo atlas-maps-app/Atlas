@@ -184,7 +184,7 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
                 if (route != null) RoutePill(h.minutes, h.metres) { route(p, line.summary.name) } else Reach(h.minutes, h.metres)
             }
             Text(
-                statusOf(words, tone, staleMark(h), listOfNotNull(kind) + worded),
+                statusOf(words, tone, staleMark(h), listOfNotNull(kind) + worded.filterNot { sameWord(it, kind) }),
                 style = INDEX_META.copy(fontSize = 13.5.sp), color = c.soft, maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             val plan = w.onPlan?.takeIf { w.plans(p) }
