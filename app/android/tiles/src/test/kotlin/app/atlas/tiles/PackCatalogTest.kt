@@ -216,7 +216,7 @@ class PackCatalogTest {
         publish(ByteArray(10), ByteArray(10), split = 4)
         val cache = File(dir, "packs.json")
         var now = 0L
-        val catalog = PackCatalog(gh.url("packs.json"), cacheFile = cache, clock = { now })
+        val catalog = PackCatalog(gh.url("packs.json"), cacheFile = cache, clock = { now }, client = tilesClient)
         assertEquals(2, catalog.packs().size)
         assertEquals("Luxembourg", catalog.pack("luxembourg")!!.name)
         assertTrue(cache.isFile)
@@ -228,9 +228,9 @@ class PackCatalogTest {
         gh.down = true
         assertEquals(2, catalog.packs().size)
         // a new catalog (the app restarted) offline: the file serves
-        assertEquals(2, PackCatalog(gh.url("packs.json"), cacheFile = cache).packs().size)
+        assertEquals(2, PackCatalog(gh.url("packs.json"), cacheFile = cache, client = tilesClient).packs().size)
         // nothing kept and offline: the error
-        assertThrows(IOException::class.java) { runBlocking { PackCatalog(gh.url("packs.json")).packs() } }
+        assertThrows(IOException::class.java) { runBlocking { PackCatalog(gh.url("packs.json"), client = tilesClient).packs() } }
         // packs around a point, smallest first
         gh.down = false
         assertEquals(listOf("luxembourg", "benelux"), catalog.covering(LatLon(49.61, 6.13)).map { it.id })
@@ -242,8 +242,8 @@ class PackCatalogTest {
         val atlas = ByteArray(300_000) { (it * 7 + it / 1000).toByte() }
         val store = ByteArray(200_000) { (it % 251).toByte() }
         publish(atlas, store, split = 120_000)
-        val catalog = PackCatalog(gh.url("packs.json"))
-        val dl = PackDownloader()
+        val catalog = PackCatalog(gh.url("packs.json"), client = tilesClient)
+        val dl = PackDownloader(client = tilesClient)
         val lux = catalog.pack("luxembourg")!!
         val progress = ArrayList<PackDownloader.Progress>()
         val db = dl.download(lux.places!!, File(dir, "lux.db")) { progress += it }
@@ -275,7 +275,7 @@ class PackCatalogTest {
         // 780 MB, which OkHttp copied into it as they came
         val atlas = ByteArray(300_000) { (it * 5).toByte() }
         publish(atlas, ByteArray(10))
-        val lux = PackCatalog(gh.url("packs.json")).pack("luxembourg")!!
+        val lux = PackCatalog(gh.url("packs.json"), client = tilesClient).pack("luxembourg")!!
         val cache = okhttp3.Cache(tempDir("http"), 64L shl 20)
         val app = okhttp3.OkHttpClient.Builder().cache(cache).build()
         val target = File(dir, "cached.atlas")
@@ -288,10 +288,10 @@ class PackCatalogTest {
     @Test
     fun aCorruptDownloadIsRefused() = runBlocking {
         publish(ByteArray(5000) { it.toByte() }, ByteArray(10))
-        val lux = PackCatalog(gh.url("packs.json")).pack("luxembourg")!!
+        val lux = PackCatalog(gh.url("packs.json"), client = tilesClient).pack("luxembourg")!!
         gh.assets["luxembourg.atlas"] = ByteArray(5000) { (it + 1).toByte() }
         val target = File(dir, "bad.atlas")
-        assertThrows(PackDownloader.ChecksumException::class.java) { runBlocking { PackDownloader().download(lux.atlasFile!!, target) } }
+        assertThrows(PackDownloader.ChecksumException::class.java) { runBlocking { PackDownloader(client = tilesClient).download(lux.atlasFile!!, target) } }
         assertTrue(!File(target.path + ".download").exists())
         assertTrue(!target.exists())
     }
@@ -300,11 +300,11 @@ class PackCatalogTest {
     fun aRangeAnsweredFromTheStartRestartsThePart() = runBlocking {
         val atlas = ByteArray(300_000) { (it * 11).toByte() }
         publish(atlas, ByteArray(10), split = 120_000)
-        val big = PackCatalog(gh.url("packs.json")).pack("benelux")!!.atlasFile!!
+        val big = PackCatalog(gh.url("packs.json"), client = tilesClient).pack("benelux")!!.atlasFile!!
         val target = File(dir, "confused.atlas")
         File(target.path + ".download").writeBytes(atlas.copyOf(180_000))
         gh.rangeFromStart = true
-        PackDownloader().download(big, target)
+        PackDownloader(client = tilesClient).download(big, target)
         assertArrayEquals(atlas, target.readBytes())
     }
 
@@ -318,10 +318,10 @@ class PackCatalogTest {
         val v1 = PackFile(PackFile.ATLAS, "x.atlas", 1000, sha(old), listOf(PackPart(gh.url("v1.atlas"), 1000, null)))
         val v2 = PackFile(PackFile.ATLAS, "x.atlas", 1000, sha(new), listOf(PackPart(gh.url("v2.atlas"), 1000, null)))
         val target = File(dir, "x.atlas")
-        assertThrows(IOException::class.java) { runBlocking { PackDownloader().download(v1, target) } }
+        assertThrows(IOException::class.java) { runBlocking { PackDownloader(client = tilesClient).download(v1, target) } }
         assertEquals(600L, File(target.path + ".download").length())
         gh.storageRequests.clear()
-        PackDownloader().download(v2, target)
+        PackDownloader(client = tilesClient).download(v2, target)
         assertArrayEquals(new, target.readBytes())
         // fetched whole, not finished on the old file's bytes
         assertEquals(listOf<String?>(null), gh.storageRequests.map { it.headers["Range"] })
@@ -331,9 +331,9 @@ class PackCatalogTest {
     @Test
     fun aStoreThatUnpacksToTheWrongSizeIsRefused() = runBlocking {
         publish(ByteArray(10), ByteArray(5000) { it.toByte() })
-        val places = PackCatalog(gh.url("packs.json")).pack("luxembourg")!!.places!!.copy(rawBytes = 4999)
+        val places = PackCatalog(gh.url("packs.json"), client = tilesClient).pack("luxembourg")!!.places!!.copy(rawBytes = 4999)
         val target = File(dir, "short.db")
-        val e = assertThrows(IOException::class.java) { runBlocking { PackDownloader().download(places, target) } }
+        val e = assertThrows(IOException::class.java) { runBlocking { PackDownloader(client = tilesClient).download(places, target) } }
         assertTrue(e.message!!.contains("4999"))
         assertTrue(!target.exists())
         assertTrue(!File(target.path + ".unpacking").exists())
@@ -348,7 +348,7 @@ class PackCatalogTest {
             val f = PackFile(PackFile.ATLAS, "slow.atlas", 200, null, listOf(PackPart(slow.url("/slow.atlas").toString(), 200, null)))
             val started = System.nanoTime()
             assertThrows(TimeoutCancellationException::class.java) {
-                runBlocking { withTimeout(500) { PackDownloader().download(f, File(dir, "slow.atlas")) } }
+                runBlocking { withTimeout(500) { PackDownloader(client = tilesClient).download(f, File(dir, "slow.atlas")) } }
             }
             val seconds = (System.nanoTime() - started) / 1e9
             assertTrue("stopped after $seconds s", seconds < 5)
@@ -364,7 +364,7 @@ class PackCatalogTest {
     fun theRealListWhenOnline() = runBlocking {
         org.junit.Assume.assumeTrue(System.getProperty("atlas.online") == "true")
         val list = try {
-            PackCatalog().list()
+            PackCatalog(client = tilesClient).list()
         } catch (e: HttpStatusException) {
             // the workflow has not published yet
             org.junit.Assume.assumeTrue("no packs published yet (HTTP ${e.code})", e.code != 404)

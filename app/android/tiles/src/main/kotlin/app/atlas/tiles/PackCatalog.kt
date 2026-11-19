@@ -135,7 +135,7 @@ data class PackList(val generated: String?, val attribution: String?, val packs:
  */
 class PackCatalog(
     val url: String = DEFAULT_URL,
-    private val client: OkHttpClient = Http.client,
+    private val client: OkHttpClient,
     /** Where the last list fetched is kept, so packs can be listed offline. */
     private val cacheFile: File? = null,
     /** How long a list fetched is used before asking again. */

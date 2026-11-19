@@ -121,7 +121,7 @@ class WindowTilesTest {
     fun aWindowsPackComesByARangeOfItsOwnBytesWithTheIndexDownloadedOnce() {
         val c = country()
         val list = listOf(publish("netherlands", c, date))
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         val got = tiles.window(14, westerkerk.first, westerkerk.second, version)!!
         assertArrayEquals(c.packs[westerkerk], got.bytes)
         assertTrue(got.drawn)
@@ -137,7 +137,7 @@ class WindowTilesTest {
         // kept beside the windows' data indexes, apart from them
         assertEquals(listOf("netherlands-${hex(c.index).take(16)}.tiles.idx"), dir.list()!!.toList())
         // the app started again: the index kept in the folder serves
-        assertArrayEquals(c.packs[westerkerk], WindowTiles({ list }, dir).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+        assertArrayEquals(c.packs[westerkerk], WindowTiles({ list }, dir, client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
         assertEquals(4, gh.storageRequests.size)
         assertEquals("bytes=$start-${start + length - 1}", ranges().last())
     }
@@ -161,7 +161,7 @@ class WindowTilesTest {
         val kept = tempDir("kept")
         val tilesFile = java.io.File(kept, "netherlands.tiles").apply { writeBytes(c.tiles) }
         val indexFile = java.io.File(kept, "netherlands.tiles.idx").apply { writeBytes(c.index) }
-        val tiles = WindowTiles({ list }, dir, local = { _, _ -> WindowTiles.Local(tilesFile, indexFile) })
+        val tiles = WindowTiles({ list }, dir, local = { _, _ -> WindowTiles.Local(tilesFile, indexFile) }, client = tilesClient)
         assertArrayEquals(c.packs[westerkerk], tiles.window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
         assertArrayEquals(c.packs[neighbour], tiles.window(14, neighbour.first, neighbour.second, version)!!.bytes)
         assertFalse(tiles.window(14, water.first, water.second, version)!!.drawn)
@@ -171,7 +171,7 @@ class WindowTilesTest {
         // a copy whose bytes are not the published ones gives way to the published tiles, by a range
         val spoilt = c.tiles.copyOf().also { b -> for (i in b.indices) b[i] = (b[i].toInt() xor 0x5A).toByte() }
         tilesFile.writeBytes(spoilt)
-        val again = WindowTiles({ list }, tempDir("again"), local = { _, _ -> WindowTiles.Local(tilesFile, indexFile) })
+        val again = WindowTiles({ list }, tempDir("again"), local = { _, _ -> WindowTiles.Local(tilesFile, indexFile) }, client = tilesClient)
         assertArrayEquals(c.packs[westerkerk], again.window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
         val start = c.stored.getValue(neighbour).size
         assertEquals(listOf("bytes=$start-${start + c.stored.getValue(westerkerk).size - 1}"), ranges())
@@ -183,12 +183,12 @@ class WindowTilesTest {
         // the windows' budget lets the windows taken from them go first: they are read there again at once
         val list = listOf(publish("netherlands", country(), date), publish("belgium", country(), date))
         val kept = WindowTiles.Local(java.io.File(dir, "netherlands.tiles"), java.io.File(dir, "netherlands.tiles.idx"))
-        val tiles = WindowTiles({ list }, dir, local = { p, _ -> kept.takeIf { p.id == "netherlands" } })
+        val tiles = WindowTiles({ list }, dir, local = { p, _ -> kept.takeIf { p.id == "netherlands" } }, client = tilesClient)
         assertEquals(setOf("netherlands"), tiles.keptPacks(version))
         // another core's tiles are not the ones this phone's windows take
         assertEquals(emptySet<String>(), tiles.keptPacks("core-p9 s1.2-fedcba9876543210"))
         // no list of packs to be had: none
-        assertEquals(emptySet<String>(), WindowTiles({ throw IOException("offline") }, dir).keptPacks(version))
+        assertEquals(emptySet<String>(), WindowTiles({ throw IOException("offline") }, dir, client = tilesClient).keptPacks(version))
         assertTrue(gh.storageRequests.isEmpty())
     }
 
@@ -199,7 +199,7 @@ class WindowTilesTest {
         val far = Triple(12, 2103, 1346)
         val c = country(levels = listOf(coarse, far))
         val list = listOf(publish("netherlands", c, date))
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         val got = tiles.window(13, coarse.second, coarse.third, version)!!
         assertArrayEquals(c.packs[coarse.second to coarse.third], got.bytes)
         assertEquals(date, got.date)
@@ -208,7 +208,7 @@ class WindowTilesTest {
         assertArrayEquals(c.packs[far.second to far.third], tiles.window(12, far.second, far.third, version)!!.bytes)
         // a level's tile reaching over the pack's box from beyond it is still asked for: its cell lies across the border
         val edge = listOf(publish("netherlands", c, date, bbox = BBox(4.89, 52.36, 7.2, 53.6)))
-        assertArrayEquals(c.packs[far.second to far.third], WindowTiles({ edge }, tempDir("edge")).window(12, far.second, far.third, version)!!.bytes)
+        assertArrayEquals(c.packs[far.second to far.third], WindowTiles({ edge }, tempDir("edge"), client = tilesClient).window(12, far.second, far.third, version)!!.bytes)
         // the window with the same column and row at another level is another tile
         assertNull(tiles.window(14, coarse.second, coarse.third, version))
     }
@@ -216,7 +216,7 @@ class WindowTilesTest {
     @Test
     fun aWindowWithNothingToDrawIsAnsweredWithNoBytesAndNoRange() {
         val list = listOf(publish("netherlands", country(), date))
-        val got = WindowTiles({ list }, dir).window(14, water.first, water.second, version)!!
+        val got = WindowTiles({ list }, dir, client = tilesClient).window(14, water.first, water.second, version)!!
         assertFalse(got.drawn)
         assertEquals(0, got.bytes.size)
         assertEquals(date, got.date)
@@ -230,7 +230,7 @@ class WindowTilesTest {
         val first = c.stored.getValue(neighbour).size
         // the first part ends inside the Westerkerk's window
         val list = listOf(publish("netherlands", c, date, split = first + 10))
-        val got = WindowTiles({ list }, dir).window(14, westerkerk.first, westerkerk.second, version)!!
+        val got = WindowTiles({ list }, dir, client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)!!
         assertArrayEquals(c.packs[westerkerk], got.bytes)
         assertEquals(listOf(null, "bytes=$first-${first + 9}", "bytes=0-${c.stored.getValue(westerkerk).size - 11}"), ranges())
     }
@@ -240,19 +240,19 @@ class WindowTilesTest {
         // packs.json names another core's version: its index is not even downloaded
         val other = "core-p7 s1.1-fedcba9876543210"
         val older = listOf(publish("netherlands", country(core = other), date, core = other))
-        assertNull(WindowTiles({ older }, dir).window(14, westerkerk.first, westerkerk.second, version))
+        assertNull(WindowTiles({ older }, dir, client = tilesClient).window(14, westerkerk.first, westerkerk.second, version))
         assertTrue(gh.storageRequests.isEmpty())
         // nor where packs.json names none
         val unnamed = listOf(publish("netherlands", country(), date, core = null))
-        assertNull(WindowTiles({ unnamed }, tempDir("unnamed")).window(14, westerkerk.first, westerkerk.second, version))
+        assertNull(WindowTiles({ unnamed }, tempDir("unnamed"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version))
         assertTrue(gh.storageRequests.isEmpty())
         // an index of another core than packs.json names: read, and not taken
         val wrong = listOf(publish("netherlands", country(core = other), date, core = version))
-        assertNull(WindowTiles({ wrong }, tempDir("wrong")).window(14, westerkerk.first, westerkerk.second, version))
+        assertNull(WindowTiles({ wrong }, tempDir("wrong"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version))
         assertEquals(listOf<String?>(null), ranges())
         // the phone's own core's tiles
         val own = listOf(publish("netherlands", country(), date))
-        assertArrayEquals(country().packs[westerkerk], WindowTiles({ own }, tempDir("own")).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
+        assertArrayEquals(country().packs[westerkerk], WindowTiles({ own }, tempDir("own"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
     }
 
     @Test
@@ -267,18 +267,18 @@ class WindowTilesTest {
         val list = listOf(own.copy(files = kept.files + own.files))
         fun asked() = gh.storageRequests.map { it.url.encodedPath.substringAfterLast('/') }
         // the phone of this core: its own tiles; the other core's index is not even downloaded
-        val got = WindowTiles({ list }, dir).window(14, westerkerk.first, westerkerk.second, version)!!
+        val got = WindowTiles({ list }, dir, client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)!!
         assertArrayEquals(new.packs[westerkerk], got.bytes)
         assertEquals(date, got.date)
         assertEquals(listOf("netherlands.tiles.idx", "netherlands.tiles"), asked())
         // a phone of the core before: the tiles kept for it, and nothing of the new ones
         gh.storageRequests.clear()
-        val older = WindowTiles({ list }, tempDir("before")).window(14, westerkerk.first, westerkerk.second, before)!!
+        val older = WindowTiles({ list }, tempDir("before"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, before)!!
         assertArrayEquals(old.packs[westerkerk], older.bytes)
         assertEquals(date.minusSeconds(86_400L), older.date)
         assertEquals(listOf("netherlands-before.tiles.idx", "netherlands-before.tiles"), asked())
         // and a core of neither: none
-        assertNull(WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, "core-p6 s1.1-fedcba9876543210"))
+        assertNull(WindowTiles({ list }, tempDir("neither"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, "core-p6 s1.1-fedcba9876543210"))
     }
 
     /** The middle of window 14/[x]/[y]: its latitude and longitude. */
@@ -290,7 +290,7 @@ class WindowTilesTest {
     @Test
     fun theIndexSaysWhichPlacesOfItsBoxACountrysTilesHold() {
         val list = listOf(publish("netherlands", country(), date))
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         val (lat, lon) = middle(westerkerk.first, westerkerk.second)
         // nothing is known before the index is read, and asking reads nothing
         assertNull(tiles.holds("netherlands", version, lat, lon))
@@ -312,13 +312,13 @@ class WindowTilesTest {
         assertNull(tiles.index("belgium", version))
         // a level's tile over the place holds it too: a frame cell's levels reach a little beyond its windows
         val levelled = listOf(publish("levelled", country(levels = listOf(Triple(13, 4207, 2693))), date))
-        val withLevels = WindowTiles({ levelled }, tempDir("levels"))
+        val withLevels = WindowTiles({ levelled }, tempDir("levels"), client = tilesClient)
         assertEquals(cells.size + 1, withLevels.index("levelled", version))
         assertEquals(true, middle(8414, 5386).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
         assertEquals(true, middle(8415, 5387).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
         assertEquals(false, middle(8416, 5386).let { (a, o) -> withLevels.holds("levelled", version, a, o) })
         // a window taken reads the index as well
-        val other = WindowTiles({ list }, tempDir("other"))
+        val other = WindowTiles({ list }, tempDir("other"), client = tilesClient)
         assertNull(other.holds("netherlands", version, lat, lon))
         other.window(14, westerkerk.first, westerkerk.second, version)
         assertEquals(true, other.holds("netherlands", version, lat, lon))
@@ -327,23 +327,23 @@ class WindowTilesTest {
     @Test
     fun aWindowNoCountryHoldsGetsNoAnswer() {
         val list = listOf(publish("netherlands", country(), date))
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         // in the box, not in the index (the sea beyond the country's polygon)
         assertNull(tiles.window(14, 8414, 5386, version))
         // beyond the pack's box: its index is not even read
         val before = gh.storageRequests.size
-        assertNull(WindowTiles({ list }, tempDir("far")).window(14, 0, 0, version))
+        assertNull(WindowTiles({ list }, tempDir("far"), client = tilesClient).window(14, 0, 0, version))
         assertEquals(before, gh.storageRequests.size)
         // a level's tile the country's tiles do not list, and a level the phone does not take
         assertNull(tiles.window(13, 4207, 2692, version))
         assertNull(tiles.window(11, 2103, 1346, version))
         // a pack with the windows' data alone
         val data = list.map { p -> p.copy(files = p.files.filter { it.kind != PackFile.TILES }) }
-        assertNull(WindowTiles({ data }, tempDir("data")).window(14, westerkerk.first, westerkerk.second, version))
+        assertNull(WindowTiles({ data }, tempDir("data"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version))
         // no list to be had: asked for again only half a minute on
         var now = 0L
         var asked = 0
-        val offline = WindowTiles({ asked++; if (now < PackReads.LIST_RETRY_MS) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now })
+        val offline = WindowTiles({ asked++; if (now < PackReads.LIST_RETRY_MS) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now }, client = tilesClient)
         assertNull(offline.window(14, westerkerk.first, westerkerk.second, version))
         now = PackReads.LIST_RETRY_MS - 1
         assertNull(offline.window(14, westerkerk.first, westerkerk.second, version))
@@ -361,7 +361,7 @@ class WindowTilesTest {
             // the newer tiles hold two of the three windows
             publish("new", country(date, of = cells.take(2)), date),
         )
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         assertEquals("new", tiles.window(14, westerkerk.first, westerkerk.second, version)!!.pack)
         assertEquals("old", tiles.window(14, water.first, water.second, version)!!.pack)
         assertEquals(older, tiles.window(14, water.first, water.second, version)!!.date)
@@ -375,7 +375,7 @@ class WindowTilesTest {
         val list = listOf(publish("old", old, older), publish("new", new, date))
         // the newer country's index is not the one packs.json names: the older country's tiles give the window
         gh.assets["new.tiles.idx"] = country(date, of = cells.take(1)).index
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         val got = tiles.window(14, westerkerk.first, westerkerk.second, version)!!
         assertEquals("old", got.pack)
         assertEquals(older, got.date)
@@ -383,24 +383,24 @@ class WindowTilesTest {
         // its index whole again but its window's bytes changed: the older country's still
         gh.assets["new.tiles.idx"] = new.index
         gh.assets["new.tiles"] = new.tiles.copyOf().also { for (i in it.indices) it[i] = (it[i] + 1).toByte() }
-        assertEquals("old", WindowTiles({ list }, tempDir("bytes")).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
+        assertEquals("old", WindowTiles({ list }, tempDir("bytes"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
         // neither gives it: the failure of the first asked (the newest), the other's with it
         gh.assets["old.tiles"] = old.tiles.copyOf().also { for (i in it.indices) it[i] = (it[i] + 1).toByte() }
-        val e = assertThrows(IOException::class.java) { WindowTiles({ list }, tempDir("neither")).window(14, westerkerk.first, westerkerk.second, version) }
+        val e = assertThrows(IOException::class.java) { WindowTiles({ list }, tempDir("neither"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version) }
         assertTrue(e.message, e.message!!.contains("pack new"))
         assertEquals(1, e.suppressed.size)
         assertTrue(e.suppressed[0].message, e.suppressed[0].message!!.contains("pack old"))
         // both whole again: the newest
         gh.assets["new.tiles"] = new.tiles
         gh.assets["old.tiles"] = old.tiles
-        assertEquals("new", WindowTiles({ list }, tempDir("whole")).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
+        assertEquals("new", WindowTiles({ list }, tempDir("whole"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)!!.pack)
     }
 
     @Test
     fun bytesThatAreNotThePublishedOnesAreRefused() {
         val c = country()
         val list = listOf(publish("netherlands", c, date))
-        val tiles = WindowTiles({ list }, dir)
+        val tiles = WindowTiles({ list }, dir, client = tilesClient)
         // a window's bytes changed after its index was made
         gh.assets["netherlands.tiles"] = c.tiles.copyOf().also { it[it.size - 5] = (it[it.size - 5] + 1).toByte() }
         assertThrows(IOException::class.java) { tiles.window(14, westerkerk.first, westerkerk.second, version) }
@@ -412,7 +412,7 @@ class WindowTilesTest {
         assertArrayEquals(c.packs[westerkerk], tiles.window(14, westerkerk.first, westerkerk.second, version)!!.bytes)
         // an index that is not the one packs.json names
         gh.assets["netherlands.tiles.idx"] = country(of = cells.take(1)).index
-        assertThrows(IOException::class.java) { WindowTiles({ list }, tempDir("again")).window(14, westerkerk.first, westerkerk.second, version) }
+        assertThrows(IOException::class.java) { WindowTiles({ list }, tempDir("again"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version) }
         // an index of other tiles than the file packs.json lists beside it
         val p = publish("netherlands", c, date)
         val shorter = p.copy(
@@ -420,6 +420,6 @@ class WindowTilesTest {
                 if (f.kind != PackFile.TILES) f else f.copy(bytes = f.bytes - 1, parts = listOf(f.parts.single().copy(bytes = f.bytes - 1)))
             },
         )
-        assertThrows(IOException::class.java) { WindowTiles({ listOf(shorter) }, tempDir("shorter")).window(14, westerkerk.first, westerkerk.second, version) }
+        assertThrows(IOException::class.java) { WindowTiles({ listOf(shorter) }, tempDir("shorter"), client = tilesClient).window(14, westerkerk.first, westerkerk.second, version) }
     }
 }

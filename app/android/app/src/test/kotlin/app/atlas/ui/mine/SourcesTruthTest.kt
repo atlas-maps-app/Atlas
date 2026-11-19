@@ -55,6 +55,25 @@ class SourcesTruthTest {
     )
 
     /** The one request among Wikipedia's built addresses: the reader's API, which must be read as `*.wikipedia.org`. */
+    /**
+     * The only shipped files that may make an HTTP client or open a connection of their own, each with why. Every
+     * other request is made on a view of `providers/Http.kt`'s one client, through its gate.
+     */
+    private val ownConnections = mapOf(
+        "providers/src/main/kotlin/app/atlas/providers/Http.kt" to "the one client, whose gate every request passes",
+        "render/src/main/kotlin/app/atlas/render/live/PackLibrary.kt" to
+            "the engine's `UrlGet`, a default the app never takes: MapData hands `PackLibrary` its gated client's `get`",
+        "render/src/main/kotlin/app/atlas/render/data/Overpass.kt" to
+            "the engine's `HttpUrlPost`, a default the app never takes: MapData hands `OverpassClient` its gated client's `post`; the packer's own",
+    )
+
+    /** Making a client or opening a connection: OkHttp's, the JDK's, a raw socket's. */
+    private val opens = Regex(
+        """\bOkHttpClient\s*\(|\bOkHttpClient\.Builder\s*\(|\.openConnection\s*\(|\.openStream\s*\(|""" +
+            """\bjava\.net\.(Socket|ServerSocket|DatagramSocket|http)\b|\bSocketChannel\b|\bSocketFactory\b|""" +
+            """\bHttpClient\.new""",
+    )
+
     private val wikipediaRequest = "providers/src/main/kotlin/app/atlas/providers/Wikipedia.kt" to "\"https://\$lang.wikipedia.org/w/api.php\""
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
@@ -369,5 +388,24 @@ class SourcesTruthTest {
             assertTrue("values$lang: $chargers", chargers != null && chargers != line("mine_sent_area"))
             assertTrue("values$lang: $fuel", fuel != null && "100 m" in fuel)
         }
+    }
+
+    @Test
+    fun noShippedCodeMakesAClientOrOpensAConnectionButTheNamedFiles() {
+        val modules = shipped + "brouter"
+        val found = modules.flatMap { m ->
+            File(android, "$m/src/main").walkTopDown().filter { it.isFile && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }
+                .flatMap { f ->
+                    val path = f.relativeTo(android).path
+                    f.readLines().withIndex()
+                        .filter { (_, l) -> l.trim().let { t -> !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*") } && opens.containsMatchIn(l) }
+                        .map { (i, _) -> path to i + 1 }
+                }.toList()
+        }
+        assertTrue("the shipped sources at $android", found.isNotEmpty())
+        val elsewhere = found.filter { it.first !in ownConnections }.map { (f, l) -> "$f:$l" }
+        assertTrue("these make a client or open a connection outside the gate: $elsewhere", elsewhere.isEmpty())
+        val stale = ownConnections.keys.filter { k -> found.none { it.first == k } }
+        assertTrue("these are named as opening their own but no longer do: $stale", stale.isEmpty())
     }
 }

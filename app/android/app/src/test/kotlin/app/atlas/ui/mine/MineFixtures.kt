@@ -52,7 +52,7 @@ object MineFixtures {
     /** A dependency set that never touches the network: no packs, nothing to import. */
     fun offlineDeps(services: Services, now: Instant) = RegionDeps(
         packs = { emptyList() },
-        packDownloader = PackDownloader(),
+        packDownloader = PackDownloader(client = app.atlas.testing.tilesClient),
         importPlaces = { _, _, _, _ -> error("offline") },
         segments = services.segments,
         clock = { now.toEpochMilli() },
@@ -85,7 +85,7 @@ object MineFixtures {
     /** Like [offlineDeps], with the published list of [country] and a phone whose core is [CORE]. */
     fun countryDeps(services: Services, now: Instant) = RegionDeps(
         packs = { listOf(country()) },
-        packDownloader = PackDownloader(),
+        packDownloader = PackDownloader(client = app.atlas.testing.tilesClient),
         importPlaces = { _, _, _, _ -> error("offline") },
         segments = services.segments,
         clock = { now.toEpochMilli() },
@@ -95,7 +95,7 @@ object MineFixtures {
     /** Like [offlineDeps], with the published list of [packs] and a map builder that would build small areas on the phone. */
     fun packDeps(services: Services, now: Instant) = RegionDeps(
         packs = { packs() },
-        packDownloader = PackDownloader(),
+        packDownloader = PackDownloader(client = app.atlas.testing.tilesClient),
         importPlaces = { _, _, _, _ -> error("offline") },
         segments = services.segments,
         mapBuilder = { _, _, _, _, _ -> error("offline") },

@@ -26,7 +26,7 @@ import java.util.zip.GZIPInputStream
  * download of an older pack is started over rather than finished with another file's bytes, and a checksum mismatch
  * throws the partial file away.
  */
-class PackDownloader(client: OkHttpClient = Http.client) {
+class PackDownloader(client: OkHttpClient) {
     // a pack file takes minutes: no limit on the whole call, only on each wait for bytes. Nor through the app's HTTP
     // cache (64 MB): OkHttp copies every whole answer into it as it comes, so a country's 780 MB of tiles took as much
     // again on the phone's disk until the download ended, and then pushed every answer the cache kept out of it; GitHub's

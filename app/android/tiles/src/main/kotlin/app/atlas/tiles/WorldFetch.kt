@@ -37,7 +37,7 @@ import kotlin.math.tan
 class WorldFetch(
     private val dir: File,
     private val latest: String = WORLD_LATEST,
-    client: OkHttpClient = Http.client,
+    client: OkHttpClient,
     private val now: () -> Long = System::currentTimeMillis,
     private val drop: () -> Unit = {},
     private val hold: () -> Boolean = { false },

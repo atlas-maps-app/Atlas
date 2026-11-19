@@ -45,7 +45,7 @@ class WorldFetchTest {
         dir.deleteRecursively()
     }
 
-    private fun fetch() = WorldFetch(world, latest, now = { clock }, drop = { drops++ })
+    private fun fetch() = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, client = tilesClient)
 
     private fun sha(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 
@@ -266,7 +266,7 @@ class WorldFetchTest {
         val p = publish("world-20261102")
         gh.assets[WorldKeepList.NAME] = keepList(p.index)
         var held = true
-        fun holding() = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, hold = { held })
+        fun holding() = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, hold = { held }, client = tilesClient)
         val fetch = holding()
         assertTrue(fetch.start())
         assertNull(fetch.next)
@@ -349,7 +349,7 @@ class WorldFetchTest {
         val p = publish("world-20261102")
         gh.assets[WorldKeepList.NAME] = keepList(p.index)
         var held = true
-        val fetch = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, hold = { held })
+        val fetch = WorldFetch(world, latest, now = { clock }, drop = { drops++ }, hold = { held }, client = tilesClient)
         assertTrue(fetch.start())
         // a new version whose globe comes cut short: nothing waits, the phone's world and its keep go on
         val q = publish("world-20261201", seed = 9)
@@ -363,7 +363,7 @@ class WorldFetchTest {
         assertArrayEquals(p.index, File(world, WorldFetch.INDEX).readBytes())
         // and for the app's next start, offline
         gh.down = true
-        val offline = WorldFetch(world, latest, now = { clock }, hold = { held })
+        val offline = WorldFetch(world, latest, now = { clock }, hold = { held }, client = tilesClient)
         assertThrows(IOException::class.java) { offline.start() }
         assertEquals("world-20261102", offline.world!!.release.tag)
         assertEquals("world-20261102", offline.keep!!.release)

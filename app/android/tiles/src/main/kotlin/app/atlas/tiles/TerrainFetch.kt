@@ -25,7 +25,7 @@ import kotlin.math.sinh
 class TerrainFetch(
     private val dir: File,
     private val latest: String = TERRAIN_LATEST,
-    client: OkHttpClient = Http.client,
+    client: OkHttpClient,
     private val now: () -> Long = System::currentTimeMillis,
     private val drop: () -> Unit = {},
 ) {

@@ -20,7 +20,7 @@ class WindowPacks(
     packs: () -> List<Pack>,
     /** Where the packs' indexes are kept. */
     dir: File,
-    client: OkHttpClient = Http.client,
+    client: OkHttpClient,
     clock: () -> Long = System::currentTimeMillis,
 ) {
     /** A window's data: Overpass's answer for its box as of [date], gzipped, from pack [pack]. */

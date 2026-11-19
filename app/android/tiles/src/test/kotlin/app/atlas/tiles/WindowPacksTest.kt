@@ -85,7 +85,7 @@ class WindowPacksTest {
     fun aWindowsDataComesByARangeOfItsOwnBytesWithTheIndexDownloadedOnce() {
         val r = region(date)
         val list = listOf(publish("netherlands", r, date))
-        val packs = WindowPacks({ list }, dir)
+        val packs = WindowPacks({ list }, dir, client = tilesClient)
         val got = packs.window(14, westerkerk.first, westerkerk.second, null)!!
         assertArrayEquals(r.data[westerkerk], got.gz)
         assertEquals(date, got.date)
@@ -97,7 +97,7 @@ class WindowPacksTest {
         assertArrayEquals(r.data[8414 to 5385], packs.window(14, 8414, 5385, null)!!.gz)
         assertEquals(3, gh.storageRequests.size)
         // the app started again: the index kept in the folder serves
-        assertArrayEquals(r.data[8413 to 5384], WindowPacks({ list }, dir).window(14, 8413, 5384, null)!!.gz)
+        assertArrayEquals(r.data[8413 to 5384], WindowPacks({ list }, dir, client = tilesClient).window(14, 8413, 5384, null)!!.gz)
         assertEquals(4, gh.storageRequests.size)
         assertEquals("bytes=0-${start - 1}", ranges().last())
     }
@@ -105,11 +105,11 @@ class WindowPacksTest {
     @Test
     fun aWindowNoPackHoldsComesFromNone() {
         val list = listOf(publish("netherlands", region(date), date))
-        val packs = WindowPacks({ list }, dir)
+        val packs = WindowPacks({ list }, dir, client = tilesClient)
         // in the box, not in the index (the open sea beyond the polygon, or data the extract did not hold whole)
         assertNull(packs.window(14, 8414, 5386, null))
         // beyond the pack's box: its index is not even read
-        val far = WindowPacks({ list }, tempDir("far"))
+        val far = WindowPacks({ list }, tempDir("far"), client = tilesClient)
         val before = gh.storageRequests.size
         assertNull(far.window(14, 0, 0, null))
         assertEquals(before, gh.storageRequests.size)
@@ -118,7 +118,7 @@ class WindowPacksTest {
         // no list to be had: asked for again only half a minute on
         var now = 0L
         var asked = 0
-        val offline = WindowPacks({ asked++; if (now < WindowPacks.LIST_RETRY_MS) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now })
+        val offline = WindowPacks({ asked++; if (now < WindowPacks.LIST_RETRY_MS) throw IOException("HTTP 404 fetching the pack list") else list }, dir, clock = { now }, client = tilesClient)
         assertNull(offline.window(14, 8414, 5384, null))
         now = WindowPacks.LIST_RETRY_MS - 1
         assertNull(offline.window(14, 8414, 5384, null))
@@ -128,7 +128,7 @@ class WindowPacksTest {
         assertEquals(2, asked)
         // an index made for another window query is not used
         val other = listOf(publish("other", region(date, query = WindowsIndex.QUERY + 1), date))
-        assertNull(WindowPacks({ other }, tempDir("other")).window(14, 8414, 5384, null))
+        assertNull(WindowPacks({ other }, tempDir("other"), client = tilesClient).window(14, 8414, 5384, null))
     }
 
     @Test
@@ -139,7 +139,7 @@ class WindowPacksTest {
             // the newer pack holds two of the three windows
             publish("new", region(date, cells.take(2)), date),
         )
-        val packs = WindowPacks({ list }, dir)
+        val packs = WindowPacks({ list }, dir, client = tilesClient)
         assertEquals("new", packs.window(14, westerkerk.first, westerkerk.second, null)!!.pack)
         assertEquals("old", packs.window(14, 8414, 5385, null)!!.pack)
         assertEquals("new", packs.window(14, westerkerk.first, westerkerk.second, older)!!.pack)
@@ -153,7 +153,7 @@ class WindowPacksTest {
         val first = r.data.getValue(8413 to 5384).size
         // the first part ends inside the Westerkerk's window
         val list = listOf(publish("netherlands", r, date, split = first + 10))
-        val got = WindowPacks({ list }, dir).window(14, westerkerk.first, westerkerk.second, null)!!
+        val got = WindowPacks({ list }, dir, client = tilesClient).window(14, westerkerk.first, westerkerk.second, null)!!
         assertArrayEquals(r.data[westerkerk], got.gz)
         assertEquals(listOf(null, "bytes=$first-${first + 9}", "bytes=0-${got.gz.size - 11}"), ranges())
     }
@@ -181,7 +181,7 @@ class WindowPacksTest {
     fun bytesThatAreNotThePublishedOnesAreRefused() {
         val r = region(date)
         val list = listOf(publish("netherlands", r, date))
-        val packs = WindowPacks({ list }, dir)
+        val packs = WindowPacks({ list }, dir, client = tilesClient)
         // a window's bytes changed after its index was made
         gh.assets["netherlands.windows"] = r.windows.copyOf().also { it[it.size - 5] = (it[it.size - 5] + 1).toByte() }
         assertThrows(IOException::class.java) { packs.window(14, 8414, 5385, null) }
@@ -193,6 +193,6 @@ class WindowPacksTest {
         assertArrayEquals(r.data[8414 to 5385], packs.window(14, 8414, 5385, null)!!.gz)
         // an index that is not the one packs.json names
         gh.assets["netherlands.windows.idx"] = region(date, cells.take(1)).index
-        assertThrows(IOException::class.java) { WindowPacks({ list }, tempDir("again")).window(14, 8414, 5385, null) }
+        assertThrows(IOException::class.java) { WindowPacks({ list }, tempDir("again"), client = tilesClient).window(14, 8414, 5385, null) }
     }
 }

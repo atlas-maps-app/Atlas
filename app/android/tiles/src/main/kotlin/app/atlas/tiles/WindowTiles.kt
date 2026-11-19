@@ -39,7 +39,7 @@ class WindowTiles(
     packs: () -> List<Pack>,
     /** Where the packs' indexes are kept. */
     dir: File,
-    client: OkHttpClient = Http.client,
+    client: OkHttpClient,
     clock: () -> Long = System::currentTimeMillis,
     /** A country's tiles of a set kept whole on the phone ([Local]), or null where the phone keeps none of them. */
     private val local: (Pack, TileSet) -> Local? = { _, _ -> null },

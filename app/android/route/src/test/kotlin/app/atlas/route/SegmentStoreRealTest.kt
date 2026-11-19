@@ -44,7 +44,7 @@ class SegmentStoreRealTest {
             fake.files["segments4/diff/E0_N50/$md5.df5"] = diff.readBytes()
             server.dispatcher = fake
             server.start()
-            val store = SegmentStore(dir, baseUrl = server.url("/segments4/").toString())
+            val store = SegmentStore(dir, baseUrl = server.url("/segments4/").toString(), client = segmentsClient)
             val t0 = System.nanoTime()
             val progress = store.update("E0_N50").toList()
             println("TIMING diff of ${diff.length()} B applied and verified in ${(System.nanoTime() - t0) / 1_000_000} ms")
@@ -73,7 +73,7 @@ class SegmentStoreRealTest {
         assumeTrue(System.getProperty("atlas.online") == "true")
         val dir = Files.createTempDirectory("atlas-online").toFile()
         try {
-            val store = SegmentStore(dir)
+            val store = SegmentStore(dir, client = segmentsClient)
             val size = store.remoteSize("E0_N50")!!
             println("ONLINE E0_N50.rd5 is $size bytes")
             assertTrue(size in 50_000_000L..150_000_000L)

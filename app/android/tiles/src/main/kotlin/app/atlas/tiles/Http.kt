@@ -4,27 +4,19 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.Headers
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** HTTP for tiles: one shared client and a coroutine-friendly call. */
+/**
+ * HTTP for tiles: who is asking and a coroutine-friendly call. There is no client of its own: whoever makes a fetcher
+ * hands it one, the app its gated view of `providers`' one client, a test its own.
+ */
 object Http {
     /** Every request says who is asking, as the servers it asks (GitHub's among them) want. */
     const val USER_AGENT = "Atlas/0.1 (+https://github.com/atlas-maps-app/Atlas)"
-
-    /** A client with polite timeouts, shared so connections are reused. */
-    val client: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .callTimeout(90, TimeUnit.SECONDS)
-            .build()
-    }
 
     fun request(url: String): Request.Builder = Request.Builder().url(url).header("User-Agent", USER_AGENT)
 }

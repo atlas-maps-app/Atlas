@@ -83,7 +83,7 @@ class RegionEngineTest {
         Pack("test", "Testland", "NL", pack, null, "packs-test", listOf(file("atlas", "test.atlas", data(mapKb * 1000, seed)), file(PackFile.PLACES, "test.places", data(placesKb * 1000, seed + 1))))
 
     private fun deps(packs: () -> List<Pack>, builder: (suspend (String, String, BBox, File, (Float) -> Unit) -> Long)? = null, import: suspend (BBox, String, File, (Float) -> Unit) -> Unit = { _, _, _, _ -> error("no import") }) = RegionDeps(
-        packs = { packs() }, packDownloader = PackDownloader(), importPlaces = import, segments = null, mapBuilder = builder, voices = { listOf("nl", "en") }, clock = { clock++ },
+        packs = { packs() }, packDownloader = PackDownloader(client = app.atlas.testing.tilesClient), importPlaces = import, segments = null, mapBuilder = builder, voices = { listOf("nl", "en") }, clock = { clock++ },
     )
 
     private fun engine(d: RegionDeps) = RegionEngine(files, d) { changed++ }
@@ -660,7 +660,7 @@ class AtlasRegionManagerTest {
     private fun manager(): AtlasRegionManager {
         val files = RegionFiles(tmp.newFolder("regions"), tmp.newFolder("places"), tmp.newFolder("segments"))
         val deps = RegionDeps(
-            packs = { emptyList() }, packDownloader = PackDownloader(), importPlaces = { _, _, t, _ -> t.writeBytes(ByteArray(2_000)) }, segments = null,
+            packs = { emptyList() }, packDownloader = PackDownloader(client = app.atlas.testing.tilesClient), importPlaces = { _, _, t, _ -> t.writeBytes(ByteArray(2_000)) }, segments = null,
             mapBuilder = { _, _, _, target, _ -> target.writeBytes(ByteArray(30_000)); 30_000L },
         )
         return AtlasRegionManager(files, RegionEngine(files, deps) {}, { queue }, { wifi }, scope)
@@ -695,7 +695,7 @@ class AtlasRegionManagerTest {
     @Test
     fun aFailureComesBackAsAResultAndTheCardSaysWhy() {
         val files = RegionFiles(tmp.newFolder("r2"), tmp.newFolder("p2"), tmp.newFolder("s2"))
-        val deps = RegionDeps(packs = { emptyList() }, packDownloader = PackDownloader(), importPlaces = { _, _, _, _ -> error("x") }, segments = null)
+        val deps = RegionDeps(packs = { emptyList() }, packDownloader = PackDownloader(client = app.atlas.testing.tilesClient), importPlaces = { _, _, _, _ -> error("x") }, segments = null)
         val m = AtlasRegionManager(files, RegionEngine(files, deps) {}, { queue }, { true }, scope)
         val id = m.download(RegionRequest("Nowhere", box))
         val res = runBlocking { m.run(id) }

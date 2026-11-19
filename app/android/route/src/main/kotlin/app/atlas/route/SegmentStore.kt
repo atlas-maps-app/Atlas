@@ -54,7 +54,7 @@ data class LookupsCheck(val local: LookupVersion?, val remote: LookupVersion) {
  */
 class SegmentStore(
     val dir: File,
-    client: OkHttpClient = defaultClient(),
+    client: OkHttpClient,
     val baseUrl: String = SEGMENTS_URL,
     val profilesUrl: String = PROFILES_URL,
     /** Download speed cap in bytes per second; the default stays under 16 Mbit/s. */
@@ -328,11 +328,6 @@ class SegmentStore(
 
         /** How long a size the server answered stands ([remoteSize]): a day. */
         const val SIZE_KEPT_MS = 24 * 3600 * 1000L
-
-        fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .build()
 
         /** The tile holding a point: the south-west corner floored to 5°, e.g. Amsterdam → "E0_N50.rd5". */
         fun tileName(lat: Double, lon: Double): String {

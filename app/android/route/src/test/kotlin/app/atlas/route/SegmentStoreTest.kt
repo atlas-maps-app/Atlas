@@ -104,7 +104,7 @@ class SegmentStoreTest {
     }
 
     private fun store(rate: Long = 50_000_000) = SegmentStore(
-        dir, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(), maxBytesPerSecond = rate,
+        dir, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(), maxBytesPerSecond = rate, client = segmentsClient,
     )
 
     @Test
@@ -252,7 +252,7 @@ class SegmentStoreTest {
     fun aTilesSizeIsAskedOfTheServerOnceADay() = runBlocking {
         fake.files["segments4/E0_N50.rd5"] = ByteArray(1234)
         var now = 1_800_000_000_000L
-        val s = SegmentStore(dir, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(), clock = { now })
+        val s = SegmentStore(dir, baseUrl = server.url("/segments4/").toString(), profilesUrl = server.url("/profiles2/").toString(), clock = { now }, client = segmentsClient)
         fun heads(tile: String) = fake.requests.count { it.method == "HEAD" && it.url.encodedPath.endsWith("/$tile") }
         // a tile the server has and one it has not: each asked once
         repeat(3) {

@@ -45,7 +45,7 @@ class TerrainFetchTest {
         dir.deleteRecursively()
     }
 
-    private fun fetch() = TerrainFetch(terrain, latest, now = { clock }, drop = { drops++ })
+    private fun fetch() = TerrainFetch(terrain, latest, now = { clock }, drop = { drops++ }, client = tilesClient)
 
     private fun sha(b: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(b)
 
