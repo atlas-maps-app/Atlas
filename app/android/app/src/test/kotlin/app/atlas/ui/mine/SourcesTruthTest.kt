@@ -95,25 +95,65 @@ class SourcesTruthTest {
         assertTrue(SourcesModel.ALL.none { s -> s.hosts.any { it in links } })
     }
 
+    /**
+     * Real host names a listed host stands for: an exact host itself, and for a pattern (`*.wikipedia.org`) its name and
+     * one host below it, so a switch is asked as the app's requests ask it, never with the listed string.
+     */
+    private fun namesFor(listed: String): List<String> =
+        if (listed.startsWith("*.")) listed.removePrefix("*.").let { listOf(it, "en.$it") } else listOf(listed)
+
     @Test
     fun aSwitchHoldsBackExactlyItsSourcesHosts() {
         val owners = SourcesModel.ALL.filter { it.switchable && it.via == null }
-        val hosts = owners.flatMap { it.hosts }
-        assertEquals("no host held back by two switches", hosts.size, hosts.toSet().size)
+        val all = SourcesModel.ALL.map { it.id }.toSet()
+        // no host held back by two switches, asked by matching: each name a source stands for is held by it alone
+        for (s in owners) for (h in s.hosts) for (name in namesFor(h)) {
+            val holders = owners.filter { SourcesModel.blockedBy(name, setOf(it.id)) == it.id }.map { it.id }
+            assertEquals("$name ($h) is held back by ${s.id} alone", listOf(s.id), holders)
+        }
         for (s in owners) {
-            for (h in s.hosts) {
-                assertEquals("${s.id} holds back $h", s.id, SourcesModel.blockedBy(h, setOf(s.id)))
-                assertNull("$h goes while ${s.id} is on", SourcesModel.blockedBy(h, SourcesModel.ALL.map { it.id }.toSet() - s.id))
+            for (h in s.hosts) for (name in namesFor(h)) {
+                assertEquals("${s.id} holds back $name", s.id, SourcesModel.blockedBy(name, setOf(s.id)))
+                assertNull("$name goes while ${s.id} is on", SourcesModel.blockedBy(name, all - s.id))
             }
         }
+        val held = owners.flatMap { o -> o.hosts.flatMap { namesFor(it) } }.toSet()
         // a source asked through another's servers is held back where it is asked, never by host; one without a switch never
         for (s in SourcesModel.ALL.filter { it.via != null || !it.switchable }) {
-            for (h in s.hosts) if (h !in hosts) assertNull("${s.id}'s $h", SourcesModel.blockedBy(h, setOf(s.id)))
+            for (h in s.hosts) for (name in namesFor(h)) if (name !in held) assertNull("${s.id}'s $name", SourcesModel.blockedBy(name, setOf(s.id)))
         }
         assertNull(SourcesModel.blockedBy("overpass-api.de", setOf("osm-chargers")))
         assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", setOf("overpass")))
         assertNull(SourcesModel.blockedBy("api.openstreetmap.org", setOf("osm-notes", "osm-edits")))
-        assertNull(SourcesModel.blockedBy("example.org", SourcesModel.ALL.map { it.id }.toSet()))
+        assertNull(SourcesModel.blockedBy("example.org", all))
+    }
+
+    @Test
+    fun aPatternHoldsItsNameAndEveryHostBelowIt() {
+        val wiki = setOf("wikipedia")
+        // Wikipedia's own hosts, as its reader asks them (one per language) and as its links name them
+        for (h in listOf("en.wikipedia.org", "nds-nl.wikipedia.org", "en.m.wikipedia.org", "wikipedia.org", "www.wikipedia.org", "EN.Wikipedia.ORG", "en.wikipedia.org.")) {
+            assertEquals(h, "wikipedia", SourcesModel.blockedBy(h, wiki))
+        }
+        // a host that only ends in the same letters, or holds the name further in, is another's
+        for (h in listOf("wikipedia.org.example.com", "xwikipedia.org", "en.xwikipedia.org", "wikipedia.org..", "wikipedia.com", "org", "")) {
+            assertNull(h, SourcesModel.blockedBy(h, wiki))
+        }
+        // exact hosts are compared in lower case and without one trailing dot, and hold nothing below them
+        val packs = setOf("atlas-packs")
+        for (h in listOf("github.com", "GitHub.com", "github.com.")) assertEquals(h, "atlas-packs", SourcesModel.blockedBy(h, packs))
+        for (h in listOf("api.github.com", "github.com..", "xgithub.com")) assertNull(h, SourcesModel.blockedBy(h, packs))
+        // a star anywhere but as the whole first label is no pattern
+        val odd = listOf("en.*.org", "w*.org", "*wikipedia.org", "*.*.org").map { app.atlas.providers.ProviderInfo("odd-$it", "Odd", "x", "x", "https://example.org", hosts = listOf(it)) }
+        for (o in odd) for (h in listOf("en.wikipedia.org", "en.x.org", "wikipedia.org", "a.b.org")) assertNull("${o.hosts} holds $h", SourcesModel.blockedBy(h, setOf(o.id), odd))
+    }
+
+    @Test
+    fun aListedHostIsAHostOrAPatternOfItsFirstLabel() {
+        val name = Regex("""^(\*\.)?[a-z0-9-]+(\.[a-z0-9-]+)+$""")
+        for (s in SourcesModel.ALL + Catalogue.NOT_WIRED + Catalogue.BUNDLED) for (h in s.hosts) {
+            assertTrue("${s.id} lists \"$h\": a host in lower case, or `*.` and one", name.matches(h))
+        }
     }
 
     @Test
