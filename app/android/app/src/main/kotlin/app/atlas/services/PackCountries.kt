@@ -10,6 +10,7 @@ import app.atlas.tiles.PackCatalog
 import app.atlas.ui.mine.offline.RegionFiles
 import java.io.File
 import java.util.Locale
+import java.util.WeakHashMap
 
 /**
  * The country of each of Atlas's published packs (ISO 3166-1 alpha-2), by the pack's id, as the published list names it
@@ -69,11 +70,27 @@ class PackCountries(
         return known[id]
     }
 
-    /** The country of [store]'s region: the pack it was taken from, as the list names it; null for one of no pack or of several countries. Reads files. */
+    /**
+     * The pack each store was taken from ([ofStore]), as its region's file named it, "" for a region taken from none;
+     * a store let go is forgotten.
+     */
+    private val packs = WeakHashMap<PlaceSource, String>()
+
+    /**
+     * The country of [store]'s region: the pack it was taken from, as the list names it; null for one of no pack or of
+     * several countries. Reads the region's file once a store, whether it names a pack or not (the app maintainer,
+     * 18 November 2026, batch 5 A6: a typed search's hits read it for each kilometre cell); where there is no file, or
+     * it does not read, nothing is kept, and the next ask looks again. The list's copies as [of] reads them.
+     */
     fun ofStore(store: PlaceSource): String? {
-        val id = (store as? PlaceStore)?.file?.nameWithoutExtension ?: return null
-        val pack = runCatching { regions.get(id)?.packId }.getOrNull() ?: return null
-        return of(pack)
+        val pack = synchronized(packs) { packs[store] } ?: run {
+            val id = (store as? PlaceStore)?.file?.nameWithoutExtension ?: return null
+            val meta = runCatching { regions.get(id) }.getOrNull() ?: return null
+            val found = meta.packId.orEmpty()
+            synchronized(packs) { packs[store] = found }
+            found
+        }
+        return pack.ifEmpty { null }?.let { of(it) }
     }
 
     /**

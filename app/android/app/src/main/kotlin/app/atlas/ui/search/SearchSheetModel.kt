@@ -1258,8 +1258,10 @@ class SearchSheetModel(
         val online = !services.config.offline && services.connectivity.online.value
         return SearchContext(
             location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone),
-            // each result's address as the country at it writes it (asked off the main thread, as the search is)
+            // each result's address as the country at it writes it (asked off the main thread, as the search is): a
+            // downloaded region's own place's by the region, each region asked once (batch 5 A6)
             countryAt = { p -> HereContext.country(services, p) },
+            countryOf = { r -> HereContext.regionOf(services, r) },
         )
     }
 

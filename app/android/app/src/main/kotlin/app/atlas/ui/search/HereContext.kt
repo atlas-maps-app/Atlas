@@ -74,6 +74,20 @@ object HereContext {
     fun country(services: Services, at: LatLon): String? = region(services, at).country
 
     /**
+     * The country of the downloaded region whose store [r] is a place of, by its pack ([PackCountries.ofStore], each
+     * region's file read once): a region answers for every point its store covers, and a place of its own is one, so a
+     * typed search's hits across the country ask no 2 km query, region file or covers query for each kilometre cell (the
+     * app maintainer, 18 November 2026, batch 5 A6). Null where [r] is no region's place, where two regions hold it (on
+     * their border: [country] weighs them there), or where its region names no country; the point's country is asked
+     * then. Reads the stores: off the main thread.
+     */
+    fun regionOf(services: Services, r: PlaceRecord): String? {
+        val id = r.id ?: return null
+        val holding = services.placeStores.stores.filter { s -> runCatching { s.get(id) }.getOrNull() != null }
+        return holding.singleOrNull()?.let(services.packCountries::ofStore)
+    }
+
+    /**
      * The country at [at] ([country]) and its state or nation there: the one most of the places around name
      * ([PlaceCountry.subdivision]: their `ISO3166-2`, a German `addr:state`, a French or British postcode), when it is
      * of that country; none when they name none. Asks the regions: off the main thread.
