@@ -12,13 +12,18 @@ import app.atlas.render.data.Countries
 import app.atlas.search.MemoryPlaces
 import app.atlas.search.PlaceStore
 import app.atlas.services.PackCountries
+import app.atlas.services.RegionLayer
 import app.atlas.testing.TempFiles
 import app.atlas.testing.testServices
+import app.atlas.ui.mine.MineFixtures
+import app.atlas.ui.mine.offline.LayerRecord
 import app.atlas.ui.mine.offline.RegionFiles
 import app.atlas.ui.mine.offline.RegionMeta
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -29,6 +34,7 @@ import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Collections
+import java.util.Locale
 
 /**
  * Near a border the country is the pack's that holds the point, before the boxes' (the app maintainer, 18 November 2026,
@@ -79,16 +85,21 @@ class PackCountryTest {
 
     private val kept = MapEngine.countries to MapEngine.countryHolds
 
+    /** The phone's locale as the test found it: a test that sets another has it put back. */
+    private var phone: Locale = Locale.getDefault()
+
     @Before
     fun noTiles() {
         MapEngine.countries = emptyList()
         MapEngine.countryHolds = null
+        phone = Locale.getDefault()
     }
 
     @After
     fun tilesAsTheyWere() {
         MapEngine.countries = kept.first
         MapEngine.countryHolds = kept.second
+        Locale.setDefault(phone)
     }
 
     private fun dutchHolidays(at: LatLon, hours: app.atlas.places.OpeningHoursContext) {
@@ -242,5 +253,84 @@ class PackCountryTest {
             assertEquals("$ids", "BE", HereContext.region(s, lanaken).country)
         }
         s.close()
+    }
+
+    /**
+     * A region whose pack is named at the end of its download says its pack's country from the next ask, in the same
+     * run (the app maintainer, 19 November 2026, batch 6 A1): its file named no pack while its places were attached
+     * and asked, as its routing and voices still came, and what was kept for its store then (no pack) and for the
+     * kilometres asked meanwhile (no country) was kept for the run: a typed search's hits asked each cell again, and
+     * Maastricht read the box's Belgium till the app was killed. ff1d7649 read the file at each ask. Both are let go
+     * once the file is written again, by its time and length.
+     */
+    @Test
+    fun aRegionWhosePackIsNamedAtTheEndOfItsDownloadSaysItsCountryInTheSameRun() {
+        // a phone whose country's box holds none of these towns, so that the phone's country says nothing here
+        Locale.setDefault(Locale.US)
+        val root = TempFiles.dir("atlas-written")
+        val dirs = Dirs(root, File(root, "cache"))
+        // seven places naming no country: no other store by these towns holds seven, and what the regions said is kept
+        // for the whole JVM by their count
+        val store = PlaceStore.open(File(dirs.places.apply { mkdirs() }, "netherlands.db"))
+        val near = listOf(maastricht, maastricht, maastricht, venlo, venlo, eindhoven, eindhoven)
+        store.importPlaces(
+            near.mapIndexed { i, at ->
+                Place(OsmId.parse("n${9_700 + i}")!!, LatLon(at.lat + 0.001 * (i % 3), at.lon - 0.001 * (i % 2)), mapOf("shop" to "bakery", "name" to "Bakker $i"))
+            },
+            regionName = "Netherlands",
+        )
+        File(dirs.regions.apply { mkdirs() }, "packs-latest.json").writeText(published)
+        val s = testServices(root = root, stores = listOf(store))
+        s.mine.useDeps(MineFixtures.packDeps(s, s.clock.instant()))
+        // begun as a download begins it, in the box of the Netherlands' pack: its file names no pack yet
+        s.mine.engine.begin("netherlands", "Netherlands", BBox(3.3, 50.75, 7.2, 53.5), setOf(RegionLayer.PLACES))
+        // its places in, recorded as their install records them: the store is attached, and asked, from here on
+        s.mine.files.edit("netherlands") { it.copy(layers = it.layers + (RegionLayer.PLACES to LayerRecord("pack", 1L, 0L, "p"))) }
+        assertNull(s.packCountries.ofStore(store))
+        assertEquals("the box's, no pack named yet", "BE", HereContext.region(s, maastricht).country)
+        // the rest come: its pack written as resume writes it at its end, every layer it wants being in
+        runBlocking { s.mine.engine.resume("netherlands") }
+        assertEquals("netherlands", s.mine.files.get("netherlands")?.packId)
+        // the next asks, in the same run
+        assertEquals("NL", s.packCountries.ofStore(store))
+        val hit = store.inBox(BBox.around(maastricht, 500.0), 5).first()
+        assertEquals("a typed search's hit", "NL", HereContext.regionOf(s, hit))
+        assertEquals("the kilometre asked before", "NL", HereContext.region(s, maastricht).country)
+        assertEquals("NL", HereContext.regionNow(s, maastricht).country)
+        dutchHolidays(maastricht, HereContext.hours(s, maastricht, ZoneId.of("Europe/Amsterdam")))
+        assertEquals("a kilometre asked for the first time", "NL", HereContext.region(s, venlo).country)
+        s.close()
+        store.close()
+    }
+
+    /**
+     * Its neighbour, as before (batch 5 A6): a region of no pack whose file is not written again is read once. Its time
+     * and length say it is the same file, so one changed under them, as no writer of a region's file changes it, is not
+     * read again.
+     */
+    @Test
+    fun aRegionOfNoPackWhoseFileIsNotWrittenAgainIsReadOnce() {
+        val root = TempFiles.dir("atlas-once")
+        val dirs = Dirs(root, File(root, "cache"))
+        val store = PlaceStore.open(File(dirs.places.apply { mkdirs() }, "custom.db"))
+        store.importPlaces(listOf(Place(OsmId.parse("n9721")!!, maastricht, mapOf("shop" to "bakery"))), regionName = "Custom")
+        val files = RegionFiles(dirs.regions, dirs.places, dirs.segments)
+        // a region of no pack, its file's time a whole second
+        val first = RegionMeta("custom", "Custom" + "x".repeat(21), box, 0L, 0L)
+        files.save(first)
+        val copy = File(dirs.regions, "packs-latest.json").apply { writeText(published) }
+        val countries = PackCountries(files, listOf(copy))
+        val at = 1_700_000_000_000L
+        assertTrue(files.meta("custom").setLastModified(at))
+        assertNull(countries.ofStore(store))
+        // the same time and length, the file naming a pack (its name 21 characters shorter)
+        val named = RegionMeta("custom", "Custom", box, 0L, 0L, packId = "netherlands")
+        assertEquals(first.toJson().length, named.toJson().length)
+        files.meta("custom").apply {
+            writeText(named.toJson())
+            assertTrue(setLastModified(at))
+        }
+        assertNull("its file was read again", countries.ofStore(store))
+        store.close()
     }
 }

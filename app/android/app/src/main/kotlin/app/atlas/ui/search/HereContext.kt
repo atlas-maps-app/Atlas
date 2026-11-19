@@ -85,11 +85,11 @@ object HereContext {
 
     /**
      * The country of the downloaded region whose store [r] is a place of, by its pack ([PackCountries.ofStore], each
-     * region's file read once): a region answers for every point its store covers, and a place of its own is one, so a
-     * typed search's hits across the country ask no 2 km query, region file or covers query for each kilometre cell (the
-     * app maintainer, 18 November 2026, batch 5 A6). Null where [r] is no region's place, where two regions hold it (on
-     * their border: [country] weighs them there), or where its region names no country; the point's country is asked
-     * then. Reads the stores: off the main thread.
+     * region's file read once, and again once written since): a region answers for every point its store covers, and a
+     * place of its own is one, so a typed search's hits across the country ask no 2 km query, region file or covers
+     * query for each kilometre cell (the app maintainer, 18 November 2026, batch 5 A6). Null where [r] is no region's
+     * place, where two regions hold it (on their border: [country] weighs them there), or where its region names no
+     * country; the point's country is asked then. Reads the stores: off the main thread.
      */
     fun regionOf(services: Services, r: PlaceRecord): String? {
         val id = r.id ?: return null
@@ -106,13 +106,15 @@ object HereContext {
 
     /**
      * [region] as far as it is known without asking the regions, for a frame that cannot wait: what they said at [at]
-     * before (by the count of places they held when last asked, so no store is touched: the first touch opens every
-     * region's file; the app maintainer, 18 November 2026, batch 5 A5), else the country of the tiles there as the list
-     * read so far names it, else the map's own country there.
+     * before (by the count of places they held when last asked and the packs as last read, [PackCountries.generation],
+     * so no store or file is touched: the first touch opens every region's file; the app maintainer, 18 November 2026,
+     * batch 5 A5), else the country of the tiles there as the list read so far names it, else the map's own country
+     * there.
      */
     fun regionNow(services: Services, at: LatLon): HereRegion {
         val counted = services.regionsCounted
-        return settled(services, if (counted <= 0) null else said[key(counted, at)], at, services.packCountries::now)
+        val kept = if (counted <= 0) null else said[key(counted, services.packCountries.generation, at)]
+        return settled(services, kept, at, services.packCountries::now)
     }
 
     /** [country] as far as it is known without asking the regions ([regionNow]). */
@@ -196,17 +198,22 @@ object HereContext {
     /**
      * What the regions on the phone say at [at]: the `addr:country` most of the places around name, else the country of
      * the region whose store holds the point ([app.atlas.services.PackCountries.ofRegionAt], its pack's), and the state or
-     * nation most name, each read in its place's country; null with no region downloaded. Kept per kilometre and per
-     * count of regions (a download changes it), [KEPT] at most. A point is asked once at a time: the rows of a list in
-     * one kilometre, read together, take the first one's answer (the app maintainer, 18 November 2026, batch 5 B12: 500
-     * saved places in 14 kilometres asked 136 times, the store's lock 64 deep).
+     * nation most name, each read in its place's country; null with no region downloaded. Kept per kilometre, per count
+     * of regions (a download changes it) and per [PackCountries.generation] (a region's pack found changed; the app
+     * maintainer, 19 November 2026, batch 6 A1: the kilometres asked while a region came read no pack of it for the
+     * run), [KEPT] at most. A point is asked once at a time: the rows of a list in one kilometre, read together, take
+     * the first one's answer (18 November 2026, batch 5 B12: 500 saved places in 14 kilometres asked 136 times, the
+     * store's lock 64 deep).
      */
     private fun regionsSay(services: Services, at: LatLon): HereRegion? {
         val store = services.placeStores
         val size = store.size
         services.regionsCounted = size
         if (size == 0) return null
-        val key = key(size, at)
+        // the regions' files written since their packs were read are read again first: a pack named since lets go what
+        // was said without it
+        services.packCountries.recheck(store.stores)
+        val key = key(size, services.packCountries.generation, at)
         said[key]?.let { return it }
         val turn = asking.computeIfAbsent(key) { Any() }
         try {
@@ -232,7 +239,7 @@ object HereContext {
         return counts.maxByOrNull { it.value }?.key
     }
 
-    private fun key(regions: Int, at: LatLon) = "$regions:${(at.lat * 100).roundToInt()}:${(at.lon * 100).roundToInt()}"
+    private fun key(regions: Int, generation: Int, at: LatLon) = "$regions:$generation:${(at.lat * 100).roundToInt()}:${(at.lon * 100).roundToInt()}"
 }
 
 /** Which clock a far-away place keeps, worked out without a network: its country's, else the sun's hour. */

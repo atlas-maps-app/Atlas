@@ -76,21 +76,58 @@ class PackCountries(
      */
     private val packs = WeakHashMap<PlaceSource, String>()
 
+    /** The time and length of each store's region's file as [packs] read it: written since, it is read again. */
+    private val stamps = WeakHashMap<PlaceSource, Stamp>()
+
+    /** A file's last-modified time and its length, which each write of a region's file changes: two stats. */
+    private data class Stamp(val time: Long, val length: Long)
+
+    /**
+     * How often a store's pack was found changed as its region's file was read again ([ofStore]): what the regions
+     * said by the pack it named before is let go by it ([app.atlas.ui.search.HereContext]). Memory: the main thread
+     * reads it.
+     */
+    @Volatile
+    var generation = 0
+        private set
+
     /**
      * The country of [store]'s region: the pack it was taken from, as the list names it; null for one of no pack or of
      * several countries. Reads the region's file once a store, whether it names a pack or not (the app maintainer,
-     * 18 November 2026, batch 5 A6: a typed search's hits read it for each kilometre cell); where there is no file, or
-     * it does not read, nothing is kept, and the next ask looks again. The list's copies as [of] reads them.
+     * 18 November 2026, batch 5 A6: a typed search's hits read it for each kilometre cell), and again once it was
+     * written since, as its time and length say (19 November 2026, batch 6 A1: a download names its pack at its end,
+     * so a region asked while its routing came named none for the run); where there is no file, or it does not read,
+     * nothing is kept, and the next ask looks again. The list's copies as [of] reads them. Stats the file: off the main
+     * thread.
      */
     fun ofStore(store: PlaceSource): String? {
+        val id = (store as? PlaceStore)?.file?.nameWithoutExtension ?: return null
+        // the file's time and length before it is read: a write after them is seen at the next ask
+        val file = regions.meta(id)
+        val stamp = Stamp(file.lastModified(), file.length())
+        val was = synchronized(packs) { if (stamps[store] == stamp) null else packs.remove(store) }
         val pack = synchronized(packs) { packs[store] } ?: run {
-            val id = (store as? PlaceStore)?.file?.nameWithoutExtension ?: return null
-            val meta = runCatching { regions.get(id) }.getOrNull() ?: return null
-            val found = meta.packId.orEmpty()
-            synchronized(packs) { packs[store] = found }
+            val meta = runCatching { regions.get(id) }.getOrNull()
+            val found = meta?.packId.orEmpty()
+            synchronized(packs) {
+                if (meta != null) {
+                    packs[store] = found
+                    stamps[store] = stamp
+                }
+                if (was != null && was != found) generation++
+            }
+            meta ?: return null
             found
         }
         return pack.ifEmpty { null }?.let { of(it) }
+    }
+
+    /**
+     * Asks [ofStore] again for each of [stores] whose pack is kept, so that a region's file written since is read again
+     * and [generation] says whether its pack changed, before what was said by it is read. Stats: off the main thread.
+     */
+    fun recheck(stores: List<PlaceSource>) {
+        for (s in stores) if (synchronized(packs) { packs.containsKey(s) }) ofStore(s)
     }
 
     /**
