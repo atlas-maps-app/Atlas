@@ -37,6 +37,8 @@ mod runtime {
         fn posix_memalign(out: *mut *mut c_void, align: usize, size: usize) -> i32;
         fn write(fd: i32, buf: *const u8, n: usize) -> isize;
         fn abort() -> !;
+        #[cfg(target_os = "android")]
+        fn android_set_abort_message(message: *const core::ffi::c_char);
     }
 
     /// The C library's allocator; posix_memalign where an alignment is past malloc's 16 bytes.
@@ -90,28 +92,61 @@ mod runtime {
 
     #[panic_handler]
     fn panic(info: &core::panic::PanicInfo) -> ! {
-        // where, without the formatting machinery: `atlas_clean: panic at <file>:<line>`
-        say(b"atlas_clean: panic at ");
-        if let Some(at) = info.location() {
-            say(at.file().as_bytes());
-            let mut digits = [0u8; 10];
-            let mut n = at.line();
-            let mut k = digits.len();
-            loop {
-                k -= 1;
-                digits[k] = b'0' + (n % 10) as u8;
-                n /= 10;
-                if n == 0 || k == 0 {
-                    break;
-                }
-            }
-            say(b":");
-            say(&digits[k..]);
-        }
+        let mut message = [0u8; crate::PANIC_MESSAGE];
+        let n = crate::panic_message(info.location().map(|at| (at.file().as_bytes(), at.line())), &mut message);
+        say(&message[..n]);
         say(b"\n");
+        // what a phone's crash report carries (the tombstone's abort message), as the core's fail sets it
+        #[cfg(target_os = "android")]
+        // SAFETY: a string ended by a NUL, which bionic copies
+        unsafe {
+            android_set_abort_message(message.as_ptr().cast())
+        };
         // SAFETY: the C library's abort
         unsafe { abort() }
     }
+}
+
+/// The bytes a panic's message takes, its NUL with them.
+pub const PANIC_MESSAGE: usize = 256;
+
+/// What a panic says, to the standard error and on Android as the abort message a crash report carries: `atlas_clean:
+/// panic at <file>:<line>` (without a place, `atlas_clean: panic`), written into `out` with a NUL after it (the
+/// file cut short where the whole does not fit); its length without the NUL. Without the formatting machinery,
+/// which the library leaves out.
+pub fn panic_message(at: Option<(&[u8], u32)>, out: &mut [u8; PANIC_MESSAGE]) -> usize {
+    let mut digits = [0u8; 10];
+    let mut k = digits.len();
+    let mut n = 0;
+    let mut put = |bytes: &[u8], room: usize, n: &mut usize| {
+        for &b in bytes.iter().take(room.saturating_sub(*n)) {
+            out[*n] = b;
+            *n += 1;
+        }
+    };
+    let last = PANIC_MESSAGE - 1;
+    match at {
+        None => put(b"atlas_clean: panic", last, &mut n),
+        Some((file, line)) => {
+            let mut v = line;
+            loop {
+                k -= 1;
+                digits[k] = b'0' + (v % 10) as u8;
+                v /= 10;
+                if v == 0 || k == 0 {
+                    break;
+                }
+            }
+            let line = &digits[k..];
+            put(b"atlas_clean: panic at ", last, &mut n);
+            // the file as much as leaves room for the line
+            put(file, last - 1 - line.len(), &mut n);
+            put(b":", last, &mut n);
+            put(line, last, &mut n);
+        }
+    }
+    out[n] = 0;
+    n
 }
 
 /// A grid point: latitude and longitude in 1e-7 degrees.
@@ -430,5 +465,30 @@ pub unsafe extern "C" fn atlas_clean_rings_free(out: *mut AtlasCleanRings) {
         // SAFETY: owner is the Box atlas_clean_rings leaked
         drop(unsafe { Box::from_raw(out.owner.cast::<OwnedRings>()) });
         out.owner = core::ptr::null_mut();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_panic_says_where_as_a_phone_shows_it() {
+        // the message a phone's crash report carries for a panic here, as the handler writes it
+        let at = core::panic::Location::caller();
+        let mut out = [0xFFu8; PANIC_MESSAGE];
+        let n = panic_message(Some((at.file().as_bytes(), at.line())), &mut out);
+        let message = std::format!("atlas_clean: panic at {}:{}", at.file(), at.line());
+        std::println!("abort message: {}", core::str::from_utf8(&out[..n]).unwrap());
+        assert_eq!(&out[..n], message.as_bytes());
+        assert_eq!(out[n], 0);
+        // a file too long for it is cut, and its line kept
+        let long = [b'x'; 400];
+        let n = panic_message(Some((&long, 4_294_967_295)), &mut out);
+        assert_eq!(n, PANIC_MESSAGE - 1);
+        assert!(out[..n].ends_with(b"xx:4294967295"));
+        assert_eq!(out[n], 0);
+        let n = panic_message(None, &mut out);
+        assert_eq!(&out[..=n], b"atlas_clean: panic\0");
     }
 }
