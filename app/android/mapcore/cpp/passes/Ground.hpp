@@ -1098,12 +1098,14 @@ public:
     [[nodiscard]] const SoftShadows* soft_shadows() const noexcept;
     /// Whether the last frame drew its shadows soft (the moment blurs them).
     [[nodiscard]] bool drew_soft() const noexcept { return drew_soft_; }
+#if defined(ATLAS_TESTS)
     /// The tests' switch: the soft shadows' mask made again every frame, its last result never standing (as before its
     /// key took what it reads alone: the base its kept results are held to, tests/ground/shadows_vk_test.cpp).
     void make_mask_always(bool always) noexcept { mask_always_ = always; }
     /// The tests' look at the soft shadows' kept result: how many results the mask has made (its box, grid, union and
     /// blur run) since the pass was made; a frame whose mask is the last one's makes none, and dispatches nothing.
     [[nodiscard]] std::uint64_t mask_makes() const noexcept { return mask_made_; }
+#endif
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
@@ -1554,13 +1556,15 @@ private:
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
     bool drew_soft_ = false;
-    bool mask_always_ = false;
-    /// What the soft shadows' last result was made of (key_shadow_mask), whether this frame's is that one, the entry
-    /// this frame's lies in (SoftShadows::slots), and the results made.
+#if defined(ATLAS_TESTS)
+    bool mask_always_ = false;    // make_mask_always
+    std::uint64_t mask_made_ = 0; // mask_makes
+#endif
+    /// What the soft shadows' last result was made of (key_shadow_mask), whether this frame's is that one, and the
+    /// entry this frame's lies in (SoftShadows::slots).
     std::vector<std::uint32_t> mask_key_;
     bool mask_kept_ = false;
     std::uint32_t mask_entry_ = 0;
-    std::uint64_t mask_made_ = 0;
     bool only_setts_ = false;
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
