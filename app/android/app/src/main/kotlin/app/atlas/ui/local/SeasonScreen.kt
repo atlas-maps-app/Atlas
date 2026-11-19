@@ -251,7 +251,8 @@ internal suspend fun nearestMarket(services: app.atlas.Services, at: LatLon, now
     val pick = found.firstOrNull { isFarmersMarket(it.place.tags) } ?: found.firstOrNull { it.place.tags["opening_hours"] != null } ?: found.firstOrNull() ?: return null
     val tags = pick.place.tags
     val name = app.atlas.places.Localise.name(tags, lang) ?: return null
-    val hours = app.atlas.ui.search.HereContext.hours(services, pick.place.location, zone)
+    // the regions are asked off the main thread, which this runs on (the screen's produceState; batch 5 A5)
+    val hours = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { app.atlas.ui.search.HereContext.hours(services, pick.place.location, zone) }
     return MarketNow(pick.place, name, pick.distanceM, marketLine(tags["opening_hours"], now, zone, hours, services.context.getString(R.string.kit_open)) { services.context.getString(R.string.moment_market_open_until, it) })
 }
 

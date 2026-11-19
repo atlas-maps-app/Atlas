@@ -82,11 +82,13 @@ object HereContext {
 
     /**
      * [region] as far as it is known without asking the regions, for a frame that cannot wait: what they said at [at]
-     * before, else the country of the tiles there as the list read so far names it, else the map's own country there.
+     * before (by the count of places they held when last asked, so no store is touched: the first touch opens every
+     * region's file; the app maintainer, 18 November 2026, batch 5 A5), else the country of the tiles there as the list
+     * read so far names it, else the map's own country there.
      */
     fun regionNow(services: Services, at: LatLon): HereRegion {
-        val store = services.placeStores
-        return settled(services, if (store.size == 0) null else said[key(store.size, at)], at, services.packCountries::now)
+        val counted = services.regionsCounted
+        return settled(services, if (counted <= 0) null else said[key(counted, at)], at, services.packCountries::now)
     }
 
     /** [country] as far as it is known without asking the regions ([regionNow]). */
@@ -175,8 +177,10 @@ object HereContext {
      */
     private fun regionsSay(services: Services, at: LatLon): HereRegion? {
         val store = services.placeStores
-        if (store.size == 0) return null
-        val key = key(store.size, at)
+        val size = store.size
+        services.regionsCounted = size
+        if (size == 0) return null
+        val key = key(size, at)
         said[key]?.let { return it }
         val sample = runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull().orEmpty()
         val country = commonest(sample) { PlaceCountry.tagged(it.tags) } ?: services.packCountries.ofRegionAt(store.stores, at)
