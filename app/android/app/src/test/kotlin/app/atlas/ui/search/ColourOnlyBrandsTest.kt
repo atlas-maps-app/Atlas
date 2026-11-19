@@ -131,6 +131,20 @@ class ColourOnlyBrandsTest {
         assertEquals("sign:$geldmaat", tileOf(hasText("Geldmaat") and hasText("NEAREST", substring = true, ignoreCase = true)))
     }
 
+    /**
+     * A deck's title is the brand's name as the street says it: "Jumbo", the table's `brand`, not its name "Jumbo
+     * (Europe)", which tells the Dutch and Belgian chain from Chile's.
+     */
+    @Test
+    fun aDecksTitleIsTheBrandsStreetName() {
+        open(Dest.Category("preset:shop/supermarket"), jumbo(10, 0.001), jumbo(11, 0.0025))
+        val deck = hasTestTag(DECK_TAG) and hasText("2 near", substring = true)
+        compose.waitUntil(20_000) { compose.onAllNodes(deck).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        assertTrue("the deck's title", compose.onAllNodes(deck and hasText("Jumbo")).fetchSemanticsNodes().isNotEmpty())
+        assertTrue("no \"Jumbo (Europe)\"", compose.onAllNodes(hasText("(Europe)", substring = true)).fetchSemanticsNodes().isEmpty())
+    }
+
     /** What the picture at the top of the one card of [name] shows ([PictureMark]), its card in view. */
     private fun pictureOf(name: String): String? {
         val card = hasTestTag(PLACE_TAG) and hasText(name)
