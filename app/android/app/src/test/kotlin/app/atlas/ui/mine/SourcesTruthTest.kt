@@ -23,10 +23,13 @@ class SourcesTruthTest {
     private val shipped = listOf("app", "mapview", "providers", "tiles", "route", "search", "places", "render", "core", "guide", "anchor", "rendertiles", "mapcore")
 
     /**
-     * Hosts the code names but never asks: links the user opens, XML namespaces, and the page that finds the phone's
-     * browsers for signing in to OpenStreetMap (openInBrowser).
+     * Hosts the code names but never asks: links the user opens (a rating's page on Foursquare, a review's and a place's
+     * reviews on Mangrove), XML namespaces, and the page that finds the phone's browsers for signing in to OpenStreetMap
+     * (openInBrowser).
      */
-    private val links = setOf("afdc.energy.gov", "chargemap.com", "example.org", "map.openchargemap.io", "www.topografix.com", "www.w3.org")
+    private val links = setOf(
+        "afdc.energy.gov", "chargemap.com", "example.org", "foursquare.com", "mangrove.reviews", "map.openchargemap.io", "www.topografix.com", "www.w3.org",
+    )
 
     /**
      * The addresses whose host is wholly built from a variable, each by its file and its line's own code, with what it is:
@@ -63,16 +66,59 @@ class SourcesTruthTest {
         File(android, "$m/src/main").walkTopDown().filter { it.isFile && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }.toList()
     }
 
-    /** Every host named by an address in the code of [files], comments left out. */
-    private fun hostsIn(files: List<File>): Map<String, String> {
+    /**
+     * An address in the code with a literal [host], [where] it is, and whether it stands as the `url` of a source's
+     * declaration (`ProviderInfo(… url = "…")`): the source's website, which the code declares and never asks.
+     */
+    private data class Address(val host: String, val where: String, val declared: Boolean) {
+        override fun toString() = "$where $host"
+    }
+
+    /** Every address with a literal host in the code of [files], comments left out, each where it stands. */
+    private fun addressesIn(files: List<File>): List<Address> {
         val url = Regex("""https?://([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)""")
-        val out = LinkedHashMap<String, String>()
+        val out = ArrayList<Address>()
         for (f in files) {
-            f.readLines().forEachIndexed { i, line ->
+            val lines = f.readLines()
+            val declaration = declarationLines(lines)
+            lines.forEachIndexed { i, line ->
                 val code = line.trim()
                 if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) return@forEachIndexed
-                for (m in url.findAll(code.replace(Regex("""\s//\s.*$"""), ""))) out.putIfAbsent(m.groupValues[1], "${f.relativeTo(android)}:${i + 1}")
+                val c = code.replace(Regex("""\s//\s.*$"""), "")
+                for (m in url.findAll(c)) {
+                    val declared = i in declaration && Regex("""(^|[\s,(])url = """" + Regex.escape(m.value)).containsMatchIn(c)
+                    out += Address(m.groupValues[1], "${f.relativeTo(android)}:${i + 1}", declared)
+                }
             }
+        }
+        return out
+    }
+
+    /** The indexes of [lines] inside a `ProviderInfo(…)` call, by its parentheses, what is in quotes skipped. */
+    private fun declarationLines(lines: List<String>): Set<Int> {
+        val out = HashSet<Int>()
+        val text = lines.joinToString("\n")
+        var from = 0
+        while (true) {
+            val start = text.indexOf("ProviderInfo(", from).takeIf { it >= 0 } ?: break
+            var i = start + "ProviderInfo".length
+            var depth = 0
+            var quoted = false
+            while (i < text.length) {
+                val ch = text[i]
+                if (quoted) {
+                    if (ch == '\\') i++ else if (ch == '"') quoted = false
+                } else when (ch) {
+                    '"' -> quoted = true
+                    '(' -> depth++
+                    ')' -> if (--depth == 0) break
+                }
+                i++
+            }
+            val first = text.substring(0, start).count { it == '\n' }
+            val last = text.substring(0, minOf(i, text.length)).count { it == '\n' }
+            for (l in first..last) out += l
+            from = i
         }
         return out
     }
@@ -114,9 +160,10 @@ class SourcesTruthTest {
         assertTrue("the Android sources at $android", File(android, "providers/src/main").isDirectory)
         val listed = SourcesModel.ALL.flatMap { it.hosts }.toSet()
         val unwired = Catalogue.NOT_WIRED.flatMap { it.hosts }.toSet()
+        // a source's website is excused only where the code declares it so, as the `url` of its declaration: named
+        // anywhere else (a client's base, a request) it is asked, and must be listed
         val websites = (SourcesModel.ALL + Catalogue.NOT_WIRED + Catalogue.BUNDLED).mapNotNull { java.net.URI(it.url).host }.toSet()
-        val named = hostsIn(sources(shipped))
-        val unknown = named.filterKeys { it !in listed && it !in unwired && it !in websites && it !in links }
+        val unknown = addressesIn(sources(shipped)).filter { a -> !(a.declared && a.host in websites) && a.host !in links && a.host !in listed && a.host !in unwired }
         assertTrue("hosts the code names that no source lists: $unknown", unknown.isEmpty())
     }
 
