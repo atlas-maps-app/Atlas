@@ -26,6 +26,25 @@ class PackCountries(
     @Volatile
     private var known: Map<String, String> = emptyMap()
 
+    /**
+     * How finely each published country's tiles hold a point, as far as their indexes are in memory; null until the map
+     * is wired ([app.atlas.services.MapData]: [app.atlas.tiles.WindowTiles.level]). What the country question reads near
+     * a border, never having an index read or fetched for it (the app maintainer, 18 November 2026, batch 5 A3: asking
+     * a point's country started the download of its country's index, 1.5 MB for the Netherlands, which only the map's
+     * camera asked for before).
+     */
+    @Volatile
+    var tiles: Tiles? = null
+
+    /** How finely a pack's tiles hold a place, from what is in memory alone. */
+    fun interface Tiles {
+        /**
+         * The finest level at which pack [id]'s tiles list the place at [lat], [lon]: 14 its window, 13 or 12 a frame
+         * cell's level tile over it, 0 none; null where the pack's index is not in memory.
+         */
+        fun level(id: String, lat: Double, lon: Double): Int?
+    }
+
     /** When the copies were last read, so a pack the list names no country for does not read them at each ask. */
     private var readAt = 0L
 

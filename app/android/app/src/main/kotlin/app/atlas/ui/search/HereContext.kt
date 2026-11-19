@@ -10,6 +10,8 @@ import app.atlas.places.OpeningHoursContext
 import app.atlas.places.PlaceCountry
 import app.atlas.render.data.Countries
 import app.atlas.search.PlaceRecord
+import app.atlas.services.PackCountries
+import app.atlas.tiles.WindowTiles
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDateTime
@@ -76,7 +78,7 @@ object HereContext {
      * ([PlaceCountry.subdivision]: their `ISO3166-2`, a German `addr:state`, a French or British postcode), when it is
      * of that country; none when they name none. Asks the regions: off the main thread.
      */
-    fun region(services: Services, at: LatLon): HereRegion = settled(regionsSay(services, at), at, services.packCountries::of)
+    fun region(services: Services, at: LatLon): HereRegion = settled(services, regionsSay(services, at), at, services.packCountries::of)
 
     /**
      * [region] as far as it is known without asking the regions, for a frame that cannot wait: what they said at [at]
@@ -84,7 +86,7 @@ object HereContext {
      */
     fun regionNow(services: Services, at: LatLon): HereRegion {
         val store = services.placeStores
-        return settled(if (store.size == 0) null else said[key(store.size, at)], at, services.packCountries::now)
+        return settled(services, if (store.size == 0) null else said[key(store.size, at)], at, services.packCountries::now)
     }
 
     /** [country] as far as it is known without asking the regions ([regionNow]). */
@@ -128,22 +130,41 @@ object HereContext {
      * What the regions said ([said]) made whole: their country, else the tiles' there ([tilesCountry], each pack's country
      * by [pack]), else the map's own; their state or nation if of it.
      */
-    private fun settled(said: HereRegion?, at: LatLon, pack: (String) -> String?): HereRegion {
-        val country = said?.country ?: tilesCountry(at, pack) ?: Countries.of(at)
+    private fun settled(services: Services, said: HereRegion?, at: LatLon, pack: (String) -> String?): HereRegion {
+        val country = said?.country ?: tilesCountry(services, at, pack) ?: Countries.of(at)
         return HereRegion(country, said?.subdivision?.takeIf { country != null && it.startsWith("$country-") })
     }
 
     /**
-     * The country whose published tiles serve the windows at [at], as [pack] names a pack's: the first of the map's
-     * countries whose box holds the point and whose tiles' index lists it, as the map takes it (MapEngine.levelsAt); never
-     * by its box alone, which reaches past its border (the Netherlands' holds Antwerp). Null where no tiles' index on the
-     * phone lists it. Neither blocks nor reads a store: the map asks the same at each camera.
+     * The country whose published tiles serve the windows at [at], as [pack] names a pack's: of the map's countries whose
+     * box holds the point, the one whose tiles' index lists it the most finely ([PackCountries.Tiles]: its window before
+     * a frame cell's level tile, which reaches past a border: Maastricht's L12 holds Lanaken), the boxes saying where two
+     * list it as finely (the app maintainer, 18 November 2026, batch 5 A3), and where a country whose box holds the point
+     * has no index in memory, which may list it more finely than another's level tile does; never by a box alone (the
+     * Netherlands' holds Antwerp). Null where no index in memory lists it. Reads memory alone: no index is read or
+     * fetched for the asking (the camera has them read), no store is asked, and it never blocks.
      */
-    private fun tilesCountry(at: LatLon, pack: (String) -> String?): String? {
-        val holds = MapEngine.countryHolds ?: return null
-        return MapEngine.countries.firstNotNullOfOrNull { c ->
-            if (c.holds(at.lat, at.lon) && holds.at(c, at.lat, at.lon) == true) pack(c.id) else null
+    private fun tilesCountry(services: Services, at: LatLon, pack: (String) -> String?): String? {
+        val tiles = services.packCountries.tiles ?: return null
+        var finest = 0
+        var unread = false
+        val holding = ArrayList<String>(2)
+        for (c in MapEngine.countries) {
+            if (!c.holds(at.lat, at.lon)) continue
+            val level = tiles.level(c.id, at.lat, at.lon)
+            if (level == null) {
+                unread = true
+                continue
+            }
+            if (level <= 0 || level < finest) continue
+            if (level > finest) {
+                finest = level
+                holding.clear()
+            }
+            holding += c.id
         }
+        if (finest == 0 || (unread && finest < WindowTiles.LEVEL)) return null
+        return holding.map(pack).distinct().singleOrNull()
     }
 
     /**
@@ -159,7 +180,7 @@ object HereContext {
         said[key]?.let { return it }
         val sample = runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull().orEmpty()
         val country = commonest(sample) { PlaceCountry.tagged(it.tags) } ?: services.packCountries.ofRegionAt(store.stores, at)
-        val around = country ?: tilesCountry(at, services.packCountries::of) ?: Countries.of(at)
+        val around = country ?: tilesCountry(services, at, services.packCountries::of) ?: Countries.of(at)
         val found = HereRegion(country, commonest(sample) { PlaceCountry.subdivision(it.tags, PlaceCountry.of(it.tags, around)) })
         if (said.size > 256) said.clear()
         said[key] = found
