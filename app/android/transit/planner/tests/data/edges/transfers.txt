@@ -3,3 +3,7 @@ WB,WC,,,W1a,W2a,1,
 VB,VC,,,V1a,V2a,1,
 SS,SS,,,,,2,300
 MS,MS,,,M1a,M2a,2,300
+TB,TC,,,T1a,T2a,2,480
+TB,TC,,,T1b,T2c,2,120
+ZB,ZC,,,Z1a,Z2a,4,
+NB,NC,N1,N2,,,1,
