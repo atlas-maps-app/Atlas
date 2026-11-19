@@ -28,7 +28,7 @@ class ShopLogicTest {
     private fun at(metresNorth: Double, metresEast: Double = 0.0) = Geo.destination(Geo.destination(here, 0.0, metresNorth), 90.0, metresEast)
 
     private fun shop(id: Long, name: String, tags: Map<String, String>, where: LatLon): ShopPlace =
-        ShopPlace(Place(OsmId(OsmType.NODE, id), where, tags + ("name" to name)), name, Geo.distance(here, where))
+        ShopPlace(Place(OsmId(OsmType.NODE, id), where, tags + ("name" to name)), name, Geo.distance(here, where), country = null)
 
     // ---- Tour ------------------------------------------------------------------------------------------------------
 

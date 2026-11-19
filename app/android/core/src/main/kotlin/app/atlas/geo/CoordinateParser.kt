@@ -1,5 +1,6 @@
 package app.atlas.geo
 
+import app.atlas.num.Digits
 import java.net.URLDecoder
 import kotlin.math.abs
 
@@ -25,16 +26,19 @@ object CoordinateParser {
         }
     }
 
-    // Unicode primes, quotes, degree look-alikes, minus signs and odd spaces to their plain forms.
+    // Unicode primes, quotes, degree look-alikes, minus signs and odd spaces to their plain forms, and any script's
+    // digits to 0 to 9 ("٥٢٫٣٧, ٤٫٨٩"): on Android `\d` took them and `toDouble` threw (the reviewer, 17 November,
+    // finding 12).
     private fun normalise(text: String): String {
         val sb = StringBuilder(text.length)
-        for (c in text.trim()) {
+        for (c in Digits.ascii(text.trim())) {
             sb.append(
                 when (c) {
                     '′', '’', '‘', '´', '`', 'ʹ', 'ˈ' -> '\''
                     '″', '”', '“', 'ʺ', '˝' -> '"'
                     'º', '˚', '∘', '⁰' -> '°'
                     '−', '–', '‒' -> '-'
+                    '،' -> ','
                     ' ', ' ', ' ', '\t', '\n', '\r' -> ' '
                     else -> c
                 },

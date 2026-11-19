@@ -172,9 +172,12 @@ class SearchViewModel(
             lang = lang,
             now = now,
             online = online(),
-            country = null,
             limit = LIMIT,
             hours = HereContext.hours(services, at, now.zone),
+            // each result's address as the country at it writes it (asked off the main thread, as the search is): a
+            // downloaded region's own place's by the region, each region asked once (batch 5 A6)
+            countryAt = { p -> HereContext.country(services, p) },
+            countryOf = { r -> HereContext.regionOf(services, r) },
         )
     }
 

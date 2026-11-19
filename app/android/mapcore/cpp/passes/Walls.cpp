@@ -132,6 +132,11 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
         in.blocks = std::size_t{helpers} + 1;
     }
     const geometry::TileBuildings g = geometry::build_buildings(in);
+    if (g.windows_cut > 0) {
+        const tiles::TileHeader& h = b.tile().header;
+        log::warn("vk buildings: {}/{}/{} holds more windows than a frame draws ({}): {} walls go without theirs",
+                  h.level, h.x, h.y, tiles::building::most_tile_windows, g.windows_cut);
+    }
     if (g.items.empty()) return {};
     auto layout = std::make_shared<BuildingTile>();
     const std::vector<Words> words = heap_words(g, b.origin().x, b.origin().z, *layout);

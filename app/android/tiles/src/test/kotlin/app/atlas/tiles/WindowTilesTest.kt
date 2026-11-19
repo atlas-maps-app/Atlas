@@ -325,6 +325,30 @@ class WindowTilesTest {
     }
 
     @Test
+    fun theIndexSaysHowFinelyItsTilesHoldAPlace() {
+        val list = listOf(publish("levelled", country(levels = listOf(Triple(13, 4207, 2693), Triple(12, 2103, 1346))), date))
+        val tiles = WindowTiles({ list }, dir)
+        val (lat, lon) = middle(westerkerk.first, westerkerk.second)
+        // nothing is known before the index is read, and asking reads nothing
+        assertNull(tiles.level("levelled", version, lat, lon))
+        assertEquals(0, gh.storageRequests.size)
+        tiles.index("levelled", version)
+        // its window
+        assertEquals(WindowTiles.LEVEL, tiles.level("levelled", version, lat, lon))
+        // no window listed, under the L13 tile 4207/2693
+        assertEquals(13, middle(8414, 5386).let { (a, o) -> tiles.level("levelled", version, a, o) })
+        // no window and no L13 tile listed (4206/2692), under the L12 tile 2103/1346
+        assertEquals(12, middle(8412, 5384).let { (a, o) -> tiles.level("levelled", version, a, o) })
+        assertEquals(true, middle(8412, 5384).let { (a, o) -> tiles.holds("levelled", version, a, o) })
+        // beyond them all
+        assertEquals(0, middle(8420, 5390).let { (a, o) -> tiles.level("levelled", version, a, o) })
+        assertEquals(false, middle(8420, 5390).let { (a, o) -> tiles.holds("levelled", version, a, o) })
+        // another core's index says nothing, and asking read nothing more
+        assertNull(tiles.level("levelled", "core-p0 s0", lat, lon))
+        assertEquals(1, gh.storageRequests.size)
+    }
+
+    @Test
     fun aWindowNoCountryHoldsGetsNoAnswer() {
         val list = listOf(publish("netherlands", country(), date))
         val tiles = WindowTiles({ list }, dir)

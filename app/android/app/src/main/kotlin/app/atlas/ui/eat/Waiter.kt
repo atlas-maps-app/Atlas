@@ -32,7 +32,7 @@ object Waiter {
     /** Answers [text] at the table's moment [at] in [zone]. */
     fun ask(text: String, area: EatArea, at: LocalDateTime, zone: ZoneId, lang: String, limit: Int = 8): Answer {
         val zoned = at.atZone(zone)
-        val parsed = QueryParser.parse(text, lang, zoned)
+        val parsed = QueryParser.parse(text, lang, zoned, area.hours.country)
         val query = Query.and(Query.Tags(EatKind.FILTER), parsed.query)
         val ctx = EvalContext(location = area.centre, now = zoned, lang = lang, limit = limit, hours = area.hours)
         val result = OfflineEvaluator(area.source).run(query, ctx)

@@ -1,6 +1,7 @@
 #include "load/Cut.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/BigRoad.hpp"
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Seams.hpp"
 #include "geometry/StreetWall.hpp"
@@ -1562,16 +1563,12 @@ private:
         }
     }
 
-    /// rendertiles' Drawn.line for a big road: its asphalt by lanes, the widest the renders draw where its width
-    /// cannot be read.
+    /// A big road's reach beside its line: half the width the ground draws it with and half a metre, the ground's own
+    /// rule (geometry/BigRoad.hpp: a lanes or a width that cannot be read or that no road has as absent), so that its
+    /// box is never narrower than its asphalt. (rendertiles' Drawn.line took the lanes as Long.toInt and a width as
+    /// given, so a negative one, or lanes past 2^31, gave no reach at all, and lanes past the doubles 30 m.)
     [[nodiscard]] static double big_pad(const BigRoad& r) {
-        constexpr double unknown = 30.0;
-        const double lanes_f = num(r.tags.get("lanes")).value_or(r.hw.ends_with("link") ? 1.0 : 2.0);
-        const auto lanes_l = pymath::checked::to_int(lanes_f); // PyMath.int: no value past the doubles' integers
-        if (!lanes_l) return unknown;
-        const auto lanes = static_cast<std::int32_t>(static_cast<std::uint32_t>(*lanes_l)); // Long.toInt()
-        const double w = num(r.tags.get("width")).value_or((lanes * 3.5) + (r.hw == "motorway" ? 3.0 : 1.0));
-        return std::isfinite(w) ? (w / 2) + 0.5 : unknown;
+        return (geometry::big_road_size(r.hw, r.tags.get("lanes"), r.tags.get("width")).width / 2) + 0.5;
     }
 
     /// regions.py's lines: railways, big roads, runways and taxiways, power lines, marine works, a park's edge.

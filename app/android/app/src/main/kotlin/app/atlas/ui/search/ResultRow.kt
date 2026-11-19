@@ -71,8 +71,8 @@ fun walkOrDistance(metres: Double): String =
     if (WalkTime.seconds(metres) <= FAR_WALK_S) walkMinutes(WalkTime.seconds(metres)) else shortDistance(metres)
 
 /**
- * What a row says about a place, worked out once: its name and kind, symbol and colour, its open status (holiday
- * aware when [open] comes from a search that knew the country) and how far it is.
+ * What a row says about a place, worked out once: its name and kind, symbol and colour, its open status (as its caller
+ * read it, in the holidays and the sun where it is) and how far it is.
  */
 @Immutable
 data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepFree: Boolean) {
@@ -84,12 +84,15 @@ data class PlaceLine(val summary: PlaceSummary, val words: OpenWords?, val stepF
         get() = summary.distanceM?.let(::walkOrDistance)
 
     companion object {
-        /** The line for [place] seen from [from] at [now]; [open] overrides the status read without holidays. */
-        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus? = null, name: String? = null, distanceM: Double? = null): PlaceLine {
-            val base = PlaceSummary.of(place, from, lang, now)
+        /**
+         * The line for [place] seen from [from] at [now], how it stands for opening [open] as its caller read it (a
+         * search's hit, or its hours read where it is: never without its holidays); its mark the brand's of [country],
+         * the country of the map at it.
+         */
+        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, open: OpenStatus?, country: String?, name: String? = null, distanceM: Double? = null): PlaceLine {
+            val base = PlaceSummary.withOpen(place, from, lang, open, country)
             val s = base.copy(
                 name = name ?: base.name,
-                open = open ?: base.open,
                 distanceM = distanceM ?: base.distanceM,
             )
             return PlaceLine(s, OpenWords.of(s, now), place.tags["wheelchair"] == "yes")
@@ -230,8 +233,8 @@ fun kindOf(place: Place, lang: String?): String? = Presets.match(place.tags)?.na
 /** What [place] is, to title it when it has no name of its own: its preset's own name ("Gift Shop"), or null. */
 fun kindTitleOf(place: Place, lang: String?): String? = Presets.match(place.tags)?.fullName(lang)
 
-/** The one-line address of [place], or null. */
-fun addressOf(place: Place): String? = Localise.address(place.tags)
+/** The one-line address of [place] as [country] writes it (its own `addr:country` first), or null. */
+fun addressOf(place: Place, country: String?): String? = Localise.address(place.tags, country)
 
 /** Metres from [from] to [place], or null when either is unknown. */
 fun distanceTo(from: LatLon?, place: Place): Double? = from?.let { Geo.distance(it, place.location) }

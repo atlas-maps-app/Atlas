@@ -71,6 +71,18 @@ object Brands {
 
     private val data: Data by lazy { load() }
 
+    /**
+     * The names a kind has in a bundled language that are also its brands' names ([key]s, by the kind's main tag:
+     * "shop=kiosk" to "kiosk"), from `kind_words.tsv`: by its name alone such a place is no brand's.
+     */
+    private val kindWords: Map<String, Set<String>> by lazy {
+        val text = Resources.text("kind_words.tsv") ?: return@lazy emptyMap()
+        text.lineSequence().filter { it.isNotBlank() && !it.startsWith('#') }.mapNotNull { line ->
+            val tab = line.indexOf('\t')
+            if (tab < 0) null else line.substring(0, tab) to line.substring(tab + 1).split('|').map(::key).filter { it.isNotEmpty() }.toSet()
+        }.toMap()
+    }
+
     private fun load(): Data {
         val text = Resources.text("brands.tsv") ?: error("missing brands.tsv")
         val all = ArrayList<Brand>(15000)
@@ -159,26 +171,73 @@ object Brands {
     fun byWikidata(qid: String): List<Brand> = data.byWikidata[qid] ?: emptyList()
 
     /**
-     * The brand of a mapped place: by `brand:wikidata`, else by its `brand` name with the same main key (amenity,
-     * shop…), else by its `name` when the main tag matches exactly. Among several, the one whose main tag matches
-     * and that trades in [country] wins.
+     * The brand of a mapped place in [country], the country of the map at it, its own `addr:country` first
+     * ([PlaceCountry]): by `brand:wikidata`, else by its `brand` name with the same main key (amenity, shop…), else by
+     * its `name` when the main tag matches exactly. Among several, the one whose main tag matches and that trades in the
+     * country wins. A name alone is a chain's only where the chain trades (the reviewer, 17 November, finding 9):
+     * "Etos" is a chain in the Netherlands alone; where the country is not known, only a chain that trades
+     * everywhere. A chain also trades where [alsoTrades] says, given it and the country: a store's, where its own
+     * places name the chain by `brand:wikidata` or `brand` ([named]), since the lists lag behind the street.
      */
-    fun forTags(tags: Map<String, String>, country: String? = null): Brand? {
-        val c = country ?: tags["addr:country"]
+    fun forTags(tags: Map<String, String>, country: String?, alsoTrades: (Brand, String) -> Boolean = { _, _ -> false }): Brand? {
+        val c = PlaceCountry.of(tags, country)
+        val m = candidates(tags) ?: return null
+        val list = if (m.byName) m.brands.filter { tradesIn(it, c) || (c != null && alsoTrades(it, c)) } else m.brands
+        return if (list.isEmpty()) null else best(list, tags, c)
+    }
+
+    /**
+     * True when [forTags] may answer otherwise in another country or another store: its tags fit entries that trade
+     * apart, by its name alone (where a chain trades, its list or the store's own places say: [forTags]'s alsoTrades),
+     * or several of them where the place names no country of its own. A store matches these once it knows the
+     * countries around them and the chains its places name (`StoreWriter` in :search).
+     */
+    fun dependsOnCountry(tags: Map<String, String>): Boolean {
+        val m = candidates(tags) ?: return false
+        val apart = m.brands.any { it.countries.isNotEmpty() || it.excludedCountries.isNotEmpty() }
+        return apart && (m.byName || (m.brands.size > 1 && PlaceCountry.tagged(tags) == null))
+    }
+
+    /**
+     * The entries [tags] name by `brand:wikidata`, that item's alone, or by `brand` where one entry alone bears the name
+     * for a place of its kind, not by the name alone: the chain a place says it is of (the app maintainer, 18 November
+     * 2026, batch 5 B10: `brand=Coop` named each of the eleven chains called Coop, so in a Belgian store a supermarket
+     * named only "Coop" became Coop Italia's).
+     */
+    fun named(tags: Map<String, String>): List<Brand> {
         val qid = tags["brand:wikidata"]?.trim()?.takeIf { it.isNotEmpty() }
-        qid?.let { data.byWikidata[it] }?.let { list -> return best(list, tags, c) }
+        if (qid != null) return data.byWikidata[qid].orEmpty()
+        if (tags["brand"].isNullOrBlank()) return emptyList()
+        return candidates(tags)?.takeIf { !it.byName }?.brands?.takeIf { it.size == 1 }.orEmpty()
+    }
+
+    /** The entries a place's tags fit, and whether by its name alone. */
+    private class Candidates(val brands: List<Brand>, val byName: Boolean)
+
+    private fun candidates(tags: Map<String, String>): Candidates? {
+        val qid = tags["brand:wikidata"]?.trim()?.takeIf { it.isNotEmpty() }
+        qid?.let { data.byWikidata[it] }?.let { list -> return Candidates(list, byName = false) }
         // a different Wikidata item means a different company, whatever the name
         fun sameItem(b: Brand) = qid == null || b.wikidata == null || b.wikidata == qid
         tags["brand"]?.let { b ->
             val list = data.byKey[key(b)]?.filter { sameKey(it, tags) && sameItem(it) }
-            if (!list.isNullOrEmpty()) return best(list, tags, c)
+            if (!list.isNullOrEmpty()) return Candidates(list, byName = false)
         }
         tags["name"]?.let { n ->
-            val list = data.byKey[key(n)]?.filter { exactTag(it, tags) && sameItem(it) }
-            if (!list.isNullOrEmpty()) return best(list, tags, c)
+            val k = key(n)
+            // a kind's own word is no brand by itself: "Kiosk" at a kiosk, "Station-service" at a fuel station (the app
+            // maintainer, 18 November 2026, batch 4 B16), whatever brand of that kind is so called
+            val list = data.byKey[k]?.filter { exactTag(it, tags) && sameItem(it) && !kindsWord(it, k) }
+            if (!list.isNullOrEmpty()) return Candidates(list, byName = true)
         }
         return null
     }
+
+    /** Whether the name keyed [k] is a name of [b]'s kind in a bundled language ([kindWords]). */
+    private fun kindsWord(b: Brand, k: String) = b.keyTags.entries.any { (tk, tv) -> kindWords["$tk=$tv"]?.contains(k) == true }
+
+    /** Trades in [country]; where it is not known, everywhere (some countries aside). */
+    private fun tradesIn(b: Brand, country: String?) = if (country == null) b.countries.isEmpty() else b.availableIn(country)
 
     private fun exactTag(b: Brand, tags: Map<String, String>) = b.keyTags.isNotEmpty() && b.keyTags.all { (k, v) -> tags[k] == v }
     private fun sameKey(b: Brand, tags: Map<String, String>) = b.keyTags.isEmpty() || b.keyTags.keys.any { it in tags }

@@ -75,8 +75,12 @@ internal fun momentView(m: Moment, now: Instant, zone: ZoneId, here: LatLon, orb
             val name = Localise.name(m.place.tags, lang) ?: stringResource(R.string.season_market)
             val day = DateTimeFormatter.ofPattern("EEE", Locale.getDefault()).format(m.at.atZone(zone))
             val open = m.at <= now
-            val hours = if (open && m.until != null) stringResource(R.string.moment_market_open_until, t(m.until))
-            else if (m.until != null) "$day ${t(m.at)}–${t(m.until)}" else "$day ${t(m.at)}"
+            val hours = when {
+                open && m.until != null -> stringResource(R.string.moment_market_open_until, t(m.until))
+                open -> stringResource(R.string.kit_open)
+                m.until != null -> "$day ${t(m.at)}–${t(m.until)}"
+                else -> "$day ${t(m.at)}"
+            }
             MomentView(m, "place.market.2", 0xFF2F7A3A, name, hours, stringResource(R.string.moment_because_market), Dest.Place.of(m.place))
         }
         is Moment.Station -> {

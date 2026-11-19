@@ -1,9 +1,18 @@
 package app.atlas.ui.kit
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import app.atlas.geo.LatLon
+import app.atlas.model.Place
 import app.atlas.nav.LocalServices
+import app.atlas.places.OpeningHoursContext
+import app.atlas.ui.search.HereContext
+import app.atlas.ui.search.HereRegion
+import app.atlas.ui.search.PlaceLocale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.time.Clock
 import java.time.LocalDateTime
 
@@ -15,6 +24,52 @@ import java.time.LocalDateTime
 fun rememberNow(vararg keys: Any?): LocalDateTime {
     val clock = LocalServices.current.clock
     return remember(clock, *keys) { LocalDateTime.now(clock) }
+}
+
+/**
+ * The holidays and the sun at [at], which a screen reads the hours of the places there in ([HereContext.hours]: the
+ * country there, never the phone's language, its state or nation where that changes them, and the real sun), kept per
+ * point: those of [rememberRegionAt].
+ */
+@Composable
+fun rememberHoursAt(at: LatLon): OpeningHoursContext {
+    val zone = LocalServices.current.clock.zone
+    val region = rememberRegionAt(at)
+    return remember(region, at, zone) { region.hours(at, zone) }
+}
+
+/**
+ * The country of the map at [at] ([HereContext.country]: the regions on the phone, else the map's own), which a place
+ * naming none of its own is read in, its holidays and its brand; kept per point ([rememberRegionAt]).
+ */
+@Composable
+fun rememberCountryAt(at: LatLon): String? = rememberRegionAt(at).country
+
+/**
+ * The country of the map at [at] and its state or nation there ([HereContext.region]), kept per point. The regions are
+ * asked off the main thread, once a kilometre; until they answer, what is known without them ([HereContext.regionNow]).
+ */
+@Composable
+fun rememberRegionAt(at: LatLon): HereRegion {
+    val services = LocalServices.current
+    val region = remember(services, at) { mutableStateOf(HereContext.regionNow(services, at)) }
+    LaunchedEffect(region) { region.value = withContext(Dispatchers.IO) { HereContext.region(services, at) } }
+    return region.value
+}
+
+/**
+ * Where [place] keeps its time, seen from the phone ([HereContext.localeOf]): its own country, else the map's at it,
+ * its state or nation, and its clock; kept per place. A row reads its place so, never where the phone is (the app
+ * maintainer, 18 November 2026, batch 4 B18: a saved café in Munich read Dutch holidays). The regions are asked off the
+ * main thread; until they answer, what is known without them ([HereContext.localeNow]).
+ */
+@Composable
+fun rememberLocaleOf(place: Place): PlaceLocale {
+    val services = LocalServices.current
+    val zone = services.clock.zone
+    val locale = remember(services, place, zone) { mutableStateOf(HereContext.localeNow(services, place, HereContext.phoneAt(services), zone)) }
+    LaunchedEffect(locale) { locale.value = withContext(Dispatchers.IO) { HereContext.localeOf(services, place, HereContext.phoneAt(services), zone) } }
+    return locale.value
 }
 
 /** The app's clock, for screens that reason with instants and zones themselves. */

@@ -96,6 +96,14 @@ struct BuildingTile {
     std::vector<std::uint16_t> near_items;
     /// Each windowed wall's first window among the tile's by cell (its windows: [window_at[i], window_at[i + 1])).
     std::vector<std::uint32_t> window_at;
+    /// The windows of windowed walls [first, first + n), exact: each wall's count is its levels times its bays (below
+    /// 2^32, as the shader counts them), so its difference in window_at is exact though the running count may wrap;
+    /// their sum, which may not fit 32 bits, in 64.
+    [[nodiscard]] std::uint64_t windows_of(std::uint32_t first, std::uint32_t n) const noexcept {
+        std::uint64_t sum = 0;
+        for (std::uint32_t i = first; i < first + n; ++i) sum += window_at[i + 1] - window_at[i];
+        return sum;
+    }
     /// Each windowed wall's item (its wall's), so the frame's jobs take only the walls whose windows it draws.
     std::vector<std::uint16_t> window_items;
     /// Each windowed wall's face (its wall's), whose light inputs its reveals' colour comes from.

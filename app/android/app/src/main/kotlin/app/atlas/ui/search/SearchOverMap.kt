@@ -34,6 +34,7 @@ import app.atlas.mapview.UserLocation
 import app.atlas.model.Place
 import app.atlas.places.CategoryNode
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
 import app.atlas.nav.Dest
@@ -136,7 +137,7 @@ internal fun SearchOverMap(nav: Navigator, query: String = "", kind: String? = n
         // closed places lighter, as their rows are: open or not then as now, the sheet's
         val now = rememberNow(state.results)
         val markers = remember(state.results, text.results, field, state.focus, state.prefs.cards, now) {
-            if (field.isNotBlank()) typedMarkers(text.results, now, state.centre, state.prefs.mode) else sheetMarkers(state, now)
+            if (field.isNotBlank()) typedMarkers(text.results, now, state.centre, state.prefs.mode, state.moment.hours) else sheetMarkers(state, now)
         }
         FitToPlaces(over.state, state, band)
         FitToWalk(over.state, state, band)
@@ -193,7 +194,7 @@ internal fun sheetMarkers(s: SearchSheetState, now: LocalDateTime): List<Marker>
     return hits.mapIndexed { i, h ->
         val p = h.record.place
         val on = p.key == chosen
-        pinOf(p, full = i < PINS || on, closedThere(h.open, h.minutes, now), rank = hits.size - i, selected = on, outlined = isCoreKind(s.node, h))
+        pinOf(p, full = i < PINS || on, closedThere(h.open, h.minutes, now), rank = hits.size - i, s.moment.hours.country, selected = on, outlined = isCoreKind(s.node, h))
     }
 }
 
@@ -212,7 +213,7 @@ internal fun isCoreKind(view: CategoryNode?, h: ResultHit): Boolean =
  * crowd, the pins go first, then an open place's dot before a closed one's, the ringed before the rest, each by [rank]:
  * a cluster is light only where all in it are closed.
  */
-private fun pinOf(p: Place, full: Boolean, closed: Boolean, rank: Int, selected: Boolean = false, outlined: Boolean = false): Marker {
+private fun pinOf(p: Place, full: Boolean, closed: Boolean, rank: Int, country: String?, selected: Boolean = false, outlined: Boolean = false): Marker {
     val faded = closed && !selected
     val ringed = outlined && !selected
     val priority = rank + (if (ringed) TIER else 0) + when {
@@ -221,10 +222,10 @@ private fun pinOf(p: Place, full: Boolean, closed: Boolean, rank: Int, selected:
         faded -> 0
         else -> 2 * TIER
     }
-    if (full) signOf(p)?.let { brand ->
+    if (full) signOf(p, country)?.let { brand ->
         return Marker(p.key, p.location, Symbols.symbolFor(p.tags), BrandSigns.argb(brand).toLong() and 0xFFFFFFFFL, MarkerStyle.BRAND, logo = brand.id, selected = selected, priority = priority, place = p, faded = faded, outlined = ringed)
     }
-    val (symbol, colour) = markOf(p)
+    val (symbol, colour) = markOf(p, country)
     val style = if (full) MarkerStyle.PIN else MarkerStyle.DOT
     return Marker(p.key, p.location, symbol, colour.toLong() and 0xFFFFFFFFL, style, selected = selected, priority = priority, place = p, faded = faded, outlined = ringed)
 }
@@ -247,21 +248,22 @@ internal fun showsCard(s: SearchSheetState, field: String, place: Place): Boolea
 
 /**
  * The places among typed results as pins, each with its mark ([markOf]) as its row has it, lighter where its row's light
- * says closed at [now], [mode] from [here] ([closedThere]).
+ * says closed at [now], [mode] from [here] ([closedThere]); an online place's own hours read in [hours] (the holidays and
+ * the sun there).
  */
-internal fun typedMarkers(r: SearchResults?, now: LocalDateTime, here: LatLon, mode: TravelMode): List<Marker> {
+internal fun typedMarkers(r: SearchResults?, now: LocalDateTime, here: LatLon, mode: TravelMode, hours: OpeningHoursContext): List<Marker> {
     val places = r?.items.orEmpty().mapNotNull { item ->
         when (item) {
             is SearchItem.PlaceResult -> Triple(item.hit.place, item.hit.open, item.hit.distance)
             // an online place's hours are its own, as its row reads them
-            is SearchItem.Online -> Triple(item.place, OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(now), item.distance)
+            is SearchItem.Online -> Triple(item.place, OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(now, hours), item.distance)
             is SearchItem.Element -> Triple(item.hit.place, item.hit.open, item.hit.distance)
             else -> null
         }
     }
     return places.mapIndexed { i, (p, open, distance) ->
         val minutes = Travel.minutes(distance ?: Geo.distance(here, p.location), mode)
-        pinOf(p, full = i < PINS, closedThere(open, minutes, now), rank = places.size - i)
+        pinOf(p, full = i < PINS, closedThere(open, minutes, now), rank = places.size - i, hours.country)
     }
 }
 
