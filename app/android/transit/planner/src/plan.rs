@@ -1103,8 +1103,8 @@ impl<'s> Search<'s, '_> {
     /// the one next after the journey's own departure by itself, since most journeys already leave as late as they
     /// can and that search says so. Each search is held to what could still match a journey it can tell something
     /// of. The journeys that leave later are put in `kept`. Returns how many searches it took: `cap` at most
-    /// ([`crate::Limits::departures`]), and where that stops it before every journey's latest moment is known,
-    /// the search is cut short: a journey may then leave sooner than it need.
+    /// ([`crate::Limits::departures`]), and where a search more would have been needed to know every journey's
+    /// latest moment, the search is cut short: a journey may then leave sooner than it need.
     fn leave_later(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, mut anchors: Vec<Anchor>, cap: usize) -> u32 {
         let Some(end) = anchors.iter().map(|a| a.time).max() else {
             return 0;
@@ -1153,7 +1153,7 @@ impl<'s> Search<'s, '_> {
         // (the moment of the search before, while this one can build on it; the journeys of each are in `found`)
         let (mut searches, mut before) = (0u32, i32::MIN);
         while let Some(target) = self.anchors.iter().position(|a| a.hi - a.lo > 1) {
-            if self.cut || self.steps > self.max_steps || searches as usize >= cap {
+            if self.cut || self.steps > self.max_steps {
                 self.cut = true;
                 break;
             }
@@ -1185,6 +1185,12 @@ impl<'s> Search<'s, '_> {
                 self.offer_first(stop, moments[p as usize] + secs as i32, secs);
             }
             if !self.w.marks[0].is_empty() {
+                // The cap is met here, where a search is needed and may not be made: a moment from which nothing
+                // can be in time needs none, and an answer whose last tries were all of that kind is whole.
+                if searches as usize >= cap {
+                    self.cut = true;
+                    break;
+                }
                 self.rounds();
                 searches += 1;
             }

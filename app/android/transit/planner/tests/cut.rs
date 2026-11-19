@@ -888,6 +888,54 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
     assert!(asked > 100 && stopped > 10 && most > 20 && for_one * 5 < for_all * 4, "{asked} {stopped} {most} {for_one} {for_all}");
 }
 
+/// The cap on the searches for a later departure is said where it cut, and nowhere else. A try for a later moment
+/// needs a search only when something can still be reached from that moment; an answer capped at exactly as many
+/// searches as the whole one took has made every one of them, tried the rest without, and is whole: the same
+/// journeys, and not cut short.
+#[test]
+fn a_cap_on_later_departures_is_said_only_where_it_cut() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (mut asked, mut whole_at_cap, mut wrongly, mut cut) = (0, 0, Vec::new(), 0);
+    for (i, (a, z)) in pairs(&tt, 120, 61).into_iter().enumerate() {
+        let place = |s: u32| if i % 3 == 0 { Place::Stop(s) } else { Place::Point { lat: tt.stop(s).lat + 1500, lon: tt.stop(s).lon - 2500 } };
+        let mut q = Query::new(place(a), place(z), 0, [8 * 3600, 17 * 3600 + 900][i % 2] + 67 * i as u32);
+        q.arrive_by = i % 5 == 1;
+        if i % 4 < 2 {
+            q.wishes.push(Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) });
+            q.weigh = i % 4 == 0;
+        }
+        let whole = p.plan(&q);
+        assert!(!whole.cut_short, "{q:?}");
+        if whole.journeys.is_empty() {
+            continue;
+        }
+        asked += 1;
+        for cap in 1..=whole.searches.min(40) {
+            let mut capped = q.clone();
+            capped.limits.departures = cap;
+            let got = p.plan(&capped);
+            assert!(got.searches <= whole.searches, "pair {i}, cap {cap}: {q:?}");
+            if got.searches == whole.searches {
+                // every search the whole answer made was made: nothing was left out
+                assert_eq!(got.journeys, whole.journeys, "pair {i}, cap {cap}: {q:?}");
+                whole_at_cap += 1;
+                if got.cut_short {
+                    wrongly.push(format!("pair {i}, cap {cap} of {} searches", whole.searches));
+                }
+            } else {
+                // a search was left out, and the answer says so
+                assert!(got.cut_short, "pair {i}, cap {cap}: {} searches of {} and not said: {q:?}", got.searches, whole.searches);
+                cut += 1;
+            }
+        }
+    }
+    println!("{asked} pairs: {whole_at_cap} capped answers whole, {} of them said to be cut short; {cut} cut", wrongly.len());
+    assert!(wrongly.is_empty(), "{} whole answers said to be cut short, of {whole_at_cap}:\n{}", wrongly.len(), wrongly[..wrongly.len().min(12)].join("\n"));
+    assert!(asked > 100 && whole_at_cap > 250 && cut > 500, "{asked} {whole_at_cap} {cut}");
+}
+
 /// Late in the evening a window's last connections take long: the next ride from a change may be an hour off, or
 /// the next morning's. They are options all the same, and the answer has them: compared with the scan as far as the
 /// query's own horizon. (A window's answer lacked them until 18 November 2026: the search stopped where the faster
