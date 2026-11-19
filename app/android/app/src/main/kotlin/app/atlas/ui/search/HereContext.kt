@@ -217,25 +217,39 @@ object HereContext {
 /** Which clock a far-away place keeps, worked out without a network: its country's, else the sun's hour. */
 object PlaceZone {
     /**
-     * The clock at [p] in [country]: the country's own ([Countries.timezone], by longitude where it spans several), the
-     * Canaries' and the Azores' their own (the app maintainer, 18 November 2026, batch 4 B15: the zone nearest the sun's
-     * hour put Madrid on the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's); for a country it does not
-     * name, the country's zone nearest the sun's hour there; the sun's whole hour itself where the country is unknown.
+     * The clock at [p] in [country]: the islands far off their country's own their own ([islands]); in a country of
+     * several clocks ([SEVERAL]) the country's zone nearest the sun's hour there, as before batch 4 (the app maintainer,
+     * 18 November 2026, batch 5 A8: the engine's table cuts them by longitude, or gives them one zone, and put Halifax on
+     * Toronto's clock, Manaus on São Paulo's, Tijuana on Mexico City's, Nashville on New York's and Kaliningrad on
+     * Moscow's); in every other its own ([Countries.timezone]; batch 4 B15: the zone nearest the sun's hour put Madrid on
+     * the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's), else the one nearest the sun's hour there; the
+     * sun's whole hour itself where the country is unknown.
      */
     fun guess(country: String?, p: LatLon, at: Instant = Instant.now()): ZoneId {
         islands(country, p)?.let { return ZoneId.of(it) }
-        Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull()?.let { return it } }
+        if (country !in SEVERAL) Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull()?.let { return it } }
         val sun = p.lon / 15.0
         val best = zonesOf(country).minByOrNull { id -> abs(ZoneId.of(id).rules.getStandardOffset(at).totalSeconds / 3600.0 - sun) }
         return best?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.ofHours(sun.roundToInt().coerceIn(-12, 14))
     }
 
-    /** The islands far off their country's own clock: the Canaries west of 12° W, the Azores west of 20° W. */
+    /**
+     * The islands far off their country's own clock: the Canaries west of 12° W, the Azores west of 20° W, Easter Island
+     * west of 100° W (Chile's, two hours behind Santiago: batch 5 A8, right on 38ddafa1).
+     */
     private fun islands(country: String?, p: LatLon): String? = when {
         country == "ES" && p.lon < -12.0 -> "Atlantic/Canary"
         country == "PT" && p.lon < -20.0 -> "Atlantic/Azores"
+        country == "CL" && p.lon < -100.0 -> "Pacific/Easter"
         else -> null
     }
+
+    /**
+     * The countries of several clocks, read by the sun's hour (batch 5 A8): those the engine's table cuts by longitude
+     * (the United States, Canada, Australia, Russia, Indonesia), those it gives one zone (Mexico, Brazil), and those it
+     * names none for (Kazakhstan, Mongolia, both Congos), so they stay so if it ever does.
+     */
+    private val SEVERAL = setOf("US", "CA", "MX", "BR", "RU", "AU", "ID", "KZ", "MN", "CD", "CG")
 
     /** The zone ids of [country] (ISO 3166 alpha-2), from the system's ICU data; none when unknown. */
     private fun zonesOf(country: String?): List<String> {
