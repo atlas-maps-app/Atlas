@@ -206,6 +206,15 @@ size_t atlas_transit_plan(atlas_transit *t, const int32_t *query, size_t query_l
                           size_t from_walks_len, const int32_t *to_walks, size_t to_walks_len, const int32_t *wishes,
                           size_t wishes_len);
 
+/* Tells the plan under way on this timetable to stop: from any thread, at any time while the timetable is open.
+ * The plan ends soon (it looks every 1,024 steps of its search: within some milliseconds on a country's file,
+ * wherever it is), and its answer is what it had by then, with ATLAS_TRANSIT_CUT_STOPPED at
+ * ATLAS_TRANSIT_A_CUT_SHORT: for whoever no longer waits for the answer (a new destination was typed, the screen
+ * was left, the pack is being swapped). The word is for the plan that runs when it is said. With no plan under way
+ * it does nothing, and the plan that begins afterwards runs whole: to stop a plan that has not begun, do not begin
+ * it. */
+void atlas_transit_stop(const atlas_transit *t);
+
 /* Copies the last answer's numbers to `out`, `cap` of them at most, and gives how many it has. 0, with nothing
  * copied, while a plan on this timetable is under way.
  *
@@ -217,7 +226,9 @@ size_t atlas_transit_plan(atlas_transit *t, const int32_t *query, size_t query_l
  *                               than _Q_DEPARTURES), _CUT_BAG, _CUT_OPTIONS, _CUT_PLACE (a place stood for more
  *                               stops than a search begins at), _CUT_DAYS (more service days could matter than a
  *                               search reads), _CUT_CHEAPER (with _CUT_STEPS: they ran out while a boarding read
- *                               on for a cheaper trip). An app says "cut short" for any of them.
+ *                               on for a cheaper trip). An app says "cut short" for any of them. And
+ *                               _CUT_STOPPED, which is no cap: atlas_transit_stop ended the plan, and nobody is
+ *                               shown its answer.
  *   ATLAS_TRANSIT_A_HORIZON     how long past the asked moment journeys were followed, in seconds
  *   ATLAS_TRANSIT_A_SEARCHES, _A_LABELS, _A_STEPS_K, _A_LATER   what the search did, for a timing overlay
  *   ATLAS_TRANSIT_A_SPARE       0; nothing yet
@@ -302,6 +313,7 @@ size_t atlas_transit_answer(const atlas_transit *t, int32_t *out, size_t cap);
 #define ATLAS_TRANSIT_CUT_PLACE 32
 #define ATLAS_TRANSIT_CUT_DAYS 64
 #define ATLAS_TRANSIT_CUT_CHEAPER 128
+#define ATLAS_TRANSIT_CUT_STOPPED 256
 #define ATLAS_TRANSIT_J_HEAD 6
 #define ATLAS_TRANSIT_J_DEPART 0
 #define ATLAS_TRANSIT_J_ARRIVE 1

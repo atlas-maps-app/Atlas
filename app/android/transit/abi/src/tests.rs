@@ -240,7 +240,7 @@ fn the_header_names_the_same_numbers() {
         assert!(said.contains(words), "the header no longer says: {words}");
     }
     // and each function the library gives is declared there
-    for function in ["abi", "open", "close", "number", "text", "meta", "plan", "answer"] {
+    for function in ["abi", "open", "close", "number", "text", "meta", "plan", "stop", "answer"] {
         assert!(header.contains(&format!("atlas_transit_{function}(")), "{function}");
     }
 }
@@ -938,5 +938,73 @@ fn a_plan_under_way_refuses_a_second_plan_and_a_reading() {
     assert!(counts[0] == 120 && counts[1] > 100 && counts[2] > 0 && counts[3] > 100, "{counts:?}");
     // and when all is quiet the answer is there, whole
     assert_eq!(t.plan(&sent), whole);
+}
+
+/// A plan can be stopped from another thread: the plan under way ends soon, gives what it has, and its answer says
+/// that it was stopped, by that bit alone. A stop with no plan under way stops nothing: the plan that begins
+/// afterwards runs whole, as does the plan after a stopped one.
+#[test]
+fn a_plan_is_stopped_from_another_thread() {
+    struct Shared(*mut AtlasTransit);
+    // SAFETY: the interface's own word: a stop from any thread, and a reading that meets a plan is refused
+    unsafe impl Sync for Shared {}
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let t = Open::of(&b);
+    let shared = Shared(t.0);
+    let sent = send(&a_long_question(&tt));
+    let whole = t.plan(&sent);
+    assert!(whole.len() > A_HEAD + J_HEAD && whole[A_CUT_SHORT] == 0 && whole[A_STEPS_K] > 100, "{:?}", &whole[..A_HEAD.min(whole.len())]);
+    // nobody plans: nothing to stop, and nothing kept for the plan that comes
+    // SAFETY (here and below): an open timetable
+    unsafe { atlas_transit_stop(shared.0) };
+    unsafe { atlas_transit_stop(null()) };
+    assert_eq!(t.plan(&sent), whole);
+    let (mut stopped, mut late, mut refused, mut fewest) = (0, 0, 0, i32::MAX);
+    for _ in 0..300 {
+        let got = std::thread::scope(|scope| {
+            let (shared, sent) = (&shared, &sent);
+            let planning = scope.spawn(move || {
+                // SAFETY: an open timetable and four arrays with their lengths
+                let n = unsafe { atlas_transit_plan(shared.0, sent.query.as_ptr(), sent.query.len(), sent.from.as_ptr(), sent.from.len(), sent.to.as_ptr(), sent.to.len(), sent.wishes.as_ptr(), sent.wishes.len()) };
+                let mut out = vec![i32::MIN; n];
+                // (a refused plan has no answer of its own; and a reading may meet the other thread's look)
+                while n > 0 {
+                    // SAFETY: room for `n` numbers
+                    match unsafe { atlas_transit_answer(shared.0, out.as_mut_ptr(), n) } {
+                        0 => std::hint::spin_loop(),
+                        m => {
+                            assert_eq!(m, n);
+                            break;
+                        }
+                    }
+                }
+                out
+            });
+            // the plan is under way once the answer before it can no longer be read
+            while !planning.is_finished() && unsafe { atlas_transit_answer(shared.0, null_mut(), 0) } != 0 {
+                std::hint::spin_loop();
+            }
+            unsafe { atlas_transit_stop(shared.0) };
+            planning.join().unwrap()
+        });
+        if got.is_empty() {
+            // (the plan met this thread's look at the answer, and was refused: I4)
+            refused += 1;
+        } else if got[A_CUT_SHORT] == 0 {
+            // (it was done before the word came)
+            assert_eq!(got, whole);
+            late += 1;
+        } else {
+            assert_eq!(got[A_CUT_SHORT], CUT_STOPPED);
+            assert!(got[A_STEPS_K] <= whole[A_STEPS_K] && got[A_JOURNEYS] <= whole[A_JOURNEYS], "{:?}", &got[..A_HEAD]);
+            assert_eq!(received(&got).0.len(), got[A_JOURNEYS] as usize);
+            (stopped, fewest) = (stopped + 1, fewest.min(got[A_STEPS_K]));
+        }
+        // and the plan after it is whole
+        assert_eq!(t.plan(&sent), whole);
+    }
+    println!("300 plans of {},000 steps told to stop from another thread: {stopped} stopped (the soonest after {fewest},000 steps), {late} done before the word came, {refused} refused", whole[A_STEPS_K]);
+    assert!(stopped >= 100 && fewest * 4 < whole[A_STEPS_K], "{stopped} stopped, the soonest after {fewest},000 of {},000 steps", whole[A_STEPS_K]);
 }
 

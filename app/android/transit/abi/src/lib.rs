@@ -279,6 +279,7 @@ pub const CUT_OPTIONS: i32 = Answer::OPTIONS as i32;
 pub const CUT_PLACE: i32 = Answer::PLACE as i32;
 pub const CUT_DAYS: i32 = Answer::DAYS as i32;
 pub const CUT_CHEAPER: i32 = Answer::CHEAPER as i32;
+pub const CUT_STOPPED: i32 = Answer::STOPPED as i32;
 pub const J_HEAD: usize = 6;
 pub const J_DEPART: usize = 0;
 pub const J_ARRIVE: usize = 1;
@@ -430,6 +431,7 @@ pub const NAMES: &[(&str, i64)] = &[
     ("CUT_PLACE", CUT_PLACE as i64),
     ("CUT_DAYS", CUT_DAYS as i64),
     ("CUT_CHEAPER", CUT_CHEAPER as i64),
+    ("CUT_STOPPED", CUT_STOPPED as i64),
     ("J_HEAD", J_HEAD as i64),
     ("J_DEPART", J_DEPART as i64),
     ("J_ARRIVE", J_ARRIVE as i64),
@@ -461,13 +463,14 @@ pub struct AtlasTransit {
     tt: Timetable<'static>,
     planner: Planner<'static>,
     answer: Vec<i32>,
-    /// Who has the planner and the answer now: nobody (`IDLE`), a plan (`PLANNING`), or a call that reads the
-    /// answer (`READING`).
+    /// Who has the planner and the answer now: nobody (`IDLE`), a plan (`PLANNING`; `STOPPING` once it was told
+    /// to stop), or a call that reads the answer (`READING`).
     doing: AtomicU8,
 }
 
 const IDLE: u8 = 0;
 const PLANNING: u8 = 1;
+const STOPPING: u8 = 2;
 const READING: u8 = 3;
 
 /// An open timetable's planner and answer, taken for one call: given back when this goes.
@@ -772,7 +775,7 @@ pub unsafe extern "C" fn atlas_transit_plan(
         return 0;
     }
     // SAFETY: an open timetable
-    let Some(_taken) = (unsafe { take(t, PLANNING) }) else {
+    let Some(taken) = (unsafe { take(t, PLANNING) }) else {
         return 0;
     };
     // SAFETY: the caller's arrays, each as long as it says
@@ -787,8 +790,24 @@ pub unsafe extern "C" fn atlas_transit_plan(
     let Some(query) = read(q, from, to, wishes) else {
         return 0;
     };
-    write(&planner.plan(&query), answer);
+    write(&planner.plan_while(&query, &|| taken.0.load(Ordering::Relaxed) != STOPPING), answer);
     answer.len()
+}
+
+/// Tells the plan under way on this timetable to stop, from any thread: it ends where it next looks (every
+/// `atlas_transit::plan::LOOK_EVERY` steps) and gives what it has, cut short by `CUT_STOPPED`. With no plan under
+/// way it does nothing, and nothing of it is kept: the word is for the plan that runs now, and the plan that
+/// begins afterwards runs whole. (So is the flag one number: only a plan under way can become one that is
+/// stopping, and a plan that ends leaves nobody at all.)
+///
+/// # Safety
+/// `t` is null or an open timetable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn atlas_transit_stop(t: *const AtlasTransit) {
+    if !t.is_null() {
+        // SAFETY: an open timetable; the flag is read and written by any thread, as an atomic is
+        let _ = unsafe { &(*t).doing }.compare_exchange(PLANNING, STOPPING, Ordering::Release, Ordering::Relaxed);
+    }
 }
 
 /// Copies the last answer's numbers into `out`, `cap` of them at most, and gives how many the answer has. 0, with
