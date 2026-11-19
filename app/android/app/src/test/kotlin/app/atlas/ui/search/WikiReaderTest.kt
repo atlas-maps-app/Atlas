@@ -56,4 +56,23 @@ class WikiReaderTest {
 
     @Test
     fun inEnglishTheSentenceNamesTheSettingsRow() = switchedOffNamesTheRow()
+
+    /** The sentence's own words that do not change with the row's label: "switched off", in English. */
+    private val off: String get() = RuntimeEnvironment.getApplication().getString(R.string.place_wiki_off, "").trim()
+
+    @Test
+    fun withNoArticleAndNoFailureTheReaderDoesNotBlameTheSwitch() {
+        // offline, nothing kept: no article, nothing thrown
+        read { null }
+        assertTrue(compose.onAllNodes(hasText(off, substring = true)).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithText(RuntimeEnvironment.getApplication().getString(R.string.place_wiki_read)).assertExists()
+    }
+
+    @Test
+    fun aFailureThatIsNotTheSwitchShowsItsOwnWords() {
+        read { throw java.net.UnknownHostException("nowhere.example") }
+        assertTrue(compose.onAllNodes(hasText(off, substring = true)).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithText("nowhere.example").assertExists()
+        compose.onNodeWithText(RuntimeEnvironment.getApplication().getString(R.string.place_wiki_read)).assertExists()
+    }
 }
