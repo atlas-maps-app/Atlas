@@ -11,7 +11,11 @@
 //!
 //! Asked for like that without the file, it fails. On a file of another feed the planner is still held to the scan,
 //! journey by journey. What runs everywhere is the check that the journeys' file itself is whole.
+//!
+//! The same file holds one thing more that no hand-written feed can: a point with more stops around it than a
+//! search begins at (4,096) says that its answer was cut short, and by what.
 
+use atlas_transit::{Answer, Place, Planner, Query, Timetable};
 use std::process::Command;
 
 const JOURNEYS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/journeys-nl-9696.tsv");
@@ -24,6 +28,31 @@ fn the_fixed_journeys_agree_with_the_scan() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{said}{}", String::from_utf8_lossy(&out.stderr));
     assert!(said.contains("fixed journeys:"), "{said}");
+}
+
+/// From a point in Utrecht to a point in Amsterdam: with the reach a query has by default the stops around each
+/// are few and nothing is cut; with a reach of 50 km each point has more stops around it than a search begins at,
+/// the nearest stay, and the answer says that it was cut short by that and by nothing else.
+#[test]
+#[ignore = "needs the whole country's file: ATLAS_TRANSIT_FILE=<file> cargo test --test fixed -- --ignored"]
+fn a_point_with_more_stops_around_it_than_a_search_begins_at_says_so() {
+    let file = std::env::var("ATLAS_TRANSIT_FILE").expect("ATLAS_TRANSIT_FILE names no timetable file of the Netherlands");
+    let bytes = std::fs::read(&file).unwrap();
+    let tt = Timetable::open(&bytes).unwrap();
+    let mut planner = Planner::new(tt);
+    let (utrecht, amsterdam) = (Place::Point { lat: 520_894_000, lon: 51_101_000 }, Place::Point { lat: 523_791_000, lon: 49_003_000 });
+    let mut q = Query::new(utrecht, amsterdam, tt.day_of(20261117).unwrap_or(1), 8 * 3600);
+    let near = planner.plan(&q);
+    assert!(!near.cut_short && near.cut_by == 0 && !near.journeys.is_empty(), "{} {}", near.cut_by, near.journeys.len());
+    q.reach_m = 50_000;
+    let wide = planner.plan(&q);
+    assert!(wide.cut_short && wide.cut_by == Answer::PLACE && !wide.journeys.is_empty(), "{} {}", wide.cut_by, wide.journeys.len());
+    // The nearest stops stay, so the wide reach is in no later than the narrow one; and within twice that reach
+    // one can walk all the way, ten hours here, which is an option of no rides beside the train.
+    let first = |a: &Answer| a.journeys.iter().map(|j| j.arrive).min().unwrap();
+    assert!(first(&wide) <= first(&near), "{} {}", first(&wide), first(&near));
+    assert!(wide.journeys.iter().any(|j| j.rides == 0) && near.journeys.iter().all(|j| j.rides > 0));
+    println!("{file}: reach 1 km, {} options, the first in at {}; reach 50 km, {} options, the first in at {}, cut short by a place of too many stops", near.journeys.len(), first(&near), wide.journeys.len(), first(&wide));
 }
 
 /// The journeys' file is whole: its feed's line, and for each journey a name of its own, two places, a date, a

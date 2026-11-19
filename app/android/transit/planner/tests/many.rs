@@ -12,7 +12,7 @@
 
 use atlas_transit::file::{StopText, TripText};
 use atlas_transit::reference::{Reference, between_mm, day_start, impossible, places};
-use atlas_transit::{How, Journey, Leg, Place, Planner, Query, Timetable, What, Wish};
+use atlas_transit::{Answer, How, Journey, Leg, Place, Planner, Query, Timetable, What, Wish};
 
 const NONE: u32 = u32::MAX;
 
@@ -381,6 +381,7 @@ fn a_place_of_more_stops_than_a_search_begins_at_says_so() {
         assert!(ends.cut && ends.from.len() == 4096 && !ends.from.iter().any(|e| e.0 == wa), "first {first}");
         let a = p.plan(&q);
         assert!(a.cut_short && a.journeys.is_empty(), "first {first}: {:?}", a.journeys);
+        assert_eq!(a.cut_by, Answer::PLACE);
     }
     // arriving there, the same
     let mut q = Query::new(Place::Stop(wa), Place::Walks(dead(4096).chain([(wz, 600)]).collect()), 0, hm(8, 45));
@@ -398,6 +399,7 @@ fn a_place_of_more_stops_than_a_search_begins_at_says_so() {
     assert!(ends.cut && ends.from.len() == 4096);
     let a = p.plan(&q);
     assert!(a.cut_short);
+    assert_eq!(a.cut_by, Answer::PLACE);
     // (of stops as near as each other those of the lower number stay: A is among them)
     assert_eq!(a.journeys.iter().map(|j| (j.depart as u32, j.arrive as u32)).collect::<Vec<_>>(), [(hm(8, 0), hm(8, 30))]);
     // and a station of 4,096 is whole

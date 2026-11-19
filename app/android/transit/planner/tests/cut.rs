@@ -10,7 +10,7 @@
 
 use atlas_transit::geo::distance_mm;
 use atlas_transit::reference::{Reference, impossible, places};
-use atlas_transit::{Area, How, Journey, Leg, Mode, Place, Planner, Query, Timetable, What, Wish, fuzz};
+use atlas_transit::{Answer, Area, How, Journey, Leg, Mode, Place, Planner, Query, Timetable, What, Wish, fuzz};
 
 fn bytes(name: &str) -> Vec<u8> {
     std::fs::read(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
@@ -677,6 +677,35 @@ fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
     println!("{asked} questions with 40 trips in a row avoided: {whole} answers are whole, {said} say they are not, {} lack an option and do not say so", silent.len());
     assert!(silent.is_empty(), "{} answers that lack an option and do not say so:\n{}", silent.len(), silent[..silent.len().min(8)].join("\n"));
     assert!(asked >= 10 && whole >= 10, "{asked} {whole}");
+    // Reading on for a cheaper trip is counted in steps like the rest, and where the steps run out there the
+    // answer says that too: 63 trips in a row avoided along each of those routes, a window of two hours, and
+    // the fewest steps a query may have.
+    let (mut asked, mut reading, mut by_steps) = (0, 0, 0);
+    for &r in routes.iter().take(12) {
+        let route = tt.route(r);
+        let running: Vec<u32> = (route.first_trip..route.first_trip + route.trips).filter(|t| tt.runs(tt.trip(*t).service, 0)).collect();
+        if running.len() < 80 {
+            continue;
+        }
+        for pos in 0..route.stops - 1 {
+            let (from, to) = (tt.pattern_stop(route.first_stop + pos).stop, tt.pattern_stop(route.first_stop + route.stops - 1).stop);
+            let mut q = Query::new(Place::Stop(from), Place::Stop(to), 0, tt.time(tt.trip_times(running[4]), pos).1.saturating_sub(120));
+            (q.max_rides, q.window, q.limits.options, q.limits.bag, q.weigh) = (16, 7200, 1024, 16, false);
+            q.wishes = running[4..67].iter().map(|t| Wish { what: What::Trip(*t), how: How::Avoid(60) }).collect();
+            for steps in [30_000, 60_000, 120_000, 250_000, 500_000] {
+                q.limits.steps = steps;
+                let got = p.plan(&q);
+                asked += 1;
+                by_steps += (got.cut_by & Answer::STEPS != 0) as u32;
+                if got.cut_by & Answer::CHEAPER != 0 {
+                    reading += 1;
+                    assert!(got.cut_short && got.cut_by & Answer::STEPS != 0, "{q:?}");
+                }
+            }
+        }
+    }
+    println!("{asked} questions along those routes with 63 trips avoided and few steps: {by_steps} met the cap on steps, {reading} of those while reading on for a cheaper trip");
+    assert!(by_steps >= 20 && reading >= 1, "{asked} {by_steps} {reading}");
 }
 
 /// A stop keeps so many labels a round and no more ([`atlas_transit::Limits::bag`]); the one that goes when a bag
@@ -714,6 +743,8 @@ fn a_full_bag_says_so() {
             let got = p.plan(&q);
             asked[k] += 1;
             said[k] += got.cut_short as u32;
+            // (the bag is the one cap these can meet)
+            assert_eq!(got.cut_by, if got.cut_short { Answer::BAG } else { 0 }, "pair {i} with a bag of {bag}");
             if options(&got.journeys) != options(&whole.journeys) {
                 lost[k] += 1;
                 if !got.cut_short {
@@ -812,20 +843,26 @@ fn a_search_stops_at_its_caps() {
     let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600);
     q.window = 7200;
     let whole = p.plan(&q);
-    assert!(!whole.cut_short && whole.searches > 3);
+    assert!(!whole.cut_short && whole.cut_by == 0 && whole.searches > 3);
+    // and each says which cap it was
     q.limits.steps = 10_000;
     let cut = p.plan(&q);
     assert!(cut.cut_short && cut.steps < 200_000, "{}", cut.steps);
+    assert_eq!(cut.cut_by, Answer::STEPS);
     q.limits = Default::default();
     q.limits.labels = 1024;
-    assert!(p.plan(&q).cut_short);
+    let cut = p.plan(&q);
+    assert!(cut.cut_short);
+    assert_eq!(cut.cut_by, Answer::LABELS);
     q.limits = Default::default();
     q.limits.departures = 2;
     let few = p.plan(&q);
     assert!(few.cut_short && few.searches <= 3);
+    assert_eq!(few.cut_by, Answer::MOMENTS);
     q.limits = Default::default();
     q.limits.options = 1;
-    assert_eq!(p.plan(&q).journeys.len(), 1);
+    let one = p.plan(&q);
+    assert_eq!((one.journeys.len(), one.cut_short, one.cut_by), (1, true, Answer::OPTIONS));
 }
 
 /// Whatever cap a search meets, and wherever in it, the answer says so: an answer that is not the whole one is
@@ -913,6 +950,7 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
         }
         if got.journeys != whole.journeys {
             assert!(got.cut_short, "pair {i}: an option leaves sooner than it need and the answer does not say so: {q:?}");
+            assert_eq!(got.cut_by, Answer::MOMENTS, "pair {i}: {q:?}");
             stopped += 1;
         }
         // one option: the fastest, leaving as late as it can, and no search for any other. Weighed, the fastest
@@ -927,6 +965,7 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
         let fastest = whole.journeys.iter().min_by_key(|j| first(j)).unwrap();
         assert_eq!(got.journeys, [fastest.clone()], "pair {i}: {q:?}");
         assert_eq!(got.cut_short, whole.journeys.len() > 1, "pair {i}: {q:?}");
+        assert_eq!(got.cut_by, if got.cut_short { Answer::OPTIONS } else { 0 }, "pair {i}: {q:?}");
         // (for a single pair it may take a search more than for all: how far apart the moments tried lie depends
         // on the journeys looked for)
         (for_all, for_one, most, asked) = (for_all + whole.searches, for_one + got.searches, most.max(whole.searches), asked + 1);
@@ -975,6 +1014,7 @@ fn a_cap_on_later_departures_is_said_only_where_it_cut() {
             } else {
                 // a search was left out, and the answer says so
                 assert!(got.cut_short, "pair {i}, cap {cap}: {} searches of {} and not said: {q:?}", got.searches, whole.searches);
+                assert_eq!(got.cut_by, Answer::MOMENTS, "pair {i}, cap {cap}: {q:?}");
                 cut += 1;
             }
         }

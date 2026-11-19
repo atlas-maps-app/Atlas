@@ -390,6 +390,38 @@ pub struct Planner<'a> {
     work: Work,
 }
 
+impl Answer {
+    /// The steps met their cap ([`crate::Limits::steps`]).
+    pub const STEPS: u32 = 1;
+    /// The labels met theirs ([`crate::Limits::labels`]), or a round held 65,536 arrivals apart under the feed's
+    /// rules.
+    pub const LABELS: u32 = 2;
+    /// More moments to search from than [`crate::Limits::departures`]: a window's, or the later moments tried for
+    /// one moment's journeys.
+    pub const MOMENTS: u32 = 4;
+    /// A stop's bag of labels, or a route's of trips ridden, was full and one went ([`crate::Limits::bag`]).
+    pub const BAG: u32 = 8;
+    /// More options than may be shown ([`crate::Limits::options`]), or more than 4,096 journeys found.
+    pub const OPTIONS: u32 = 16;
+    /// A place stood for more stops than a search begins at.
+    pub const PLACE: u32 = 32;
+    /// More service days could matter than a search reads.
+    pub const DAYS: u32 = 64;
+    /// The steps met their cap while a boarding read on for a cheaper trip of its route (with `STEPS`).
+    pub const CHEAPER: u32 = 128;
+    /// Each cap's bit and its name, for a tool to say which.
+    pub const CAPS: [(u32, &'static str); 8] = [
+        (Answer::STEPS, "steps"),
+        (Answer::LABELS, "labels"),
+        (Answer::MOMENTS, "moments"),
+        (Answer::BAG, "a full bag"),
+        (Answer::OPTIONS, "options"),
+        (Answer::PLACE, "a place of too many stops"),
+        (Answer::DAYS, "service days"),
+        (Answer::CHEAPER, "reading on for a cheaper trip"),
+    ];
+}
+
 /// What a search returns.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Answer {
@@ -398,6 +430,9 @@ pub struct Answer {
     /// A cap of [`crate::Limits`] was met, or a place stood for more than 4,096 stops, so there may be options
     /// missing (or, asked for one moment, one that leaves sooner than it need).
     pub cut_short: bool,
+    /// Which: a bit for each cap that was met ([`Answer::STEPS`] and the others); 0 exactly where `cut_short` is
+    /// false. For whoever sets the limits, and for the tool's `bench`; an app shows `cut_short`.
+    pub cut_by: u32,
     /// How long past the asked moment and its window journeys were followed, in seconds: the query's horizon, or
     /// less where the search was patient ([`crate::Limits::patient`]). A patient search lacks nothing for it: what
     /// could still be an option past that (a journey with fewer rides than the first found, and any journey from
@@ -754,6 +789,7 @@ impl<'a> Planner<'a> {
             aimed: false,
             lazy: false,
             cut: false,
+            why: 0,
             stops: self.tt.stops() as usize,
             far: start + window + horizon,
             kept: Vec::new(),
@@ -912,6 +948,8 @@ impl<'a> Planner<'a> {
         // where a place stood for more stops than a search begins at, or more service days could matter than a
         // search reads.
         let mut cut = s.cut || s.steps > s.max_steps || too_many || s.dropped || ends.cut || !every_day;
+        let met = |is: bool, cap: u32| if is { cap } else { 0 };
+        let mut why = s.why | met(s.steps > s.max_steps, Answer::STEPS) | met(too_many, Answer::OPTIONS) | met(s.dropped, Answer::BAG) | met(ends.cut, Answer::PLACE) | met(!every_day, Answer::DAYS);
         if keep.len() > options {
             // too many over a window: those nearest the asked moment stay
             if back {
@@ -919,9 +957,10 @@ impl<'a> Planner<'a> {
             } else {
                 keep.truncate(options);
             }
-            cut = true;
+            (cut, why) = (true, why | Answer::OPTIONS);
         }
-        Answer { journeys: keep, cut_short: cut, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps, later: s.later_most }
+        debug_assert_eq!(cut, why != 0);
+        Answer { journeys: keep, cut_short: cut, cut_by: why, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps, later: s.later_most }
     }
 }
 
@@ -953,6 +992,8 @@ struct Search<'s, 'a> {
     max_steps: u64,
     steps: u64,
     cut: bool,
+    /// Which caps were met ([`Answer::cut_by`]); the bag's bit is `dropped`'s.
+    why: u32,
     stops: usize,
     /// Whether the least seconds to the end are worked out (`Search::aim`), or being worked out as the search asks
     /// (`Search::aim_lazily`).
@@ -1061,6 +1102,7 @@ impl<'s> Search<'s, '_> {
         let mut events = self.departures(first, start, span - 1);
         if self.steps > self.max_steps {
             // (the count from the journey's end or this list went past the cap: the list is not whole)
+            self.why |= Answer::STEPS;
             self.cut = true;
             return searches;
         }
@@ -1072,6 +1114,7 @@ impl<'s> Search<'s, '_> {
                 distinct += 1;
                 if distinct > cap {
                     keep = i;
+                    self.why |= Answer::MOMENTS;
                     self.cut = true;
                     break;
                 }
@@ -1092,6 +1135,7 @@ impl<'s> Search<'s, '_> {
             self.note_cover(moment);
         }
         if i > 0 {
+            self.why |= if self.steps > self.max_steps { Answer::STEPS } else { Answer::LABELS };
             self.cut = true;
         }
         searches
@@ -1170,6 +1214,7 @@ impl<'s> Search<'s, '_> {
         let (mut searches, mut before) = (0u32, i32::MIN);
         while let Some(target) = self.anchors.iter().position(|a| a.hi - a.lo > 1) {
             if self.cut || self.steps > self.max_steps {
+                self.why |= if self.steps > self.max_steps { Answer::STEPS } else { 0 };
                 self.cut = true;
                 break;
             }
@@ -1204,6 +1249,7 @@ impl<'s> Search<'s, '_> {
                 // The cap is met here, where a search is needed and may not be made: a moment from which nothing
                 // can be in time needs none, and an answer whose last tries were all of that kind is whole.
                 if searches as usize >= cap {
+                    self.why |= Answer::MOMENTS;
                     self.cut = true;
                     break;
                 }
@@ -1809,6 +1855,7 @@ impl<'s> Search<'s, '_> {
             return;
         }
         if self.w.labels.len() >= self.max_labels {
+            self.why |= Answer::LABELS;
             self.cut = true;
             return;
         }
@@ -1912,6 +1959,7 @@ impl<'s> Search<'s, '_> {
             for &r in list.iter() {
                 self.ride(r, self.w.route_from[r as usize], round);
                 if self.steps > self.max_steps {
+                    self.why |= Answer::STEPS;
                     self.cut = true;
                     break;
                 }
@@ -1947,6 +1995,7 @@ impl<'s> Search<'s, '_> {
             for &l in special.iter() {
                 if self.steps > self.max_steps {
                     // (each reads its stop's rules, which a file may have any number of)
+                    self.why |= Answer::STEPS;
                     self.cut = true;
                     break;
                 }
@@ -1965,6 +2014,7 @@ impl<'s> Search<'s, '_> {
             let later = core::mem::take(&mut self.w.later);
             for &l in later.iter() {
                 if self.steps > self.max_steps {
+                    self.why |= Answer::STEPS;
                     self.cut = true;
                     break;
                 }
@@ -2058,6 +2108,7 @@ impl<'s> Search<'s, '_> {
                     continue;
                 }
                 if self.w.labels.len() >= self.max_labels || self.w.later_seen[round].len() >= 65_536 {
+                    self.why |= Answer::LABELS;
                     self.cut = true;
                     return;
                 }
@@ -2075,6 +2126,7 @@ impl<'s> Search<'s, '_> {
             return;
         }
         if self.w.labels.len() >= self.max_labels {
+            self.why |= Answer::LABELS;
             self.cut = true;
             return;
         }
@@ -2094,6 +2146,7 @@ impl<'s> Search<'s, '_> {
             return;
         }
         if self.w.labels.len() >= self.max_labels || self.w.held[round].len() >= 65_536 {
+            self.why |= Answer::LABELS;
             self.cut = true;
             return;
         }
@@ -2223,6 +2276,7 @@ impl<'s> Search<'s, '_> {
                 }
             }
             if self.steps > self.max_steps || self.cut {
+                self.why |= if self.steps > self.max_steps { Answer::STEPS } else { 0 };
                 self.cut = true;
                 break;
             }
@@ -2242,6 +2296,7 @@ impl<'s> Search<'s, '_> {
             return;
         }
         if self.w.labels.len() >= self.max_labels {
+            self.why |= Answer::LABELS;
             self.cut = true;
             return;
         }
@@ -2255,6 +2310,7 @@ impl<'s> Search<'s, '_> {
                 return;
             }
             if seen.len() >= 65_536 {
+                self.why |= Answer::LABELS;
                 self.cut = true;
                 return;
             }
@@ -2300,6 +2356,7 @@ impl<'s> Search<'s, '_> {
                 if self.w.found.len() < 4096 {
                     self.w.found.push(f);
                 } else {
+                    self.why |= Answer::OPTIONS;
                     self.cut = true;
                 }
             }
@@ -2502,6 +2559,9 @@ impl<'s> Search<'s, '_> {
                     break;
                 }
             }
+            if trip_costs && self.steps > self.max_steps && (rank as usize) < run.trips.len() {
+                self.why |= Answer::CHEAPER;
+            }
         }
     }
 
@@ -2571,6 +2631,9 @@ impl<'s> Search<'s, '_> {
                 if !trip_costs || c <= least {
                     break;
                 }
+            }
+            if trip_costs && self.steps > self.max_steps && (rank as usize) < run.trips.len() {
+                self.why |= Answer::CHEAPER;
             }
             off += step;
         }
