@@ -42,9 +42,12 @@ class SourcesTruthTest {
     )
 
     /**
-     * The addresses whose host is wholly built from a variable, each by its file and its line's own code, with what it is:
-     * any other, in these files or another, shows up as a failure. A host whose first label alone is built
-     * (`https://$lang.wikipedia.org`) is no exception: it reads as `*.wikipedia.org`.
+     * The addresses whose host is built from a variable other than as its first label, each by its file and its line's
+     * own code, with what it is: a host wholly built (`https://$t`), or with a template in a later label
+     * (`https://api.$region.example.net`). Any other such address fails. A host whose first label alone is built
+     * (`https://$lang.wikipedia.org`) is no exception: it reads as `*.wikipedia.org`, and a listed pattern must hold it.
+     * Not read: a host joined at run time (`"https://" + x`), built by `HttpUrl.Builder().host(x)` or `String.format`, or
+     * held in a resource; from point 4 on the gate holds those by their view's source.
      */
     private val builtHosts = mapOf(
         ("app/src/main/kotlin/app/atlas/ui/search/PlaceParts.kt" to "else -> \"https://\$t\"") to "a place's own website, opened in the browser",
@@ -142,15 +145,21 @@ class SourcesTruthTest {
      * is wholly one as `*`; each with where it is and its line's code.
      */
     private fun builtHostsIn(files: List<File>): List<Built> {
-        val url = Regex("""https?://(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)((?:\.[A-Za-z0-9-]+)*)""")
+        // the host: labels of letters, digits and dashes, and templates, up to the first character that ends a host
+        val template = """(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)"""
+        val url = Regex("""https?://((?:[A-Za-z0-9-]|$template)+(?:\.(?:[A-Za-z0-9-]|$template)+)*)""")
+        val first = Regex("""^$template((?:\.[A-Za-z0-9-]+)*)$""")
         val out = ArrayList<Built>()
         for (f in files) {
             f.readLines().forEachIndexed { i, line ->
                 val code = line.trim()
                 if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) return@forEachIndexed
                 for (m in url.findAll(code.replace(Regex("""\s//\s.*$"""), ""))) {
-                    val rest = m.groupValues[1]
-                    out += Built(if (rest.isEmpty()) "*" else "*$rest", "${f.relativeTo(android)}", i + 1, code)
+                    val host = m.groupValues[1]
+                    if ('$' !in host) continue
+                    // the first label alone built: `*.rest`; wholly built, or a template further in: `*`, pinned by its line
+                    val read = first.matchEntire(host)?.groupValues?.get(1)?.let { rest -> if (rest.isEmpty()) "*" else "*$rest" } ?: "*"
+                    out += Built(read, "${f.relativeTo(android)}", i + 1, code)
                 }
             }
         }
@@ -200,9 +209,10 @@ class SourcesTruthTest {
         for (b in built.filter { it.host != "*" }) {
             assertTrue("$b: no listed pattern holds it", patterns.any { p -> app.atlas.providers.hostHolds(p, b.host) })
         }
-        // a host wholly built from a variable only where it is named, by its line's own code: one a line
+        // a host built other than by its first label only where it is named, by its line's own code: one a line
         val whole = built.filter { it.host == "*" }.map { it.file to it.code }
-        assertEquals("hosts wholly built from a variable: $whole", builtHosts.keys.toList().sortedBy { it.first }, whole.sortedBy { it.first })
+        val order = compareBy<Pair<String, String>>({ it.first }, { it.second })
+        assertEquals("hosts built other than by their first label: $whole", builtHosts.keys.toList().sortedWith(order), whole.sortedWith(order))
         // Wikipedia's one request is read, and held to Wikipedia's pattern: the links for the browser are not what counts
         val request = built.filter { it.file == wikipediaRequest.first && wikipediaRequest.second in it.code }
         assertEquals("Wikipedia's request, read as *.wikipedia.org: $built", listOf("*.wikipedia.org"), request.map { it.host })
