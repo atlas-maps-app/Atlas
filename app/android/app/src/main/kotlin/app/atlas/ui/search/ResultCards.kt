@@ -52,6 +52,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -137,7 +139,7 @@ private fun inView(state: androidx.compose.foundation.lazy.LazyListState): Int {
  * the page's serif and the way there on the page's blue route pill, the minutes on it ([RoutePill]); then how it stands
  * now (open or not, "≈" where its hours are guessed) and what its row says of it, and its symbols. A place in a
  * cuisine's house wears it (the HouseCards board): the house's tint, its motif for the picture, the name in its
- * typeface and ink.
+ * typeface and ink; but a chain on its sign ([signOf]), whose card is its own.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -148,7 +150,9 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
     val lang = w.lang
     val line = remember(h, w.now, w.country) { PlaceLine.of(p, null, lang, w.now, h.open, w.country, w.nameOf(h), h.metres) }
     val eat = remember(p.key) { EatPlace.of(p, p.location, lang) }
-    val house = remember(p.key) { eat?.let { CuisineHouse.of(it) } }
+    // a chain on its sign is the chain's card, not its cuisine's house: its fascia, the card's own paper and face (the
+    // owner, 17 November: "instead of the generic or cuisine art")
+    val house = remember(p.key, w.country) { eat?.takeIf { signOf(p, w.country) == null }?.let { CuisineHouse.of(it) } }
     val arrival = arrivalWords(h.open, h.minutes, w.now)
     val tone = arrival?.second ?: if (h.open == null) Tone.UNKNOWN else line.tone
     val words = (arrival?.first ?: openWords(line))?.let { if (!h.hoursConfirmed) "≈ $it" else it }
@@ -226,7 +230,7 @@ private fun RoutePill(minutes: Int, metres: Double, onClick: () -> Unit) {
 
 /**
  * What stands at a card's top: the place's own photo where the phone keeps one (as its page shows it, its licence's
- * credit on it), else its cuisine's house, a chain's fascia (its sign, as its shop front shows it), a plate of what it
+ * credit on it), else a chain's fascia (its sign, as its shop front shows it), its cuisine's house, a plate of what it
  * serves, or what its kind shows ([artOf]) in its family's colour (the search's cards). Where the picture does not say
  * what the place is, its pin does, with the mark the map draws it with ([markOf]).
  */
@@ -241,11 +245,18 @@ private fun CardPicture(h: ResultHit, eat: EatPlace?, house: CuisineHouse?, view
     val chain = remember(p.key, country) { signOf(p, country) }
     // the place's own symbol large, unless it wears a logo; its pin would only say it again
     val art = remember(p.key, node?.id) { (node?.let { artOf(it) } ?: Scene(Motif.CONTOURS)).let { a -> if (a is Emblem && !mark.startsWith("logo-")) Emblem(mark) else a } }
-    Box(modifier) {
+    val shown = when {
+        photo != null -> "photo"
+        chain != null -> "fascia:${chain.id}"
+        house != null -> "house:${house.name}"
+        dish != null -> "dish"
+        else -> "art"
+    }
+    Box(modifier.semantics { pictureMark = shown }) {
         when {
             photo != null -> Image(photo.bitmap, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            house != null -> Canvas(Modifier.fillMaxSize()) { houseMotif(house) }
             chain != null -> Fascia(chain, Modifier.fillMaxSize())
+            house != null -> Canvas(Modifier.fillMaxSize()) { houseMotif(house) }
             dish != null -> Canvas(Modifier.fillMaxSize()) { drawPlate(dish, p.key.hashCode()) }
             else -> Box(Modifier.fillMaxSize().bandSurface(Color(colour), art))
         }
@@ -261,6 +272,13 @@ private fun CardPicture(h: ResultHit, eat: EatPlace?, house: CuisineHouse?, view
         }
     }
 }
+
+/**
+ * What a card's picture shows, for the tests: "photo", "house:" and the cuisine's house, "fascia:" and the brand's id,
+ * "dish" or "art"; the card's merged semantics carry it.
+ */
+internal val PictureMark = SemanticsPropertyKey<String>("PictureMark", mergePolicy = { parent, child -> parent ?: child })
+internal var SemanticsPropertyReceiver.pictureMark by PictureMark
 
 /**
  * A chain's fascia, as its shop front shows it: its sign's colour edge to edge, lit from above and darker at its foot,

@@ -131,6 +131,36 @@ class ColourOnlyBrandsTest {
         assertEquals("sign:$geldmaat", tileOf(hasText("Geldmaat") and hasText("NEAREST", substring = true, ignoreCase = true)))
     }
 
+    /** What the picture at the top of the one card of [name] shows ([PictureMark]), its card in view. */
+    private fun pictureOf(name: String): String? {
+        val card = hasTestTag(PLACE_TAG) and hasText(name)
+        compose.waitUntil(20_000) { compose.onAllNodes(hasTestTag(CARDS_TAG)).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(20_000) { compose.onAllNodes(card).fetchSemanticsNodes().isNotEmpty() }
+        compose.waitForIdle()
+        return compose.onNode(card).fetchSemanticsNode().config.getOrNull(PictureMark)
+    }
+
+    /**
+     * As cards, a chain's fascia comes before its cuisine's house (the owner's "instead of the generic or cuisine art"):
+     * a New York Pizza, which has a colour and no logo and serves pizza, is green with its name, not the Italian house.
+     */
+    @Test
+    fun aPizzaChainsCardWearsItsFasciaNotItsCuisinesHouse() {
+        open(Dest.Category("preset:amenity/fast_food"), place(40, 0.001, mapOf("amenity" to "fast_food", "cuisine" to "pizza", "name" to "New York Pizza", "brand" to "New York Pizza", "brand:wikidata" to "Q2639128")), cards = true)
+        val shown = pictureOf("New York Pizza")
+        capture("chain_card_colour_only")
+        assertEquals("fascia:newyorkpizza-29392a", shown)
+    }
+
+    /** The same rule for a chain with a logo: a McDonald's, which serves burgers, wears its arches, not the diner's house. */
+    @Test
+    fun aBurgerChainsCardWearsItsFasciaNotItsCuisinesHouse() {
+        open(Dest.Category("preset:amenity/fast_food"), place(41, 0.001, mapOf("amenity" to "fast_food", "cuisine" to "burger", "name" to "McDonald's", "brand" to "McDonald's", "brand:wikidata" to "Q38076")), cards = true)
+        val shown = pictureOf("McDonald's")
+        capture("chain_card_logo")
+        assertEquals("fascia:mcdonalds-d35a75", shown)
+    }
+
     @Test
     fun aBrandWhoseColourIsNotKnownKeepsItsKindsMark() {
         open(Dest.Category("preset:shop/supermarket"), jumbo(10, 0.001), ekoplaza)
