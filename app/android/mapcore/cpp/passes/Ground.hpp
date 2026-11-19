@@ -1575,13 +1575,18 @@ private:
     bool keep_glow_ = false;
     bool drew_glow_ = false;
     /// What the last glow's layers and filter were made of (write_lit), and whether this frame's differ; what they
-    /// cover this frame.
+    /// cover this frame. A frame's key counts once its layers recorded (record_lit_layer takes glow_next_), not when it
+    /// was decided: a frame that decides and does not record (its descriptors did not begin: the clear alone) leaves
+    /// the last recorded key, so the next frame makes the layers again where they would have changed.
     std::vector<std::uint32_t> glow_key_;
+    std::optional<std::vector<std::uint32_t>> glow_next_; ///< none where no frame decided since the last record
     bool glow_stale_ = true;
     GlowPlan glow_plan_;
     /// What the last ripple's result was made of (key_ripple: the view's alone while the camera moves), and whether
     /// this frame's differs; what its stages cover this frame; the results made, and the keys that took the records.
+    /// As the glow's: a frame's key counts once its layer recorded (record_ripple_layer takes ripple_next_).
     std::vector<std::uint32_t> ripple_key_;
+    std::optional<std::vector<std::uint32_t>> ripple_next_;
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
     std::vector<PixelBox> ripple_boxes_; ///< each element's box in the layer this frame (plan_ripple's scratch)
