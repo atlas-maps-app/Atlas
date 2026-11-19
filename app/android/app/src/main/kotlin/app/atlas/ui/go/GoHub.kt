@@ -18,6 +18,7 @@ import app.atlas.search.within
 import app.atlas.services.LocationQuality
 import app.atlas.services.LocalData
 import app.atlas.services.Units
+import app.atlas.ui.search.HereContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -146,7 +147,7 @@ class GoHub(private val services: Services) {
     fun startEars(context: Context, headings: kotlinx.coroutines.flow.Flow<Double?>? = null): EarsSession {
         earsState.value?.let { return it }
         val session = EarsSession(services.voice, GuideSettings(mode = Mode.WALK, language = Locale.getDefault().toLanguageTag(), zone = services.clock.zone),
-            services.scope, ::placesNow, services.clock.zone)
+            services.scope, ::placesNow, services.clock.zone) { at -> HereContext.hours(services, at, services.clock.zone) }
         earsState.value = session
         session.start(services.location.fixes(LocationQuality.NAVIGATION), headings)
         NavigationService.start(context)

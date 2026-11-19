@@ -202,10 +202,12 @@ TEST_CASE("ground: a window's tiles beside another pack's are ordered by their e
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::string regions = environment("ATLAS_REGIONS_DIR");
     const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (dir.empty() || regions.empty() || !std::filesystem::exists(westerkerk)) {
+    if (dir.empty() || regions.empty()) {
         MESSAGE("ATLAS_TILES_DIR or ATLAS_REGIONS_DIR is not set: no windows are drawn here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     const auto windows = nine_windows(regions, std::filesystem::path(ATLAS_TEST_SCRATCH) / "order-windows");
     ATLAS_REQUIRE(windows.size() == 9);
     auto session = test::open_session();

@@ -603,6 +603,15 @@ def build_categories(src, presets):
                 raise SystemExit(f'ALSO {sid}: no such node {node}')
         return {'also': list(CAT.ALSO[sid])} if sid in CAT.ALSO else {}
 
+    def also_tags(cid):
+        """The places of other kinds category [cid] holds too, by their tags (categories.py ALSO's "cat:"), each a rule."""
+        rules = CAT.ALSO.get('cat:' + cid, ())
+        for r in rules:
+            if not r.startswith('tags:') or not r[len('tags:'):].strip():
+                raise SystemExit(f'ALSO cat:{cid}: not a rule of tags: {r}')
+        parts = [r[len('tags:'):].strip() for r in rules]
+        return {'alsoTags': parts[0] if len(parts) == 1 else ' or '.join(f'({x})' for x in parts)} if parts else {}
+
     def order(node):
         """The kinds that end [node]'s row (categories.py LAST), each checked: a shelf's categories, a category's presets,
         none twice."""
@@ -631,9 +640,10 @@ def build_categories(src, presets):
         assert len(own) == len(LANGS), family
         out.append({'id': family, 'shelf': True, 'symbol': sym, 'colour': CAT.FAMILY[family], 'names': dict(zip(CAT.LANGS, own))}
                    | also(family) | order('shelf:' + family))
-    unknown = set(CAT.ALSO) - {g[0] for g in CAT.GROUPS} - {s[0] for s in CAT.SHELVES}
+    unknown = {k for k in CAT.ALSO if not k.startswith('cat:')} - {g[0] for g in CAT.GROUPS} - {s[0] for s in CAT.SHELVES}
+    unknown |= {k for k in CAT.ALSO if k.startswith('cat:')} - {'cat:' + c[0] for c in CAT.CATEGORIES}
     if unknown:
-        raise SystemExit('ALSO names no shelf: ' + ', '.join(sorted(unknown)))
+        raise SystemExit('ALSO names no shelf or category: ' + ', '.join(sorted(unknown)))
     ids = {g[0] for g in CAT.GROUPS}
     for cid, legacy, group, sym, rule, own, nf in CAT.CATEGORIES:
         if cid in ids:
@@ -646,7 +656,7 @@ def build_categories(src, presets):
             e['legacy'] = legacy
         if cid in CAT.CORE:
             e['core'] = list(CAT.CORE[cid])
-        out.append(e | order('cat:' + cid))
+        out.append(e | order('cat:' + cid) | also_tags(cid))
     return out
 
 
@@ -831,6 +841,56 @@ def fetch_logos(src, slugs):
     return out
 
 
+def brand_key(name):
+    """Brands.key: folded as Text.fold folds (accents off, compatibility forms unfolded, "ß" as "ss"), "&" as "and", "+" as
+    "plus", letters and digits only ("McDonald's" -> "mcdonalds")."""
+    s = name.replace('&', ' and ').replace('+', ' plus ')
+    if any(ord(c) >= 128 for c in s):
+        s = ''.join(c for c in unicodedata.normalize('NFKD', s).lower() if unicodedata.category(c) != 'Mn')
+    else:
+        s = s.lower()
+    swaps = {'\u00df': 'ss', '\u00f8': 'o', '\u00e6': 'ae', '\u0153': 'oe', '\u0142': 'l', '\u0111': 'd', '\u0131': 'i'}
+    return ''.join(swaps.get(c, c) for c in s if c.isalnum() or c in swaps)
+
+
+def kind_words():
+    """
+    kind_words.tsv: the names a kind has in any bundled language that are also names of a brand of that kind ("Kiosk",
+    "Station-service", "Farmacia"), by the kind's main tag: by its name alone such a place is no brand's (the app
+    maintainer, 18 November 2026, batch 4 B16). From brands.tsv and i18n/*.json as they are.
+    """
+    keys = {}
+    with open(os.path.join(OUT, 'brands.tsv'), encoding='utf-8') as f:
+        for line in f:
+            if line.startswith('#'):
+                continue
+            c = line.rstrip('\n').split('\t')
+            kv = c[4] if len(c) > 4 else ''
+            if '=' not in kv:
+                continue
+            names = [c[1], c[2] or c[1]] + [m for m in (c[11] if len(c) > 11 else '').split('|') if m]
+            keys.setdefault(kv, set()).update(k for k in map(brand_key, names) if k)
+    words = {}
+    d = os.path.join(OUT, 'i18n')
+    for lang in sorted(os.listdir(d)):
+        with open(os.path.join(d, lang), encoding='utf-8') as f:
+            texts = json.load(f).get('p', {})
+        for kv, brand_keys in keys.items():
+            t = texts.get(kv.replace('=', '/'))
+            if not t:
+                continue
+            said = [n for n in t[0].split('/')] + (t[2].split('\n') if len(t) > 2 and t[2] else [])
+            for n in (n.strip() for n in said):
+                if n and brand_key(n) in brand_keys:
+                    words.setdefault(kv, set()).add(n)
+    path = os.path.join(OUT, 'kind_words.tsv')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write('# key=value\tnames, | between\n')
+        for kv in sorted(words):
+            f.write(kv + '\t' + '|'.join(sorted(words[kv])) + '\n')
+    return os.path.getsize(path)
+
+
 # --------------------------------------------------------------------------------------------------------------- main
 
 def main():
@@ -845,6 +905,8 @@ def main():
     ap.add_argument('--mends', action='store_true',
                     help="symbols.json and ui.json after an edit of the symbols' mends and frames (tables.py) or of "
                          "custom_icons.txt, from the resources as they are")
+    ap.add_argument('--kind-words', action='store_true',
+                    help="kind_words.tsv alone (the kinds' names that are their brands' names), from the resources as they are")
     ap.add_argument('--kinds', action='store_true',
                     help="symbols.json with the icons kinds.tsv names that it lacks, from the open sets in --src (no "
                          "download) or from the sets imported in the symbol manager, and LICENSES.md crediting those")
@@ -859,6 +921,9 @@ def main():
         return
     if a.mends:
         print(json.dumps(mend_resources(), indent=1))
+        return
+    if a.kind_words:
+        print(json.dumps({'kind_words.tsv': kind_words()}, indent=1))
         return
     if a.categories:
         with open(os.path.join(OUT, 'presets.json'), encoding='utf-8') as f:
@@ -926,6 +991,7 @@ def main():
     brands, logo_meta, stats = build_brands(src, a.repo, a.brands)
     report.update(stats)
     report['brands.tsv'] = dump_tsv(brands, BRAND_COLUMNS, os.path.join(OUT, 'brands.tsv'))
+    report['kind_words.tsv'] = kind_words()
     logos = fetch_logos(src, logo_meta)
     report['logos.json'] = dump({k: [v[0], [list(p) for p in v[1]]] for k, v in logos.items()}, os.path.join(OUT, 'logos.json'))
     total = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(OUT) for f in fs)

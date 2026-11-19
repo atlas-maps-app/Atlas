@@ -67,7 +67,7 @@ class WalkModelTest {
     }
 
     private fun model(router: Router = straight, places: List<Place> = this.places): SearchSheetModel {
-        val m = SearchSheetModel(testServices(stores = listOf(MemoryPlaces(places)), router = router), w, "en")
+        val m = SearchSheetModel(testServices(stores = listOf(MemoryPlaces(places, country = null)), router = router), w, "en")
         m.moveTo(w)
         until { m.state.value.served.isNotEmpty() }
         return m

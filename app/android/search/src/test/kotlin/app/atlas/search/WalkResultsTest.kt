@@ -19,7 +19,7 @@ import org.junit.Test
  */
 class WalkResultsTest {
     private val here = LatLon(52.37, 4.88)
-    private val moment = Moment(Fixtures.saturday)
+    private val moment = Moment(Fixtures.saturday, hours = Nowhere)
     private val walk = Intents.all.first { it.id == Intents.WALK }
     private val parks = CategoryTree.category("parks")!!
 
@@ -27,7 +27,7 @@ class WalkResultsTest {
 
     private fun green(north: Double, across: Double?, vararg tags: Pair<String, String>): PlaceRecord {
         val at = Geo.destination(here, 0.0, north)
-        return PlaceRecord.of(Place(OsmId(OsmType.WAY, ++ids), at, tags.toMap(), across?.let { BBox.around(at, it / 2) }))
+        return PlaceRecord.of(Place(OsmId(OsmType.WAY, ++ids), at, tags.toMap(), across?.let { BBox.around(at, it / 2) }), country = null)
     }
 
     private val big = green(500.0, 600.0, "leisure" to "park", "name" to "Het Grote Park")
@@ -35,11 +35,11 @@ class WalkResultsTest {
     private val pocket = green(60.0, 40.0, "leisure" to "park", "name" to "Postzegelpark")
     private val hidden = green(120.0, 300.0, "leisure" to "garden", "access" to "private", "name" to "Besloten Tuin")
     private val point = green(90.0, null, "leisure" to "park", "name" to "Plantsoen")
-    private val cafe = PlaceRecord.of(Place(OsmId(OsmType.NODE, 900), Geo.destination(here, 90.0, 80.0), mapOf("amenity" to "cafe", "name" to "Koffie")))
+    private val cafe = PlaceRecord.of(Place(OsmId(OsmType.NODE, 900), Geo.destination(here, 90.0, 80.0), mapOf("amenity" to "cafe", "name" to "Koffie")), country = null)
     private val pool = listOf(big, nameless, pocket, hidden, point, cafe)
 
     private fun spot(north: Double, vararg tags: Pair<String, String>) =
-        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++ids), Geo.destination(here, 0.0, north), tags.toMap()))
+        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++ids), Geo.destination(here, 0.0, north), tags.toMap()), country = null)
 
     private val view = spot(30.0, "tourism" to "viewpoint")
     private val statue = spot(40.0, "tourism" to "artwork", "artwork_type" to "statue", "name" to "Anne Frank")

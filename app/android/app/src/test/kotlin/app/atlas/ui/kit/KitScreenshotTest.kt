@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import app.atlas.places.OpeningHours
+import app.atlas.testing.Nowhere
 import app.atlas.testing.shot
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -115,7 +116,7 @@ class KitScreenshotTest {
         Label("Instruments")
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
             val hours = OpeningHours.parse("Mo-Su 12:00-15:00,17:30-23:00")
-            ClockDial(hours.spans(LocalDate.of(2026, 10, 13)), LocalTime.of(19, 42), size = 128.dp, contentDescription = "open until 23:00")
+            ClockDial(hours.spans(LocalDate.of(2026, 10, 13), context = Nowhere), LocalTime.of(19, 42), size = 128.dp, contentDescription = "open until 23:00")
             Compass(heading = 20f, size = 128.dp, target = 75f)
             ProgressRing(0.68f, size = 96.dp, stroke = 9.dp) { Text("12′", style = Atlas.type.numeralSmall) }
         }

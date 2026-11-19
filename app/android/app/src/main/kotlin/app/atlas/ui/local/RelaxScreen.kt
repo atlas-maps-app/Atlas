@@ -59,6 +59,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import kotlinx.coroutines.launch
 import java.time.LocalDateTime
 import kotlin.math.cos
@@ -98,6 +99,7 @@ fun RelaxScreen(args: Dest.Relax, nav: Navigator) {
     val here = rememberHere()
     val clock = appClock()
     val local = remember(clock) { LocalDateTime.ofInstant(clock.instant(), clock.zone) }
+    val opening = rememberHoursAt(here)
     var kind by rememberSaveable { mutableStateOf(args.kind?.takeIf { k -> WAYS.any { it.id == k } } ?: "sauna") }
     var freeOnly by rememberSaveable { mutableStateOf(false) }
     var reading by remember { mutableStateOf<Reading?>(null) }
@@ -162,7 +164,7 @@ fun RelaxScreen(args: Dest.Relax, nav: Navigator) {
                         // The board fades a place that costs, and marks it "$$" on a stone tile.
                         val paid = t["fee"] == "yes"
                         PlaceCard(
-                            f, here, facts, local, RELAX_CARD, dim = paid,
+                            f, here, facts, local, opening, RELAX_CARD, dim = paid,
                             tile = { dim ->
                                 Box(Modifier.size(48.dp).boardBox(if (dim) 0xFF6A6450 else Ink.css(), corners(14f)), contentAlignment = Alignment.Center) {
                                     if (dim) BoardLine("$$", boardStyle(15f, 900, Cream.css(), 19.5f)) else Glyph(chosen.symbol, Cream, 26.dp)

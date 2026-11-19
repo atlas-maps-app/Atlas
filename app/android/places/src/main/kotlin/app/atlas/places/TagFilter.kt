@@ -1,5 +1,7 @@
 package app.atlas.places
 
+import app.atlas.num.Digits
+
 /** A numeric comparison in a [TagFilter.Compare]. */
 enum class CompareOp(val symbol: String) {
     LT("<"), LE("<="), GT(">"), GE(">=");
@@ -26,6 +28,9 @@ sealed class TagFilter {
 
     /** Every key the filter reads (key regexes are left out). */
     abstract fun keys(): Set<String>
+
+    /** Whether the filter reads [key]: one of its [keys], or one its key patterns match. */
+    open fun reads(key: String): Boolean = key in keys()
 
     /**
      * The Overpass QL tag selectors when the filter is a plain conjunction, e.g. `[amenity=cafe][!fee]`; else null.
@@ -98,6 +103,7 @@ sealed class TagFilter {
             tags.any { (k, v) -> keyRegex.containsMatchIn(k) && (valueRegex?.containsMatchIn(v) ?: true) }
         override fun toText() = "~${quote(keyPattern)}" + (valuePattern?.let { "~${quote(it)}" } ?: "")
         override fun keys() = emptySet<String>()
+        override fun reads(key: String) = keyRegex.containsMatchIn(key)
         override fun toOverpass() = "[~${ql(keyPattern)}~${ql(valuePattern ?: ".")},i]"
     }
 
@@ -113,6 +119,7 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = tags.keys.any { k -> keyRegex.matches(k) && tests.getOrPut(k) { keyed(part, k) }.matches(tags) }
         override fun toText() = part.toText()
         override fun keys() = emptySet<String>()
+        override fun reads(key: String) = keyRegex.matches(key)
         override fun toOverpass(): String? = when (part) {
             is Has -> "[~${ql(keyPattern)}~\".\"]"
             is Equals -> "[~${ql(keyPattern)}~${ql("^" + regexLiteral(part.value) + "$")}]"
@@ -155,6 +162,7 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = parts.all { it.matches(tags) }
         override fun toText() = parts.joinToString(" and ") { if (it is Or) "(${it.toText()})" else it.toText() }
         override fun keys() = parts.flatMapTo(LinkedHashSet()) { it.keys() }
+        override fun reads(key: String) = parts.any { it.reads(key) }
         override fun toOverpass(): String? {
             val sb = StringBuilder()
             for (p in parts) sb.append(p.toOverpass() ?: return null)
@@ -167,6 +175,7 @@ sealed class TagFilter {
         override fun matches(tags: Map<String, String>) = parts.any { it.matches(tags) }
         override fun toText() = parts.joinToString(" or ") { it.toText() }
         override fun keys() = parts.flatMapTo(LinkedHashSet()) { it.keys() }
+        override fun reads(key: String) = parts.any { it.reads(key) }
     }
 
     /** The part does not hold. */
@@ -177,6 +186,7 @@ sealed class TagFilter {
             else -> "not ${part.toText()}"
         }
         override fun keys() = part.keys()
+        override fun reads(key: String) = part.reads(key)
         override fun toOverpass(): String? = when (part) {
             is Has -> "[!${ql(part.key)}]"
             is Equals -> "[${ql(part.key)}!=${ql(part.value)}]"
@@ -376,16 +386,18 @@ internal class TagFilterParser(private val s: String) {
 
     private fun compare(key: String, op: CompareOp): TagFilter {
         val start = i
-        val text = value()
+        // a number in any script's digits is that number ("capacity>٥"): on Android `\d` took them and `toDouble`
+        // threw (the reviewer, 17 November, finding 12)
+        val text = Digits.ascii(value())
         if ('\'' in text) {
             // feet and inches, 12'6": kept in metres
             val m = Units.parse(text)?.takeIf { it.dimension == Dimension.LENGTH }
                 ?: throw TagFilterException("length expected after ${op.symbol}", start)
             return TagFilter.Compare(key, op, Math.round(m.value * 1000) / 1000.0, "m")
         }
-        val m = Regex("""^([-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*([A-Za-z/'"]*)$""").matchEntire(text)
+        val m = Regex("""^([-+]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+))\s*([A-Za-z/'"]*)$""").matchEntire(text)
             ?: throw TagFilterException("number expected after ${op.symbol}", start)
-        val n = m.groupValues[1].replace(',', '.').toDouble()
+        val n = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: throw TagFilterException("number expected after ${op.symbol}", start)
         var unit = m.groupValues[2].ifEmpty { null }
         if (unit == null) {
             // "4.2 m": a unit written after a space

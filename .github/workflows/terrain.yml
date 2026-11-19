@@ -121,6 +121,10 @@ jobs:
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "GDAL's tools and the core's host build"
         # gdal-bin: gdalwarp, gdalbuildvrt, gdaltransform and gdal_translate, for the national grids (MIT; a tool of
         # this job only). atlas_stagep: the core's own reader, which decodes every tile the packer wrote (packs.yml

@@ -909,7 +909,7 @@ class SearchScreensTest {
                 far(1, 0.27, "leisure" to "bowling_alley", "name" to "Bowling"),
                 far(2, 0.36, "leisure" to "ice_rink", "name" to "IJsbaan"),
                 far(3, 0.50, "leisure" to "water_park", "name" to "Zwemparadijs"),
-            ),
+            ), country = null,
         )
         open(Dest.Category("fun"), testServices(stores = listOf(Fixtures.amsStore, further)))
         waitFor("Playground")

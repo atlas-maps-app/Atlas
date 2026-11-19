@@ -1,6 +1,7 @@
 package app.atlas.ui.eat
 
 import app.atlas.places.OpenState
+import app.atlas.places.statedSpans
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -36,8 +37,11 @@ enum class MarketCheck {
     }
 }
 
-/** A market on one day: when it is on, and what it is called that day (`open "Biologische Boerenmarkt"`). */
-data class MarketSession(val place: EatPlace, val from: LocalTime, val to: LocalTime, val what: String?)
+/**
+ * A market on one day: when it is on, and what it is called that day (`open "Biologische Boerenmarkt"`); [to] null
+ * where its hours state no closing time (`Sa 08:00+`), and [openEnd] where it runs on past [to] (or [from]) with none.
+ */
+data class MarketSession(val place: EatPlace, val from: LocalTime, val to: LocalTime?, val what: String?, val openEnd: Boolean = false)
 
 /** One day of the week strip: its date, whether a market is on, and the sessions. */
 data class MarketDay(val date: LocalDate, val sessions: List<MarketSession>)
@@ -88,7 +92,7 @@ object MarketModel {
         for (m in markets) {
             val table = m.hours?.weekTable(monday, area.hours) ?: continue
             table.forEachIndexed { d, spans ->
-                for (s in spans) if (s.state == OpenState.OPEN) byDay[d] += MarketSession(m, s.startTime, s.endTime, s.comment)
+                for (s in statedSpans(spans)) if (s.state == OpenState.OPEN) byDay[d] += MarketSession(m, s.startTime, s.endTime, s.comment, s.openEnd)
             }
         }
         return (0 until 7).map { d -> MarketDay(monday.plusDays(d.toLong()), byDay[d].sortedBy { it.from }.distinctBy { it.place.name to it.from }) }

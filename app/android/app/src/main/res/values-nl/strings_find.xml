@@ -147,6 +147,7 @@
     <string name="find_hours_known">%1$d van %2$d noemen openingstijden</string>
     <string name="find_hours_today">Vandaag meestal open %1$s–%2$s; de eerste om %3$s, de laatste tot %4$s</string>
     <string name="find_hours_today_none">Vandaag geen open</string>
+    <string name="find_hours_today_from">Vandaag meestal open vanaf %1$s</string>
     <string name="find_fact_none">De kaart zegt het niet</string>
     <string name="find_unknown_ask">Beantwoord: %1$s?</string>
     <string name="find_unknown_title">%1$s?</string>

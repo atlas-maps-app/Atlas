@@ -246,7 +246,7 @@ object MineFixtures {
             node(9_300_004, w.lat - 0.0040, w.lon - 0.0010, mapOf("amenity" to "library", "name" to "Library study desks", "power_supply" to "yes", "fee" to "no")),
             node(9_300_005, w.lat + 0.0080, w.lon + 0.0100, mapOf("tourism" to "camp_site", "name" to "Stonewood", "power_supply" to "yes")),
         )
-        return app.atlas.search.MemoryPlaces(places + fuels + water + power)
+        return app.atlas.search.MemoryPlaces(places + fuels + water + power, country = null)
     }
 
     /** A phone at the Westerkerk with the Amsterdam extract and the [roadside] fixtures. */

@@ -61,8 +61,11 @@ inline constexpr double window_margin = 200.0;
 /// frame cell's levels beside its windows (load/Levels.hpp: its L13 and L12 tiles, which the core draws beyond the
 /// windows' reach), where core-p11's country tiles held the windows alone and today's map drew beyond 9 km; core-p13
 /// each building's wall and roof slots (wall_slot and roof_slot: the user's palette's slots their colours go with),
-/// which core-p12's tiles lack, so their buildings keep today's colours whatever the palette.
-inline constexpr std::string_view stage_p_version = "core-p13";
+/// which core-p12's tiles lack, so their buildings keep today's colours whatever the palette; core-p14 the buildings
+/// that can be there (load/Clean.hpp): courtyards cut out, an outline drawn less its parts, overlapping footprints
+/// clipped, what is underground and a relation's ring that is a building's own way left out, and a building's numbers
+/// bounded, where core-p13 roofed the courtyards, hid a whole outline for one part and drew the rest as mapped.
+inline constexpr std::string_view stage_p_version = "core-p14";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and every pack there
 /// lights with TONE (frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.

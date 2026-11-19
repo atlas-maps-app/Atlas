@@ -21,7 +21,7 @@ object EveryKind {
      * pulse: how many, how many open, the nearest and the minutes to it.
      */
     fun around(places: List<PlaceRecord>, from: LatLon, moment: Moment, hours: HoursBook = HoursBook(places), scope: CategoryNode? = null): List<CategoryPulse> {
-        val found = places.mapNotNullTo(LinkedHashSet()) { CategoryTree.of(it.tags, PlaceRecord.geometryOf(it.place)) }
+        val found = places.flatMapTo(LinkedHashSet()) { kindsOf(it) }
             .filter { it.kind != NodeKind.SHELF && (scope == null || CategoryTree.isUnder(it, scope)) }
         // a family's own node (a category, a key), or the kind the list is of, stands for its places of no kind of their
         // own; beside the kinds under it, it would count them all again ("Shops, 227" among the shops), so it is listed
@@ -35,6 +35,25 @@ object EveryKind {
         return kinds.groupBy { if (it.category.family == CategoryTree.OSM) null else it.category.id }
             .flatMap { (category, nodes) -> Browse.pulses(nodes, byCategory[category].orEmpty(), from, moment, hours) }
             .filter { it.count > 0 }
+    }
+
+    /**
+     * The kinds [r] is: its own ([CategoryTree.of]) and, where a value lists several (`cuisine=italian;pizza`), each
+     * one's, as the kinds' lists read it ([Browse.holds]: a place of "italian;pizza" is in the pizzerias' list too, so
+     * the pizzerias are a kind around; the reviewer, 17 November, finding 11). Only the values a kind is read from are
+     * split ([CategoryTree.reads]): `opening_hours` and `phone` were too, each part a copy of the tags and a whole
+     * [CategoryTree.of], on every refresh (the app maintainer, 18 November 2026, batch 4 B20).
+     */
+    private fun kindsOf(r: PlaceRecord): List<CategoryNode> {
+        val geometry = PlaceRecord.geometryOf(r.place)
+        val own = CategoryTree.of(r.tags, geometry)
+        if (r.tags.none { (k, v) -> ';' in v && CategoryTree.reads(k) }) return listOfNotNull(own)
+        val out = LinkedHashSet<CategoryNode>()
+        own?.let(out::add)
+        for ((k, v) in r.tags) if (';' in v && CategoryTree.reads(k)) {
+            for (part in v.split(';')) part.trim().takeIf { it.isNotEmpty() }?.let { CategoryTree.of(r.tags + (k to it), geometry) }?.let(out::add)
+        }
+        return out.toList()
     }
 
     /**

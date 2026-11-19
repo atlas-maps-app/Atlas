@@ -6,6 +6,7 @@ import app.atlas.geo.LatLon
 import app.atlas.geo.LocalFrame
 import app.atlas.model.Place
 import app.atlas.places.TagFilter
+import app.atlas.render.data.Countries
 import app.atlas.render.data.ElementType
 import app.atlas.render.data.OsmElement
 import app.atlas.render.data.OverpassJson
@@ -37,7 +38,8 @@ class LocalDataGoldenTest {
         val goldens: Goldens by lazy { Goldens.read() }
         private val packFile = File(repo, "app/android/app/src/main/assets/packs/amsterdam.atlas")
         val pack: PackFeatures by lazy { PackFeatures(listOf(PackBoxes(PackReader.open(packFile)))) }
-        val local: LocalData by lazy { LocalData(stores = { null }, packs = { pack }) }
+        /** The pack alone, its brands matched in the map's own country at each point, as the app with no region downloaded. */
+        val local: LocalData by lazy { LocalData(stores = { null }, packs = { pack }, countryAt = { Countries.of(it) }) }
 
         val raw: List<OsmElement> by lazy {
             val out = ArrayList<OsmElement>()
@@ -86,7 +88,7 @@ class LocalDataGoldenTest {
     fun theWholeRoutesOnTheCanalRingPack() {
         assumeTrue("needs $grachten", grachten.isFile)
         PackReader.open(grachten).use { reader ->
-            val ring = LocalData(stores = { null }, packs = { PackFeatures(listOf(PackBoxes(reader))) })
+            val ring = LocalData(stores = { null }, packs = { PackFeatures(listOf(PackBoxes(reader))) }, countryAt = { null })
             val wrong = ArrayList<String>()
             var asked = 0
             for (r in goldens.routes) for (s in r.steps) {
@@ -105,7 +107,7 @@ class LocalDataGoldenTest {
     fun howFastOnTheCanalRingPack() = runBlocking {
         assumeTrue("needs $grachten", grachten.isFile)
         PackReader.open(grachten).use { reader ->
-            val ring = LocalData(stores = { null }, packs = { PackFeatures(listOf(PackBoxes(reader))) })
+            val ring = LocalData(stores = { null }, packs = { PackFeatures(listOf(PackBoxes(reader))) }, countryAt = { null })
             val at = goldens.points.first().at
             fun <T> ms(n: Int, block: () -> T): Double {
                 block()
@@ -204,8 +206,14 @@ class LocalDataGoldenTest {
         assertTrue(missing.joinToString("\n"), missing.isEmpty())
         val c = goldens.chains
         val chains = local.brands(BBox.around(c.centre, c.radius + NAME_M), 500).value.associateBy { it.brand.id }
+        // The tiles took a name alone for a chain wherever the chain traded (the reviewer, 17 November, finding 9): the
+        // clothes shop named Hope on the Prinsengracht, which names no brand (Hope Special Sizes, by its site), for Hope,
+        // an underwear brand of Angola, Brazil and Paraguay. Atlas matches a name alone only with a brand that trades
+        // where the place is: no chain. The golden stays as it was recorded.
+        val elsewhere = setOf("hope-0b7e74")
+        assertTrue(elsewhere.none { it in chains })
         val wrong = ArrayList<String>()
-        for ((id, list) in c.chains) {
+        for ((id, list) in c.chains - elsewhere) {
             val have = chains[id]?.branches.orEmpty()
             val lost = missing(list, have)
             if (lost.isNotEmpty()) wrong += "$id: " + lost.joinToString()

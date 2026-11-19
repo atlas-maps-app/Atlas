@@ -129,7 +129,8 @@ class QueryViewModel(
             return
         }
         val now = ZonedDateTime.now(services.clock)
-        val parsed = withContext(Dispatchers.Default) { QueryParser.parse(text, lang, now) }
+        // a brand's name is the brand of the country here (the reviewer, 17 November, finding 9)
+        val parsed = withContext(Dispatchers.Default) { QueryParser.parse(text, lang, now, HereContext.country(services, here())) }
         mutable.update { it.copy(parsed = parsed) }
         if (parsed.steps.isEmpty()) {
             mutable.update { it.copy(result = null, circles = emptyList(), running = false, online = false) }

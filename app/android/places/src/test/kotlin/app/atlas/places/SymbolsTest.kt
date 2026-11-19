@@ -136,11 +136,11 @@ class SymbolsTest {
     @Test
     fun aChainIsMarkedByItsLogoOnItsKindsColour() {
         val ah = mapOf("shop" to "supermarket", "brand" to "Albert Heijn", "brand:wikidata" to "Q1653985", "name" to "Albert Heijn")
-        assertEquals("logo-albertheijn", Symbols.markFor(ah))
+        assertEquals("logo-albertheijn", Symbols.markFor(ah, country = null))
         assertEquals(PlaceFamily.GROCERY.colour, Symbols.colourFor(ah))
         // a chain without a logo keeps its kind's symbol
         val plus = mapOf("shop" to "supermarket", "brand" to "PLUS", "name" to "PLUS Van Dijk")
-        assertEquals(Symbols.symbolFor(plus), Symbols.markFor(plus))
+        assertEquals(Symbols.symbolFor(plus), Symbols.markFor(plus, country = null))
     }
 
     @Test

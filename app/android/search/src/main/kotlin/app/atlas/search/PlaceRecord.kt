@@ -48,14 +48,17 @@ class PlaceRecord(
     override fun toString() = "${place.id ?: place.key} ${name() ?: preset ?: ""}"
 
     companion object {
-        /** Works out category, brand, preset and symbol for [place] drawn as [geometry]. */
-        fun of(place: Place, geometry: Geometry = geometryOf(place)): PlaceRecord = of(place, geometry, Categories.of(place.tags))
+        /**
+         * Works out category, brand, preset and symbol for [place] drawn as [geometry]; its brand is the one of
+         * [country], the country of the map at it, unless the place names its own ([Brands.forTags]).
+         */
+        fun of(place: Place, country: String?, geometry: Geometry = geometryOf(place)): PlaceRecord = of(place, geometry, Categories.of(place.tags), country)
 
         /** Like [of], with the [category] a store's rules gave the place ([Filing]). */
-        internal fun of(place: Place, geometry: Geometry, category: Category?): PlaceRecord {
+        internal fun of(place: Place, geometry: Geometry, category: Category?, country: String?): PlaceRecord {
             val tags = place.tags
             val preset = Presets.match(tags, geometry)
-            val brand = if ("brand" in tags || "brand:wikidata" in tags || "name" in tags) Brands.forTags(tags) else null
+            val brand = if ("brand" in tags || "brand:wikidata" in tags || "name" in tags) Brands.forTags(tags, country) else null
             return PlaceRecord(place, category?.id, brand?.id, preset?.id, symbolOf(preset, category, tags, geometry))
         }
 

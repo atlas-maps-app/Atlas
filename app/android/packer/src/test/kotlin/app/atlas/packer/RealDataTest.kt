@@ -130,7 +130,7 @@ class RealDataTest {
     @Test
     fun realSearchesFindRealPlaces() = runBlocking {
         val engine = SearchEngine(store)
-        val here = SearchContext(location = LatLon(43.7384, 7.4246), lang = "fr")
+        val here = SearchContext(location = LatLon(43.7384, 7.4246), lang = "fr", hours = Nowhere)
         fun SearchItem.osmId(): OsmId? = (this as? SearchItem.PlaceResult)?.hit?.record?.id
 
         val casino = engine.search("casino de monte carlo", here)
@@ -382,7 +382,7 @@ class RealDataTest {
         assertTrue("${built.rawBytes} bytes", built.rawBytes < 40L * 1000 * 1000)
         PlaceStore.open(out).use { lux ->
             val engine = SearchEngine(lux)
-            val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr")
+            val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr", hours = Nowhere)
             fun timed(text: String): Pair<app.atlas.search.SearchResults, Double> {
                 var r = runBlocking { engine.search(text, here) }
                 val t = DoubleArray(9) {

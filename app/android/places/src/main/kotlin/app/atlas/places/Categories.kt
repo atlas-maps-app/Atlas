@@ -34,7 +34,29 @@ class Category internal constructor(
      * among the groceries). Empty for most.
      */
     val last: List<String> = emptyList(),
+    /**
+     * Places of other kinds it holds too, by their tags (categories.py ALSO's "cat:"): Post's shops that take the post,
+     * Health's chemists that dispense (the app maintainer, 18 November 2026, batch 4 A6). Each keeps its own kind (the
+     * first rule, [Categories.of]); the category and its shelf hold it, list it and count it. Null for most.
+     */
+    val alsoTags: TagFilter? = null,
 ) {
+    /**
+     * Every place behind its door, as a list made by tags reads them: a leaf's own ([rule]) and those of other kinds it
+     * holds too ([alsoTags]); a group's, its leaves'.
+     */
+    val door: TagFilter? by lazy {
+        when {
+            rule != null -> alsoTags?.let { TagFilter.Or(listOf(rule, it)) } ?: rule
+            isGroup -> TagFilter.Or(Categories.children(id).mapNotNull { it.door })
+            else -> null
+        }
+    }
+
+    /** Whether a place of another kind with [tags] is behind its door too ([alsoTags]; a group's, any of its leaves'). */
+    fun holdsAlso(tags: Map<String, String>): Boolean =
+        if (isGroup) Categories.children(id).any { it.alsoTags?.matches(tags) == true } else alsoTags?.matches(tags) == true
+
     /** The name in [lang], else in English. */
     fun name(lang: String? = "en"): String = names[Langs.resolve(lang)] ?: names["en"] ?: id
 
@@ -83,6 +105,7 @@ object Categories {
                 core = o["core"]?.arr?.mapNotNull { it.str }?.toSet().orEmpty(),
                 also = o["also"]?.arr?.mapNotNull { it.str }.orEmpty(),
                 last = o["last"]?.arr?.mapNotNull { it.str }.orEmpty(),
+                alsoTags = o["alsoTags"]?.str?.let { TagFilter.parse(it) },
             )
             category to (o["shelf"] != null)
         } ?: emptyList()
@@ -134,6 +157,9 @@ object Categories {
 
     /** True unless the tags describe something that is not a place to go (a parking space, a vacant shop, a siren). */
     fun isPlace(tags: Map<String, String>): Boolean = tags.isNotEmpty() && !data.notAPlace.matches(tags)
+
+    /** Whether [key]'s value can change what [of] gives a place: a key some leaf's rule, or what is no place, reads. */
+    fun reads(key: String): Boolean = data.notAPlace.reads(key) || data.leaves.any { it.rule?.reads(key) == true }
 
     /** The first leaf whose rule [tags] pass, or null when it is not a place Atlas lists. */
     fun of(tags: Map<String, String>): Category? {

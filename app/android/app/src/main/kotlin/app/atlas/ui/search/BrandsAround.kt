@@ -58,14 +58,15 @@ object BrandsAround {
      */
     fun nearAsFound(services: Services, at: LatLon, radiusM: Double): Flow<BrandsNearby> = flow {
         val store = services.placeStores
+        val country = HereContext.country(services, at)
         if (store.covers(at)) {
-            emit(split(store.inBox(BBox.around(at, radiusM)).map { it.place }, at, radiusM, PlaceOrigin.STORE))
+            emit(split(store.inBox(BBox.around(at, radiusM)).map { it.place }, at, radiusM, PlaceOrigin.STORE, country))
             return@flow
         }
         emitAll(
             services.localData.placesAsFound(at, radiusM, TagFilter.Has("name"), 5_000)
-                .map { split(it.value, at, radiusM, it.origin) }
-                .catch { emit(split(emptyList(), at, radiusM, null)) },
+                .map { split(it.value, at, radiusM, it.origin, country) }
+                .catch { emit(split(emptyList(), at, radiusM, null, country)) },
         )
     }.flowOn(Dispatchers.Default)
 
@@ -83,14 +84,17 @@ object BrandsAround {
     private fun kindOf(chain: BrandBranches): CategoryNode? =
         chain.branches.map { CategoryTree.of(it.tags, PlaceRecord.geometryOf(it)) }.groupBy { it?.id }.values.maxByOrNull { it.size }?.first()
 
-    /** Splits [places] within [radiusM] of [at] into chains (most branches first) and named independents (nearest first). */
-    fun split(places: List<Place>, at: LatLon, radiusM: Double, origin: PlaceOrigin?): BrandsNearby {
+    /**
+     * Splits [places] within [radiusM] of [at] into chains (most branches first) and named independents (nearest first);
+     * the chains as they trade in [country], the country of the map there ([Brands.forTags]).
+     */
+    fun split(places: List<Place>, at: LatLon, radiusM: Double, origin: PlaceOrigin?, country: String?): BrandsNearby {
         val byBrand = HashMap<String, MutableList<Place>>()
         val brands = HashMap<String, Brand>()
         val independents = ArrayList<Place>()
         for (p in places) {
             if (!isTrade(p.tags) || Geo.distance(at, p.location) > radiusM) continue
-            val brand = Brands.forTags(p.tags)
+            val brand = Brands.forTags(p.tags, country)
             if (brand != null) {
                 brands[brand.id] = brand
                 byBrand.getOrPut(brand.id) { ArrayList() } += p

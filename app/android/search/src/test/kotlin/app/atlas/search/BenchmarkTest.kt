@@ -80,7 +80,7 @@ class BenchmarkTest {
     @Test
     fun theSearchBoxUnderBudget() = runBlocking {
         val engine = SearchEngine(Fixtures.store)
-        val ctx = SearchContext(location = Fixtures.westerkerk, now = Fixtures.saturday)
+        val ctx = SearchContext(location = Fixtures.westerkerk, now = Fixtures.saturday, hours = Nowhere)
         val texts = listOf(
             "pharm", "apotheek", "westerkrk", "albert hein", "prinsengracht 263", "52.3745, 4.8838", "cafe near bicycle rental 200m",
             "quiet café with an outlet, then dinner", "restaurant", "picture hooks", "where can I buy batteries",

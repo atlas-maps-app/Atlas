@@ -40,8 +40,10 @@ struct Box {
     const double d = metres / earth_radius;
     const double t = pymath::radians(bearing);
     const double f1 = pymath::radians(lat);
-    const double f2 =
-        pymath::asin((pymath::sin(f1) * pymath::cos(d)) + (pymath::cos(f1) * pymath::sin(d) * pymath::cos(t)));
+    // the sine of the destination's latitude, held to asin's domain: at the poles its rounding reaches 1 (it never
+    // passed it at 15 m, the one distance drawn, where 5.6e8 latitudes were tried), and past it Python raises
+    const double f2 = pymath::asin(std::clamp(
+        (pymath::sin(f1) * pymath::cos(d)) + (pymath::cos(f1) * pymath::sin(d) * pymath::cos(t)), -1.0, 1.0));
     const double l2 = pymath::radians(lon) + pymath::atan2(pymath::sin(t) * pymath::sin(d) * pymath::cos(f1),
                                                            pymath::cos(d) - (pymath::sin(f1) * pymath::sin(f2)));
     return {pymath::degrees(f2), pymath::fmod(pymath::degrees(l2) + 540.0, 360.0) - 180.0};

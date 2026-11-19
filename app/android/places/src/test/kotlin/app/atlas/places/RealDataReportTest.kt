@@ -78,7 +78,7 @@ class RealDataReportTest {
             assertNotNull(name, b)
             assertEquals(name, qid, b!!.wikidata)
         }
-        assertNotNull("Albert Heijn's logo", Brands.forTags(mapOf("brand:wikidata" to "Q1653985"))!!.logo)
+        assertNotNull("Albert Heijn's logo", Brands.forTags(mapOf("brand:wikidata" to "Q1653985"), "nl")!!.logo)
         assertNotNull("McDonald's logo", Brands.forTags(mapOf("brand" to "McDonald's", "amenity" to "fast_food"), "nl")!!.logo)
         assertNotNull("Starbucks logo", Brands.forTags(mapOf("brand" to "Starbucks", "amenity" to "cafe"), "nl")!!.logo)
         assertTrue("most brands of the extract match", matched >= seen.size * 0.8)
