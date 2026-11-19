@@ -27,7 +27,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use atlas_transit::file::{LineText, OperatorText, StopText, TripText};
-use atlas_transit::{Answer, Area, How, Leg, Mode, OpenError, Place, Planner, Query, Spot, Timetable, What, Wish};
+use atlas_transit::{Answer, Area, How, Leg, Limits, Mode, OpenError, Place, Planner, Query, Spot, Timetable, What, Wish};
 
 #[cfg(test)]
 mod tests;
@@ -138,6 +138,7 @@ pub const BAD_VERSION: i32 = 2;
 pub const BAD_SECTION: i32 = 3;
 pub const BAD_RECORD: i32 = 4;
 pub const BAD_DAYS: i32 = 5;
+pub const INDEX_TOO_LARGE: i32 = 6;
 
 // A timetable's numbers.
 pub const N_FIRST_DAY: u32 = 0;
@@ -303,6 +304,7 @@ pub const NAMES: &[(&str, i64)] = &[
     ("BAD_SECTION", BAD_SECTION as i64),
     ("BAD_RECORD", BAD_RECORD as i64),
     ("BAD_DAYS", BAD_DAYS as i64),
+    ("INDEX_TOO_LARGE", INDEX_TOO_LARGE as i64),
     ("N_FIRST_DAY", N_FIRST_DAY as i64),
     ("N_DAYS", N_DAYS as i64),
     ("N_STOPS", N_STOPS as i64),
@@ -474,14 +476,16 @@ pub extern "C" fn atlas_transit_abi() -> u32 {
     ABI
 }
 
-/// Opens a timetable that lies in memory. Null where the bytes are no timetable this library reads; `why`, where
-/// it is not null, gets the reason, or `OPENED`.
+/// Opens a timetable that lies in memory. Null where the bytes are no timetable this library reads, or where the
+/// planner's index for it would take more than `index_most` bytes of memory (0 or less: the library's own bound,
+/// `Limits::default().index`), which is found before any of that memory is asked for; `why`, where it is not
+/// null, gets the reason, or `OPENED`.
 ///
 /// # Safety
 /// `bytes` points to `len` bytes that stay where they are, unchanged, until the timetable is closed; `why` is null
 /// or points to a number that may be written.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn atlas_transit_open(bytes: *const u8, len: usize, why: *mut i32) -> *mut AtlasTransit {
+pub unsafe extern "C" fn atlas_transit_open(bytes: *const u8, len: usize, index_most: i32, why: *mut i32) -> *mut AtlasTransit {
     let opened = if bytes.is_null() || len > isize::MAX as usize {
         Err(NOT_A_TIMETABLE)
     } else {
@@ -496,12 +500,19 @@ pub unsafe extern "C" fn atlas_transit_open(bytes: *const u8, len: usize, why: *
             OpenError::Days => BAD_DAYS,
         })
     };
+    let opened = opened.and_then(|tt| {
+        let mut limits = Limits::default();
+        if index_most > 0 {
+            limits.index = index_most as u64;
+        }
+        Planner::within(tt, &limits).map(|planner| (tt, planner)).map_err(|_| INDEX_TOO_LARGE)
+    });
     if !why.is_null() {
         // SAFETY: a number that may be written, by the caller's word
         unsafe { why.write(opened.as_ref().err().copied().unwrap_or(OPENED)) };
     }
     match opened {
-        Ok(tt) => Box::into_raw(Box::new(AtlasTransit { tt, planner: Planner::new(tt), answer: Vec::new() })),
+        Ok((tt, planner)) => Box::into_raw(Box::new(AtlasTransit { tt, planner, answer: Vec::new() })),
         Err(_) => core::ptr::null_mut(),
     }
 }

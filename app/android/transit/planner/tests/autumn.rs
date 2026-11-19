@@ -104,7 +104,7 @@ fn the_scan_reads_the_days_and_the_changes_by_itself() {
 fn the_night_the_clock_goes_back() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     // asked on Saturday's day, in Saturday's seconds: Sunday's 03:40 is 25 h + 3 h 40, its 04:00 is 29:00
     let night = vec![(hm(28, 20), hm(29, 0), "K1a K2b".to_string())];
     let mut q = query(&tt, "KA", "KZ", 1, hm(28, 0));
@@ -148,7 +148,7 @@ fn the_night_the_clock_goes_back() {
 fn nobody_changes_where_the_feed_says_so() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let direct = vec![(hm(8, 5), hm(9, 0), "G3a".to_string())];
     for (change, rules) in [(None, true), (Some(0), true), (Some(600), true), (None, false)] {
         let mut q = query(&tt, "GA", "GZ", 0, hm(7, 55));

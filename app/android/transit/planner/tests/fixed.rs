@@ -39,7 +39,7 @@ fn a_point_with_more_stops_around_it_than_a_search_begins_at_says_so() {
     let file = std::env::var("ATLAS_TRANSIT_FILE").expect("ATLAS_TRANSIT_FILE names no timetable file of the Netherlands");
     let bytes = std::fs::read(&file).unwrap();
     let tt = Timetable::open(&bytes).unwrap();
-    let mut planner = Planner::new(tt);
+    let mut planner = Planner::new(tt).unwrap();
     let (utrecht, amsterdam) = (Place::Point { lat: 520_894_000, lon: 51_101_000 }, Place::Point { lat: 523_791_000, lon: 49_003_000 });
     let mut q = Query::new(utrecht, amsterdam, tt.day_of(20261117).unwrap_or(1), 8 * 3600);
     let near = planner.plan(&q);

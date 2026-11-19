@@ -23,7 +23,7 @@
 
 use atlas_transit::file::{LineText, OperatorText, StopText, TripText};
 use atlas_transit::reference::{Reference, impossible};
-use atlas_transit::{Answer, Area, How, Journey, Leg, Mode, NONE, Place, Planner, Query, Spot, Timetable, What, Wish, fuzz};
+use atlas_transit::{Answer, Area, How, IndexTooLarge, Journey, Leg, Mode, NONE, Place, Planner, Query, Spot, Timetable, What, Wish, fuzz};
 use std::fmt::Write as _;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -163,9 +163,15 @@ fn info(tt: &Timetable, bytes: usize, read_ms: f64, open_ms: f64) {
         tt.rules()
     );
     println!("stop times it stands for: {}", tt.stop_times());
+    println!("a planner's index: {} bytes", Planner::index_bytes(tt));
     for (k, v) in tt.meta_lines() {
         println!("  {k} = {v}");
     }
+}
+
+/// Why no planner was made, in words.
+fn too_large(e: IndexTooLarge) -> String {
+    format!("no planner: its index would take {} bytes of memory, and {} are allowed", grouped(e.bytes), grouped(e.limit))
 }
 
 /// A count with its thousands apart.
@@ -479,7 +485,7 @@ fn print_journey(tt: &Timetable, j: &Journey) {
 fn plan(tt: &Timetable, args: &[String]) -> Result<(), String> {
     let q = query_of(tt, args)?;
     let t0 = Instant::now();
-    let mut planner = Planner::new(*tt);
+    let mut planner = Planner::new(*tt).map_err(too_large)?;
     let ready = ms(t0);
     let t0 = Instant::now();
     let a = planner.plan(&q);
@@ -580,7 +586,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
     let path = args.first().ok_or("fixed: the journeys' file")?;
     let write = args.iter().any(|a| a == "--write");
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut planner = Planner::new(*tt);
+    let mut planner = Planner::new(*tt).map_err(too_large)?;
     let mut reference: Option<(i32, Reference)> = None;
     let (mut out, mut wrong, mut count, mut answered) = (String::new(), 0, 0, 0);
     let mut same_feed = true;
@@ -752,7 +758,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     let at = parse_clock(option(args, "--time").unwrap_or("08:00"))?;
     let points = args.iter().any(|a| a == "--points");
     let t0 = Instant::now();
-    let mut planner = Planner::new(*tt);
+    let mut planner = Planner::new(*tt).map_err(too_large)?;
     let ready = ms(t0);
     let t0 = Instant::now();
     let scan = Reference::new(&planner, day, at as i32 - 86_400, at as i32 + 2 * 86_400);

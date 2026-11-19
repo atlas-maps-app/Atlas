@@ -116,12 +116,17 @@ int main(int argc, char **argv) {
 
     /* what is no timetable is not opened, and the reason is said */
     int32_t why = -7;
-    atlas_transit *none = atlas_transit_open((const uint8_t *)"no timetable, whatever it says", 30, &why);
+    atlas_transit *none = atlas_transit_open((const uint8_t *)"no timetable, whatever it says", 30, 0, &why);
     printf("thirty bytes of something else: %s, reason %d\n", none == NULL ? "not opened" : "opened", (int)why);
-    none = atlas_transit_open(bytes, (size_t)size / 2, &why);
+    none = atlas_transit_open(bytes, (size_t)size / 2, 0, &why);
     printf("half the file: %s, reason %d\n", none == NULL ? "not opened" : "opened", (int)why);
 
-    atlas_transit *t = atlas_transit_open(bytes, (size_t)size, &why);
+    /* nor a timetable whose index would take more memory than the caller allows: here a hundred bytes */
+    none = atlas_transit_open(bytes, (size_t)size, 100, &why);
+    printf("the file, its index held to a hundred bytes: %s, reason %d\n", none == NULL ? "not opened" : "opened", (int)why);
+    if (none != NULL || why != ATLAS_TRANSIT_INDEX_TOO_LARGE) return 1;
+
+    atlas_transit *t = atlas_transit_open(bytes, (size_t)size, 0, &why);
     printf("the file: %s, reason %d\n", t == NULL ? "not opened" : "opened", (int)why);
     if (t == NULL) return 1;
     shown = t;

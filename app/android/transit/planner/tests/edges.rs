@@ -109,7 +109,7 @@ fn the_file_is_sound() {
 fn a_late_window_has_its_last_connection() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut q = query(&tt, "LA", "LZ", 0, hm(22, 0));
     q.window = 7200;
     let want = [(hm(22, 10), hm(22, 30), "L1a".to_string()), (hm(22, 40), hm(23, 0), "L1b".to_string()), (hm(23, 40), hm(25, 25), "L2a L3a".to_string())];
@@ -137,7 +137,7 @@ fn a_late_window_has_its_last_connection() {
 fn a_patient_search_has_the_way_with_fewer_rides() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (fast, direct) = ((hm(10, 0), hm(10, 25), "F1a F2a".to_string()), (hm(10, 0), hm(11, 40), "F3a".to_string()));
     for window in [0, 600] {
         for patient in [true, false] {
@@ -168,7 +168,7 @@ fn a_patient_search_has_the_way_with_fewer_rides() {
 fn a_departure_is_the_latest_that_makes_the_arrival() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let q = query(&tt, "BA", "BZ", 0, hm(8, 0));
     assert_eq!(all(&tt, &ask(&mut p, &q)), [(hm(8, 22), hm(9, 10), "B1b B2a".to_string())]);
     // and asked to arrive by 09:10, it arrives when it can: the 08:30 bus is there twenty minutes before the 08:50
@@ -184,7 +184,7 @@ fn a_departure_is_the_latest_that_makes_the_arrival() {
 fn a_window_ends_with_its_last_moment() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let later = (hm(8, 22), hm(9, 10), "B1b B2a".to_string());
     let mut q = query(&tt, "BA", "BZ", 0, hm(7, 30));
     for (window, want) in [(31 * 60, vec![]), (32 * 60, vec![]), (51 * 60, vec![]), (52 * 60, vec![later.clone()]), (3600, vec![later.clone()])] {
@@ -213,7 +213,7 @@ fn a_window_ends_with_its_last_moment() {
 fn a_vehicle_that_waits_is_reached_by_an_aimed_search() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     for (from, to, want) in [
         ("WA", "WZ", vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())]),
         ("VA", "VZ", vec![(hm(8, 0), hm(8, 30), "V1a V2a".to_string()), (hm(8, 1), hm(8, 32), "V3a".to_string())]),
@@ -248,7 +248,7 @@ fn a_vehicle_that_waits_is_reached_by_an_aimed_search() {
 fn a_stop_has_its_own_time_to_change() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut q = query(&tt, "SA", "SZ", 0, hm(7, 55));
     // 08:10 in, 300 s to change: not the 08:12, the 08:16
     assert_eq!(all(&tt, &ask(&mut p, &q)), [(hm(8, 0), hm(8, 24), "S1a S2b".to_string())]);
@@ -277,7 +277,7 @@ fn a_stop_has_its_own_time_to_change() {
 fn the_feeds_rules_between_two_stops() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let stop = |id: &str| (0..tt.stops()).find(|s| tt.stop_text(*s, StopText::Id) == id).unwrap();
     let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
     let walk = |a: &str, z: &str| {
@@ -372,7 +372,7 @@ fn the_feeds_rules_between_two_stops() {
 fn a_line_that_waits_holds_one_vehicle() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let stop = |id: &str| (0..tt.stops()).find(|s| tt.stop_text(*s, StopText::Id) == id).unwrap();
     let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
     let walk = |a: &str, z: &str| {
@@ -455,7 +455,7 @@ fn a_line_that_waits_holds_one_vehicle() {
 fn the_night_the_clock_changes() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let q = query(&tt, "KA", "KZ", 1, hm(28, 0));
     let j = ask(&mut p, &q);
     // in Saturday's seconds: Sunday's 05:40 is 23 h + 5 h 40, and its 06:00 is 29:00
@@ -475,7 +475,7 @@ fn the_night_the_clock_changes() {
 fn a_walk_all_the_way_can_begin_at_any_moment() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let at = |id: &str| {
         let s = tt.stop((0..tt.stops()).find(|s| tt.stop_text(*s, StopText::Id) == id).unwrap());
         Place::Point { lat: s.lat, lon: s.lon }
@@ -523,7 +523,7 @@ fn a_walk_all_the_way_can_begin_at_any_moment() {
 fn a_cheaper_trip_of_the_next_service_day() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
     let ways = |p: &mut Planner, at: u32, by: bool, wish: (&str, u32), weigh: bool| {
         let mut q = query(&tt, "OA", "OZ", 0, at);
@@ -550,7 +550,7 @@ fn a_cheaper_trip_of_the_next_service_day() {
 fn weighed_the_options_kept_are_the_best_with_their_cost() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
     let kept = |p: &mut Planner, from: &str, to: &str, at: u32, by: bool, wish: (&str, u32), weigh: bool, options: u32| {
         let mut q = query(&tt, from, to, 0, at);

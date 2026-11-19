@@ -99,7 +99,7 @@ fn the_file_is_what_the_feed_says() {
 fn the_fast_bus_that_overtakes() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, e) = (stop(&tt, "A"), stop(&tt, "E"));
     let j = ask(&mut p, &Query::new(Place::Stop(a), Place::Stop(e), 0, hm(8, 0)));
     assert_eq!(j.len(), 1);
@@ -123,7 +123,7 @@ fn the_fast_bus_that_overtakes() {
 fn a_change_and_the_feeds_rules_for_it() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, f) = (stop(&tt, "A"), stop(&tt, "F"));
     // without the rules: the fast bus is at Centrum 08:12, two minutes to the other platform, the 08:21 tram
     let mut q = Query::new(Place::Stop(a), Place::Stop(f), 0, hm(8, 0));
@@ -170,7 +170,7 @@ fn a_change_and_the_feeds_rules_for_it() {
 fn no_boarding_where_the_feed_says_so() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     // at Dorp nobody boards the day's buses; only the late one takes riders there
     let j = ask(&mut p, &Query::new(Place::Stop(stop(&tt, "D")), Place::Stop(stop(&tt, "E")), 0, hm(8, 0)));
     assert_eq!((j.len(), j[0].depart as u32, j[0].arrive as u32, numbers(&tt, &j[0])), (1, hm(24, 0), hm(24, 10), vec!["103".to_string()]));
@@ -183,7 +183,7 @@ fn no_boarding_where_the_feed_says_so() {
 fn past_midnight_and_the_days() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (d, e, g) = (stop(&tt, "D"), stop(&tt, "E"), stop(&tt, "G"));
     // Tuesday 00:00 at Dorp: Monday's last bus is there at its 24:00
     let j = ask(&mut p, &Query::new(Place::Stop(d), Place::Stop(e), 1, 0));
@@ -216,7 +216,7 @@ fn past_midnight_and_the_days() {
 fn wishes() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, e, f, bos) = (stop(&tt, "A"), stop(&tt, "E"), stop(&tt, "F"), stop(&tt, "B"));
     let base = Query::new(Place::Stop(a), Place::Stop(e), 0, hm(8, 0));
     let with = |what: What, how: How| {
@@ -302,7 +302,7 @@ fn wishes() {
 fn from_a_point_and_on_foot() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, e) = (tt.stop(stop(&tt, "A")), tt.stop(stop(&tt, "E")));
     // 100 m north of Aan Zee to 200 m north of Eind: the walks at both ends, at 1.25 m/s over the line and 30 %
     let north = |m: i32| (m as i64 * 10_000_000 / 111_195) as i32;
@@ -325,7 +325,7 @@ fn from_a_point_and_on_foot() {
 fn what_is_asked_wrongly_comes_back_empty() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut q = Query::new(Place::Stop(9999), Place::Station(u32::MAX), i32::MAX, u32::MAX);
     q.window = u32::MAX;
     q.max_rides = u32::MAX;
@@ -353,7 +353,7 @@ fn what_is_asked_wrongly_comes_back_empty() {
 fn an_area_ends_at_its_edge_and_a_station_is_its_stops() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, f, g, e) = (stop(&tt, "A"), stop(&tt, "F"), stop(&tt, "G"), stop(&tt, "E"));
     let (fort, gracht) = (tt.stop(f), tt.stop(g));
     assert_eq!((gracht.lat - fort.lat, gracht.lon - fort.lon), (2000, 0));

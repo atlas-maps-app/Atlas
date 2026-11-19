@@ -26,7 +26,7 @@ impl Open {
     fn of(b: &[u8]) -> Open {
         let mut why = -7;
         // SAFETY: the bytes outlive every Open made of them here, which the tests see to
-        let t = unsafe { atlas_transit_open(b.as_ptr(), b.len(), &mut why) };
+        let t = unsafe { atlas_transit_open(b.as_ptr(), b.len(), 0, &mut why) };
         assert!(!t.is_null() && why == OPENED, "why {why}");
         Open(t)
     }
@@ -436,7 +436,7 @@ fn an_answer_crosses_whole() {
     for (name, queries) in [("edges.tt", 60_000), ("tiny.tt", 30_000), ("autumn.tt", 30_000), ("utrecht-20261117.tt", 1500)] {
         let b = bytes(name);
         let tt = Timetable::open(&b).unwrap();
-        let mut planner = Planner::new(tt);
+        let mut planner = Planner::new(tt).unwrap();
         let t = Open::of(&b);
         let mut rng = Rng(0x5EED_0000_0000_0001 ^ queries as u64);
         for i in 0..queries {
@@ -654,7 +654,7 @@ fn a_file_that_is_no_timetable_says_why() {
     let why = |bytes: &[u8]| {
         let mut why = -7;
         // SAFETY: the bytes with their length, and a number to write to
-        let t = unsafe { atlas_transit_open(bytes.as_ptr(), bytes.len(), &mut why) };
+        let t = unsafe { atlas_transit_open(bytes.as_ptr(), bytes.len(), 0, &mut why) };
         // SAFETY: what open gave, closed once (null closes nothing)
         unsafe { atlas_transit_close(t) };
         assert_eq!(t.is_null(), why != OPENED);
@@ -691,11 +691,31 @@ fn a_file_that_is_no_timetable_says_why() {
     // SAFETY: no bytes at all; and no place for the reason
     unsafe {
         let mut said = -7;
-        assert!(atlas_transit_open(null(), 100, &mut said).is_null() && said == NOT_A_TIMETABLE);
-        assert!(atlas_transit_open(b"abc".as_ptr(), 3, null_mut()).is_null());
-        let t = atlas_transit_open(b.as_ptr(), b.len(), null_mut());
+        assert!(atlas_transit_open(null(), 100, 0, &mut said).is_null() && said == NOT_A_TIMETABLE);
+        assert!(atlas_transit_open(b"abc".as_ptr(), 3, 0, null_mut()).is_null());
+        let t = atlas_transit_open(b.as_ptr(), b.len(), 0, null_mut());
         assert!(!t.is_null());
         atlas_transit_close(t);
+    }
+}
+
+/// A timetable whose index would take more memory than the caller allows is not opened, and the reason is its
+/// own: to the byte what the planner says the index takes, and nothing or less than nothing is the library's own
+/// bound.
+#[test]
+fn a_file_whose_index_would_pass_the_bound_is_not_opened() {
+    for name in ["tiny.tt", "edges.tt", "waits.tt", "utrecht-20261117.tt"] {
+        let b = bytes(name);
+        let takes = Planner::index_bytes(&Timetable::open(&b).unwrap());
+        assert!(takes > 100 && takes < i32::MAX as u64, "{name}: {takes}");
+        for (most, opens) in [(takes as i32, true), (takes as i32 - 1, false), (1, false), (0, true), (-1, true), (i32::MIN, true), (i32::MAX, true)] {
+            let mut why = -7;
+            // SAFETY: the bytes with their length, and a number to write to
+            let t = unsafe { atlas_transit_open(b.as_ptr(), b.len(), most, &mut why) };
+            // SAFETY: what open gave, closed once (null closes nothing)
+            unsafe { atlas_transit_close(t) };
+            assert_eq!((!t.is_null(), why), (opens, if opens { OPENED } else { INDEX_TOO_LARGE }), "{name}: {takes} bytes, held to {most}");
+        }
     }
 }
 

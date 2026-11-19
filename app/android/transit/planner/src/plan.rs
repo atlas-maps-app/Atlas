@@ -82,7 +82,7 @@
 use crate::file::{MAX_TIME, PatternStop, Route, Rule, Timetable};
 use crate::geo::distance_mm;
 use crate::journey::{Journey, Leg, Spot};
-use crate::query::{MAX_PENALTY, MAX_QUERY_TIME, MAX_RIDES, MAX_WINDOW, Place, Prefs, Query, bit, cost};
+use crate::query::{Limits, MAX_PENALTY, MAX_QUERY_TIME, MAX_RIDES, MAX_WINDOW, Place, Prefs, Query, bit, cost};
 use crate::NONE;
 use alloc::collections::{BinaryHeap, VecDeque};
 use alloc::vec;
@@ -254,6 +254,163 @@ struct Bound {
     trips: Vec<(u32, u32)>,
     lines: Vec<(u32, u32)>,
     stops: Vec<u32>,
+}
+
+impl Bound {
+    /// With room for so many that name a trip, a line, a stop alone.
+    fn with_room(n: &[u64; 3]) -> Bound {
+        Bound { trips: Vec::with_capacity(n[0] as usize), lines: Vec::with_capacity(n[1] as usize), stops: Vec::with_capacity(n[2] as usize) }
+    }
+
+    /// One side of a rule, by what it names there.
+    fn push(&mut self, stop: u32, trip: u32, line: u32) {
+        match named_by(trip, line) {
+            0 => self.trips.push((stop, trip)),
+            1 => self.lines.push((stop, line)),
+            _ => self.stops.push(stop),
+        }
+    }
+
+    /// Sorted, each once, and the room it no longer needs given back.
+    fn settle(&mut self) {
+        settle(&mut self.trips);
+        settle(&mut self.lines);
+        settle(&mut self.stops);
+    }
+}
+
+/// A list sorted, each of its entries once, and the room it no longer needs given back.
+fn settle<T: Ord>(list: &mut Vec<T>) {
+    list.sort_unstable();
+    list.dedup();
+    list.shrink_to_fit();
+}
+
+/// Which of a `Bound`'s three lists a side of a rule is in: by the trip it names, by the line, or by its stop alone.
+fn named_by(trip: u32, line: u32) -> usize {
+    if trip != NONE {
+        0
+    } else if line != NONE {
+        1
+    } else {
+        2
+    }
+}
+
+/// What one rule adds to the index. A rule is read this one way, when its room is counted and when it is put in.
+#[derive(Clone, Copy)]
+struct Adds {
+    /// A rule for everyone: between two stops it is in the walks already, and the index has no word of it. From a
+    /// stop to itself it is that stop's own time to change (type 2), or says that nobody changes there (type 3,
+    /// `NO_CHANGE`): `own`, else `NONE`.
+    general: bool,
+    own: u32,
+    /// It names a trip or a line, and: a vehicle waits for another (kind 1 or 4), between two stops; a vehicle
+    /// waits for another; it binds (kinds 1 to 4).
+    waits: bool,
+    waiting: bool,
+    binds: bool,
+}
+
+fn adds(r: &Rule, stops: u32) -> Adds {
+    if r.from_trip == NONE && r.to_trip == NONE && r.from_line == NONE && r.to_line == NONE {
+        let own = match r.kind {
+            2 if r.min_time != NONE => r.min_time.min(MAX_TIME - 1),
+            3 => NO_CHANGE,
+            _ => NONE,
+        };
+        let own = if r.from_stop == r.to_stop && r.from_stop < stops { own } else { NONE };
+        return Adds { general: true, own, waits: false, waiting: false, binds: false };
+    }
+    let waiting = matches!(r.kind, 1 | 4) && r.from_stop < stops && r.to_stop < stops;
+    Adds { general: false, own: NONE, waits: waiting && r.from_stop != r.to_stop, waiting, binds: (1..=4).contains(&r.kind) }
+}
+
+/// The days the clock changes that an index keeps, at most (a file covers 400 days at most, a year's two).
+const ODD_DAYS: usize = 64;
+
+/// The file's word of the days the clock changes, day by day: "YYYYMMDD:seconds to the next day's beginning", as
+/// the packer wrote them.
+fn odd_days<'t>(tt: &Timetable<'t>) -> impl Iterator<Item = &'t str> {
+    tt.meta("odd_days").unwrap_or("").split(' ').filter(|word| !word.is_empty()).take(ODD_DAYS)
+}
+
+/// The room each list of an index is given: counted over the rules before any memory is asked for, so that what
+/// the index takes is known first ([`Planner::index_bytes`]) and no list grows while it is made.
+#[derive(Default)]
+struct Room {
+    /// Some stop has its own time to change.
+    own_change: bool,
+    /// The rules that name a trip or a line; of them, those by which a vehicle waits between two stops, and those
+    /// by which one waits.
+    named: u64,
+    waits: u64,
+    waiting: u64,
+    /// For the side changed from and the side changed to, how many of the rules by which a vehicle waits, and of
+    /// those that bind, name a trip there, a line, or neither.
+    waiting_by: [[u64; 3]; 2],
+    bound_by: [[u64; 3]; 2],
+    /// The days the file says the clock changes.
+    odd: u64,
+}
+
+impl Room {
+    fn of(tt: &Timetable) -> Room {
+        let mut room = Room { odd: odd_days(tt).count() as u64, ..Room::default() };
+        for i in 0..tt.rules() {
+            let r = tt.rule(i);
+            let a = adds(&r, tt.stops());
+            room.own_change |= a.own != NONE;
+            if a.general {
+                continue;
+            }
+            room.named += 1;
+            room.waits += a.waits as u64;
+            room.waiting += a.waiting as u64;
+            for (side, by) in [named_by(r.from_trip, r.from_line), named_by(r.to_trip, r.to_line)].into_iter().enumerate() {
+                room.waiting_by[side][by] += a.waiting as u64;
+                room.bound_by[side][by] += a.binds as u64;
+            }
+        }
+        room
+    }
+
+    /// The bytes an index with this room asks for, all of it held at once while it is made: every list of
+    /// [`Index`] at the room it is given, and beside them a number a profile, given back when the index is made.
+    /// (The packer says the same number of a file it writes: `index_bytes` in ../pack/ttpack.py, held to this by
+    /// the files written by hand.)
+    fn bytes(&self, tt: &Timetable) -> u64 {
+        const WORD: u64 = size_of::<u32>() as u64;
+        const PAIR: u64 = size_of::<(u32, u32)>() as u64;
+        const REACH: u64 = size_of::<(u32, u32, bool)>() as u64;
+        const BITS: u64 = size_of::<u64>() as u64;
+        let stops = tt.stops() as u64;
+        let bits = BITS * stops.div_ceil(64);
+        let lists = |by: &[[u64; 3]; 2]| by.iter().map(|n| PAIR * (n[0] + n[1]) + WORD * n[2]).sum::<u64>();
+        WORD * stops // by_lat
+            + WORD * (stops + 1) // back_first
+            + PAIR * tt.walks() as u64 // back
+            + 2 * bits // rule_from, rule_to
+            + if self.own_change { WORD * stops } else { 0 } // own_change
+            + WORD * self.named // rules_by_to
+            + 2 * PAIR * self.waits // waits
+            + if self.waits > 0 { 2 * bits } else { 0 } // waits_at
+            + 2 * REACH * self.waiting // wait_reach
+            + lists(&self.waiting_by) // waiting
+            + lists(&self.bound_by) // bound
+            + WORD * tt.pattern_stops() as u64 // hop
+            + PAIR * self.odd // odd
+            + WORD * tt.profiles() as u64 // while it is made: which route a profile was last folded for
+    }
+}
+
+/// Why no planner was made of a timetable: its index would take more memory than it may.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndexTooLarge {
+    /// What the index would take, in bytes ([`Planner::index_bytes`]).
+    pub bytes: u64,
+    /// What it may take ([`Limits::index`]).
+    pub limit: u64,
 }
 
 /// The trips that run on one day, route by route in each route's order: what a boarding searches, so that it never
@@ -458,83 +615,95 @@ pub struct Ends {
 }
 
 impl<'a> Planner<'a> {
-    pub fn new(tt: Timetable<'a>) -> Planner<'a> {
+    /// A planner for a timetable, with the library's own bound on what its index may take
+    /// ([`Limits::default`]'s `index`).
+    pub fn new(tt: Timetable<'a>) -> Result<Planner<'a>, IndexTooLarge> {
+        Planner::within(tt, &Limits::default())
+    }
+
+    /// The bytes of memory a planner's index takes for a timetable, worked out from the file's counts and one
+    /// pass over its rules, without asking for any: what making a planner holds at once, to the byte. What stays
+    /// when it is made is no more (less where rules name the same thing twice).
+    pub fn index_bytes(tt: &Timetable) -> u64 {
+        Room::of(tt).bytes(tt)
+    }
+
+    /// A planner for a timetable whose index takes no more than `limits.index` bytes. Over that none is made, and
+    /// no memory was asked for: a file that asks for more than there is must not end the process, as an
+    /// allocation that fails does. The timetable itself is open all the same.
+    pub fn within(tt: Timetable<'a>, limits: &Limits) -> Result<Planner<'a>, IndexTooLarge> {
+        let room = Room::of(&tt);
+        let bytes = room.bytes(&tt);
+        if bytes > limits.index || bytes > isize::MAX as u64 {
+            return Err(IndexTooLarge { bytes, limit: limits.index });
+        }
+        // Every list is asked for here, at the room counted for it, before anything is put in: so the most held
+        // at once is `bytes`, whatever the rules are, and nothing below asks for more. (tests/memory.rs counts.)
         let stops = tt.stops();
+        let words = (stops as usize).div_ceil(64);
         let mut by_lat: Vec<u32> = (0..stops).collect();
-        by_lat.sort_unstable_by_key(|s| (tt.stop(*s).lat, *s));
-        // the walks, turned round
         let mut back_first = vec![0u32; stops as usize + 1];
+        let mut back = vec![(0u32, 0u32); tt.walks() as usize];
+        let (mut rule_from, mut rule_to) = (vec![0u64; words], vec![0u64; words]);
+        let mut own_change: Vec<u32> = if room.own_change { vec![NONE; stops as usize] } else { Vec::new() };
+        let mut rules_by_to: Vec<u32> = Vec::with_capacity(room.named as usize);
+        let mut waits: [Vec<(u32, u32)>; 2] = [Vec::with_capacity(room.waits as usize), Vec::with_capacity(room.waits as usize)];
+        let mut waits_at: [Vec<u64>; 2] = if room.waits > 0 { [vec![0u64; words], vec![0u64; words]] } else { [Vec::new(), Vec::new()] };
+        let mut wait_reach: [Vec<(u32, u32, bool)>; 2] = [Vec::with_capacity(room.waiting as usize), Vec::with_capacity(room.waiting as usize)];
+        let mut waiting = [Bound::with_room(&room.waiting_by[0]), Bound::with_room(&room.waiting_by[1])];
+        let mut bound = [Bound::with_room(&room.bound_by[0]), Bound::with_room(&room.bound_by[1])];
+        let mut hop = vec![u32::MAX; tt.pattern_stops() as usize];
+        let mut odd: Vec<(i32, i32)> = Vec::with_capacity(room.odd as usize);
+        let mut folded = vec![NONE; tt.profiles() as usize];
+
+        by_lat.sort_unstable_by_key(|s| (tt.stop(*s).lat, *s));
+        // the walks, turned round: how many lead into each stop, where each stop's begin, and then each walk put
+        // at its stop's place, which moves that place to the stop's end
         for i in 0..tt.walks() {
             back_first[tt.walk(i).0 as usize + 1] += 1;
         }
         for s in 0..stops as usize {
             back_first[s + 1] += back_first[s];
         }
-        let mut at = back_first.clone();
-        let mut back = vec![(0u32, 0u32); tt.walks() as usize];
         for s in 0..stops {
             let (lo, hi) = tt.walks_from(s);
             for i in lo..hi {
                 let (to, secs) = tt.walk(i);
-                back[at[to as usize] as usize] = (s, secs);
-                at[to as usize] += 1;
+                back[back_first[to as usize] as usize] = (s, secs);
+                back_first[to as usize] += 1;
             }
         }
-        let words = (stops as usize).div_ceil(64);
-        let (mut rule_from, mut rule_to) = (vec![0u64; words], vec![0u64; words]);
-        let mut rules_by_to = Vec::new();
-        let mut bound = [Bound::default(), Bound::default()];
-        let mut own_change: Vec<u32> = Vec::new();
-        let mut waits = [Vec::new(), Vec::new()];
-        let mut waiting = [Bound::default(), Bound::default()];
-        let mut wait_reach: [Vec<(u32, u32, bool)>; 2] = [Vec::new(), Vec::new()];
+        // (a stop's end is the next one's beginning)
+        for s in (1..=stops as usize).rev() {
+            back_first[s] = back_first[s - 1];
+        }
+        back_first[0] = 0;
         for i in 0..tt.rules() {
             let r = tt.rule(i);
-            if r.from_trip == NONE && r.to_trip == NONE && r.from_line == NONE && r.to_line == NONE {
-                // A rule for everyone: between two stops it is in the walks already. From a stop to itself it is
-                // that stop's own time to change (type 2), or says that nobody changes there (type 3).
-                let own = match r.kind {
-                    2 if r.min_time != NONE => r.min_time.min(MAX_TIME - 1),
-                    3 => NO_CHANGE,
-                    _ => NONE,
-                };
-                if r.from_stop == r.to_stop && r.from_stop < stops && own != NONE {
-                    if own_change.is_empty() {
-                        own_change = vec![NONE; stops as usize];
-                    }
-                    let at = &mut own_change[r.from_stop as usize];
-                    *at = if *at == NONE { own } else { (*at).max(own) };
-                }
+            let a = adds(&r, stops);
+            if a.own != NONE {
+                let at = &mut own_change[r.from_stop as usize];
+                *at = if *at == NONE { a.own } else { (*at).max(a.own) };
+            }
+            if a.general {
                 continue;
             }
-            if matches!(r.kind, 1 | 4) && r.from_stop != r.to_stop && r.from_stop < stops && r.to_stop < stops {
+            if a.waits {
                 waits[0].push((r.to_stop, r.from_stop));
                 waits[1].push((r.from_stop, r.to_stop));
             }
-            if matches!(r.kind, 1 | 4) && r.from_stop < stops && r.to_stop < stops {
+            if a.waiting {
                 let same = r.from_stop == r.to_stop;
                 let (lo, hi) = tt.walks_from(r.from_stop);
                 let secs = if same { 0 } else { (lo..hi).map(|w| tt.walk(w)).find(|w| w.0 == r.to_stop).map_or(u32::MAX, |w| w.1) };
                 for (d, (stop, trip, line)) in [(r.from_stop, r.from_trip, r.from_line), (r.to_stop, r.to_trip, r.to_line)].into_iter().enumerate() {
                     wait_reach[d].push((stop, secs, same));
-                    if trip != NONE {
-                        waiting[d].trips.push((stop, trip));
-                    } else if line != NONE {
-                        waiting[d].lines.push((stop, line));
-                    } else {
-                        waiting[d].stops.push(stop);
-                    }
+                    waiting[d].push(stop, trip, line);
                 }
             }
-            if (1..=4).contains(&r.kind) {
+            if a.binds {
                 for (b, (stop, trip, line)) in bound.iter_mut().zip([(r.from_stop, r.from_trip, r.from_line), (r.to_stop, r.to_trip, r.to_line)]) {
-                    if trip != NONE {
-                        b.trips.push((stop, trip));
-                    } else if line != NONE {
-                        b.lines.push((stop, line));
-                    } else {
-                        b.stops.push(stop);
-                    }
+                    b.push(stop, trip, line);
                 }
             }
             rule_from[(r.from_stop >> 6) as usize] |= 1 << (r.from_stop & 63);
@@ -561,8 +730,6 @@ impl<'a> Planner<'a> {
             }
         }
         // each pattern's fastest hops: over the profiles its trips use, each once a route
-        let mut hop = vec![u32::MAX; tt.pattern_stops() as usize];
-        let mut folded = vec![NONE; tt.profiles() as usize];
         for r in 0..tt.routes() {
             let route = tt.route(r);
             for t in route.first_trip..route.first_trip.saturating_add(route.trips) {
@@ -580,41 +747,29 @@ impl<'a> Planner<'a> {
                 }
             }
         }
-        let mut waits_at = [Vec::new(), Vec::new()];
         for (w, at) in waits.iter_mut().zip(waits_at.iter_mut()) {
-            w.sort_unstable();
-            w.dedup();
-            if !w.is_empty() {
-                *at = vec![0u64; words];
-                for &(stop, _) in w.iter() {
-                    at[(stop >> 6) as usize] |= 1 << (stop & 63);
-                }
+            settle(w);
+            for &(stop, _) in w.iter() {
+                at[(stop >> 6) as usize] |= 1 << (stop & 63);
             }
         }
         for reach in wait_reach.iter_mut() {
             // a stop once: the longest of its changes, and whether any is at the stop itself
             reach.sort_unstable();
-            let mut once: Vec<(u32, u32, bool)> = Vec::new();
-            for &(stop, secs, same) in reach.iter() {
-                match once.last_mut() {
-                    Some(o) if o.0 == stop => *o = (stop, o.1.max(secs), o.2 || same),
-                    _ => once.push((stop, secs, same)),
+            reach.dedup_by(|more, stop| {
+                let same = more.0 == stop.0;
+                if same {
+                    *stop = (stop.0, stop.1.max(more.1), stop.2 || more.2);
                 }
-            }
-            *reach = once;
+                same
+            });
+            reach.shrink_to_fit();
         }
         for b in bound.iter_mut().chain(waiting.iter_mut()) {
-            b.trips.sort_unstable();
-            b.trips.dedup();
-            b.lines.sort_unstable();
-            b.lines.dedup();
-            b.stops.sort_unstable();
-            b.stops.dedup();
+            b.settle();
         }
         let max_time = (latest.saturating_add(longest)).min(2 * MAX_TIME) as i32;
-        // the days the clock changes, as the packer wrote them: "YYYYMMDD:seconds to the next day's beginning"
-        let mut odd: Vec<(i32, i32)> = Vec::new();
-        for word in tt.meta("odd_days").unwrap_or("").split(' ').take(64) {
+        for word in odd_days(&tt) {
             let Some((date, secs)) = word.split_once(':') else { continue };
             let (Some(day), Ok(secs)) = (date.parse().ok().and_then(|d| tt.day_of(d)), secs.parse::<i32>()) else { continue };
             if (DAY - 7200..=DAY + 7200).contains(&secs) && secs != DAY && day.unsigned_abs() < 100_000 && !odd.iter().any(|o| o.0 == day) {
@@ -622,7 +777,8 @@ impl<'a> Planner<'a> {
             }
         }
         odd.sort_unstable();
-        Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, bound, max_time, hop, odd, own_change, waits, waits_at, waiting, wait_reach }, days: Vec::new(), work: Work::default() }
+        odd.shrink_to_fit();
+        Ok(Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, bound, max_time, hop, odd, own_change, waits, waits_at, waiting, wait_reach }, days: Vec::new(), work: Work::default() })
     }
 
     pub fn timetable(&self) -> &Timetable<'a> {

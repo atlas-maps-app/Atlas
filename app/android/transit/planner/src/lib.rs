@@ -29,7 +29,7 @@ pub mod reference;
 
 pub use file::{OpenError, Timetable};
 pub use journey::{Journey, Leg, Spot};
-pub use plan::{Answer, Planner};
+pub use plan::{Answer, IndexTooLarge, Planner};
 pub use query::{Area, How, Limits, Mode, Place, Query, What, Wish};
 
 /// "Nothing" where the file or the planner names a stop, a line or a trip.

@@ -45,13 +45,17 @@ uint32_t atlas_transit_abi(void);
 #define ATLAS_TRANSIT_BAD_SECTION 3     /* a section missing, there twice, outside the file, or of the wrong length */
 #define ATLAS_TRANSIT_BAD_RECORD 4      /* a number that points outside what it names, or passes a bound */
 #define ATLAS_TRANSIT_BAD_DAYS 5        /* the file does not say which days it covers */
+#define ATLAS_TRANSIT_INDEX_TOO_LARGE 6 /* a timetable, but what the planner works out of it would pass index_most */
 
 /* Opens the timetable in `len` bytes at `bytes` (a file read or mapped whole): its checks are made, and what the
  * planner needs of it is worked out once (a moment, and memory, for a country's file: not on the thread that
- * draws). Null where the bytes are no timetable this library reads; `why`, unless null, gets the reason, or
- * ATLAS_TRANSIT_OPENED. The checks hold a file to its own form, not to its maker: a fetched file is held to its
- * size and hash before it comes here. */
-atlas_transit *atlas_transit_open(const uint8_t *bytes, size_t len, int32_t *why);
+ * draws). That memory, the planner's index, takes 4 to 6 MB for a country; how many bytes it takes is known from
+ * the file before any is asked for, and over `index_most` bytes (0 or less: the library's own bound, 256 MB, which
+ * no timetable comes near) the file is not opened, so that a file that asks for more than the phone has cannot
+ * end the process. Null where the bytes are no timetable this library reads, or over that bound; `why`, unless
+ * null, gets the reason, or ATLAS_TRANSIT_OPENED. The checks hold a file to its own form, not to its maker: a
+ * fetched file is held to its size and hash before it comes here. */
+atlas_transit *atlas_transit_open(const uint8_t *bytes, size_t len, int32_t index_most, int32_t *why);
 
 /* Closes it; the bytes are the caller's again. Null closes nothing. */
 void atlas_transit_close(atlas_transit *t);

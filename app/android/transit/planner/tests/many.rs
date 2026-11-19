@@ -116,7 +116,7 @@ fn a_rule_holds_however_many_stand_before_it() {
     let tt = Timetable::open(&many).unwrap();
     tt.verify().unwrap();
     assert_eq!(tt.rules(), 140_011);
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let waits = vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())];
     let least = vec![(hm(8, 0), hm(8, 28), "M1a M2b".to_string())];
     for (from, to, want, by) in [("WA", "WZ", &waits, hm(8, 30)), ("MA", "MZ", &least, hm(8, 28))] {
@@ -147,7 +147,7 @@ fn many_rules_into_one_stop_cost_no_more_than_reading_them() {
     let tt = Timetable::open(&many).unwrap();
     tt.verify().unwrap();
     assert_eq!((tt.stops(), tt.rules()), (had + 60_000, 60_011));
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let want = vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())];
     // four queries, three times over: the fastest of the three is what they take when nothing else disturbs
     let mut took = std::time::Duration::MAX;
@@ -187,7 +187,7 @@ fn a_waiting_rule(b: &[u8], from: u32, second: u32, line: u32, pairs: &[(u32, u3
     let with = with_rules(b, [[from, second, NONE, line, NONE, NONE, 1, NONE]].into_iter());
     let ruled = Timetable::open(&with).unwrap();
     ruled.verify().unwrap();
-    let (mut plain, mut waiting) = (Planner::new(tt), Planner::new(ruled));
+    let (mut plain, mut waiting) = (Planner::new(tt).unwrap(), Planner::new(ruled).unwrap());
     let scans: Vec<[Reference; 2]> = (0..2).map(|day| [Reference::new(&plain, day, -86_400, 3 * 86_400), Reference::new(&waiting, day, -86_400, 3 * 86_400)]).collect();
     // whether a bus of the line, other than `own` on its day, leaves the second stop from `since` on and before `until`
     let leaves_between = |day: i32, since: i32, until: i32, own: (u32, i32)| {
@@ -319,7 +319,7 @@ fn more_costly_trips_in_a_row_before_a_bus_that_waits() {
     let tt = Timetable::open(&b).unwrap();
     tt.verify().unwrap();
     assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270405, 2, 4, 47, 0, 1));
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scan = Reference::new(&p, 0, -86_400, 3 * 86_400);
     let avoided: Vec<Wish> = (5..45).map(|n| Wish { what: What::Trip(trip(&tt, &format!("K1_{n:02}"))), how: How::Avoid(60) }).collect();
     let mut asked = |time: u32, by: bool, weigh: bool, wishes: &[Wish]| -> Vec<(u32, u32, String, u32)> {
@@ -360,7 +360,7 @@ fn a_place_of_more_stops_than_a_search_begins_at_says_so() {
     let had = Timetable::open(&b).unwrap().stops();
     let more = with_stops(&b, 5000);
     let tt = Timetable::open(&more).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (wa, wz) = (stop(&tt, "WA"), stop(&tt, "WZ"));
     // ten minutes on foot to Wacht's A, and ten seconds to stops no line calls at
     let dead = |n: u32| (had..had + n).map(|s| (s, 10u32));
@@ -393,7 +393,7 @@ fn a_place_of_more_stops_than_a_search_begins_at_says_so() {
     // a station of 5,001 stops: the search begins at 4,096 of them and says so
     let station = with_stops_of(&b, 5000, wa);
     let tt = Timetable::open(&station).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let q = Query::new(Place::Station(wa), Place::Stop(wz), 0, hm(7, 55));
     let ends = p.ends(&q);
     assert!(ends.cut && ends.from.len() == 4096);
@@ -405,7 +405,7 @@ fn a_place_of_more_stops_than_a_search_begins_at_says_so() {
     // and a station of 4,096 is whole
     let station = with_stops_of(&b, 4095, wa);
     let tt = Timetable::open(&station).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     assert!(!p.ends(&q).cut && p.ends(&q).from.len() == 4096);
     assert_eq!(ask(&mut p, &q), [(hm(8, 0), hm(8, 30), "W1a W2a".to_string())]);
 }
@@ -431,7 +431,7 @@ fn a_trip_of_many_days_hides_no_other() {
     let b = with_section(&b, b"PTIM", &times, times.len() as u32 / 2);
     let tt = Timetable::open(&b).unwrap();
     tt.verify().unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     // Wacht, as it ever was: 08:00 to 08:30, forward and back, for one moment and over a window
     let waits = vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())];
     for window in [0, 600] {
@@ -479,7 +479,7 @@ fn a_walk_is_as_long_as_the_ground_says_at_any_latitude() {
         let moved = with_section(&b, b"STOP", &stops, stops.len() as u32 / 12);
         let tt = Timetable::open(&moved).unwrap();
         tt.verify().unwrap();
-        let mut p = Planner::new(tt);
+        let mut p = Planner::new(tt).unwrap();
         let at = tt.stop(pa);
         assert_eq!(at.lat, lat);
         for (dlat, dlon, paper) in [(0, 100_000, east), (50_000, 0, north), (-50_000, -100_000, both)] {

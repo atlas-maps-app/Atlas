@@ -1,16 +1,16 @@
 //! What a timetable takes in memory beside its own bytes: nothing to open it, an index a planner makes once, and
 //! what a planner that has answered keeps for the next question. Counted by an allocator that counts every byte
-//! asked for and given back, so this file has the only `unsafe` of the crate's tests, and its two tests never run
-//! at once: one's bytes would be counted with the other's.
+//! asked for and given back, so this file has the only `unsafe` of the crate's tests, and its tests never run at
+//! once: one's bytes would be counted with the other's.
 //!
 //! The numbers are the README's ("What it takes in memory"); the interface's host reads them to know what
 //! `atlas_transit_open` costs on a phone. The second test says them for a country's file:
 //! `ATLAS_TRANSIT_FILE=<file> cargo test --test memory -- --ignored --nocapture`.
 
-use atlas_transit::{Place, Planner, Query, Timetable};
+use atlas_transit::{IndexTooLarge, Limits, Place, Planner, Query, Timetable};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 const NONE: u32 = u32::MAX;
@@ -22,6 +22,11 @@ const START: usize = 1 << 48;
 static LIVE: AtomicUsize = AtomicUsize::new(START);
 static MOST: AtomicUsize = AtomicUsize::new(START);
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+/// One test at a time, whatever became of the one before.
+fn alone() -> MutexGuard<'static, ()> {
+    ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 thread_local! {
     /// Whether this thread's bytes are counted now: the measuring test's own, and no other thread's (the test
@@ -98,7 +103,7 @@ struct Taken {
 fn of(bytes: &[u8]) -> Taken {
     let (tt, kept, most) = taken(|| Timetable::open(bytes).unwrap());
     let open = (kept, most);
-    let (mut planner, kept, most) = taken(|| Planner::new(tt));
+    let (mut planner, kept, most) = taken(|| Planner::new(tt).unwrap());
     let index = (kept, most);
     let served: Vec<u32> = (0..tt.stops()).filter(|s| tt.stop(*s).kind == 0 && tt.routes_at(*s).0 != tt.routes_at(*s).1).collect();
     let ask = |planner: &mut Planner, day: i32, questions: usize| {
@@ -113,6 +118,10 @@ fn of(bytes: &[u8]) -> Taken {
     let asked = (kept, most);
     let (_, kept, most) = taken(|| (1..tt.days().min(21) as i32).for_each(|day| ask(&mut planner, day, 1)));
     Taken { open, index, asked, days: (kept, most) }
+}
+
+fn read(name: &str) -> Vec<u8> {
+    std::fs::read(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
 }
 
 fn mb(bytes: usize) -> f64 {
@@ -166,8 +175,8 @@ fn with_rules(b: &[u8], more: impl Iterator<Item = [u32; 8]>) -> Vec<u8> {
 /// what the README says, and a rule that names a line that waits costs the index what the README says.
 #[test]
 fn a_file_takes_what_the_readme_says() {
-    let _one = ONE_AT_A_TIME.lock().unwrap();
-    let bytes = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/utrecht-20261117.tt")).unwrap();
+    let _one = alone();
+    let bytes = read("utrecht-20261117.tt");
     let t = of(&bytes);
     said("Utrecht", &bytes, &t);
     let tt = Timetable::open(&bytes).unwrap();
@@ -184,17 +193,22 @@ fn a_file_takes_what_the_readme_says() {
     let ruled = Timetable::open(&with).unwrap();
     ruled.verify().unwrap();
     assert_eq!(ruled.rules(), tt.rules() + n);
-    let (planner, kept, most) = taken(|| Planner::new(ruled));
-    let each = (kept - t.index.0) as f64 / n as f64;
-    println!("with {n} rules more that name a line that waits: {:.2} MB kept, {:.2} MB at most: {each:.1} bytes a rule on top of the 32 it has in the file", mb(kept), mb(most));
+    let (planner, kept, most) = taken(|| Planner::new(ruled).unwrap());
+    let (each, made) = ((kept - t.index.0) as f64 / n as f64, (most - t.index.1) as f64 / n as f64);
+    println!("with {n} rules more that name a line that waits: {:.2} MB kept, {:.2} MB at most: {each:.1} bytes a rule kept and {made:.0} while the index is made, on top of the 32 it has in the file", mb(kept), mb(most));
     drop(planner);
-    assert!((30.0..80.0).contains(&each), "{each}");
+    // while it is made: its number (4), the pair of stops each way (16), what the change takes at each end (24),
+    // and for the rules where one waits and for the rules that bind a stop (4) and a stop with a line (8); and
+    // once, a bit a stop each way for where one waits
+    assert_eq!(most - t.index.1, 68 * n as usize + 2 * 8 * tt.stops().div_ceil(64) as usize);
+    // kept: the pair of stops each way and its number, and what many rules say alike once
+    assert!((20.0..40.0).contains(&each), "{each}");
 }
 
 #[test]
 #[ignore = "needs the whole country's file: ATLAS_TRANSIT_FILE=<file> cargo test --test memory -- --ignored --nocapture"]
 fn a_country_takes_what_the_readme_says() {
-    let _one = ONE_AT_A_TIME.lock().unwrap();
+    let _one = alone();
     let file = std::env::var("ATLAS_TRANSIT_FILE").expect("ATLAS_TRANSIT_FILE names no timetable file of the Netherlands");
     let bytes = std::fs::read(&file).unwrap();
     let t = of(&bytes);
@@ -202,4 +216,63 @@ fn a_country_takes_what_the_readme_says() {
     assert_eq!(t.open, (0, 0));
     assert!(t.index.0 * 5 < bytes.len() && t.index.1 < t.index.0 * 2, "{:?}", t.index);
     assert!(t.asked.0 + t.days.0 < 3 * bytes.len(), "{:?} {:?}", t.asked, t.days);
+    // and the most the index held while it was made is what was known of the file before
+    let says = Planner::index_bytes(&Timetable::open(&bytes).unwrap());
+    println!("its index was said to take {says} bytes before it was made (the packer's summary says the same of the file)");
+    assert_eq!(t.index.1 as u64, says);
+}
+
+/// What a planner's index takes is known before it is made, to the byte: of every file here the most held at once
+/// while it is made is what `Planner::index_bytes` said, and what stays is no more. The four files written by
+/// hand take what the packer says of them when it writes them: ../pack/test_ttpack.py holds the same four numbers.
+#[test]
+fn an_index_takes_what_was_said_before_it_was_made() {
+    let _one = alone();
+    for (name, packer) in [("tiny.tt", Some(352)), ("edges.tt", Some(1704)), ("autumn.tt", Some(152)), ("waits.tt", Some(160)), ("utrecht-20261117.tt", None)] {
+        let bytes = read(name);
+        let tt = Timetable::open(&bytes).unwrap();
+        let says = Planner::index_bytes(&tt);
+        let (planner, kept, most) = taken(|| Planner::new(tt).unwrap());
+        drop(planner);
+        println!("{name}: said {says} bytes, held {most} at the most, kept {kept}");
+        assert_eq!(most as u64, says, "{name}: the most held at once is not what was said");
+        assert!(kept <= most, "{name}");
+        if let Some(packer) = packer {
+            assert_eq!(says, packer, "{name}: the packer's test has another number");
+        }
+    }
+    // and with rules that name the same line at the same stop many times over, which the index keeps once
+    let bytes = read("utrecht-20261117.tt");
+    let tt = Timetable::open(&bytes).unwrap();
+    let n = 50_000u32;
+    let with = with_rules(&bytes, (0..n).map(|k| [k % 40, 300 + k % 7, NONE, k % 3, k % 5, NONE, 1 + k % 4, NONE]));
+    let ruled = Timetable::open(&with).unwrap();
+    assert_eq!(ruled.rules(), tt.rules() + n);
+    let says = Planner::index_bytes(&ruled);
+    let (planner, kept, most) = taken(|| Planner::new(ruled).unwrap());
+    drop(planner);
+    println!("with {n} rules more, many alike: said {says} bytes, held {most} at the most, kept {kept}");
+    assert_eq!(most as u64, says);
+    assert!(kept * 2 < most, "rules alike are kept once: {kept} of {most}");
+}
+
+/// Over what it may take no planner is made, and not a byte was asked for; at it one is. The library's own bound
+/// is far from any timetable.
+#[test]
+fn an_index_over_what_it_may_take_is_refused_before_any_memory_is_asked_for() {
+    let _one = alone();
+    for name in ["tiny.tt", "edges.tt", "waits.tt", "utrecht-20261117.tt"] {
+        let bytes = read(name);
+        let tt = Timetable::open(&bytes).unwrap();
+        let says = Planner::index_bytes(&tt);
+        for limit in [says - 1, says / 2, 0] {
+            let limits = Limits { index: limit, ..Limits::default() };
+            let (refused, kept, most) = taken(|| Planner::within(tt, &limits).err());
+            assert_eq!(refused, Some(IndexTooLarge { bytes: says, limit }), "{name}");
+            assert_eq!((kept, most), (0, 0), "{name}: memory was asked for all the same");
+        }
+        assert!(Planner::within(tt, &Limits { index: says, ..Limits::default() }).is_ok(), "{name}");
+        assert!(says * 100 < Limits::default().index, "{name}");
+    }
+    assert_eq!(Limits::default().index, 256 << 20);
 }

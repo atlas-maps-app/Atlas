@@ -1,6 +1,7 @@
 the interface: 2, and the header's: 2
 thirty bytes of something else: not opened, reason 1
 half the file: not opened, reason 3
+the file, its index held to a hundred bytes: not opened, reason 6
 the file: opened, reason 0
 from 20270326, 4 days, 56 stops, 38 lines, 61 trips; Europe/Amsterdam
 27 March 2027 is day 1, 30 February is no day, day 3 is 20270329

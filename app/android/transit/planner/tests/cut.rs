@@ -48,7 +48,7 @@ fn the_file_is_sound() {
 fn the_planner_and_the_scan_agree() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut compared, mut latest, mut arriving, mut stepped, mut most_later) = (0, 0, 0, 0, 0);
     let (mut as_late, mut later_with_more) = (0, 0);
     let (mut moments, mut on_foot, mut fewer) = (0, 0, 0);
@@ -168,7 +168,7 @@ fn the_planner_and_the_scan_agree() {
 fn the_feeds_rules_are_held_to_the_best_answer() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
     // a trip of a rule's side through its stop, running on a day of the file: (trip, where along it, the day)
     let trip_through = |stop: u32, trip: u32, line: u32, boarding: bool| -> Option<(u32, u32, i32)> {
@@ -259,7 +259,7 @@ fn the_feeds_rules_are_held_to_the_best_answer() {
 fn a_patient_search_gives_what_the_whole_search_gives() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut options, mut sooner) = (0, 0);
     for (i, (a, z)) in pairs(&tt, 600, 21).into_iter().enumerate() {
         let time = [8 * 3600, 22 * 3600 + 1800, 13 * 3600, 5 * 3600, 23 * 3600 + 2400][i % 5] + 131 * (i as u32 % 9);
@@ -286,7 +286,7 @@ fn with_the_feeds_rules_every_journey_can_be_made() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
     assert_eq!(tt.rules(), 160);
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut journeys = 0;
     for (a, z) in pairs(&tt, 150, 5) {
         let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600);
@@ -303,7 +303,7 @@ fn with_the_feeds_rules_every_journey_can_be_made() {
 fn wishes_close_and_cost_what_they_say() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let rail = |tt: &Timetable, j: &Journey| j.legs.iter().filter(|l| matches!(l, Leg::Ride { route, .. } if Mode::of(tt.line_type(tt.route(*route).line)) == Mode::Rail)).count() as u32;
     let (mut both, mut with_rail) = (0, 0);
     for (a, z) in pairs(&tt, 120, 6) {
@@ -358,7 +358,7 @@ fn option(j: &Journey, q: &Query) -> (i32, i32, u32, u32) {
 fn two_windows_give_what_one_over_both_gives() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let said = |js: &[Journey]| {
         let mut v: Vec<(i32, i32, u32, u32)> = js.iter().filter(|j| j.rides > 0).map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect();
         v.sort_unstable();
@@ -404,7 +404,7 @@ fn two_windows_give_what_one_over_both_gives() {
 fn two_windows_between_points_give_the_rides_one_over_both_gives() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (stops, mut rng) = (served(&tt), fuzz::Rng(41));
     let rides = |js: &[Journey]| {
         let mut v: Vec<(i32, i32, u32, u32)> = js.iter().filter(|j| j.rides > 0).map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect();
@@ -503,7 +503,7 @@ fn weighing_with_the_bag_a_query_has() {
 fn weighing_with_a_bag_of(bag: u32) {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut options, mut left_out) = (0, 0);
     for (i, (a, z)) in pairs(&tt, 240, 8).into_iter().enumerate() {
         let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 6 * 3600 + 613 * i as u32);
@@ -559,7 +559,7 @@ fn weighing_with_a_bag_of(bag: u32) {
 fn wishes_with_a_cost_are_held_to_the_scan() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
     let stops = served(&tt);
     let (mut asked, mut cut, mut options, mut several, mut costly, mut differ) = (0, 0, 0, 0, 0, Vec::new());
@@ -642,7 +642,7 @@ fn wishes_with_a_cost_are_held_to_the_scan() {
 fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scan = Reference::new(&p, 0, -86_400, 3 * 86_400);
     let mut routes: Vec<u32> = (0..tt.routes()).collect();
     routes.sort_by_key(|r| (core::cmp::Reverse(tt.route(*r).trips), *r));
@@ -715,7 +715,7 @@ fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
 fn a_full_bag_says_so() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut asked, mut lost, mut said, mut silent, mut sixteen) = ([0u32; 4], [0u32; 4], [0u32; 4], Vec::new(), 0);
     for (i, (a, z)) in pairs(&tt, 240, 71).into_iter().enumerate() {
         let (sa, sz) = (tt.stop(a), tt.stop(z));
@@ -764,7 +764,7 @@ fn a_full_bag_says_so() {
 fn the_answers_are_the_same_everywhere() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut sum = 0xcbf2_9ce4_8422_2325u64;
     let mut fold = |v: u64| sum = (sum ^ v).wrapping_mul(0x100_0000_01b3);
     let (mut journeys, mut one_moment, mut stepped, mut most_later, mut asked_back) = (0, 0, 0, 0, 0);
@@ -838,7 +838,7 @@ fn nothing_panics_on_files_a_little_wrong_or_queries_at_their_edges() {
 fn a_search_stops_at_its_caps() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, z) = pairs(&tt, 1, 8)[0];
     let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600);
     q.window = 7200;
@@ -873,7 +873,7 @@ fn a_search_stops_at_its_caps() {
 fn an_answer_that_is_not_whole_says_so() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut asked, mut short, mut silent) = (0, 0, Vec::new());
     for (i, (a, z)) in pairs(&tt, 90, 51).into_iter().enumerate() {
         let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600 + 311 * i as u32);
@@ -913,7 +913,7 @@ fn an_answer_that_is_not_whole_says_so() {
 fn the_search_for_a_later_departure_is_held_to_the_limits() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut for_all, mut for_one, mut stopped, mut most, mut asked) = (0, 0, 0, 0, 0);
     for (i, (a, z)) in pairs(&tt, 120, 61).into_iter().enumerate() {
         // from a stop, or from a point with every stop within a kilometre: many moments at which something leaves
@@ -983,7 +983,7 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
 fn a_cap_on_later_departures_is_said_only_where_it_cut() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut asked, mut whole_at_cap, mut wrongly, mut cut) = (0, 0, Vec::new(), 0);
     for (i, (a, z)) in pairs(&tt, 120, 61).into_iter().enumerate() {
         let place = |s: u32| if i % 3 == 0 { Place::Stop(s) } else { Place::Point { lat: tt.stop(s).lat + 1500, lon: tt.stop(s).lon - 2500 } };
@@ -1034,7 +1034,7 @@ fn a_cap_on_later_departures_is_said_only_where_it_cut() {
 fn a_late_window_has_its_last_connections() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut compared, mut past, mut shown, mut arriving) = (0, 0, 0, 0);
     for (day, time, window, seed, by) in [
         (0, 22 * 3600, 7200, 11u64, false),
