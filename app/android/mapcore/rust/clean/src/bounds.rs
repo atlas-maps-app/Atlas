@@ -74,7 +74,7 @@ fn two_combs_that_cross_tooth_by_tooth_are_given_up_inside_the_round() {
     let b = turned(comb(1499, 2, -20, 0, true), true);
     assert_eq!((a.len(), b.len()), (3000, 3000));
     assert_eq!(a.len() + b.len(), MAX_SEGMENTS);
-    let (r, bytes) = peak(|| boolean(&[a.clone()], &[b.clone()], Op::Inter));
+    let (r, bytes) = peak(|| boolean(std::slice::from_ref(&a), std::slice::from_ref(&b), Op::Inter));
     assert!(r.is_none());
     std::println!("two combs' arrangement: given up, {bytes} bytes held at once at most");
     assert!(bytes < 4 << 20, "{bytes} bytes held at once");
