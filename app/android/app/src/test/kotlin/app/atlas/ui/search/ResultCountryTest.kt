@@ -107,6 +107,57 @@ class ResultCountryTest {
         assertEquals("the country asked at a point of the region's own", emptyList<LatLon>(), asked)
     }
 
+    /** France's pack and Belgium's, as Atlas would publish them. */
+    private val twoPublished = """
+        {"format": 1, "generated": "2026-11-01T00:00:00Z", "packs": [
+          {"id": "france", "name": "France", "country": "FR", "bbox": [-5.2, 41.3, 9.6, 51.1],
+           "files": [{"kind": "places", "url": "https://example.invalid/france.db.zst", "bytes": 1}]},
+          {"id": "belgium", "name": "Belgium", "country": "BE", "bbox": [2.5, 49.4, 6.5, 51.6],
+           "files": [{"kind": "places", "url": "https://example.invalid/belgium.db.zst", "bytes": 1}]}
+        ]}
+    """.trimIndent()
+
+    /**
+     * A place two regions hold is written as the country at its point writes it, not as the first region's (the app
+     * maintainer, 19 November 2026, batch 6 B9: the first region's country passed every test, as no test's place was
+     * two regions'): a bakery in Comines, Belgium, on the Lys, held by France's region and by Belgium's, the places
+     * around it naming Belgium; France's region first, then Belgium's. Belgium writes the street first, France the
+     * number.
+     */
+    @Test
+    fun aPlaceTwoRegionsHoldIsWrittenAsTheCountryAtItsPointWritesIt() {
+        val comines = LatLon(50.7686, 3.0054)
+        val bakery = Place(
+            OsmId.parse("n9501")!!, comines,
+            mapOf("name" to "Boulangerie du Pont", "shop" to "bakery", "addr:street" to "Rue de Wervik", "addr:housenumber" to "12",
+                "addr:postcode" to "7780", "addr:city" to "Comines"),
+        )
+        val around = (0 until 5).map { i ->
+            Place(OsmId.parse("n${9_511 + i}")!!, LatLon(comines.lat + 0.001 * (i + 1), comines.lon), mapOf("shop" to "convenience", "name" to "Magasin $i", "addr:country" to "BE"))
+        }
+        for (franceFirst in listOf(true, false)) {
+            val root = TempFiles.dir("atlas-results")
+            val dirs = Dirs(root, File(root, "cache"))
+            val files = RegionFiles(dirs.regions, dirs.places, dirs.segments)
+            fun region(id: String, box: BBox): PlaceStore {
+                val store = PlaceStore.open(File(dirs.places.apply { mkdirs() }, "$id.db"))
+                store.importPlaces(listOf(bakery) + around, regionName = id)
+                files.save(RegionMeta(id, id, box, 0L, 0L, packId = id))
+                return store
+            }
+            val france = region("france", BBox(-5.2, 41.3, 9.6, 51.1))
+            val belgium = region("belgium", BBox(2.5, 49.4, 6.5, 51.6))
+            File(dirs.regions, "packs-latest.json").writeText(twoPublished)
+            val s = testServices(root = root, stores = if (franceFirst) listOf(france, belgium) else listOf(belgium, france))
+            val vm = SearchViewModel(s, "Boulangerie du Pont", null, { comines }, "en", online = { false }, search = { t, c -> s.search.search(t, c) })
+            until { vm.state.value.results != null && !vm.state.value.searching }
+            val hit = vm.state.value.results!!.items.filterIsInstance<SearchItem.PlaceResult>().single { it.hit.record.id.toString() == "n9501" }
+            val line = hit.subtitle.orEmpty()
+            assertTrue("France's region first $franceFirst: $line", line.contains("Rue de Wervik 12") && !line.contains("12 Rue de Wervik"))
+            s.close()
+        }
+    }
+
     /**
      * Its neighbour: a region taken from no pack names no country, so its places' country is asked at their points, as
      * before.

@@ -321,6 +321,9 @@ class OpeningHoursTest {
         assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T06:00"), stockholm))
         assertEquals(false, oh("sunrise+").isOpen(t("2026-12-22T12:00"), tromso))
         assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T00:30"), tromso))
+        // a bare sunrise or dawn, with no +, is a point in time, as 17:00 is: not the morning (19 November 2026,
+        // batch 6 B9: read as one, open till midnight, it passed every test)
+        for (h in listOf("sunrise", "dawn", "Mo-Su sunrise")) assertEquals(h, false, oh(h).isOpen(t("2026-06-21T12:00"), stockholm))
     }
 
     @Test

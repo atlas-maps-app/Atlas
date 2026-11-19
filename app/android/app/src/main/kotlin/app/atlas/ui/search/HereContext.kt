@@ -84,6 +84,13 @@ object HereContext {
     /** The points being asked now, each with the turn those asking it take: the rows of one kilometre ask once. */
     private val asking = ConcurrentHashMap<String, Any>()
 
+    /**
+     * Whether [at]'s kilometre is being asked now, with the regions as they are: its turn is let go once it is
+     * answered. For a test (the app maintainer, 19 November 2026, batch 6 B9: kept for ever, it passed every test).
+     */
+    internal fun beingAsked(services: Services, at: LatLon): Boolean =
+        asking.containsKey(key(services.placeStores.size, services.packCountries.generation, at))
+
     /** Where the phone is, as the screens that need "here" take it: its fix, else where the map started, else the Westerkerk. */
     fun phoneAt(services: Services): LatLon =
         services.location.last.value?.location ?: services.startCameraNow()?.target ?: Services.WESTERKERK

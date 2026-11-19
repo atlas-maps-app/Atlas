@@ -100,6 +100,8 @@ data class ServicesConfig(
     val mapEngine: Boolean = true,
     /** A router in place of the phone's own (tests: one that needs no routing data). */
     val router: Router? = null,
+    /** Nearby places by category in place of the phone's own ([Services.places]; tests: answers of their own). */
+    val placeFinder: PlaceFinder? = null,
 )
 
 /**
@@ -282,7 +284,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Nearby places by category (the Map home's row and needs): the place stores, else the map's packs and windows, then online. */
     val places: PlaceFinder by lazy {
-        LayeredPlaceFinder(
+        config.placeFinder ?: LayeredPlaceFinder(
             local = { localData },
             overpass = { if (config.offline) null else overpass },
             online = { connectivity.online.value },

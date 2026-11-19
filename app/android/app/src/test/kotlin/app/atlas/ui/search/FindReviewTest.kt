@@ -129,7 +129,9 @@ class FindReviewTest {
      * Moncton on Toronto's clock, St John's on Halifax's, Manaus, Cuiabá and Porto Velho on São Paulo's, Rio Branco two
      * hours off, Tijuana and Mexicali on Mexico City's, Nashville and Birmingham on New York's, Kaliningrad on Moscow's,
      * Broken Hill on Sydney's and Easter Island on Santiago's. None reads further off than on 38ddafa1, in January or in
-     * July; a country of one clock keeps it (Madrid, Lisbon, Shanghai), and the islands theirs.
+     * July; a country of one clock keeps it (Madrid, Lisbon, Shanghai), and the islands theirs. With Santiago, Ambon
+     * and Sorong (19 November 2026, batch 6 B9: Santiago on Easter Island's clock, and Indonesia by the table's cuts,
+     * Ambon and Sorong on Makassar's, passed every test).
      */
     @Test
     fun aFarPlaceIsReadNoFurtherOffThanBefore() {
@@ -158,6 +160,9 @@ class FindReviewTest {
             Triple("Europe/Kaliningrad", "RU", LatLon(54.7104, 20.4522)),
             Triple("Australia/Broken_Hill", "AU", LatLon(-31.9539, 141.4539)),
             Triple("Pacific/Easter", "CL", LatLon(-27.15, -109.4333)),
+            Triple("America/Santiago", "CL", LatLon(-33.4489, -70.6693)),
+            Triple("Asia/Jayapura", "ID", LatLon(-3.6954, 128.1814)),
+            Triple("Asia/Jayapura", "ID", LatLon(-0.8762, 131.2558)),
             Triple("Europe/Madrid", "ES", LatLon(40.4168, -3.7038)),
             Triple("Europe/Lisbon", "PT", LatLon(41.1496, -8.6110)),
             Triple("Asia/Shanghai", "CN", LatLon(30.6586, 104.0647)),

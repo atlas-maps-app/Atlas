@@ -152,6 +152,26 @@ class StoreOffTheMainThreadTest {
         s.close()
     }
 
+    /**
+     * The season page's market reads its hours by the regions off the main thread, which the page's produceState runs
+     * on (the app maintainer, 19 November 2026, batch 6 B9: read on it, it passed every test). The market is the local
+     * finder's own answer, so the store is asked only for the hours.
+     */
+    @Test
+    fun theSeasonPagesMarketAsksTheRegionsOffTheMainThread() {
+        val ingolstadt = LatLon(48.7665, 11.4258)
+        val market = place(7601, LatLon(ingolstadt.lat + 0.002, ingolstadt.lon), "amenity" to "marketplace", "name" to "Wochenmarkt",
+            "opening_hours" to "Sa 07:00-13:00; PH off")
+        val store = Watched(MemoryPlaces(quarter(ingolstadt) + market, country = null))
+        val s = testServices(clock = epiphany, stores = listOf(store))
+        s.local.finder.fake = { _, _, _ -> listOf(market) }
+        assertTrue(Looper.myLooper() == Looper.getMainLooper())
+        val line = runBlocking { app.atlas.ui.local.nearestMarket(s, ingolstadt, epiphany.instant(), epiphany.zone) }
+        assertEquals("Wochenmarkt", line?.name)
+        assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
+        s.close()
+    }
+
     @Test
     fun aBrandsBranchesAskTheCountryInTheirFlow() {
         val store = Watched(MemoryPlaces(quarter(regensburg), country = null))

@@ -367,6 +367,20 @@ class SearchSheetModel(
     private var askedHits: List<Hit> = emptyList()
     private var askJob: Job? = null
 
+    /**
+     * The sheet's readings under way, by name: "pool" (the grid's places), "quests", "node" (a kind's), "rank", "also"
+     * (what else sells), "further" (the kind further), "walk", "region", "sites" (the bathing waters) and "ask" (typed
+     * words); one cancelled is under way until its body has returned. For a test that reads the sheet once its work is
+     * done, or all of it but what the test holds back (the app maintainer, 19 November 2026, batch 6 B9: it waited for
+     * a quiet tenth of a second). Not counted: the collectors that run for the sheet's life, what the user sends or
+     * keeps, and the kinds of a list opened from a kind ([openEvery]). The main thread.
+     */
+    internal val busy: Set<String>
+        get() = mapOf(
+            "pool" to poolJob, "quests" to questsJob, "node" to nodeJob, "rank" to rankJob, "also" to alsoJob,
+            "further" to furtherJob, "walk" to walkJob, "region" to regionJob, "sites" to sitesJob, "ask" to askJob,
+        ).filterValues { it != null && !it.isCompleted }.keys
+
     /** The circle typed words asked for ("within 500 m"): it does not widen. */
     private var fixedRadius: Double? = null
 

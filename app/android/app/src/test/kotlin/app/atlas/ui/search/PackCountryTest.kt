@@ -210,6 +210,35 @@ class PackCountryTest {
     }
 
     /**
+     * The country question as MapData wires it (the app maintainer, 19 November 2026, batch 6 B9: no test ran its
+     * wiring, so the question's hook wired back to the camera's, which has a tiles' index read or downloaded, passed
+     * every test): with a core of its own and no index in memory, the question has none read, by the hook or through
+     * [HereContext], at the towns or Antwerp; the camera's hook, wired beside it, has the Netherlands' read once.
+     */
+    @Test
+    fun theCountryQuestionAsMapDataWiresItHasNoIndexRead() {
+        val root = TempFiles.dir("atlas-border")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        val read = Collections.synchronizedList(ArrayList<String>())
+        s.mapData.coreVersion = { "core-test" }
+        s.mapData.readIndex = { id, _ -> read += id }
+        s.mapData.wireCountries()
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        val tiles = s.packCountries.tiles!!
+        for (t in towns + antwerp) assertNull("$t", tiles.level("netherlands", t.lat, t.lon))
+        for (t in towns + antwerp) {
+            HereContext.region(s, t)
+            HereContext.regionNow(s, t)
+        }
+        assertEquals("the country question had a tiles' index read", emptyList<String>(), read)
+        // the camera's hook has it read, once a minute at most
+        for (t in towns) assertNull("$t", MapEngine.countryHolds!!.at(MapEngine.countries.first(), t.lat, t.lon))
+        assertEquals(listOf("netherlands"), read)
+        s.close()
+    }
+
+    /**
      * How finely two countries' tiles' indexes list a point by these towns: the Netherlands' window at Maastricht and its
      * L12 tile over Lanaken and Kanne, Belgium's window at Lanaken and its L12 tile over Maastricht and Kanne; nothing
      * elsewhere; null for a country in [unread], whose index is not in memory.
