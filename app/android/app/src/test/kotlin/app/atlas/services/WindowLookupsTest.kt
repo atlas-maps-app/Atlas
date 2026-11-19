@@ -609,6 +609,105 @@ class WindowLookupsTest {
         assertTrue("the wheel waited for the windows: $took ms", took >= 1_000)
     }
 
+    /**
+     * Where Overpass fails, the answer holds every place shown before it, though another lookup let its windows go
+     * meanwhile (the app maintainer, 19 November 2026, batch 6 A3): the read after the failure held only the window the
+     * phone keeps, where 38ddafa1 kept what it had shown. The places' lookup here; the category row, the wheel and the
+     * shop screens below, the eat screens in `EatWindowsTest`.
+     */
+    @Test
+    fun aFailureHoldsWhatWasShownThoughAnotherLookupLetItsWindowsGo() {
+        val (error, names) = afterAnotherLookup { local, _, report ->
+            local.placesAsFound(off, 2_000.0, cafe).collect { report(it.error, it.value.mapNotNull { p -> p.name() }.toSet()) }
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    @Test
+    fun theCategoryRowsFailureHoldsWhatWasShown() {
+        val (error, names) = afterAnotherLookup { local, op, report ->
+            LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true }).nearby("eat", off, 2_000.0, 20)
+                .collect { report(it.error, it.places.mapNotNull { p -> p.name() }.toSet()) }
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    /** The wheel shows nothing till it answers: what the windows brought is what it had (38ddafa1 waited for them). */
+    @Test
+    fun theWheelsFailureHoldsWhatTheWindowsBrought() {
+        val (error, names) = afterAnotherLookup(byAnswer = false) { local, op, report ->
+            val got = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true }).nearbyMany(listOf("eat"), off, 2_000.0, 20).getValue("eat")
+            report(got.error, got.places.mapNotNull { it.name() }.toSet())
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    @Test
+    fun theShopScreensFailureHoldsWhatWasShown() {
+        val (error, names) = afterAnotherLookup { local, op, report ->
+            app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+                .around("cafes-shown", cafe, off, 2_000.0).collect { report(it.error, it.places.mapNotNull { p -> p.name() }.toSet()) }
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    /**
+     * Batch 6 A3's scene: a lookup 2 km around [off], whose windows came from Atlas's packs while Overpass waits;
+     * then a second lookup far west that holds eighteen windows (the nine the phone keeps around its middle, nine from
+     * the packs) and looks last, so at the first's close the trim takes the first's; then Overpass fails for the
+     * first. The phone keeps [off]'s own window, so what it holds after is never none. [lookup] runs the first and
+     * gives each answer to its `report` as the error and the names; where [byAnswer] the second begins once an answer
+     * held [nearOff], else (the wheel, which shows nothing) once Overpass was asked, the phone holds the first's ten
+     * windows, and a little more, for the first's own look at them. The last answer.
+     */
+    private fun afterAnotherLookup(byAnswer: Boolean = true, lookup: suspend (LocalData, Overpass, (String?, Set<String>) -> Unit) -> Unit): Pair<String?, Set<String>> = runBlocking {
+        val release = CountDownLatch(1)
+        val requested = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                requested.countDown()
+                release.await(20, TimeUnit.SECONDS)
+                return MockResponse.Builder().code(504).body("busy").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val far = TileId(WindowPlaces.LEVEL, tile.x - 6, tile.y)
+        val dir = tmp.newFolder("shown")
+        File(dir, "${tile.z}-${tile.x}-${tile.y}.json.gz").writeBytes(cafeAt(tile.x, tile.y))
+        for (dx in -1..1) for (dy in -1..1) File(dir, "${WindowPlaces.LEVEL}-${far.x + dx}-${far.y + dy}.json.gz").writeBytes(cafeAt(far.x + dx, far.y + dy))
+        val windows = WindowPlaces({ dir }, packed = { x, y -> cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val shown = CountDownLatch(1)
+        val answers = java.util.Collections.synchronizedList(ArrayList<Pair<String?, Set<String>>>())
+        val first = launch(Dispatchers.IO) {
+            lookup(local, op) { error, names ->
+                answers += error to names
+                if (names == nearOff) shown.countDown()
+            }
+        }
+        if (byAnswer) assertTrue("the first lookup's windows showed", shown.await(10, TimeUnit.SECONDS))
+        else {
+            assertTrue("Overpass was asked", requested.await(10, TimeUnit.SECONDS))
+            assertEquals("the first lookup's windows came", 10, heldIn(windows, BBox.around(off, 2_000.0), off, 10))
+            Thread.sleep(200)
+        }
+        val farBox = BBox.around(far.bbox.center, 3_000.0)
+        val held = windows.fetched(farBox, far.bbox.center, 10_000L, waitForPart = true)
+        assertEquals("the second lookup holds eighteen windows", 18, held?.places?.size)
+        // the second's the last look before Overpass answers: its middle and its windows are the ones held
+        windows.held(farBox, far.bbox.center)
+        release.countDown()
+        first.join()
+        assertEquals("Overpass was asked once", 1, asked.get())
+        answers.last()
+    }
+
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
         val until = System.nanoTime() + 5_000_000_000L

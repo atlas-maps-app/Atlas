@@ -321,8 +321,8 @@ class LocalData(
      * answer for the whole of it ([windowsBeside]: waited for first where they can make the box whole, else asked beside
      * it, and the packs' part shown once they came where Overpass has not answered by then); [ask]'s answer kept by
      * [keep] and sorted by [order]; where it failed, what the phone holds by then (with the windows the packs sent, waited
-     * for what was left of the wait) and [ask]'s error. Nothing on the phone and offline: [ask]'s answer alone (none, no
-     * origin).
+     * for what was left of the wait) with every place shown before it, and [ask]'s error. Nothing on the phone and
+     * offline: [ask]'s answer alone (none, no origin).
      */
     private fun asFound(
         at: LatLon,
@@ -336,12 +336,16 @@ class LocalData(
         var best = onPhone(at, box, fromStore, accept, keep, order)
         best?.let { emit(it) }
         if (best?.partial == false) return@flow
+        // every place shown, by key, for a failure's answer
+        val shown = LinkedHashMap<String, Place>()
+        best?.value?.forEach { shown[it.key] = it }
         val available = online.available()
         val asked = windowsBeside(at, box, accept, show = { (found, whole) ->
             val got = LocalAnswer(order(found.filter(keep)), PlaceOrigin.PACK, partial = !whole)
             val before = best
             if (before == null || got.partial != before.partial || got.value.map { it.key } != before.value.map { it.key }) emit(got)
             best = got
+            got.value.forEach { shown[it.key] = it }
         }, failed = { it.error != null }, ask = ask.takeIf { available })
         val phone = best
         val got = when {
@@ -350,11 +354,19 @@ class LocalData(
             phone == null -> ask()
             else -> return@flow
         }
-        // where it failed, what the phone holds by now: the windows the packs were asked for that came meanwhile too
+        // where it failed, what the phone holds by now (the windows the packs were asked for that came meanwhile too),
+        // with every place shown before it, each once, now's copy first (the app maintainer, 19 November 2026, batch 6
+        // A3: what it held by now could be fewer than were shown, where another lookup had let the windows go
+        // meanwhile; 38ddafa1 kept what it had shown); where that read fails, what was shown
         val now = when {
             got.error == null -> null
             phone?.origin == PlaceOrigin.STORE -> phone
-            else -> onPhone(at, box, fromStore, accept, keep, order) ?: phone
+            else -> {
+                val read = orNull { onPhone(at, box, fromStore, accept, keep, order) }
+                val base = read ?: phone
+                if (base == null || shown.isEmpty()) base
+                else base.copy(value = order((read?.value.orEmpty() + shown.values).distinctBy { it.key }.filter(keep)))
+            }
         }
         emit(now?.copy(error = got.error) ?: got.copy(value = order(got.value.filter(keep))))
     }.flowOn(Dispatchers.IO)
