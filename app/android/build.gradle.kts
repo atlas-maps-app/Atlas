@@ -74,3 +74,21 @@ subprojects {
         doLast { tmp.deleteRecursively() }
     }
 }
+
+// A unit test reaches no server but this machine. Every name a test JVM looks up is looked up in ci/test-hosts alone,
+// which names this machine and nothing else: a real name is never asked of a resolver, and its lookup fails naming it
+// ("Unable to resolve host nominatim.openstreetmap.org in hosts file"). A mock that names itself by the address it
+// listens on is "localhost" there, whatever this machine is called. The JVM's proxies are cleared, so no request leaves
+// by one either, and a proxy named in a test is a name like any other. -Datlas.online=true (TestSupport.assumeOnline)
+// lifts it, for the online tests alone; the app has none of it.
+val testsOnline = providers.systemProperty("atlas.online").orNull == "true"
+val testHosts = rootProject.file("ci/test-hosts")
+subprojects {
+    tasks.withType<Test>().configureEach {
+        if (testsOnline) return@configureEach
+        inputs.file(testHosts).withPropertyName("testHosts").withPathSensitivity(PathSensitivity.NONE)
+        systemProperty("jdk.net.hosts.file", testHosts.absolutePath)
+        systemProperty("java.net.useSystemProxies", "false")
+        for (p in listOf("http.proxyHost", "https.proxyHost", "ftp.proxyHost", "socksProxyHost")) systemProperty(p, "")
+    }
+}
