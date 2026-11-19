@@ -191,34 +191,46 @@ class SourcesGateTest {
         services.close()
     }
 
+    /** Real names a listed host stands for: an exact host itself; a pattern's name and one host below it. */
+    private fun namesFor(listed: String): List<String> =
+        if (listed.startsWith("*.")) listed.removePrefix("*.").let { listOf(it, "en.$it") } else listOf(listed)
+
     @Test
-    fun eachOfTheAppsOwnSourcesSwitchedOffIsRefusedByItsIdThroughServicesOwnClient() = runBlocking {
-        // the six SourcesModel adds to the providers' catalogue: a gate wired with the catalogue alone would let them go
-        val own = listOf(SourcesModel.ATLAS_PACKS, SourcesModel.BROUTER, SourcesModel.PANORAMAX, SourcesModel.OPEN_PRICES, SourcesModel.ISS_ORBIT, SourcesModel.TANKERKOENIG)
+    fun eachSwitchableSourceSwitchedOffAloneIsRefusedByItsIdThroughServicesOwnClientAndAnothersHostGoes() = runBlocking {
+        // every source with a switch of its own, the catalogue's and SourcesModel's six: a gate wired with fewer, or one
+        // that refuses whatever is asked while anything is off, fails here
+        val switchable = SourcesModel.ALL.filter { it.switchable && it.via == null }
         val services = testServices()
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse.Builder().code(200).body("ok").build())
-            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
-            val looked = Collections.synchronizedList(ArrayList<String>())
-            // through a view of a source that is on: the host decides
-            val client = services.http("wikidata").client.newBuilder().direct()
-                .dns { name -> looked += name; listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }.build()
-            fun ask(host: String) = runCatching { client.newCall(okhttp3.Request.Builder().url("http://$host:${server.port}/").build()).execute().close() }.exceptionOrNull()
-            for (s in own) {
-                services.switch(setOf(s.id))
-                for (h in s.hosts) {
-                    val refused = ask(h)
-                    assertTrue("${s.id} at $h: $refused", refused is SwitchedOffException && refused.source == s.id && refused.host == h)
+        try {
+            MockWebServer().use { server ->
+                server.dispatcher = object : mockwebserver3.Dispatcher() {
+                    override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse = MockResponse.Builder().code(200).body("ok").build()
                 }
+                server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+                val looked = Collections.synchronizedList(ArrayList<String>())
+                // through a view of a source that lists none of these hosts: the host decides
+                val client = services.http("wikidata").client.newBuilder().direct()
+                    .dns { name -> looked += name; listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }.build()
+                fun ask(host: String) = runCatching { client.newCall(okhttp3.Request.Builder().url("http://$host:${server.port}/").build()).execute().close() }.exceptionOrNull()
+                val went = ArrayList<String>()
+                for ((i, s) in switchable.withIndex()) {
+                    services.switch(setOf(s.id))
+                    for (h in s.hosts) for (name in namesFor(h)) {
+                        val refused = ask(name)
+                        assertTrue("${s.id} at $name: $refused", refused is SwitchedOffException && refused.source == s.id && refused.host == name)
+                    }
+                    // another source's host, while this one alone is off: it goes, and reaches the server
+                    val other = switchable[(i + 1) % switchable.size]
+                    val name = namesFor(other.hosts.first()).last()
+                    assertEquals("${other.id}'s $name with ${s.id} off", null, ask(name))
+                    went += name
+                }
+                assertEquals("only the hosts that went were looked up", went, looked.toList())
+                assertEquals(switchable.size, server.requestCount)
             }
-            assertEquals("no name looked up", emptyList<String>(), looked.toList())
-            assertEquals(0, server.requestCount)
-            // switched on: it goes
-            services.switch(emptySet())
-            assertEquals(null, ask(SourcesModel.OPEN_PRICES.hosts.first()))
-            assertEquals(1, server.requestCount)
+        } finally {
+            services.close()
         }
-        services.close()
     }
 
     @Test
