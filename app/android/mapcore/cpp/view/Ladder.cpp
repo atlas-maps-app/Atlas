@@ -338,6 +338,7 @@ Placed Ladder::exact(const Knot& k, std::int32_t width_dp, std::int32_t height_d
     c.set("W", integer(width_dp));
     c.set("H", integer(height_dp));
     if (living_) return c;
+    c.set("no_fin", boolean(false)); // Pictures only: a country pack's view with its finishing
     c.set("obj_split", integer(obj_split));
     if (c.find("haze0") == nullptr) c.set("haze0", real(c.number("dist").value_or(0.0) * 0.85));
     if (c.find("haze1") == nullptr) c.set("haze1", real(c.number("dist").value_or(0.0) * 2.2));
