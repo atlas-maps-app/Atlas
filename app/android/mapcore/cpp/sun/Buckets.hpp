@@ -295,3 +295,7 @@ private:
 };
 
 } // namespace atlas::sun
+
+/// A scene's tiles view its scene's parts (it owns none), so an iterator outlives the view it came from.
+template <>
+inline constexpr bool std::ranges::enable_borrowed_range<atlas::sun::SceneTiles> = true;
