@@ -708,6 +708,53 @@ class WindowLookupsTest {
         answers.last()
     }
 
+    /**
+     * A lookup cancelled as it starts leaves nothing waited for (the app maintainer, 19 November 2026, batch 6 A4): the
+     * windows it had asked the packs for stayed waited for, for ever, as `withContext` dropped the fetch it made, so
+     * every later lookup's windows went in their place. Here the lookup is cancelled while it reads the regions, on
+     * the dispatcher the category row runs on; then a lookup east, one farther east, and the first east again: its
+     * windows are still held, so the packs are not asked for them again.
+     */
+    @Test
+    fun aLookupCancelledAsItStartsLeavesNothingWaitedFor() = runBlocking {
+        val gated = java.util.concurrent.atomic.AtomicBoolean(true)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val sent = AtomicInteger()
+        val empty = tmp.newFolder("cancelled")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
+        val local = LocalData(
+            stores = {
+                if (gated.get()) {
+                    entered.countDown()
+                    release.await(20, TimeUnit.SECONDS)
+                }
+                null
+            },
+            packs = { null },
+            isOnline = { true },
+            windowPlaces = windows,
+            countryAt = { null },
+        )
+        val lookup = launch(Dispatchers.Default) {
+            local.beside<Result<List<app.atlas.model.Place>>>(here, 1_000.0, cafe, failed = { it.isFailure }, ask = null)
+        }
+        assertTrue("the lookup reads the regions", entered.await(10, TimeUnit.SECONDS))
+        lookup.cancel()
+        gated.set(false)
+        release.countDown()
+        lookup.join()
+        // the cancelled lookup's nine windows come all the same
+        assertEquals(9, heldIn(windows, nine(tile), here, 9))
+        val east = TileId(WindowPlaces.LEVEL, tile.x + 10, tile.y)
+        val farther = TileId(WindowPlaces.LEVEL, tile.x + 20, tile.y)
+        assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+        assertEquals(9, windows.fetched(nine(farther), farther.bbox.center, 10_000L)?.places?.size)
+        val before = sent.get()
+        assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+        assertEquals("the windows east asked of the packs again", 0, sent.get() - before)
+    }
+
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
         val until = System.nanoTime() + 5_000_000_000L

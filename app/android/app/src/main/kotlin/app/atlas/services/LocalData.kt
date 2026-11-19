@@ -52,6 +52,7 @@ import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 /**
@@ -470,16 +471,26 @@ class LocalData(
         ask: (suspend () -> T)?,
     ): T? {
         val w = windowPlaces
-        val started = if (w == null || !isOnline()) null else withContext(Dispatchers.IO) {
-            try {
-                val pack = packsCovering(at)
-                if (storeCovering(at) != null || pack?.covers(box) == true) null
-                else pack to w.start(box, at, windowWaitMs)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
+        // the fetch made, closed where the lookup is cancelled as it starts (the app maintainer, 19 November 2026,
+        // batch 6 A4: `withContext` dropped it, so its windows stayed waited for, and every other lookup's went in
+        // their place)
+        val made = AtomicReference<WindowPlaces.Fetch?>()
+        val started = if (w == null || !isOnline()) null else try {
+            withContext(Dispatchers.IO) {
+                try {
+                    val pack = packsCovering(at)
+                    if (storeCovering(at) != null || pack?.covers(box) == true) null
+                    else pack to w.start(box, at, windowWaitMs).also { made.set(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    made.getAndSet(null)?.close()
+                    null
+                }
             }
+        } catch (e: CancellationException) {
+            made.getAndSet(null)?.close()
+            throw e
         }
         if (started == null) return ask?.invoke()
         val (pack, fetch) = started
