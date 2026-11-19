@@ -75,7 +75,9 @@
 //! horizon. Every loop over the file's data counts steps. An answer says when a cap was met
 //! ([`Answer::cut_short`]), wherever in the search it was: also where the steps passed theirs outside a search's
 //! rounds, in the count from the journey's end or in the list of a window's departures, and where a bag was full
-//! and a label went from it (the option it led to may be the one that is missing).
+//! and a label went from it (the option it led to may be the one that is missing). And where a place stood for
+//! more stops than a search begins at (4,096: the nearest stay), whether they came from a station, from the stops
+//! around a point or from a list of walks.
 
 use crate::file::{MAX_TIME, PatternStop, Route, Rule, Timetable};
 use crate::geo::distance_mm;
@@ -95,7 +97,7 @@ const RIDE: u8 = 1;
 const CHANGE: u8 = 2;
 const DEAD: u8 = 0x80;
 const NEVER: i32 = i32::MAX;
-/// The most stops a place may stand for.
+/// The most stops a search begins at, or ends at: of the stops a place stands for, the nearest so many.
 const MAX_ENDS: usize = 4096;
 
 /// Whether a rule's field, which may name nothing, lets this trip or line through.
@@ -303,8 +305,15 @@ impl DayTrips {
     }
 }
 
-/// How many days' lists a planner keeps.
+/// How many days' lists a planner keeps from one query to the next (a search that touches more keeps more).
 const KEPT_DAYS: usize = 16;
+
+/// How many service days one search may read. A trip ends under 2 × 2^20 s after its service day began (its first
+/// departure and its time under way are each under 2^20: the format), a query follows journeys over three days at
+/// most (a day's window and two days on), and a day may begin two hours off where the clock changes: 28 days
+/// between the earliest service day that can matter and the latest, 29 in all.
+const MAX_OFFSETS: usize = 32;
+const _: () = assert!((2 * MAX_TIME as usize + MAX_WINDOW as usize + 2 * 86_400 + 2 * 7200) / 86_400 + 2 <= MAX_OFFSETS);
 
 /// A stop in a round: the first label of the bag of those who arrived there by a ride (0) and of those ready to
 /// board (1), and the earliest time of any such label with that many rides or fewer. Together, so that a route's
@@ -386,8 +395,8 @@ pub struct Planner<'a> {
 pub struct Answer {
     /// The options: none of them is beaten by another in departure, arrival, rides and cost together. By departure.
     pub journeys: Vec<Journey>,
-    /// A cap of [`crate::Limits`] was met, so there may be options missing (or, asked for one moment, one that
-    /// leaves sooner than it need).
+    /// A cap of [`crate::Limits`] was met, or a place stood for more than 4,096 stops, so there may be options
+    /// missing (or, asked for one moment, one that leaves sooner than it need).
     pub cut_short: bool,
     /// How long past the asked moment and its window journeys were followed, in seconds: the query's horizon, or
     /// less where the search was patient ([`crate::Limits::patient`]). A patient search lacks nothing for it: what
@@ -409,6 +418,8 @@ pub struct Answer {
 pub struct Ends {
     pub from: Vec<(u32, u32)>,
     pub to: Vec<(u32, u32)>,
+    /// A place stood for more stops than a search begins at, and only the nearest are here.
+    pub cut: bool,
 }
 
 impl<'a> Planner<'a> {
@@ -585,20 +596,22 @@ impl<'a> Planner<'a> {
 
     /// The stops a query's two places stand for, before any wish closes one.
     pub fn ends(&self, q: &Query) -> Ends {
-        Ends { from: self.near(&q.from, q, true), to: self.near(&q.to, q, false) }
+        let ((from, more), (to, others)) = (self.near(&q.from, q, true), self.near(&q.to, q, false));
+        Ends { from, to, cut: more || others }
     }
 
-    /// The stops of a place with the seconds on foot: `leaving` it, or reaching it.
-    fn near(&self, place: &Place, q: &Query, leaving: bool) -> Vec<(u32, u32)> {
+    /// The stops of a place with the seconds on foot: `leaving` it, or reaching it. A stop once, by its shortest
+    /// way; and of more than [`MAX_ENDS`] stops the nearest, with the word that there were more.
+    fn near(&self, place: &Place, q: &Query, leaving: bool) -> (Vec<(u32, u32)>, bool) {
         let tt = &self.tt;
         let mut out: Vec<(u32, u32)> = Vec::new();
         let around = |s: u32, out: &mut Vec<(u32, u32)>| {
             out.push((s, 0));
             if leaving {
                 let (lo, hi) = tt.walks_from(s);
-                out.extend((lo..hi).take(MAX_ENDS).map(|i| tt.walk(i)));
+                out.extend((lo..hi).map(|i| tt.walk(i)));
             } else if let (Some(&lo), Some(&hi)) = (self.ix.back_first.get(s as usize), self.ix.back_first.get(s as usize + 1)) {
-                out.extend(self.ix.back.get(lo as usize..hi as usize).unwrap_or(&[]).iter().take(MAX_ENDS));
+                out.extend(self.ix.back.get(lo as usize..hi as usize).unwrap_or(&[]).iter());
             }
         };
         match place {
@@ -606,7 +619,7 @@ impl<'a> Planner<'a> {
             Place::Stop(_) => {}
             Place::Station(st) => {
                 for s in 0..tt.stops() {
-                    if (s == *st || tt.stop(s).parent == *st) && out.len() < 8 * MAX_ENDS {
+                    if s == *st || tt.stop(s).parent == *st {
                         around(s, &mut out);
                     }
                 }
@@ -629,16 +642,20 @@ impl<'a> Planner<'a> {
                     }
                 }
             }
-            Place::Walks(v) => out.extend(v.iter().take(MAX_ENDS).filter(|e| e.0 < tt.stops() && e.1 < MAX_TIME)),
+            Place::Walks(v) => out.extend(v.iter().filter(|e| e.0 < tt.stops() && e.1 < MAX_TIME)),
         }
+        // Everything the place stands for is gathered first (a station's stops and the file's walks from each, a
+        // list as long as its maker made it: no more than the file or the query holds), so that what stays of too
+        // many is the nearest, and so that it is known there were too many.
         out.sort_unstable();
         out.dedup_by_key(|e| e.0); // sorted by stop then seconds: the first of a stop is its shortest
-        if out.len() > MAX_ENDS {
+        let more = out.len() > MAX_ENDS;
+        if more {
             out.sort_unstable_by_key(|e| (e.1, e.0));
             out.truncate(MAX_ENDS);
             out.sort_unstable();
         }
-        out
+        (out, more)
     }
 
     /// The wishes of a query, worked out.
@@ -653,12 +670,16 @@ impl<'a> Planner<'a> {
         }
     }
 
-    /// The days before and after the query's whose trips can matter to a search over these real seconds.
-    pub(crate) fn offsets(&self, earliest: i32, latest: i32) -> (i32, i32) {
+    /// The days before and after the query's whose trips can matter to a search over these real seconds, and
+    /// whether that is all of them: of more than [`MAX_OFFSETS`] the latest are read (which no file and query
+    /// can ask for as the format and the query's bounds stand: see there).
+    pub(crate) fn offsets(&self, earliest: i32, latest: i32) -> (i32, i32, bool) {
         // (where the clock changes, a day begins up to two hours off its 86,400 s)
         let slack = if self.ix.odd.is_empty() { 0 } else { 7200 };
         let lo = (earliest - slack - self.ix.max_time).div_euclid(DAY);
-        (lo, (latest + slack).div_euclid(DAY).min(lo + 15))
+        let hi = (latest + slack).div_euclid(DAY);
+        let first = lo.max(hi - (MAX_OFFSETS as i32 - 1));
+        (first, hi, first == lo)
     }
 
     /// The seconds from the beginning of service day `day` to the beginning of the day `off` days on (or before):
@@ -685,10 +706,10 @@ impl<'a> Planner<'a> {
         let window = q.window.min(MAX_WINDOW) as i32;
         let (earliest, latest) = q.followed();
         let horizon = latest - earliest - window;
-        let (off_lo, off_hi) = self.offsets(earliest, latest);
+        let (off_lo, off_hi, every_day) = self.offsets(earliest, latest);
         let day = q.day.clamp(-100_000, 100_000);
         // the lists of the days this search can touch; a day outside the file has no trips and needs none
-        let mut day_lists = [usize::MAX; KEPT_DAYS];
+        let mut day_lists = [usize::MAX; MAX_OFFSETS];
         for off in off_lo..=off_hi {
             let d = day + off;
             if d < 0 || d >= self.tt.days() as i32 {
@@ -704,7 +725,7 @@ impl<'a> Planner<'a> {
                 self.days.push(DayTrips::of(&self.tt, d));
             }
         }
-        let mut zeros = [0i32; KEPT_DAYS];
+        let mut zeros = [0i32; MAX_OFFSETS];
         for off in off_lo..=off_hi {
             if let Some(at) = self.days.iter().position(|l| l.day == day + off) {
                 day_lists[(off - off_lo) as usize] = at;
@@ -894,8 +915,10 @@ impl<'a> Planner<'a> {
         // Cut short: a cap was met where the search says so itself, or the steps passed theirs anywhere at all (the
         // count from the journey's end, the list of a window's departures): whatever came after did less than
         // it should.
-        // And where a bag was full and a label went from it, an option may have gone with it.
-        let mut cut = s.cut || s.steps > s.max_steps || too_many || s.dropped;
+        // And where a bag was full and a label went from it, an option may have gone with it. So may one have
+        // where a place stood for more stops than a search begins at, or more service days could matter than a
+        // search reads.
+        let mut cut = s.cut || s.steps > s.max_steps || too_many || s.dropped || ends.cut || !every_day;
         if keep.len() > options {
             // too many over a window: those nearest the asked moment stay
             if back {
@@ -921,9 +944,9 @@ struct Search<'s, 'a> {
     /// The query's service day, and the days around it whose trips are looked at, with each one's list.
     day: i32,
     days: &'s [DayTrips],
-    day_lists: [usize; KEPT_DAYS],
+    day_lists: [usize; MAX_OFFSETS],
     /// By day offset: when that service day begins, in seconds of the query's ([`Planner::zero`]).
-    zeros: [i32; KEPT_DAYS],
+    zeros: [i32; MAX_OFFSETS],
     off_lo: i32,
     off_hi: i32,
     /// Nothing later than this is followed.

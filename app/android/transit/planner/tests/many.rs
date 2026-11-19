@@ -1,6 +1,8 @@
 //! A file's rules must not set a query's time or its answer by how many they are. The file comes over the network:
 //! here the hand-written feed (tests/data/edges.tt, see tests/edges.rs for its islands) is given tens of thousands
-//! of rules more, built in the test, and the answers worked out on paper must stay what they are.
+//! of rules more, built in the test, and the answers worked out on paper must stay what they are. So must they
+//! with thousands of stops more than a search begins at, and with a trip that is under way for twelve days: what
+//! the format allows and no timetable has.
 //!
 //! - Wacht: the bus A to B is in at 08:10, and the bus C to Z leaves 08:12 and waits for it (the feed's rule);
 //!   no walk joins B and C. The one way is 08:00 to 08:30.
@@ -58,11 +60,16 @@ fn with_rules(b: &[u8], more: impl Iterator<Item = [u32; 8]>) -> Vec<u8> {
 
 /// The file with stops added that no line calls at and no walk leads to, far from every other.
 fn with_stops(b: &[u8], more: u32) -> Vec<u8> {
+    with_stops_of(b, more, NONE)
+}
+
+/// The same, the stops added being stops of a station (`parent`), or of none.
+fn with_stops_of(b: &[u8], more: u32, parent: u32) -> Vec<u8> {
     let (mut stops, mut walks, mut routes) = (section(b, b"STOP"), section(b, b"XFRI"), section(b, b"SRTI"));
     let had = stops.len() as u32 / 12;
     for k in 0..more {
-        // (a place of its own, no station, a stop of the plainest kind, no strings)
-        stops.extend([540_000_000 + k, 60_000_000, NONE, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        // (a place of its own, a stop of the plainest kind, no strings)
+        stops.extend([540_000_000 + k, 60_000_000, parent, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         walks.push(*walks.last().unwrap());
         routes.push(*routes.last().unwrap());
     }
@@ -195,5 +202,105 @@ fn a_line_that_waits_is_read_no_further_than_the_search_goes() {
     let more = steps[1].saturating_sub(steps[0]);
     println!("150 questions: {} steps without the rule, {} with it ({more} more); the rule changes {differ} answers", steps[0], steps[1]);
     assert!(more < steps[0] / 10, "{more} steps more than the {} without the rule", steps[0]);
+}
+
+/// A place may stand for more stops than a search begins at (4,096): a list of walks the app worked out, a
+/// station of many stops, every stop within reach of a point. The nearest stay, and the answer says that it is
+/// cut short; a list that only repeats itself is not too long. (The first 4,096 lines of a list were read and no
+/// more, and of more stops the nearest were kept: both without a word.)
+#[test]
+fn a_place_of_more_stops_than_a_search_begins_at_says_so() {
+    let b = bytes();
+    let had = Timetable::open(&b).unwrap().stops();
+    let more = with_stops(&b, 5000);
+    let tt = Timetable::open(&more).unwrap();
+    let mut p = Planner::new(tt);
+    let (wa, wz) = (stop(&tt, "WA"), stop(&tt, "WZ"));
+    // ten minutes on foot to Wacht's A, and ten seconds to stops no line calls at
+    let dead = |n: u32| (had..had + n).map(|s| (s, 10u32));
+    let way = vec![(hm(7, 50), hm(8, 30), "W1a W2a".to_string())];
+    let from = |walks: Vec<(u32, u32)>| Query::new(Place::Walks(walks), Place::Stop(wz), 0, hm(7, 45));
+    // 4,096 stops are all kept, wherever in the list the one that matters stands
+    let q = from(dead(4095).chain([(wa, 600)]).collect());
+    assert_eq!(ask(&mut p, &q), way);
+    // and so are they when the list says some of them twice before it comes to that one
+    let q = from(dead(4095).chain(dead(900)).chain([(wa, 600)]).collect());
+    assert_eq!(p.ends(&q).from.len(), 4096);
+    assert_eq!(ask(&mut p, &q), way);
+    // one more: the 4,096 nearest stay, the stop ten minutes off is not among them, and the answer says so
+    for first in [true, false] {
+        let a_stop = |at: bool| (at == first).then_some((wa, 600));
+        let q = from(a_stop(true).into_iter().chain(dead(4096)).chain(a_stop(false)).collect());
+        let ends = p.ends(&q);
+        assert!(ends.cut && ends.from.len() == 4096 && !ends.from.iter().any(|e| e.0 == wa), "first {first}");
+        let a = p.plan(&q);
+        assert!(a.cut_short && a.journeys.is_empty(), "first {first}: {:?}", a.journeys);
+    }
+    // arriving there, the same
+    let mut q = Query::new(Place::Stop(wa), Place::Walks(dead(4096).chain([(wz, 600)]).collect()), 0, hm(8, 45));
+    q.arrive_by = true;
+    assert!(p.plan(&q).cut_short);
+    q.to = Place::Walks(dead(4095).chain(dead(4095)).chain([(wz, 600)]).collect());
+    assert_eq!(ask(&mut p, &q), [(hm(8, 0), hm(8, 40), "W1a W2a".to_string())]);
+
+    // a station of 5,001 stops: the search begins at 4,096 of them and says so
+    let station = with_stops_of(&b, 5000, wa);
+    let tt = Timetable::open(&station).unwrap();
+    let mut p = Planner::new(tt);
+    let q = Query::new(Place::Station(wa), Place::Stop(wz), 0, hm(7, 55));
+    let ends = p.ends(&q);
+    assert!(ends.cut && ends.from.len() == 4096);
+    let a = p.plan(&q);
+    assert!(a.cut_short);
+    // (of stops as near as each other those of the lower number stay: A is among them)
+    assert_eq!(a.journeys.iter().map(|j| (j.depart as u32, j.arrive as u32)).collect::<Vec<_>>(), [(hm(8, 0), hm(8, 30))]);
+    // and a station of 4,096 is whole
+    let station = with_stops_of(&b, 4095, wa);
+    let tt = Timetable::open(&station).unwrap();
+    let mut p = Planner::new(tt);
+    assert!(!p.ends(&q).cut && p.ends(&q).from.len() == 4096);
+    assert_eq!(ask(&mut p, &q), [(hm(8, 0), hm(8, 30), "W1a W2a".to_string())]);
+}
+
+/// The format lets a trip's first departure and its time under way each be just under 2^20 s, twelve days: a file
+/// may hold a trip that ends twenty-four days after its service day began. Every search then looks that many
+/// service days back for what may still be running, and must not lose the asked day over it. (Sixteen days were
+/// read from the earliest on: the asked one was not among them, and the answer was empty without a word.)
+#[test]
+fn a_trip_of_many_days_hides_no_other() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let (late, long) = (trip(&tt, "L3a"), trip(&tt, "L2a"));
+    // L3a, alone on its route, leaves 1,040,000 s into its service day; L2a, alone on its route too, gets times
+    // of its own: 1,040,000 s to its second stop
+    let (mut trips, mut profiles, mut times) = (section(&b, b"TRIP"), section(&b, b"PROF"), section(&b, b"PTIM"));
+    trips[late as usize * 4] = 1_040_000;
+    trips[long as usize * 4 + 1] = profiles.len() as u32 / 2;
+    profiles.extend([times.len() as u32 / 2, 2]);
+    times.extend([0, 0, 1_040_000, 1_040_000]);
+    let b = with_section(&b, b"TRIP", &trips, trips.len() as u32 / 4);
+    let b = with_section(&b, b"PROF", &profiles, profiles.len() as u32 / 2);
+    let b = with_section(&b, b"PTIM", &times, times.len() as u32 / 2);
+    let tt = Timetable::open(&b).unwrap();
+    tt.verify().unwrap();
+    let mut p = Planner::new(tt);
+    // Wacht, as it ever was: 08:00 to 08:30, forward and back, for one moment and over a window
+    let waits = vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())];
+    for window in [0, 600] {
+        let mut q = Query::new(Place::Stop(stop(&tt, "WA")), Place::Stop(stop(&tt, "WZ")), 0, hm(7, 55));
+        q.window = window;
+        assert_eq!(ask(&mut p, &q), waits, "window {window}");
+        (q.arrive_by, q.time) = (true, hm(8, 30));
+        assert_eq!(ask(&mut p, &q), waits, "window {window}, arriving by");
+    }
+    // and the widest question there is: a day's window, followed two days on
+    let mut q = Query::new(Place::Stop(stop(&tt, "WA")), Place::Stop(stop(&tt, "WZ")), 0, hm(7, 55));
+    (q.window, q.limits.horizon) = (86_400, 2 * 86_400);
+    assert_eq!(ask(&mut p, &q), waits);
+    // and Laat's last way that evening is gone: its bus to B is twelve days under way, further than any question
+    // follows a journey
+    let mut q = Query::new(Place::Stop(stop(&tt, "LA")), Place::Stop(stop(&tt, "LB")), 0, hm(23, 30));
+    q.limits.horizon = 2 * 86_400;
+    assert_eq!(ask(&mut p, &q), []);
 }
 
