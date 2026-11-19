@@ -26,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <thread>
@@ -66,12 +67,22 @@ public:
     /// The grid over every tile's solids, in the tiles' order; `scene_maxh` is the scene's tallest solid
     /// (Samples.hpp's scene_maxh). `chunks` are the tiles' chunk hashes (for the disk cache; empty: none kept).
     Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::Sha256Digest> chunks = {});
+    /// The same over tiles' parts that other scenes may share (SunGlobals keeps each tile's part from one scene to
+    /// the next, never a copy of it).
+    Scene(std::vector<std::shared_ptr<const SunTile>> tiles, double scene_maxh,
+          std::vector<tiles::Sha256Digest> chunks = {});
     /// `from` with its tiles as `tiles`: the same tiles with the same solids, some made whole that were their solids
     /// alone (a tile of the halo come resident: SunGlobals). Its grid is `from`'s, shared, and so are its chunks.
-    Scene(const Scene& from, std::vector<SunTile> tiles);
+    Scene(const Scene& from, std::vector<std::shared_ptr<const SunTile>> tiles);
 
     [[nodiscard]] const Grid& grid() const noexcept { return *grid_; }
-    [[nodiscard]] std::span<const SunTile> tiles() const noexcept { return tiles_; }
+    /// Its tiles, in order: a random-access view of each one's part.
+    [[nodiscard]] auto tiles() const noexcept {
+        return std::views::transform(tiles_,
+                                     [](const std::shared_ptr<const SunTile>& t) -> const SunTile& { return *t; });
+    }
+    /// Tile `t`'s part, which other scenes may share.
+    [[nodiscard]] const std::shared_ptr<const SunTile>& part(std::size_t t) const noexcept { return tiles_[t]; }
     /// Where tile `t`'s solids begin in the grid.
     [[nodiscard]] PrismId base(std::size_t t) const noexcept { return base_[t]; }
     /// Tile `t`'s chunk hash, or nothing: the disk cache's key for its bits (the scene's maker may hash into it the
@@ -85,7 +96,7 @@ public:
     [[nodiscard]] std::optional<std::uint32_t> find(tiles::TileKey key) const noexcept;
 
 private:
-    std::vector<SunTile> tiles_;
+    std::vector<std::shared_ptr<const SunTile>> tiles_;
     std::vector<PrismId> base_;
     std::vector<tiles::Sha256Digest> chunks_;
     std::shared_ptr<const Grid> grid_;

@@ -254,13 +254,15 @@ TEST_CASE(
     }
     ATLAS_REQUIRE(next < halo.size());
     ATLAS_REQUIRE(every->tiles()[next].samples.size() > 0);
-    std::vector<SunTile> again(built->tiles().begin(), built->tiles().end());
+    // the scene's parts, shared (a scene made whole copies no tile), the one come resident made whole
+    std::vector<std::shared_ptr<const SunTile>> again;
+    for (std::size_t i = 0; i < built->tiles().size(); ++i) again.push_back(built->part(i));
     {
         const tl::ChunkRef* c = pack->chunks().find(halo[next]);
         arena.reset();
         auto tile = pack->decode(*c, zstd, decoder, arena, raw, scratch);
         ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
-        again[next] = make_tile(*tile, head, region, level, decks);
+        again[next] = std::make_shared<const SunTile>(make_tile(*tile, head, region, level, decks));
     }
     const Scene whole_again(*built, std::move(again));
     CHECK(&whole_again.grid() == &built->grid());
