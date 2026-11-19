@@ -23,6 +23,11 @@
 
 extern crate alloc;
 
+// 64 bits alone. The allocator below takes the C library's malloc to give memory aligned to 16 bytes, which a
+// 32-bit bionic does not; and Atlas ships for arm64-v8a and x86_64.
+#[cfg(not(target_pointer_width = "64"))]
+compile_error!("atlas_transit_abi is built for 64-bit targets alone: its allocator takes malloc's memory as aligned to 16 bytes");
+
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;

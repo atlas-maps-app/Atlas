@@ -233,9 +233,9 @@ fn the_header_names_the_same_numbers() {
     }
     assert_eq!(atlas_transit_abi(), ABI);
     // what the header says in words, where the words were wrong or missing once: the kinds of stop a file has, how
-    // "no such stop" is told where -1 is a place on the map
+    // "no such stop" is told where -1 is a place on the map, and that the library is built for 64 bits alone
     let said = header.split_whitespace().filter(|word| *word != "*").collect::<Vec<_>>().join(" ");
-    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other"] {
+    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other", "built for 64-bit targets alone"] {
         assert!(said.contains(words), "the header no longer says: {words}");
     }
     // and each function the library gives is declared there

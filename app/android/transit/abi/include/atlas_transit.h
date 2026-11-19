@@ -18,6 +18,9 @@
  * the part that was not understood; a number out of range names nothing (ATLAS_TRANSIT_NONE, or no bytes); a null
  * timetable answers nothing. Memory comes from malloc; where the planner finds itself wrong, it aborts.
  *
+ * The library is built for 64-bit targets alone (arm64-v8a and x86_64 on Android): it takes malloc's memory as
+ * aligned to 16 bytes, which a 32-bit C library does not give, and does not compile for one.
+ *
  * Times are seconds of a service day as the file has them (../FORMAT.md, "Time"): a day is counted from the file's
  * first day, and a time may pass 86,400 or lie before 0. Places on the map are in 1e-7 degree. */
 #ifndef ATLAS_TRANSIT_H
