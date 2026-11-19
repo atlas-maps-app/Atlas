@@ -968,7 +968,7 @@ map_phase() {
 # within HIDDEN_BACK_S seconds (10: lavapipe's frames take about 2 s with the water's light), the same process (no
 # second `vk first frame`). Called in the map phase, after the swipe.
 hidden_check() {
-  local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-10} frames back delay firsts surface
+  local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-60} frames back delay firsts surface i
   adb shell input keyevent KEYCODE_HOME
   if ! wait_line mapwarm 10 "vk hidden: on"; then
     echo "MAP FAILED: no 'vk hidden: on' within 10 s of the home key (the core was not told the app went to the background)"
@@ -978,7 +978,13 @@ hidden_check() {
   sleep "$hidden"
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $PKG/.MainActivity > /dev/null
   wait_line mapwarm 10 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 10 s of the return"; FAIL=1; }
-  sleep "$wait"
+  # The first frame back: at once where the surface outlived the stop; where it did not, once the core has made its
+  # pipelines again for the new one (9 s and over 10 s on the emulator, 18 November), so up to $wait s; then 2 s more.
+  for i in $(seq 1 "$wait"); do
+    since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk frame ' && break
+    sleep 1
+  done
+  sleep 2
   frames=$(since_marker mapwarm | sed -n '/AtlasMap: vk hidden: on/,/AtlasMap: vk hidden: off/p' | grep -c 'AtlasMap: vk frame ')
   back=$(since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -c 'AtlasMap: vk frame ')
   delay=$(since_marker mapwarm | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
@@ -991,7 +997,7 @@ hidden_check() {
   else
     surface="the surface kept"
   fi
-  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames in $wait s, the first ${delay:-none} s after 'vk hidden: off', $surface; $(since_marker mapwarm | grep -o 'vk hidden: off.*' | tail -1)"
+  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames, the first ${delay:-none} s after 'vk hidden: off', $surface; $(since_marker mapwarm | grep -o 'vk hidden: off.*' | tail -1)"
   [ "$frames" -eq 0 ] || { echo "MAP FAILED: the core drew $frames frames while the app was hidden (none, ENGINE.md's audit B1)"; FAIL=1; }
   [ "$back" -gt 0 ] || { echo "MAP FAILED: no frame within $wait s of the return from the background"; FAIL=1; }
   [ "$firsts" -le 1 ] || { echo "MAP FAILED: the return started the map again ($firsts 'vk first frame' lines)"; FAIL=1; }
