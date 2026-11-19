@@ -8,8 +8,9 @@
 //
 // Whatever a scene holds, stage T must build it or leave it out without failing an invariant, without reading out of
 // bounds and without running without bound: no tag's value, no height and no length may end the process. The pack the
-// writer writes must open, and each tile in it decode. Seeds: fuzz/corpus/fuzz_stage_t (fuzz_load's seeds and crash
-// inputs, a big road's lanes and widths, and every input that crashed it).
+// writer writes must open, and each tile in it decode. The walls and the sun's samples must count the same windows,
+// each window's sample where the walls number it (windows_agree). Seeds: fuzz/corpus/fuzz_stage_t (fuzz_load's seeds
+// and crash inputs, a big road's lanes and widths, and every input that crashed it).
 #include "base/arena.hpp"
 #include "base/assert.hpp"
 #include "fuzz/scenes.hpp"
@@ -38,6 +39,7 @@
 #include "tiles/TileWriter.hpp"
 #include "twin/building/BuildingTile.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -81,6 +83,30 @@ std::optional<tl::Pack> pack_of(const std::vector<tl::TileFill>& cut, const atla
         ATLAS_UNREACHABLE("a pack the writer wrote does not open");
     }
     return std::move(*pack);
+}
+
+/// The walls and the sun's samples count the same windows: a window's sample is found by its place in the tile's
+/// window group, which the walls number (geometry/Walls.cpp's number_windows) and the samples walk again
+/// (sun/Samples.cpp's wall_windows). The group holds as many as the walls' windows, and each windowed wall's, from its
+/// first, are its record's on its edge, in its order (a window's place on its wall as a sample holds it, at most
+/// 0xFFFF). A houseboat cabin's panes have none.
+void windows_agree(const geo::TileBuildings& walls, const atlas::sun::TileSamples& s) {
+    ATLAS_ASSERT(s.windows_first <= s.size() && s.size() - s.windows_first == walls.windows,
+                 "the walls and the sun's samples count different windows");
+    for (const geo::WindowWall& w : walls.window_walls) {
+        if (w.style == geo::WindowStyle::cabin) continue;
+        const geo::Prim& wall = walls.edged.at(w.wall);
+        const geo::BuildingItem& item = walls.items.at(wall.item);
+        const std::uint32_t count = std::uint32_t{w.levels} * w.cols;
+        ATLAS_ASSERT(w.first <= walls.windows && count <= walls.windows - w.first, "a wall's windows past the tile's");
+        for (std::uint32_t k = 0; k < count; ++k) {
+            const std::uint32_t i = s.windows_first + w.first + k;
+            ATLAS_ASSERT(s.kind[i] == atlas::sun::Kind::window &&
+                             s.source[i] == static_cast<atlas::sun::Source>(item.source) && s.owner[i] == item.record &&
+                             s.edge[i] == wall.edge && s.part[i] == std::min<std::uint32_t>(k, 0xFFFFU),
+                         "a window's sample is not the window's");
+        }
+    }
 }
 
 /// Every pass's CPU build of `tile` at ladder `level`, as the residency's passes build it (their kinds any rows).
@@ -131,7 +157,7 @@ void build_tile(const tl::Tile& tile, const tl::RenderHead& head, const tl::Styl
 
     std::vector<atlas::sun::Deck> decks;
     atlas::sun::collect_decks(tile, head, level, decks);
-    (void)atlas::sun::make_tile(tile, head, sun, level, decks);
+    windows_agree(buildings, atlas::sun::make_tile(tile, head, sun, level, decks).samples);
     (void)atlas::sun::tile_tallest(tile, level);
 }
 
