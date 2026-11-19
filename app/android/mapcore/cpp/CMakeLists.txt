@@ -35,6 +35,10 @@ set(ATLAS_EXTRA_TEST_SOURCES "" CACHE STRING "More test sources, compiled into a
 option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's canary; never in a real build)" OFF)
 if(ATLAS_TESTS)
     enable_testing()
+    # A test's hook in one of the core's classes compiles only where the tests are built (#if defined(ATLAS_TESTS)):
+    # never in the app's library, whose build has no tests. Every target of the build sees it, so a class has one
+    # layout in all of them.
+    add_compile_definitions(ATLAS_TESTS)
 endif()
 # At most ATLAS_JOBS of the build's compile, link and shader jobs at once (Ninja's pool atlas_jobs; the Vulkan-Hpp
 # units keep their own pool of two, below), for a build whose Ninja is run by a tool that gives it no -j: Gradle's NDK
