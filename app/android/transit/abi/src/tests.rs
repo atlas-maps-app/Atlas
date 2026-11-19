@@ -400,7 +400,7 @@ fn the_paper_answers_come_through() {
     wished.query.resize(Q_OPTIONS + 1, -1);
     wished.query[Q_OPTIONS] = 1;
     let v = t.plan(&wished);
-    assert_eq!((said(&v), v[A_CUT_SHORT]), (vec![next.clone()], 1));
+    assert_eq!((said(&v), v[A_CUT_SHORT]), (vec![next.clone()], CUT_OPTIONS));
     // from whoever knows the streets: ten minutes on foot to Wacht's A, five from its Z
     let walks = Sent { query: vec![P_WALKS, 0, 0, P_WALKS, 0, 0, 0, hm(7, 45) as i32], from: vec![stop("WA"), 600], to: vec![stop("WZ"), 300], ..Sent::default() };
     let v = t.plan(&walks);
@@ -432,6 +432,7 @@ fn the_paper_answers_come_through() {
 #[test]
 fn an_answer_crosses_whole() {
     let mut seen = [0usize; 6];
+    let mut caps = [0usize; 8];
     for (name, queries) in [("edges.tt", 60_000), ("tiny.tt", 30_000), ("autumn.tt", 30_000), ("utrecht-20261117.tt", 1500)] {
         let b = bytes(name);
         let tt = Timetable::open(&b).unwrap();
@@ -458,10 +459,14 @@ fn an_answer_crosses_whole() {
             let (journeys, head) = received(&v);
             assert_eq!(journeys, own.journeys, "{name}, query {i}: {q:?}");
             let steps_k = own.steps.div_ceil(1000) as i32;
-            assert_eq!(head, [own.journeys.len() as i32, own.cut_short as i32, own.horizon as i32, own.searches as i32, own.labels as i32, steps_k, own.later as i32, 0], "{name}, query {i}: {q:?}");
+            assert_eq!(head, [own.journeys.len() as i32, own.cut_by as i32, own.horizon as i32, own.searches as i32, own.labels as i32, steps_k, own.later as i32, 0], "{name}, query {i}: {q:?}");
             // (what the queries were: enough of each kind for the check to mean something)
             seen[0] += !own.journeys.is_empty() as usize;
             seen[1] += own.cut_short as usize;
+            assert_eq!(own.cut_short, v[A_CUT_SHORT] != 0);
+            for (cap, n) in Answer::CAPS.iter().zip(caps.iter_mut()) {
+                *n += (v[A_CUT_SHORT] & cap.0 as i32 != 0) as usize;
+            }
             seen[2] += !q.wishes.is_empty() as usize;
             seen[3] += matches!(q.from, Place::Walks(_)) as usize + matches!(q.to, Place::Walks(_)) as usize;
             seen[4] += own.journeys.iter().map(|j| j.legs.len()).sum::<usize>();
@@ -470,6 +475,9 @@ fn an_answer_crosses_whole() {
     }
     println!("{seen:?}: answers with journeys, cut short, with wishes, places that are walks, legs, wishes for an area or a kind");
     assert!(seen[0] > 3000 && seen[1] > 300 && seen[2] > 50_000 && seen[3] > 10_000 && seen[4] > 6000 && seen[5] > 30_000, "{seen:?}");
+    // which cap an answer met crosses too, a bit each: the caps these queries meet, by how many answers
+    println!("{:?}", Answer::CAPS.iter().zip(caps.iter()).map(|(cap, n)| (cap.1, *n)).collect::<Vec<_>>());
+    assert!(caps.iter().filter(|n| **n > 0).count() >= 4, "{caps:?}");
 }
 
 /// A query that cannot be read is refused whole: 0, and no answer. Each case here is a query that is planned as it

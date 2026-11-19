@@ -27,7 +27,7 @@ extern "C" {
 #endif
 
 /* The interface's version: atlas_transit_abi() gives the library's, and the two must be equal. */
-#define ATLAS_TRANSIT_ABI 1
+#define ATLAS_TRANSIT_ABI 2
 /* Nothing: no stop, no station, no colour, no such record. */
 #define ATLAS_TRANSIT_NONE (-1)
 /* No day: what ATLAS_TRANSIT_N_DAY_OF gives for a number that is no date. */
@@ -181,7 +181,13 @@ size_t atlas_transit_plan(atlas_transit *t, const int32_t *query, size_t query_l
  *
  * An answer: ATLAS_TRANSIT_A_HEAD numbers, then each journey, by departure. Of the head:
  *   ATLAS_TRANSIT_A_JOURNEYS    how many journeys follow
- *   ATLAS_TRANSIT_A_CUT_SHORT   1: a cap was met, so an option may be missing (or one leaves sooner than it need)
+ *   ATLAS_TRANSIT_A_CUT_SHORT   0: the answer is whole. Else a cap was met, so an option may be missing (or one
+ *                               leaves sooner than it need), and a bit says which, for whoever sets the caps:
+ *                               ATLAS_TRANSIT_CUT_STEPS, _CUT_LABELS, _CUT_MOMENTS (more moments to search from
+ *                               than _Q_DEPARTURES), _CUT_BAG, _CUT_OPTIONS, _CUT_PLACE (a place stood for more
+ *                               stops than a search begins at), _CUT_DAYS (more service days could matter than a
+ *                               search reads), _CUT_CHEAPER (with _CUT_STEPS: they ran out while a boarding read
+ *                               on for a cheaper trip). An app says "cut short" for any of them.
  *   ATLAS_TRANSIT_A_HORIZON     how long past the asked moment journeys were followed, in seconds
  *   ATLAS_TRANSIT_A_SEARCHES, _A_LABELS, _A_STEPS_K, _A_LATER   what the search did, for a timing overlay
  * A journey: ATLAS_TRANSIT_J_HEAD numbers, then its legs:
@@ -256,6 +262,14 @@ size_t atlas_transit_answer(const atlas_transit *t, int32_t *out, size_t cap);
 #define ATLAS_TRANSIT_A_LABELS 4
 #define ATLAS_TRANSIT_A_STEPS_K 5
 #define ATLAS_TRANSIT_A_LATER 6
+#define ATLAS_TRANSIT_CUT_STEPS 1
+#define ATLAS_TRANSIT_CUT_LABELS 2
+#define ATLAS_TRANSIT_CUT_MOMENTS 4
+#define ATLAS_TRANSIT_CUT_BAG 8
+#define ATLAS_TRANSIT_CUT_OPTIONS 16
+#define ATLAS_TRANSIT_CUT_PLACE 32
+#define ATLAS_TRANSIT_CUT_DAYS 64
+#define ATLAS_TRANSIT_CUT_CHEAPER 128
 #define ATLAS_TRANSIT_J_HEAD 6
 #define ATLAS_TRANSIT_J_DEPART 0
 #define ATLAS_TRANSIT_J_ARRIVE 1

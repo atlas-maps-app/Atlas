@@ -125,7 +125,7 @@ mod runtime {
 // equal ([`NAMES`]).
 
 /// The interface's version: a number that changes with any change to what crosses it.
-pub const ABI: u32 = 1;
+pub const ABI: u32 = 2;
 /// Nothing: no stop, no station, no colour.
 pub const NONE: i32 = -1;
 /// No day: not a date.
@@ -259,6 +259,15 @@ pub const A_SEARCHES: usize = 3;
 pub const A_LABELS: usize = 4;
 pub const A_STEPS_K: usize = 5;
 pub const A_LATER: usize = 6;
+// Which caps an answer met, a bit each, in its head at `A_CUT_SHORT`: the planner's own numbers.
+pub const CUT_STEPS: i32 = Answer::STEPS as i32;
+pub const CUT_LABELS: i32 = Answer::LABELS as i32;
+pub const CUT_MOMENTS: i32 = Answer::MOMENTS as i32;
+pub const CUT_BAG: i32 = Answer::BAG as i32;
+pub const CUT_OPTIONS: i32 = Answer::OPTIONS as i32;
+pub const CUT_PLACE: i32 = Answer::PLACE as i32;
+pub const CUT_DAYS: i32 = Answer::DAYS as i32;
+pub const CUT_CHEAPER: i32 = Answer::CHEAPER as i32;
 pub const J_HEAD: usize = 6;
 pub const J_DEPART: usize = 0;
 pub const J_ARRIVE: usize = 1;
@@ -400,6 +409,14 @@ pub const NAMES: &[(&str, i64)] = &[
     ("A_LABELS", A_LABELS as i64),
     ("A_STEPS_K", A_STEPS_K as i64),
     ("A_LATER", A_LATER as i64),
+    ("CUT_STEPS", CUT_STEPS as i64),
+    ("CUT_LABELS", CUT_LABELS as i64),
+    ("CUT_MOMENTS", CUT_MOMENTS as i64),
+    ("CUT_BAG", CUT_BAG as i64),
+    ("CUT_OPTIONS", CUT_OPTIONS as i64),
+    ("CUT_PLACE", CUT_PLACE as i64),
+    ("CUT_DAYS", CUT_DAYS as i64),
+    ("CUT_CHEAPER", CUT_CHEAPER as i64),
     ("J_HEAD", J_HEAD as i64),
     ("J_DEPART", J_DEPART as i64),
     ("J_ARRIVE", J_ARRIVE as i64),
@@ -817,7 +834,7 @@ pub fn read(q: &[i32], from_walks: &[i32], to_walks: &[i32], wishes: &[i32]) -> 
 /// An answer as numbers: its head, then each journey's head and its legs.
 pub fn write(a: &Answer, v: &mut Vec<i32>) {
     let n = |x: u32| x.min(i32::MAX as u32) as i32;
-    let head = [n(a.journeys.len() as u32), a.cut_short as i32, n(a.horizon), n(a.searches), n(a.labels), a.steps.div_ceil(1000).min(i32::MAX as u64) as i32, n(a.later), 0];
+    let head = [n(a.journeys.len() as u32), n(a.cut_by), n(a.horizon), n(a.searches), n(a.labels), a.steps.div_ceil(1000).min(i32::MAX as u64) as i32, n(a.later), 0];
     v.extend(head);
     let spot = |s: Spot| match s {
         Spot::Origin => ORIGIN,

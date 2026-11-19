@@ -1,4 +1,4 @@
-the interface: 1, and the header's: 1
+the interface: 2, and the header's: 2
 thirty bytes of something else: not opened, reason 1
 half the file: not opened, reason 3
 the file: opened, reason 0
