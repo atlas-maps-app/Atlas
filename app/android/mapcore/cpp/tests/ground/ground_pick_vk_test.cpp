@@ -181,7 +181,8 @@ TEST_CASE("ground pick: a tap at the Westerkerk home names the slot whose colour
     ATLAS_REQUIRE(world.has_value());
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
-        if (!std::filesystem::exists(path)) continue;
+        // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+        ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
         ATLAS_REQUIRE(
             (*world)->store().add({.id = name, .kind = tiles::PackKind::bundled, .path = path.string()}).has_value());
     }

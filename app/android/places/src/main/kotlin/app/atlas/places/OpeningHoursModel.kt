@@ -199,6 +199,10 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
             // a start the sun does not make that day, one that never comes (`sunset+` in polar day), never opens (the app
             // maintainer, 18 November 2026, batch 4 B19: it opened at midnight)
             if (a >= 1440 && from.missed(date, sun)) return null
+            // a start by sunrise or dawn is a morning's whatever its minute: to midnight, and all day where the sun does
+            // not set or the light does not go, its rising at midnight (the app maintainer, 18 November 2026, batch 5 A7:
+            // before 04:00, Stockholm's June, it closed at six as a written early start does)
+            if (openEnd && (from.event == SunEvent.SUNRISE || from.event == SunEvent.DAWN)) return a to (a / 1440 + 1) * 1440
             return if (openEnd) a to a + openEndGuess(a) else a to a + 1
         }
         var b = to.resolve(date, sun) ?: return null
@@ -217,7 +221,8 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
          * it begins: before 04:00 to six; from 04:00 to midnight; from 17:00 five hours; from 22:00 to six the next
          * morning. After a stated end (`17:00-01:00+`) the tail is [STATED_TAIL] whatever the hour. (The reviewer, 17
          * November 2026: `18:00-24:00+` read open around the clock; then the app maintainer's rule of 18 November: an
-         * early start was open for minutes, `Mo-Sa 05:30+` till six, and an end after six filled the day.)
+         * early start was open for minutes, `Mo-Sa 05:30+` till six, and an end after six filled the day.) A start by
+         * sunrise or dawn is a morning's whatever its minute, to midnight ([resolve]; batch 5 A7).
          */
         fun openEndGuess(at: Int): Int {
             val m = at % 1440

@@ -9,7 +9,9 @@ import app.atlas.mapview.MapEngine
 import app.atlas.model.OsmId
 import app.atlas.model.Place
 import app.atlas.render.data.Countries
+import app.atlas.search.MemoryPlaces
 import app.atlas.search.PlaceStore
+import app.atlas.services.PackCountries
 import app.atlas.testing.TempFiles
 import app.atlas.testing.testServices
 import app.atlas.ui.mine.offline.RegionFiles
@@ -26,6 +28,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Collections
 
 /**
  * Near a border the country is the pack's that holds the point, before the boxes' (the app maintainer, 18 November 2026,
@@ -48,12 +51,29 @@ class PackCountryTest {
     /** Sluis, in Zeelandic Flanders: with it the Dutch store's box reaches Antwerp, as the real one's does, with none of its places there. */
     private val sluis = LatLon(51.3086, 3.3861)
 
+    /** Lanaken, in Belgium, 5 km north-west of the Vrijthof: under the L12 tile over Maastricht's windows. */
+    private val lanaken = LatLon(50.8931, 5.6472)
+
+    /** Kanne, in Belgium, 4 km south of the Vrijthof, on the border: in both countries' boxes. */
+    private val kanne = LatLon(50.8106, 5.6683)
+
     /** The Netherlands' pack as Atlas publishes it (`packs.json`), its box the extract's, which holds Antwerp too. */
     private val box = BBox(3.08, 50.75, 7.23, 53.7)
     private val published = """
         {"format": 1, "generated": "2026-11-01T00:00:00Z", "packs": [
           {"id": "netherlands", "name": "Netherlands", "country": "NL", "bbox": [3.08, 50.75, 7.23, 53.7],
            "files": [{"kind": "places", "url": "https://example.invalid/netherlands.db.zst", "bytes": 1}]}
+        ]}
+    """.trimIndent()
+
+    /** The Netherlands' pack and Belgium's beside it, as Atlas would publish a second country. */
+    private val belgiumBox = BBox(2.5, 49.4, 6.5, 51.6)
+    private val twoPublished = """
+        {"format": 1, "generated": "2026-11-01T00:00:00Z", "packs": [
+          {"id": "netherlands", "name": "Netherlands", "country": "NL", "bbox": [3.08, 50.75, 7.23, 53.7],
+           "files": [{"kind": "places", "url": "https://example.invalid/netherlands.db.zst", "bytes": 1}]},
+          {"id": "belgium", "name": "Belgium", "country": "BE", "bbox": [2.5, 49.4, 6.5, 51.6],
+           "files": [{"kind": "places", "url": "https://example.invalid/belgium.db.zst", "bytes": 1}]}
         ]}
     """.trimIndent()
 
@@ -124,9 +144,9 @@ class PackCountryTest {
         val s = testServices(root = root)
         assertEquals("no region downloaded", 0, s.placeStores.size)
         MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
-        // the tiles' index: the Dutch towns' windows are listed, Antwerp's are not
-        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon ->
-            c.id == "netherlands" && towns.any { Geo.distance(it, LatLon(lat, lon)) < 5_000.0 }
+        // the tiles' index in memory: the Dutch towns' windows are listed, Antwerp's are not
+        s.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            if (id == "netherlands" && towns.any { Geo.distance(it, LatLon(lat, lon)) < 5_000.0 }) 14 else 0
         }
         val zone = ZoneId.of("Europe/Amsterdam")
         for (t in towns) {
@@ -137,9 +157,90 @@ class PackCountryTest {
         // the main thread reads the same, from what is known without a store or a file
         for (t in towns) assertEquals("$t", "NL", HereContext.regionNow(s, t).country)
         assertEquals("BE", HereContext.regionNow(s, antwerp).country)
-        // a country whose tiles' index is not on the phone yet says nothing by its box
-        MapEngine.countryHolds = MapEngine.CountryHolds { _, _, _ -> null }
+        // a country whose tiles' index is not in memory yet says nothing by its box
+        s.packCountries.tiles = PackCountries.Tiles { _, _, _ -> null }
         assertFalse("by the box alone", HereContext.region(s, maastricht).country == "NL")
+        s.close()
+    }
+
+    /**
+     * The country question reads the tiles' indexes in memory and never has one read or fetched (the app maintainer, 18
+     * November 2026, batch 5 A3): asked where a published country's index is not in memory, it asks the map's own hook
+     * nothing (MapData's, which has the index downloaded, 1.5 MB for the Netherlands, where only the camera asked
+     * before), and the boxes say.
+     */
+    @Test
+    fun aCountryWhoseTilesIndexIsNotInMemoryIsAskedForNothingAndTheBoxesSay() {
+        val root = TempFiles.dir("atlas-border")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        // a region whose one place names no country, of no pack: the regions say none, so their state's reading asks too
+        val around = MemoryPlaces(listOf(Place(OsmId.parse("n9301")!!, LatLon(venlo.lat + 0.001, venlo.lon), mapOf("shop" to "bakery"))), country = null)
+        val s = testServices(root = root, stores = listOf(around))
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        // the map's own hook as MapData answers it before the index is in memory: null, having started its download
+        val asked = Collections.synchronizedList(ArrayList<String>())
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, _, _ -> asked += c.id; null }
+        val zone = ZoneId.of("Europe/Amsterdam")
+        for (t in towns + antwerp) {
+            assertEquals("$t", Countries.of(t), HereContext.region(s, t).country)
+            assertEquals("$t", Countries.of(t), HereContext.regionNow(s, t).country)
+            assertEquals("$t", Countries.of(t), HereContext.hours(s, t, zone).country)
+            HereContext.localeAt(s, t, maastricht, zone)
+        }
+        assertEquals("the country question asked for a tiles' index", emptyList<String>(), asked)
+        s.close()
+    }
+
+    /**
+     * How finely two countries' tiles' indexes list a point by these towns: the Netherlands' window at Maastricht and its
+     * L12 tile over Lanaken and Kanne, Belgium's window at Lanaken and its L12 tile over Maastricht and Kanne; nothing
+     * elsewhere; null for a country in [unread], whose index is not in memory.
+     */
+    private fun level(id: String, lat: Double, lon: Double, unread: Set<String>): Int? {
+        if (id in unread) return null
+        val p = LatLon(lat, lon)
+        return when {
+            Geo.distance(maastricht, p) < 1_000.0 -> if (id == "netherlands") 14 else 12
+            Geo.distance(lanaken, p) < 1_000.0 -> if (id == "belgium") 14 else 12
+            Geo.distance(kanne, p) < 1_000.0 -> 12
+            else -> 0
+        }
+    }
+
+    /**
+     * Where two countries' tiles hold a point, the finer tile says whose it is, then the boxes (the app maintainer, 18
+     * November 2026, batch 5 A3): a level-12 tile spans a border, Maastricht's holds Lanaken, so the first country in the
+     * list whose tiles hold the point is no answer. Where a country whose box holds the point has no index in memory, a
+     * level tile of the other's says nothing; its window still does.
+     */
+    @Test
+    fun whereTwoCountriesTilesHoldAPointTheFinerTileSaysThenTheBoxes() {
+        val root = TempFiles.dir("atlas-border")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(twoPublished)
+        val s = testServices(root = root)
+        assertEquals("BE", Countries.of(lanaken))
+        var unread = emptySet<String>()
+        s.packCountries.tiles = PackCountries.Tiles { id, lat, lon -> level(id, lat, lon, unread) }
+        // the map's own hook has an index fetched where it is not in memory: the country question never asks it
+        MapEngine.countryHolds = MapEngine.CountryHolds { _, _, _ -> error("the country question asked the camera's hook") }
+        val nl = CountryTiles("netherlands", "Netherlands", box, levels = true)
+        val be = CountryTiles("belgium", "Belgium", belgiumBox, levels = true)
+        for (order in listOf(listOf(nl, be), listOf(be, nl))) {
+            MapEngine.countries = order
+            val ids = order.map { it.id }
+            unread = emptySet()
+            // each town its own country's window's, not the other's level tile across the border
+            assertEquals("$ids", "NL", HereContext.region(s, maastricht).country)
+            assertEquals("$ids", "BE", HereContext.region(s, lanaken).country)
+            assertEquals("$ids", "BE", HereContext.regionNow(s, lanaken).country)
+            // two level tiles alike: the boxes say
+            assertEquals("$ids", Countries.of(kanne), HereContext.region(s, kanne).country)
+            // Belgium's index not in memory: the Netherlands' window still says Maastricht; its level tile over Lanaken,
+            // which Belgium's windows may hold, says nothing
+            unread = setOf("belgium")
+            assertEquals("$ids", "NL", HereContext.region(s, maastricht).country)
+            assertEquals("$ids", "BE", HereContext.region(s, lanaken).country)
+        }
         s.close()
     }
 }

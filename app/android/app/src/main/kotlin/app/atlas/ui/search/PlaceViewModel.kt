@@ -153,7 +153,7 @@ class PlaceViewModel(
         val brand = Brands.forTags(p.tags, mutable.value.country) ?: return
         val site = withContext(Dispatchers.IO) {
             val branches = runCatching { services.placeStores.byBrand(listOf(brand.id), BBox.around(p.location, 50_000.0), 300) }.getOrDefault(emptyList())
-            BrandSite.of(branches.filter { it.place.key != p.key }.map { it.tags }, mutable.value.country)
+            BrandSite.of(branches.filter { it.place.key != p.key }.map { it.tags }, mutable.value.country, brand.brand)
         }
         if (site != null) mutable.update { it.copy(brandSite = site) }
     }

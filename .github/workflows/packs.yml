@@ -148,6 +148,10 @@ jobs:
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "The packer's tool: the core's stage P"
         # The windows' boxes are the core's own (load::window_box, which the phone asks Overpass for): `packer windows`
         # reads them from the core's stage P tool, built as the renders job builds it, before "Make room" takes the SDK.
@@ -215,6 +219,8 @@ jobs:
           # the house numbers OpenStreetMap lacks, from OpenAddresses' public tiles (a fill that fails keeps the pack as it is)
           ARGS=(--name "$NAME" --addresses "$BBOX")
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
+          # the region's country: a place's brand is matched there where its own tags and addresses name none
+          if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
           app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}"
           df -h "$WORK"
       - name: Region pack
@@ -385,6 +391,10 @@ jobs:
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "The packer's tool: the core's stage P"
         # The render packs are cut by the core's stage P (mapcore/cpp/stagep), the code the phone builds its windows
         # with, as android.yml cuts the APK's bundled tiles: built alone (the host-stagep preset: no slangc, Vulkan or

@@ -122,6 +122,7 @@ pub fn query(tt: &Timetable, rng: &mut Rng) -> Query {
     q.walk_mm_s = [1250, 0, rng.word()][rng.below(3) as usize];
     q.change_s = [None, Some(0), Some(rng.word())][rng.below(3) as usize];
     q.rules = rng.below(4) != 0;
+    q.weigh = rng.below(4) != 0;
     q.limits = Limits { labels: 20_000, steps: 400_000, departures: [64, 1, rng.word()][rng.below(3) as usize], bag: rng.below(6) as u32, options: 1 + rng.below(8) as u32, horizon: [86_400, 0, rng.word()][rng.below(3) as usize], patient: rng.below(3) != 0 };
     for _ in 0..rng.below(4) {
         let how = match rng.below(3) {

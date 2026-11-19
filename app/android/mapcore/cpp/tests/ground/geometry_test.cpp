@@ -9,6 +9,7 @@
 #include "sun/Hulls.hpp"
 #include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
+#include "tests/load/westerkerk.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 
@@ -503,13 +504,10 @@ TEST_CASE("ground: on every tile of the bundled packs, the swept hulls cover the
     }
 }
 
-TEST_CASE("ground: the bundled Westerkerk's check is the host build's") {
-    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
-    if (dir.empty()) {
-        MESSAGE("ATLAS_TILES_DIR is not set: the real packs are not checked here");
-        return;
-    }
-    auto pack = atlas::test::open_pack((std::filesystem::path(dir) / "amsterdam.atlas").string());
+TEST_CASE("ground: the Westerkerk's check, over the app's pack the core cuts, is the host build's") {
+    const std::string westerkerk = atlas::test::westerkerk_core_pack();
+    ATLAS_REQUIRE(!westerkerk.empty(), "the Westerkerk's pack is made");
+    auto pack = atlas::test::open_pack(westerkerk);
     ATLAS_REQUIRE(pack.has_value(), "the pack opens");
     const auto t0 = std::chrono::steady_clock::now();
     const std::string line = geo::ground_line(*pack);

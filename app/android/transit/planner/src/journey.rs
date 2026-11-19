@@ -48,7 +48,9 @@ impl Leg {
 /// One way to make the journey.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Journey {
-    /// When to leave the origin at the latest, and when it reaches the destination.
+    /// When to leave the origin, and when it reaches the destination. Asked for one moment, the departure is the
+    /// latest that makes this arrival with no more rides (and at no more cost in wishes); asked to arrive by, the
+    /// arrival is the earliest that this departure gives. Over a window each option is a journey as it runs.
     pub depart: i32,
     pub arrive: i32,
     pub rides: u32,

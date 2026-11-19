@@ -21,6 +21,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Toolchains)
 include(Warnings)
 include(Sanitizers)
+include(Rust)
 include(Tidy)
 include(Shaders)
 include(Data)
@@ -166,24 +167,28 @@ list(FILTER _jni_test_sources INCLUDE REGEX "/Test[^/]*\\.cpp$")
 
 # Stage P (ENGINE.md step 3): OpenStreetMap's data into render tiles, for the phone's windows and the packer alike:
 # pymath, the Overpass reader, the loads and the cut, the tiles' reader and writer, the text's case and code points, the
-# roofs' shapes and the palette (the slots a building's colours go with). Its objects are a library of their own
-# (atlas_stage_p), in the core and in the packer's tool, which links nothing else: no Vulkan, shaders or HarfBuzz.
+# roofs' shapes, the buildings' seams and the palette (the slots a building's colours go with); and the buildings'
+# cleaning, a Rust library (cmake/Rust.cmake). Its objects are a library of their own (atlas_stage_p), in the core and
+# in the packer's tool, which links nothing else: no Vulkan, shaders or HarfBuzz.
 set(_stage_p_sources "")
 foreach(area IN ITEMS base/pymath osm load tiles)
     file(GLOB_RECURSE _found CONFIGURE_DEPENDS "${area}/*.cpp" "${area}/*.c")
     list(APPEND _stage_p_sources ${_found})
 endforeach()
+# a big road's size (geometry/BigRoad.hpp), which stage T draws it with and stage P pads its box by
+list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/geometry/BigRoad.cpp")
 list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/text/Utf8.cpp"
-     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
+     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/geometry/Seams.cpp"
+     "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
 list(REMOVE_ITEM _core_sources ${_stage_p_sources})
 
-# What stage P's code links: dialect, warnings, sanitizers, zstd, and the generated headers under the build directory
-# (gen/data/*: the style file and the traditions).
+# What stage P's code links: dialect, warnings, sanitizers, zstd, the buildings' cleaning, and the generated headers
+# under the build directory (gen/data/*: the style file and the traditions).
 find_package(Threads REQUIRED)
 add_library(atlas_stage_p_requirements INTERFACE)
 target_include_directories(atlas_stage_p_requirements INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
 target_link_libraries(atlas_stage_p_requirements INTERFACE
-    atlas_options atlas_warnings atlas_sanitizers atlas_zstd Threads::Threads)
+    atlas_options atlas_warnings atlas_sanitizers atlas_zstd atlas_clean Threads::Threads)
 if(ATLAS_ANDROID)
     target_link_libraries(atlas_stage_p_requirements INTERFACE log android)
 else()
@@ -320,8 +325,11 @@ if(ATLAS_TESTS)
     # ground/ripple_vk_test and frame/map_frame_vk_test 11 each, frame/composite_vk_test 9 under TSan: their cases one a
     # part (each opens its own session, so a process apiece costs little); buildings_vk_test's tenth part its three
     # short cases, a case added since (the guessed roofs' shapes, 3 November) a part after them.
+    # frame/world_vk_test took 23 to 26 minutes on x86_64 once its world's cases had ATLAS_WORLD_DIR (18 November): its
+    # first four cases a part (the zoom to 100 km 5 of their 6 minutes), the three fades of about 4 minutes one a part,
+    # then the next four and the rest, each 2 to 7 minutes.
     set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1,3" "frame/map_frame_vk_test=1,1,1,1,1,1,1,1"
-        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1")
+        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1" "frame/world_vk_test=4,1,1,1,4")
     set(_test_patterns "")
     set(_test_entries "")
     foreach(source IN LISTS _test_sources _test_vulkan_sources)
@@ -386,6 +394,12 @@ if(ATLAS_TESTS)
     add_test(NAME atlas_tests_split COMMAND "${CMAKE_COMMAND}" "-DATLAS_TESTS_EXE=$<TARGET_FILE:atlas_tests>"
         "-DATLAS_TESTS_SPLIT=${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestSplit.cmake")
     set_tests_properties(atlas_tests_rest atlas_tests_split PROPERTIES LABELS atlas_tests)
+    # the buildings' cleaning's own tests (rust/clean, cargo's), built in a folder of their own
+    if(ATLAS_HOST)
+        add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests" --
+                 "${ATLAS_CARGO}" test --offline --locked --quiet --features std WORKING_DIRECTORY "${ATLAS_RUST_DIR}/clean")
+        set_tests_properties(rust/clean PROPERTIES LABELS "atlas_tests;load")
+    endif()
 endif()
 if(ATLAS_BENCH)
     add_subdirectory(bench)

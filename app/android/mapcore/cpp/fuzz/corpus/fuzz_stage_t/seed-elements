@@ -1,0 +1,11 @@
+{"version": 0.6, "generator": "Overpass API", "osm3s": {"copyright": "OpenStreetMap"},
+"elements": [
+{"type": "node", "id": 42, "lat": 52.3740123, "lon": 4.884, "tags": {"natural": "tree", "height": "12"}},
+{"type": "node", "id": 43, "lat": 52, "lon": -0},
+{"type": "way", "id": 900000000001, "bounds": {"minlat": 52.0, "minlon": 4.0, "maxlat": 53.0, "maxlon": 5.0},
+ "nodes": [42, 43, 42], "geometry": [{"lat": 52.3740123, "lon": 4.884}, {"lat": -0.0, "lon": 1e-7}, {"lat": 52.3740123, "lon": 4.884}],
+ "tags": {"building": "yes", "name": "Café \"De Kat\"", "note": "😀 \/ \t"}},
+{"type": "relation", "id": 7, "members": [{"type": "way", "ref": 900000000001, "role": "outer", "geometry": [{"lat": 1.5, "lon": 2.5}]},
+ {"type": "node", "ref": 42, "role": "label", "lat": 52.3740123, "lon": 4.884}], "tags": {"type": "multipolygon"}},
+{"type": "area", "id": 3600000007, "tags": null}
+]}

@@ -1,0 +1,7 @@
+{"version": 0.6, "generator": "Overpass API", "osm3s": {"copyright": "OpenStreetMap"},
+"elements": [
+{"type": "way", "id": 20, "tags": {"natural": "water"}, "geometry": [
+ {"lat": 52.3745, "lon": 4.884}, {"lat": 50.0, "lon": 4.884}, {"lat": 50.0, "lon": 5.884}, {"lat": 52.3745, "lon": 4.884}]},
+{"type": "way", "id": 21, "tags": {"natural": "water"}, "geometry": [
+ {"lat": 52.3741, "lon": 4.8842}, {"lat": -52.3741, "lon": 4.8842}, {"lat": 52.3741, "lon": 4.8845}, {"lat": 52.3741, "lon": 4.8842}]}
+]}

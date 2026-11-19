@@ -74,6 +74,7 @@
     <string name="ask_route_all">Itinéraire par chaque arrêt</string>
     <string name="place_wiki_open">Lire l’article</string>
     <string name="place_wiki_none">L’article ne peut pas être lu pour l’instant</string>
+    <string name="place_wiki_off">Wikipédia est désactivé dans Sources de données et clés</string>
     <string name="place_wiki_minutes">%1$d minutes de lecture</string>
     <string name="place_wiki_licence">Texte de Wikipédia, CC BY-SA</string>
     <string name="place_wiki_read">Lire sur Wikipédia</string>

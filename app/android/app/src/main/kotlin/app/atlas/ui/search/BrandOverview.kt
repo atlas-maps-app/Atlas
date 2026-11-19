@@ -209,9 +209,9 @@ internal fun BrandDetails(
     var reading by remember { mutableStateOf(false) }
     // its branches' own websites say the brand's first ([BrandSite]), in the country of the map where they are, its
     // Wikidata item's after
-    val site = remember(results, wiki, country) {
+    val site = remember(results, wiki, country, brand.id) {
         val tags = results?.hits?.map { it.record.tags }.orEmpty()
-        webUrl(BrandSite.of(tags, country) ?: wiki?.website)
+        webUrl(BrandSite.of(tags, country, brand.brand) ?: wiki?.website)
     }
     val article = wiki?.let { e -> langs.firstNotNullOfOrNull { l -> e.sitelinks["${l}wiki"]?.let { l to it } } }
     val every = everyBranch(brand, lang)

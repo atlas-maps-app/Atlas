@@ -56,6 +56,13 @@ data class SearchContext(
      * café in Berlin searched from Paris). Unknown where not given, and the address street first then.
      */
     val countryAt: (LatLon) -> String? = { null },
+    /**
+     * The country of the downloaded region a hit is a place of (the app's `HereContext.regionOf`), each region asked
+     * once: null where it is none, and [countryAt] says (the app maintainer, 18 November 2026, batch 5 A6: each hit that
+     * named no country asked the country at its point, for each kilometre cell a 2 km query of the regions, the region's
+     * file and a covers query, before the results showed: about a second at a first search across the Netherlands).
+     */
+    val countryOf: (PlaceRecord) -> String? = { null },
 )
 
 /** A search the user made before. */
@@ -727,8 +734,9 @@ class SearchEngine(
         val r = h.record
         val preset = r.preset?.let { Presets.byId(it) }
         val kindName = preset?.name(ctx.lang) ?: r.category?.let { Categories.byId(it)?.name(ctx.lang) }
-        // as its own country writes it: the one it names, else the country of the map at it, never the searcher's
-        val address = Localise.address(r.tags, r.tags["addr:country"]?.takeIf { it.isNotBlank() } ?: ctx.countryAt(r.location))
+        // as its own country writes it: the one it names, else its region's, else the country of the map at it, never
+        // the searcher's
+        val address = Localise.address(r.tags, r.tags["addr:country"]?.takeIf { it.isNotBlank() } ?: ctx.countryOf(r) ?: ctx.countryAt(r.location))
         // A place with no name nor address is titled by what it is ("Gift Shop"), and no line repeats it ("Gifts")
         val title = r.name(ctx.lang) ?: address ?: preset?.fullName(ctx.lang) ?: kindName ?: r.place.key
         val said = title == kindName || title == preset?.fullName(ctx.lang)

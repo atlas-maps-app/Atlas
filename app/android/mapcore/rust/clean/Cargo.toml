@@ -1,0 +1,35 @@
+# The buildings' cleaning for the core's stage P (src/lib.rs), linked into the core as a static library by
+# cpp/cmake/Rust.cmake. The standard library only: a crate from the network is a fetch, and CMake never downloads.
+[package]
+name = "atlas_clean"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# the standard library, for the examples (the tests have it anyway); the library linked into the core is no_std
+std = []
+
+[[example]]
+name = "footprints"
+required-features = ["std"]
+
+[profile.release]
+# small and whole: one unit, LTO over the crate and the standard library it calls, no unwinding (a panic aborts, as
+# the core's asserts do), no debug info
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = "debuginfo"
+overflow-checks = false
+incremental = false
+
+[profile.dev]
+panic = "abort"
+

@@ -116,6 +116,37 @@ class TextAndNamesTest {
         assertEquals("Prinsengracht 263 A, Amsterdam", Localise.address(nl, "NL"))
     }
 
+    /**
+     * A unit of one letter joins its number where the number comes before the street: "10A Downing Street", not "A, 10
+     * Downing Street" (the app maintainer, 18 November 2026, batch 5 B11). A longer unit stays before the street there,
+     * and where the street comes first after the number, as before.
+     */
+    @Test
+    fun aUnitOfOneLetterJoinsItsNumber() {
+        val gb = mapOf("addr:street" to "Downing Street", "addr:housenumber" to "10", "addr:unit" to "A", "addr:city" to "London")
+        assertEquals("10A Downing Street, London", Localise.address(gb, "GB"))
+        assertEquals("10A Downing Street, London", Localise.address(gb, "IE"))
+        val fr = mapOf("addr:street" to "Rue de Rivoli", "addr:housenumber" to "12", "addr:unit" to "B", "addr:postcode" to "75004", "addr:city" to "Paris")
+        assertEquals("12B Rue de Rivoli, 75004 Paris", Localise.address(fr, "FR"))
+        assertEquals("12B Rue de Rivoli, 75004 Paris", Localise.address(fr, "LU"))
+        assertEquals("Flat 2, 10 Downing Street, London", Localise.address(gb + ("addr:unit" to "Flat 2"), "GB"))
+        assertEquals("Downing Street 10 A, London", Localise.address(gb, "NL"))
+    }
+
+    /**
+     * A unit joins only a number of digits alone: with "10A" or "10-12" it would read as another number, "10AB" or
+     * "10-12A", so it stays before the street line there, as before (batch 5 B11); with no number there is nothing to
+     * join.
+     */
+    @Test
+    fun aUnitJoinsOnlyANumberOfDigitsAlone() {
+        val gb = mapOf("addr:street" to "Downing Street", "addr:housenumber" to "10A", "addr:unit" to "B", "addr:city" to "London")
+        assertEquals("B, 10A Downing Street, London", Localise.address(gb, "GB"))
+        assertEquals("A, 10-12 Downing Street, London", Localise.address(gb + mapOf("addr:housenumber" to "10-12", "addr:unit" to "A"), "GB"))
+        assertEquals("A, Downing Street, London", Localise.address(gb - "addr:housenumber" + ("addr:unit" to "A"), "GB"))
+        assertEquals("Flat 2, 10 Downing Street, London", Localise.address(gb + mapOf("addr:housenumber" to "10", "addr:unit" to "Flat 2"), "GB"))
+    }
+
     @Test
     fun compatibilityFormsAndLanguageSubtags() {
         assertEquals("cafe", Text.fold("ｃａｆｅ"))

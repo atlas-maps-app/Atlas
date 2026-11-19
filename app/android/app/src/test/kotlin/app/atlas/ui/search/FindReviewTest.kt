@@ -123,6 +123,66 @@ class FindReviewTest {
         assertEquals(ZoneId.of("Europe/Madrid"), zoneOf(LatLon(42.8782, -8.5448), "ES", vigo, ZoneId.of("Europe/Madrid")))
     }
 
+    /**
+     * A far place in a country of several clocks is read by the sun's hour there, as on 38ddafa1 (the app maintainer, 18
+     * November 2026, batch 5 A8): the engine's table cuts them by longitude, or gives them one zone, and put Halifax and
+     * Moncton on Toronto's clock, St John's on Halifax's, Manaus, Cuiabá and Porto Velho on São Paulo's, Rio Branco two
+     * hours off, Tijuana and Mexicali on Mexico City's, Nashville and Birmingham on New York's, Kaliningrad on Moscow's,
+     * Broken Hill on Sydney's and Easter Island on Santiago's. None reads further off than on 38ddafa1, in January or in
+     * July; a country of one clock keeps it (Madrid, Lisbon, Shanghai), and the islands theirs.
+     */
+    @Test
+    fun aFarPlaceIsReadNoFurtherOffThanBefore() {
+        val jan = java.time.Instant.parse("2026-01-15T12:00:00Z")
+        val jul = java.time.Instant.parse("2026-07-15T12:00:00Z")
+        // 38ddafa1's guess, for every country: its zone nearest the sun's hour at [lon], by standard offset at [at]
+        fun before(country: String, lon: Double, at: java.time.Instant): ZoneId {
+            val sun = lon / 15.0
+            val ids = android.icu.util.TimeZone.getAvailableIDs(country).filter { runCatching { ZoneId.of(it) }.isSuccess }
+            return ids.minByOrNull { id -> kotlin.math.abs(ZoneId.of(id).rules.getStandardOffset(at).totalSeconds / 3600.0 - sun) }?.let { ZoneId.of(it) }
+                ?: java.time.ZoneOffset.ofHours(kotlin.math.round(sun).toInt())
+        }
+        fun off(z: ZoneId, right: ZoneId, at: java.time.Instant) = kotlin.math.abs(z.rules.getOffset(at).totalSeconds - right.rules.getOffset(at).totalSeconds)
+        val far = listOf(
+            Triple("America/Halifax", "CA", LatLon(44.6488, -63.5752)),
+            Triple("America/Moncton", "CA", LatLon(46.0878, -64.7782)),
+            Triple("America/St_Johns", "CA", LatLon(47.5615, -52.7126)),
+            Triple("America/Manaus", "BR", LatLon(-3.1190, -60.0217)),
+            Triple("America/Cuiaba", "BR", LatLon(-15.6014, -56.0979)),
+            Triple("America/Porto_Velho", "BR", LatLon(-8.7612, -63.9004)),
+            Triple("America/Rio_Branco", "BR", LatLon(-9.9754, -67.8249)),
+            Triple("America/Tijuana", "MX", LatLon(32.5149, -117.0382)),
+            Triple("America/Tijuana", "MX", LatLon(32.6245, -115.4523)),
+            Triple("America/Chicago", "US", LatLon(36.1627, -86.7816)),
+            Triple("America/Chicago", "US", LatLon(33.5186, -86.8104)),
+            Triple("Europe/Kaliningrad", "RU", LatLon(54.7104, 20.4522)),
+            Triple("Australia/Broken_Hill", "AU", LatLon(-31.9539, 141.4539)),
+            Triple("Pacific/Easter", "CL", LatLon(-27.15, -109.4333)),
+            Triple("Europe/Madrid", "ES", LatLon(40.4168, -3.7038)),
+            Triple("Europe/Lisbon", "PT", LatLon(41.1496, -8.6110)),
+            Triple("Asia/Shanghai", "CN", LatLon(30.6586, 104.0647)),
+        )
+        val worse = ArrayList<String>()
+        for ((right, country, at) in far) for (i in listOf(jan, jul)) {
+            val r = ZoneId.of(right)
+            val now = PlaceZone.guess(country, at, i)
+            val was = before(country, at.lon, i)
+            if (off(now, r, i) > off(was, r, i)) worse += "$right ($country $at) on $i: $now, where 38ddafa1 read $was"
+        }
+        assertEquals("further off than on 38ddafa1", emptyList<String>(), worse)
+        // a country of one clock keeps it exactly, and the islands theirs
+        assertEquals(ZoneId.of("Europe/Madrid"), PlaceZone.guess("ES", LatLon(40.4168, -3.7038), jan))
+        assertEquals(ZoneId.of("Europe/Lisbon"), PlaceZone.guess("PT", LatLon(41.1496, -8.6110), jan))
+        assertEquals(ZoneId.of("Asia/Shanghai"), PlaceZone.guess("CN", LatLon(30.6586, 104.0647), jan))
+        assertEquals(ZoneId.of("Atlantic/Canary"), PlaceZone.guess("ES", LatLon(28.1235, -15.4363), jan))
+        assertEquals(ZoneId.of("Atlantic/Azores"), PlaceZone.guess("PT", LatLon(37.7412, -25.6756), jan))
+        // over the border from Los Angeles (200 km), the phone's country another: Mexico's clock there, not Mexico City's
+        val s = testServices()
+        val tijuana = Place(OsmId(OsmType.NODE, 9_300L), LatLon(32.5149, -117.0382), mapOf("name" to "X", "addr:country" to "MX"))
+        val seen = HereContext.localeOf(s, tijuana, LatLon(34.0522, -118.2437), ZoneId.of("America/Los_Angeles")).zone
+        for (i in listOf(jan, jul)) assertEquals("$i", ZoneId.of("America/Tijuana").rules.getOffset(i), seen.rules.getOffset(i))
+    }
+
     @Test
     fun aFailedNoteLeavesItsQuestionOpenToAskAgain() {
         val place = Place(OsmId.parse("n9")!!, LatLon(52.37, 4.88), mapOf("name" to "X", "amenity" to "cafe"))

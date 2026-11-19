@@ -20,6 +20,7 @@ import app.atlas.Services
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.nav.LocalServices
+import app.atlas.services.LayeredPlaceFinder
 import app.atlas.services.NearbyPlaces
 import app.atlas.services.PlaceOrigin
 import java.util.Locale
@@ -54,11 +55,7 @@ fun NearbyList(
     var failed by remember(categoryId, centre) { mutableStateOf<String?>(null) }
     LaunchedEffect(categoryId, centre) {
         runCatching {
-            services.places.nearby(categoryId, centre, radiusM, limit).collect { r ->
-                val prev = state
-                // a failure that holds no place keeps what was shown, with what went wrong
-                state = if (r.error != null && r.places.isEmpty() && prev != null && prev.places.isNotEmpty()) prev.copy(error = r.error) else r
-            }
+            services.places.nearby(categoryId, centre, radiusM, limit).collect { r -> state = shownAfter(state, r, centre, limit) }
         }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it else failed = it.message ?: it.toString() }
         if (state == null && failed == null) state = NearbyPlaces(emptyList(), PlaceOrigin.PACK)
     }
@@ -91,5 +88,24 @@ fun NearbyList(
                 Spacer(Modifier.height(8.dp))
             }
         }
+    }
+}
+
+/**
+ * What [NearbyList] shows after the answer [r], having shown [shown] around [centre]: an answer given whole, by Overpass
+ * or a region's store, as it is; a part from the packs, or a failure, with every place shown before it, nearest first,
+ * at most [limit], and what went wrong (the app maintainer, 18 November 2026, batch 5 B13: a failed answer that held a
+ * place was shown as it was, though it could hold fewer than what was shown: the windows read again after another
+ * lookup had let some of them go, or the packs' part alone where the windows did not read). So what is shown never
+ * shrinks but for an answer given whole; a failure that holds no place keeps what was shown, as before.
+ */
+internal fun shownAfter(shown: NearbyPlaces?, r: NearbyPlaces, centre: LatLon, limit: Int): NearbyPlaces {
+    if (shown == null || shown.places.isEmpty() || r.error == null && r.source != PlaceOrigin.PACK) return r
+    val keys = r.places.mapTo(HashSet()) { it.key }
+    val kept = shown.places.filter { it.key !in keys }
+    return when {
+        kept.isEmpty() -> r
+        r.places.isEmpty() -> shown.copy(error = r.error)
+        else -> r.copy(places = LayeredPlaceFinder.nearest(r.places + kept, centre, limit))
     }
 }

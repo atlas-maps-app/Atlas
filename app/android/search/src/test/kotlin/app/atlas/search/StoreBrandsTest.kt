@@ -98,6 +98,25 @@ class StoreBrandsTest {
     }
 
     /**
+     * By `brand` a store's place names a chain only where one chain bears that name, by `brand:wikidata` that item's
+     * alone (the app maintainer, 18 November 2026, batch 5 B10): `brand=Coop` in a Belgian store made each of the
+     * eleven chains named Coop trade in Belgium, so a supermarket there named only "Coop" became Coop Italia's.
+     */
+    @Test
+    fun aNameManyChainsBearNamesNoneOfThem() {
+        val brussels = LatLon(50.8467, 4.3525)
+        val near = LatLon(brussels.lat + 0.002, brussels.lon)
+        val coop = mapOf("shop" to "supermarket", "name" to "Coop")
+        val tagged = place(brussels, coop + ("brand" to "Coop"))
+        val named = place(near, coop)
+        store(street(brussels, "BE") + tagged + named).use { s -> assertNull(s.get(named.id!!)!!.brand) }
+        // by its item, Coop Switzerland's, the supermarket named only "Coop" is that item's
+        val item = place(brussels, coop + ("brand:wikidata" to "Q432564"))
+        val swiss = place(near, coop)
+        store(street(brussels, "BE") + item + swiss).use { s -> assertEquals("coop-36e991", s.get(swiss.id!!)!!.brand) }
+    }
+
+    /**
      * What the store's own places bring back or change over the fixtures written as one store, as a pack is: the
      * places whose chain in the store is not the one their tags give in the Netherlands, a chain whose list leaves the
      * Netherlands out matched by name alone. Printed for the report, by name; Hope, Pastini, MOS and Black, which their

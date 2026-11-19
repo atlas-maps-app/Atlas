@@ -176,7 +176,7 @@ inline constexpr Sun bundled_sun{.x = std::bit_cast<double>(0xBFE3'702C'8755'BB0
 [[nodiscard]] tiles::Result<std::uint64_t> bundled_check(const tiles::Pack& pack);
 
 /// The host build's hash of the bundled check.
-inline constexpr std::uint64_t bundled_check_expected = 0x2BE1'DA13'70C7'1615ULL;
+inline constexpr std::uint64_t bundled_check_expected = 0x538B'B90B'B4F0'7E41ULL;
 
 /// `sun <hash> ok`, or `sun <hash> FAIL expected <hash>` (with the march check's hash when that one failed too), or
 /// `sun unavailable: <why>`, for the bundled pack in `pack`.

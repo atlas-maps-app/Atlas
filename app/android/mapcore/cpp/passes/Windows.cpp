@@ -390,7 +390,9 @@ void Buildings::write_window_jobs(std::uint32_t slot, const frame::FrameState& s
                 const std::uint32_t first = i;
                 while (i < run.end && i - first < job_size && decided(i)) ++i;
                 const std::uint32_t n = i - first;
-                if (records + (b.window_at[first + n] - b.window_at[first]) + n > max_windows) {
+                // the job's records (its windows and at most a pane of glazing a wall) counted in 64 bits: up to 64
+                // walls of 4,095 levels and 65,535 bays each pass 32
+                if (std::uint64_t{records} + b.windows_of(first, n) + n > max_windows) {
                     if (!windows_capped_) {
                         log::warn("vk buildings: a frame's windows pass {}: the farther ones are left out",
                                   max_windows);
