@@ -239,6 +239,16 @@ JNIEXPORT jboolean JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_theme(J
     return JNI_TRUE;
 }
 
+/// Pictures only (branch `pictures`, never to land): the user's palette from now on (a palette block as
+/// PaletteBlock.kt writes it, as the Bridge's native_palette hands it to the map); "" or why it was refused.
+JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_palette(JNIEnv* env, jclass /*unused*/,
+                                                                                jlong handle, jobject palette) {
+    const auto block = style::read_palette_block(bytes_of(env, palette));
+    if (!block) return java(env, std::string("the palette was refused: ") + style::name_of(block.error()));
+    look_of(handle)->map->set_palette(*block);
+    return java(env, "");
+}
+
 /// The screen's haze, vignette and grain (MapCore.screenEffects).
 JNIEXPORT void JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_screen(JNIEnv* /*env*/, jclass /*unused*/,
                                                                             jlong handle, jboolean haze,

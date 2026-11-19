@@ -2,9 +2,13 @@ package app.atlas.mapcorecheck.likeness
 
 import app.atlas.geo.BBox
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.Preset
+import app.atlas.mapview.palette.Slot
 import app.atlas.mapview.vk.CoreMoment
 import app.atlas.render.Amsterdam
 import app.atlas.render.live.LiveCamera
@@ -57,6 +61,9 @@ internal object LookHost {
 
     /** MapCore.moment: the theme block from now on. */
     @JvmStatic external fun theme(handle: Long, theme: ByteBuffer): Boolean
+
+    /** Pictures only (branch `pictures`): MapCore.palette, a PaletteBlock's block; "" or why it was refused. */
+    @JvmStatic external fun palette(handle: Long, palette: ByteBuffer): String
 
     /** MapCore.screenEffects. */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)
@@ -154,8 +161,19 @@ class PhoneLook {
         val elements = System.getProperty("atlas.phonelook.elements")?.split(',')?.filter { it.isNotBlank() }?.map { File(it.trim()) }.orEmpty()
         val phone = PhoneCore(work, list, canal, off, world, under, elements)
         val side = if (under) "under" else ""
-        for ((name, spec) in views) {
-            val f = phone.draw(spec, moment, w, h, density)
+        for ((named, spec) in views) {
+            // Pictures only (branch `pictures`): a view's name may say its palette and moment, <name>~<preset>~<moment>
+            // (a preset's code, Palette.kt's Preset; noon or night, at the default moment's date)
+            val said = named.split('~')
+            val name = said.joinToString("-")
+            val palette = Palette(said.getOrNull(1)?.let { Preset.ofCode(it) ?: error("no preset '$it'") } ?: Preset.TODAY)
+            val at = when (said.getOrNull(2)) {
+                null -> moment
+                "noon" -> "2026-10-02T12:00"
+                "night" -> "2026-10-02T21:30"
+                else -> error("a moment is noon or night, not '${said[2]}'")
+            }
+            val f = phone.draw(spec, at, w, h, density, palette)
             png(f.argb, w, h, File(out, "$name-core$path$side.png"))
             File(out, "$name-core$path$side.txt").writeText(f.notes)
             println("phone look core $name (alpha $path): ${f.notes.lines().first()}")
@@ -257,7 +275,7 @@ internal class PhoneCore(
     }
 
     /** [spec] at [moment] in a [w] × [h] px frame at [density], as the phone's core draws it. */
-    fun draw(spec: PhoneLook.Spec.View, moment: String, w: Int, h: Int, density: Double): Frame {
+    fun draw(spec: PhoneLook.Spec.View, moment: String, w: Int, h: Int, density: Double, palette: Palette = Palette()): Frame {
         val widthDp = Math.round(w / density).toInt()
         val heightDp = Math.round(h / density).toInt()
         val view = spec.view(widthDp, heightDp)
@@ -268,6 +286,13 @@ internal class PhoneCore(
         try {
             // MapData.wire with the Look settings unset: the haze, vignette and grain on
             LookHost.screen(handle, haze = true, vignette = true, grain = true)
+            // Pictures only: CoreMap.moment's palette, the colours the theme does not carry, then its theme
+            if (!palette.isToday) {
+                val block = PaletteBlock.allocate()
+                PaletteBlock.write(block, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
+                LookHost.palette(handle, block).takeIf { it.isNotEmpty() }?.let { error(it) }
+            }
+            notes.appendLine("palette ${palette.base.code}, tone ${palette.toneStrength}, moment $moment")
             val taken = ArrayList<String>()
             var drew = ""
             var listed: List<Listed>
@@ -282,7 +307,7 @@ internal class PhoneCore(
                 // MapController.sendMoment: the moment for the drawn pack's zone (every pack here is Amsterdam's)
                 val zone = ZoneId.of("Europe/Amsterdam")
                 val theme = ThemeBlock.allocate()
-                CoreMoment.write(theme, PhoneLook.Spec.moment(moment, zone), zone, daylight = false)
+                CoreMoment.write(theme, PhoneLook.Spec.moment(moment, zone), zone, daylight = false, palette.toneStrength, palette)
                 check(LookHost.theme(handle, theme)) { LookHost.lastError() }
                 drew = LookHost.draw(handle, camera(view, w, h, density, pack), DRAW_SECONDS)
                 check(drew.isNotEmpty()) { "the host map drew nothing: ${LookHost.lastError()}" }
