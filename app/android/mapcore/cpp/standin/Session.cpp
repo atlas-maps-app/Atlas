@@ -703,10 +703,17 @@ Drawn Session::draw_frame(const style::CameraState& camera, const FrameTimes& ti
     if (!report || report->status == gpu::Acquired::lost) {
         if (!report && report.error().code != vk::Result::eErrorDeviceLost) {
             log::error("a frame failed: {}", report.error().text());
-            const std::scoped_lock lock(records_mutex_);
-            ++failed_frames_;
-            failed_why_ = report.error().text();
-            return d;
+            {
+                const std::scoped_lock lock(records_mutex_);
+                ++failed_frames_;
+                failed_why_ = report.error().text();
+            }
+            // Recorded and never submitted (gpu::Renderer::unsubmitted): what the frame's recording moved on is not
+            // what the GPU holds (the passes' kept results, the layouts they track, the uploads they let go of, the
+            // output's image and its semaphore), and only what a lost device's path makes again agrees with it again.
+            if (!renderer_->unsubmitted()) return d;
+            log::error("vk frame {} was recorded and not submitted: made again as after a lost device",
+                       renderer_->frame_count());
         }
         device_lost();
         d.rebuilt = true;
