@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonElement
 import okhttp3.Cache
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Dns
 import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl
@@ -153,21 +154,36 @@ class Http private constructor(
     private fun Request.Builder.headers(map: Map<String, String>): Request.Builder = apply { map.forEach { (k, v) -> header(k, v) } }
 
     companion object {
-        /** The root's client: the timeouts, the cache, and the gate with the User-Agent, as the first interceptor of its own. */
+        /**
+         * The root's client: the timeouts, the cache, and the gate, three times over. The first application interceptor
+         * asks it by the request's host and source (and adds the User-Agent). A redirect is followed below the application
+         * interceptors, so each hop is asked again by its host alone: in the name lookup, so a refused hop is never looked
+         * up nor connected to, and in a network interceptor, for a hop that would reuse a connection already open. A hop
+         * to a host no list names goes, as the request did; an answer from the cache makes no hop.
+         */
         private fun rootClient(
             cacheDir: File?, cacheBytes: Long, userAgent: String, connectTimeout: Duration, readTimeout: Duration, callTimeout: Duration,
             base: OkHttpClient?, gate: (host: String, source: String?) -> String?,
-        ): OkHttpClient = (base?.newBuilder() ?: OkHttpClient.Builder())
-            .connectTimeout(connectTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-            .readTimeout(readTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-            .callTimeout(callTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-            .apply { if (cacheDir != null) cache(Cache(cacheDir, cacheBytes)) }
-            .addInterceptor { chain ->
-                val req = chain.request()
-                gate(req.url.host, req.tag(SourceTag::class.java)?.id)?.let { throw SwitchedOffException(it, req.url.host) }
-                chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
-            }
-            .build()
+        ): OkHttpClient {
+            val lookup = base?.dns ?: Dns.SYSTEM
+            return (base?.newBuilder() ?: OkHttpClient.Builder())
+                .connectTimeout(connectTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+                .readTimeout(readTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+                .callTimeout(callTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+                .apply { if (cacheDir != null) cache(Cache(cacheDir, cacheBytes)) }
+                .addInterceptor { chain ->
+                    val req = chain.request()
+                    gate(req.url.host, req.tag(SourceTag::class.java)?.id)?.let { throw SwitchedOffException(it, req.url.host) }
+                    chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
+                }
+                .dns { host -> gate(host, null)?.let { throw SwitchedOffException(it, host) } ?: lookup.lookup(host) }
+                .addNetworkInterceptor { chain ->
+                    val req = chain.request()
+                    gate(req.url.host, null)?.let { throw SwitchedOffException(it, req.url.host) }
+                    chain.proceed(req)
+                }
+                .build()
+        }
 
         /**
          * How much of a failed answer's body [HttpException.body] keeps: enough for the reason, which some servers put

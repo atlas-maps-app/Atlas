@@ -220,4 +220,30 @@ class SourcesGateTest {
         }
         services.close()
     }
+
+    @Test
+    fun aRedirectToASwitchedOffSourcesHostIsRefusedAtTheHop() = runBlocking {
+        val services = testServices()
+        MockWebServer().use { server ->
+            server.dispatcher = object : mockwebserver3.Dispatcher() {
+                override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse =
+                    if (request.headers["Host"]!!.startsWith("www.wikidata.org")) MockResponse.Builder().code(302).addHeader("Location", "http://upload.wikimedia.org:${server.port}/p.jpg").build()
+                    else MockResponse.Builder().code(200).body("picture").build()
+            }
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val watch = Watch { true }
+            val client = services.http("wikidata").client.newBuilder().direct().dns(watch.dns).eventListener(watch).build()
+            fun get() = client.newCall(okhttp3.Request.Builder().url("http://www.wikidata.org:${server.port}/w").build()).execute().use { it.body.string() }
+            // Wikidata on, Commons off: the first hop goes, the hop to Commons' host is refused before it is sent
+            services.switch(setOf("commons"))
+            val refused = runCatching { get() }.exceptionOrNull()
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "commons" && refused.host == "upload.wikimedia.org")
+            assertEquals(1, server.requestCount)
+            // both on: it goes
+            services.switch(emptySet())
+            assertEquals("picture", get())
+            assertEquals(3, server.requestCount)
+        }
+        services.close()
+    }
 }
