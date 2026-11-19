@@ -512,8 +512,10 @@ fn a_query_that_cannot_be_read_is_refused() {
     // (a stop that is none is a query like any other, with no journey)
     assert!(with(&|s| s.query[Q_FROM + 1] = NONE));
     assert!(with(&|s| s.query[Q_FROM + 1] = i32::MAX));
-    // more numbers than a query has are not read
-    assert!(with(&|s| s.query.resize(Q_LEN + 5, 77)));
+    // a query has Q_LEN numbers at most: one more, whatever it says, and the caller reads another header
+    assert!(with(&|s| s.query.resize(Q_LEN, -1)));
+    assert!(!with(&|s| s.query.resize(Q_LEN + 1, -1)));
+    assert!(!with(&|s| s.query.resize(Q_LEN + 5, 77)));
     // walks: pairs, and no time below zero; they are not read where the place is not of that kind
     assert!(with(&|s| (s.query[Q_FROM], s.from) = (P_WALKS, vec![stop("WA"), 60])));
     assert!(!with(&|s| (s.query[Q_FROM], s.from) = (P_WALKS, vec![stop("WA"), 60, stop("WB")])));

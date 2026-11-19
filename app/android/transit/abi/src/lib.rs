@@ -768,7 +768,8 @@ pub unsafe extern "C" fn atlas_transit_answer(t: *const AtlasTransit, out: *mut 
 
 /// The query a caller's numbers say, or nothing where they say none.
 pub fn read(q: &[i32], from_walks: &[i32], to_walks: &[i32], wishes: &[i32]) -> Option<Query> {
-    if q.len() < Q_NEEDED || q[Q_TIME] < 0 {
+    // (more numbers than a query has: the caller reads another header than this library was built with)
+    if q.len() < Q_NEEDED || q.len() > Q_LEN || q[Q_TIME] < 0 {
         return None;
     }
     let place = |at: usize, walks: &[i32]| match q[at] {

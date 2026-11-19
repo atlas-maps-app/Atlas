@@ -139,7 +139,8 @@ const uint8_t *atlas_transit_meta(const atlas_transit *t, const uint8_t *key, si
 /* Plans. Gives how many numbers the answer has: it stays with the timetable until the next plan, and
  * atlas_transit_answer reads it. 0: the query could not be read, and nothing was planned.
  *
- * `query` holds the query's numbers, each at its place:
+ * `query` holds the query's numbers, each at its place, ATLAS_TRANSIT_Q_NEEDED of them at least and
+ * ATLAS_TRANSIT_Q_LEN at most (a longer query is refused: its sender reads another header than the library's):
  *   ATLAS_TRANSIT_Q_FROM, _Q_TO   three numbers each: what the place is, and two numbers of its own:
  *                                   ATLAS_TRANSIT_P_STOP     a stop, and the stops a walk away from it; then 0
  *                                   ATLAS_TRANSIT_P_STATION  a station: any of its stops; then 0
