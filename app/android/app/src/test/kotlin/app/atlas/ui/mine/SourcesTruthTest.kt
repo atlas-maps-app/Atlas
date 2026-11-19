@@ -23,12 +23,22 @@ class SourcesTruthTest {
     private val shipped = listOf("app", "mapview", "providers", "tiles", "route", "search", "places", "render", "core", "guide", "anchor", "rendertiles", "mapcore")
 
     /**
-     * Hosts the code names but never asks: links the user opens (a rating's page on Foursquare, a review's and a place's
-     * reviews on Mangrove), XML namespaces, and the page that finds the phone's browsers for signing in to OpenStreetMap
-     * (openInBrowser).
+     * Hosts the code names that are nobody's address, excused wherever they stand: XML namespaces, and the page that
+     * finds the phone's browsers for signing in to OpenStreetMap (openInBrowser).
      */
-    private val links = setOf(
-        "afdc.energy.gov", "chargemap.com", "example.org", "foursquare.com", "mangrove.reviews", "map.openchargemap.io", "www.topografix.com", "www.w3.org",
+    private val links = setOf("example.org", "www.topografix.com", "www.w3.org")
+
+    /**
+     * The pages the user opens in the browser, each by its file and its line's own code, with what it is: a page on a
+     * source's own website is excused there and nowhere else, so a request to that host is asked, and must be listed.
+     */
+    private val pages = mapOf(
+        ("providers/src/main/kotlin/app/atlas/providers/KeyedRatings.kt" to "url = fsqId?.let { \"https://foursquare.com/v/\$it\" }") to "a venue's page on Foursquare",
+        ("providers/src/main/kotlin/app/atlas/providers/Mangrove.kt" to "url = \"https://mangrove.reviews/list?signature=\$signature\"") to "a review's page on Mangrove",
+        ("providers/src/main/kotlin/app/atlas/providers/Mangrove.kt" to "\"https://mangrove.reviews/list?sub=\" + GeoSubject") to "a place's reviews on Mangrove",
+        ("providers/src/main/kotlin/app/atlas/providers/OpenChargeMap.kt" to "extra[\"url\"] = \"https://map.openchargemap.io/?id=\$id\"") to "a charger's page on Open Charge Map",
+        ("providers/src/main/kotlin/app/atlas/providers/Afdc.kt" to "extra[\"url\"] = \"https://afdc.energy.gov/stations#/station/\$id\"") to "a station's page at the AFDC",
+        ("app/src/main/kotlin/app/atlas/ui/mine/charge/ChargeScreen.kt" to "val url = \"https://chargemap.com/map?lat=") to "Chargemap's map at a charger",
     )
 
     /**
@@ -70,7 +80,7 @@ class SourcesTruthTest {
      * An address in the code with a literal [host], [where] it is, and whether it stands as the `url` of a source's
      * declaration (`ProviderInfo(… url = "…")`): the source's website, which the code declares and never asks.
      */
-    private data class Address(val host: String, val where: String, val declared: Boolean) {
+    private data class Address(val host: String, val where: String, val declared: Boolean, val file: String = "", val code: String = "") {
         override fun toString() = "$where $host"
     }
 
@@ -87,17 +97,20 @@ class SourcesTruthTest {
                 val c = code.replace(Regex("""\s//\s.*$"""), "")
                 for (m in url.findAll(c)) {
                     val declared = i in declaration && Regex("""(^|[\s,(])url = """" + Regex.escape(m.value)).containsMatchIn(c)
-                    out += Address(m.groupValues[1], "${f.relativeTo(android)}:${i + 1}", declared)
+                    out += Address(m.groupValues[1], "${f.relativeTo(android)}:${i + 1}", declared, "${f.relativeTo(android)}", c)
                 }
             }
         }
         return out
     }
 
-    /** The indexes of [lines] inside a `ProviderInfo(…)` call, by its parentheses, what is in quotes skipped. */
+    /**
+     * The indexes of [lines] inside a `ProviderInfo(…)` call, by its parentheses, what is in quotes skipped, and comment
+     * lines read as empty, as the scan reads them (a `"` or a `(` in a comment would run the call on).
+     */
     private fun declarationLines(lines: List<String>): Set<Int> {
         val out = HashSet<Int>()
-        val text = lines.joinToString("\n")
+        val text = lines.joinToString("\n") { l -> l.trim().let { t -> if (t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")) "" else l } }
         var from = 0
         while (true) {
             val start = text.indexOf("ProviderInfo(", from).takeIf { it >= 0 } ?: break
@@ -163,8 +176,15 @@ class SourcesTruthTest {
         // a source's website is excused only where the code declares it so, as the `url` of its declaration: named
         // anywhere else (a client's base, a request) it is asked, and must be listed
         val websites = (SourcesModel.ALL + Catalogue.NOT_WIRED + Catalogue.BUNDLED).mapNotNull { java.net.URI(it.url).host }.toSet()
-        val unknown = addressesIn(sources(shipped)).filter { a -> !(a.declared && a.host in websites) && a.host !in links && listed.none { it.holds(a.host) } }
+        val addresses = addressesIn(sources(shipped))
+        fun page(a: Address) = pages.keys.any { (file, code) -> a.file == file && code in a.code }
+        val unknown = addresses.filter { a -> !(a.declared && a.host in websites) && a.host !in links && !page(a) && listed.none { it.holds(a.host) } }
         assertTrue("hosts the code names that no source lists: $unknown", unknown.isEmpty())
+        // every page pinned is one address the code still names: a pin cannot outlive its line
+        for ((file, code) in pages.keys) {
+            val at = addresses.filter { it.file == file && code in it.code }
+            assertEquals("the page $file: $code", 1, at.size)
+        }
     }
 
     @Test
@@ -194,6 +214,7 @@ class SourcesTruthTest {
         // every listed source names its hosts, and a link-only host is never asked
         for (s in SourcesModel.ALL) assertTrue("${s.id} names no host", s.hosts.isNotEmpty())
         assertTrue(SourcesModel.ALL.none { s -> s.hosts.any { it in links } })
+        assertTrue(SourcesModel.ALL.none { s -> s.hosts.any { h -> pages.keys.any { (_, code) -> "://$h/" in code } } })
     }
 
     /**
