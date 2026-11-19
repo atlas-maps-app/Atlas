@@ -168,17 +168,17 @@ fn the_cleaning_ends_on_any_window_and_leaves_nothing_crossing() {
         let scaled = |ring: Vec<P>| -> Vec<P> { ring.into_iter().map(|p| P::new(30 * p.x, 30 * p.y)).collect() };
         let fps: Vec<Footprint> = (0..n)
             .map(|_| {
-                let mut rings = vec![scaled(if r.next() % 2 == 0 {
+                let mut rings = vec![scaled(if r.next().is_multiple_of(2) {
                     random_rect(&mut r)
                 } else {
                     let (cx, cy) = (r.range(50, 150), r.range(50, 150));
                     random_star(&mut r, cx, cy)
                 })];
-                if r.next() % 5 == 0 {
+                if r.next().is_multiple_of(5) {
                     rings.push(scaled(random_rect(&mut r)));
                 }
                 let min = (r.next() % 3) as f64 * 3.0;
-                Footprint { rings, min, top: min + 1.0 + (r.next() % 20) as f64, part: r.next() % 3 == 0 }
+                Footprint { rings, min, top: min + 1.0 + (r.next() % 20) as f64, part: r.next().is_multiple_of(3) }
             })
             .collect();
         let c = clean(&fps, Params::new(0.00685, 0.011054));
@@ -186,7 +186,7 @@ fn the_cleaning_ends_on_any_window_and_leaves_nothing_crossing() {
         for (k, ring) in c.ring.iter().enumerate() {
             let Some(ring) = ring else { continue };
             assert!(ring.len() >= 3, "round {round}: footprint {k}");
-            assert!(!any_crossing(&[ring.clone()]), "round {round}: footprint {k} crosses itself");
+            assert!(!any_crossing(std::slice::from_ref(ring)), "round {round}: footprint {k} crosses itself");
             assert!(c.min[k] >= fps[k].min);
         }
         if c.counts.unsettled == 0 {

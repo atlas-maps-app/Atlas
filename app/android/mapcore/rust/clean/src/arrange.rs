@@ -195,12 +195,13 @@ fn merge(segs: Vec<Seg>) -> Vec<Seg> {
     c.sort_by_key(|s| (s.a, s.b));
     let mut out: Vec<Seg> = Vec::with_capacity(c.len());
     for s in c {
-        if let Some(last) = out.last_mut() {
-            if last.a == s.a && last.b == s.b {
-                last.w[0] += s.w[0];
-                last.w[1] += s.w[1];
-                continue;
-            }
+        if let Some(last) = out.last_mut()
+            && last.a == s.a
+            && last.b == s.b
+        {
+            last.w[0] += s.w[0];
+            last.w[1] += s.w[1];
+            continue;
         }
         out.push(s);
     }

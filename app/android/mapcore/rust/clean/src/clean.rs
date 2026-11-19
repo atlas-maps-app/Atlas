@@ -5,6 +5,7 @@
 //!   4. Clipping: of two footprints that still overlap, in plan and in height, the one whose heights lie within the
 //!      other's gives way where they overlap; where neither holds the other, the one that loses less volume.
 //!   5. What is left over: an outline takes back the ground of its own that nothing draws once every cut is made.
+//!
 //! A cut is opened by a hair (Params::hair_m): its pieces lose their hairs, and a neck of that width between two
 //! bodies is cut through; a piece too small, or with no body wider than Params::thin_m, goes. Then what is left of
 //! each is one ring (crate::bridge), and the counts of what still cannot be there.
@@ -821,7 +822,8 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
     let mut beats: Vec<Vec<usize>> = vec![Vec::new(); n];
     for &(i, j, a) in &over {
         let shared_h = fps[i].top.min(fps[j].top) - min[i].max(min[j]);
-        if !(shared_h > p.height_m) {
+        // a pair that shares no more than the height (or a height that is not a number) is not one to clip
+        if shared_h.partial_cmp(&p.height_m) != Some(core::cmp::Ordering::Greater) {
             continue;
         }
         run.counts.pairs_before += 1;
@@ -862,15 +864,16 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
         }
         done[k] = true;
         let winners: Vec<usize> = beaten[k].iter().copied().filter(|&w| done[w] && drawn[w]).collect();
-        if !winners.is_empty() && drawn[k] {
-            if let Some(r) = run.less(k, &winners) {
-                if r.is_empty() {
-                    drawn[k] = false;
-                    what[k] |= VANISHED;
-                } else {
-                    run.cur[k] = Some(r);
-                    what[k] |= CLIPPED;
-                }
+        if !winners.is_empty()
+            && drawn[k]
+            && let Some(r) = run.less(k, &winners)
+        {
+            if r.is_empty() {
+                drawn[k] = false;
+                what[k] |= VANISHED;
+            } else {
+                run.cur[k] = Some(r);
+                what[k] |= CLIPPED;
             }
         }
         for &l in &beats[k] {
@@ -1131,7 +1134,7 @@ mod tests {
         // two pieces, joined by one seam (there and back), and no ground between them
         assert_eq!(crate::bridge::seams(ring).iter().filter(|&&s| s).count(), 2);
         let a = area2(ring);
-        assert!(a <= 2 * 2 * 1000 * 3000 && a >= 2 * 2 * 1000 * 2999, "{a}");
+        assert!((2 * 2 * 1000 * 2999..=2 * 2 * 1000 * 3000).contains(&a), "{a}");
     }
 
     #[test]
