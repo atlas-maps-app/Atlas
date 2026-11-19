@@ -1195,6 +1195,8 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
     };
     const std::vector<Part>& parts = every_part();
     std::vector<bool> drawn(parts.size(), false); // drawn by default in some scene
+    const auto soft_part =
+        static_cast<std::size_t>(std::ranges::find(parts, part::shadow_blur, &Part::bit) - parts.begin());
     const auto draw = [&](const Scene& scene, std::uint64_t off) {
         style::CameraState c = scene.camera;
         c.parts = scene.base | off;
@@ -1308,6 +1310,12 @@ TEST_CASE("the map leaves out each part its camera's parts name, every layer and
                                                          "frame after with {} and complete {} frames on",
                                                          let_go[i], again[i][i].own, rebuilt[i])
                                            : std::string());
+            // the soft shadows' mask in the frame right after a shadows' switch: kept where its key stands
+            // (passes/Shadows.cpp's key_shadow_mask), made where something it reads moved meanwhile
+            if ((p.bit == part::building_shadows || p.bit == part::shadow_blur) && on[soft_part].own > 0) {
+                lines += std::format("; the frame after it {} the soft shadows' mask ({} of its steps)",
+                                     again[i][soft_part].anew > 0 ? "made" : "kept", again[i][soft_part].anew);
+            }
         }
         MESSAGE(std::format("{} ({} of its switches' two frames drew other tiles):{}", scene.name, cover_moved, lines));
     }
