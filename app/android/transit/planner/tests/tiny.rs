@@ -10,7 +10,7 @@
 //! The feed's rules: U1 waits for T1; from T1F to U1 no change is possible.
 
 use atlas_transit::file::{StopText, TripText};
-use atlas_transit::reference::impossible;
+use atlas_transit::reference::{Reference, impossible};
 use atlas_transit::{Area, How, Journey, Leg, Mode, Place, Planner, Query, Spot, Timetable, What, Wish};
 
 fn bytes() -> Vec<u8> {
@@ -31,7 +31,23 @@ fn ask(planner: &mut Planner, q: &Query) -> Vec<Journey> {
     for j in a.journeys.iter() {
         assert_eq!(impossible(planner, q, j), None, "{j:?}");
     }
+    held_to_the_scan(planner, q, &a.journeys);
     a.journeys
+}
+
+/// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way, and knows
+/// no cap on rides and no on-foot journey): the earliest arrival, the latest departure, or a window's best pairs.
+fn held_to_the_scan(planner: &Planner, q: &Query, journeys: &[Journey]) {
+    if q.max_rides < 8 || q.day < 0 || journeys.iter().any(|j| j.rides == 0) || q.wishes.iter().any(|w| !matches!(w.how, How::Never)) {
+        return;
+    }
+    let scan = Reference::new(planner, q.day, q.time as i32 - 86_400, q.time as i32 + 2 * 86_400);
+    match (q.window, q.arrive_by) {
+        (0, false) => assert_eq!(journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
+        (0, true) => assert_eq!(journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
+        (_, false) => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
+        _ => {}
+    }
 }
 
 fn numbers(tt: &Timetable, j: &Journey) -> Vec<String> {
@@ -230,11 +246,35 @@ fn wishes() {
         let j = ask(&mut p, &q);
         assert_eq!((j.len(), j[0].depart as u32, j[0].arrive as u32, numbers(&tt, &j[0])), (1, hm(8, 0), hm(8, 40), vec!["101".to_string()]));
     }
-    // the fast trip avoided at ten minutes: both are options, the fast one saying what it costs
-    let j = ask(&mut p, &with(What::Trip(fast), How::Avoid(600)));
-    let mut got: Vec<_> = j.iter().map(|j| (j.arrive as u32, j.penalty, numbers(&tt, j).join(" "))).collect();
-    got.sort();
-    assert_eq!(got, [(hm(8, 20), 600, "105".to_string()), (hm(8, 40), 0, "101".to_string())]);
+    // The fast trip avoided: it is there at 08:20, the slow bus at 08:40. What the wish is worth decides whether the
+    // slow bus is an option beside it: at twenty-five minutes it is (twenty later, and the wish kept); at ten it is
+    // not; at twenty exactly it is no better for being later, and is not. The fast one says what it costs.
+    let mut options = |q: &Query| {
+        let mut got: Vec<_> = ask(&mut p, q).iter().map(|j| (j.depart as u32, j.arrive as u32, j.penalty, numbers(&tt, j).join(" "))).collect();
+        got.sort();
+        got
+    };
+    let (quick, slow) = (|cost: u32| (hm(8, 5), hm(8, 20), cost, "105".to_string()), (hm(8, 0), hm(8, 40), 0, "101".to_string()));
+    assert_eq!(options(&with(What::Trip(fast), How::Avoid(1500))), [slow.clone(), quick(1500)]);
+    assert_eq!(options(&with(What::Trip(fast), How::Avoid(600))), [quick(600)]);
+    assert_eq!(options(&with(What::Trip(fast), How::Avoid(1200))), [quick(1200)]);
+    // asked for every option, the slow bus stays whatever the wish is worth
+    let mut every = with(What::Trip(fast), How::Avoid(600));
+    every.weigh = false;
+    assert_eq!(options(&every), [slow.clone(), quick(600)]);
+    // To arrive by 08:40 the fast bus leaves five minutes later than the slow one: a wish worth ten keeps the slow
+    // one beside it, a wish worth five (no better for leaving earlier) or less does not.
+    let mut by = with(What::Trip(fast), How::Avoid(600));
+    (by.arrive_by, by.time) = (true, hm(8, 40));
+    assert_eq!(options(&by), [slow.clone(), quick(600)]);
+    by.wishes[0].how = How::Avoid(300);
+    assert_eq!(options(&by), [quick(300)]);
+    // over a window the same holds between the options that leave no earlier: from 07:50 on for a quarter of an hour
+    let mut over = with(What::Trip(fast), How::Avoid(600));
+    (over.time, over.window) = (hm(7, 50), 900);
+    assert_eq!(options(&over), [quick(600)]);
+    over.wishes[0].how = How::Avoid(1500);
+    assert_eq!(options(&over), [slow, quick(1500)]);
     // what a wheelchair can't board: the fast bus says no; the slow one says yes
     let j = ask(&mut p, &with(What::NoWheelchair, How::Never));
     assert_eq!((j.len(), numbers(&tt, &j[0])), (1, vec!["101".to_string()]));
