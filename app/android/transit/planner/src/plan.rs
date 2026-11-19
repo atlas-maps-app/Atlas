@@ -858,13 +858,16 @@ impl<'a> Planner<'a> {
         let mut keep = best(&journeys);
         let options = q.limits.options.clamp(1, 1024) as usize;
         // Asked for one moment, with more options than may be shown: the fastest stay (the earliest arrivals;
-        // arriving by, the latest departures). That is settled here, before any is searched again for a later
-        // departure: leaving later changes no arrival, and what is not shown is not searched for.
+        // arriving by, the latest departures). Weighing, the fastest are those that are in first with their cost
+        // added, which is what the wishes say an arrival is worth: of a bus in at 10:00 that costs a quarter of
+        // an hour and a train in at 10:05 that costs nothing, the train. That is settled here, before any is
+        // searched again for a later departure: leaving later changes no arrival, and what is not shown is not
+        // searched for.
         let mut too_many = false;
         if window == 0 && keep.len() > options {
             keep.sort_by_key(|j| {
                 let k = key(j);
-                (k.1, k.2, k.3)
+                if weigh { (k.3, k.1 as i64, k.2 as i64) } else { (k.1 as i64, k.2 as i64, k.3) }
             });
             keep.truncate(options);
             too_many = true;

@@ -822,7 +822,8 @@ fn an_answer_that_is_not_whole_says_so() {
 /// Asked for one moment, the search for a later departure is held to the query's limits like any other: it takes
 /// no more searches than `departures`, says so where that stops it short (an option then leaves sooner than it
 /// need, and makes the same arrival), and looks for no journey that `options` leaves out. Of more options than
-/// that the fastest stay, which is settled before any is searched again: leaving later changes no arrival.
+/// that the fastest stay (weighed: with their cost added), which is settled before any is searched again: leaving
+/// later changes no arrival.
 #[test]
 fn the_search_for_a_later_departure_is_held_to_the_limits() {
     let b = bytes("utrecht-20261117.tt");
@@ -866,11 +867,16 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
             assert!(got.cut_short, "pair {i}: an option leaves sooner than it need and the answer does not say so: {q:?}");
             stopped += 1;
         }
-        // one option: the fastest, leaving as late as it can, and no search for any other
+        // one option: the fastest, leaving as late as it can, and no search for any other. Weighed, the fastest
+        // is the one that is in first with its cost added
         let mut one = q.clone();
         one.limits.options = 1;
         let got = p.plan(&one);
-        let fastest = whole.journeys.iter().min_by_key(|j| end(j)).unwrap();
+        let first = |j: &Journey| {
+            let (at, rides, cost) = end(j);
+            if q.weigh { (at as i64 + cost as i64, at as i64, rides as i64) } else { (at as i64, rides as i64, cost as i64) }
+        };
+        let fastest = whole.journeys.iter().min_by_key(|j| first(j)).unwrap();
         assert_eq!(got.journeys, [fastest.clone()], "pair {i}: {q:?}");
         assert_eq!(got.cut_short, whole.journeys.len() > 1, "pair {i}: {q:?}");
         // (for a single pair it may take a search more than for all: how far apart the moments tried lie depends

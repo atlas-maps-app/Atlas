@@ -178,7 +178,8 @@ pub struct Limits {
     /// label went from it, an option may have gone with it: the answer says [`crate::Answer::cut_short`].
     pub bag: u32,
     /// Journeys returned. Of more: over a window those nearest the asked moment; asked for one moment the fastest
-    /// (the earliest arrivals; arriving by, the latest departures).
+    /// (the earliest arrivals; arriving by, the latest departures; and where wishes are weighed, each with its
+    /// cost added to the arrival, or taken off the departure).
     pub options: u32,
     /// How long after the asked moment a journey may still be under way, in seconds.
     pub horizon: u32,

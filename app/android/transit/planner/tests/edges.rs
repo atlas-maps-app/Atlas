@@ -545,3 +545,39 @@ fn a_cheaper_trip_of_the_next_service_day() {
     assert_eq!(ways(&mut p, hm(30, 30), true, ("O1b", 600), true), [morning(600)]);
     assert_eq!(ways(&mut p, hm(30, 30), true, ("O1b", 36_000), true), [tonight(0), morning(36_000)]);
 }
+
+/// Asked for one moment with fewer options than there are, the fastest stay; and where wishes are weighed, the
+/// fastest is the one that is in first with its cost added (arriving by, the one that leaves last with its cost
+/// taken off): the option the wishes are worth, not the bus they would rather not take.
+#[test]
+fn weighed_the_options_kept_are_the_best_with_their_cost() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
+    let kept = |p: &mut Planner, from: &str, to: &str, at: u32, by: bool, wish: (&str, u32), weigh: bool, options: u32| {
+        let mut q = query(&tt, from, to, 0, at);
+        (q.arrive_by, q.weigh, q.limits.options) = (by, weigh, options);
+        q.wishes.push(Wish { what: What::Trip(trip(wish.0)), how: How::Avoid(wish.1) });
+        let a = p.plan(&q);
+        for j in a.journeys.iter() {
+            assert_eq!(impossible(p, &q, j), None, "{j:?}");
+        }
+        (a.journeys.iter().map(|j| (j.depart as u32, j.arrive as u32, said(&tt, j).2, j.penalty)).collect::<Vec<_>>(), a.cut_short)
+    };
+    // Lijn, from 07:55 with the 08:11 that waits avoided by 40 minutes: in at 08:25 at that cost, or at 08:55 at
+    // none. Both are options; of one, weighed, the second (08:55 against 09:05)
+    let (first, next) = ((hm(8, 0), hm(8, 25), "N1a N2a".to_string(), 2400), (hm(8, 20), hm(8, 55), "N1b N2b".to_string(), 0));
+    assert_eq!(kept(&mut p, "NA", "NZ", hm(7, 55), false, ("N2a", 2400), true, 2), (vec![first.clone(), next.clone()], false));
+    assert_eq!(kept(&mut p, "NA", "NZ", hm(7, 55), false, ("N2a", 2400), true, 1), (vec![next.clone()], true));
+    // not weighed, cost is a thing of its own and the fastest is the first in
+    assert_eq!(kept(&mut p, "NA", "NZ", hm(7, 55), false, ("N2a", 2400), false, 1), (vec![first.clone()], true));
+    // Ochtend, at 22:50 with tonight's bus avoided by ten hours: the morning's (06:20 against 09:20 with the cost)
+    let (tonight, morning) = (|cost: u32| (hm(23, 0), hm(23, 20), "O1a".to_string(), cost), |cost: u32| (hm(30, 0), hm(30, 20), "O1b".to_string(), cost));
+    assert_eq!(kept(&mut p, "OA", "OZ", hm(22, 50), false, ("O1a", 36_000), true, 1), (vec![morning(0)], true));
+    assert_eq!(kept(&mut p, "OA", "OZ", hm(22, 50), false, ("O1a", 36_000), false, 1), (vec![tonight(36_000)], true));
+    // and arriving by 06:30 with the morning's avoided by ten hours, the mirror: tonight's (leaving 23:00 against
+    // 20:00 with the cost taken off)
+    assert_eq!(kept(&mut p, "OA", "OZ", hm(30, 30), true, ("O1b", 36_000), true, 1), (vec![tonight(0)], true));
+    assert_eq!(kept(&mut p, "OA", "OZ", hm(30, 30), true, ("O1b", 36_000), false, 1), (vec![morning(36_000)], true));
+}
