@@ -127,6 +127,11 @@ public:
     /// At most the items one binding of the device holds (maxStorageBufferRange: a rank table's range past it binds
     /// nothing valid), and so at first; a test lowers it to reach that failure.
     void limit_items(std::uint32_t most) noexcept { most_items_ = std::min(most, device_items_); }
+#if defined(ATLAS_TESTS)
+    /// A test's: the next begin_frame fails as one whose items pass the ring's limit does, whatever the frame's items
+    /// (a map's frame at rest never passes the ring it has, which limit_items needs to fail).
+    void fail_next_begin() noexcept { fail_begin_ = true; }
+#endif
     /// Bytes of the ring and the placeholders.
     [[nodiscard]] vk::DeviceSize bytes() const noexcept;
     /// The buffer set 1's binding `g` reads from the next frame on (the placeholder's when nothing was given; null for
@@ -178,6 +183,9 @@ private:
     std::uint32_t kinds_ = 0;
     std::uint32_t device_items_ = 0; // the items one binding of the device holds
     std::uint32_t most_items_ = 0;   // limit_items
+#if defined(ATLAS_TESTS)
+    bool fail_begin_ = false; // fail_next_begin
+#endif
     std::array<Resource, global_count> globals_{};
     bool globals_dirty_ = true;
     bool frame_dirty_ = true;

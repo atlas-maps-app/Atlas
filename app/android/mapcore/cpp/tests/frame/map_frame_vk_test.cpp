@@ -1749,4 +1749,156 @@ TEST_CASE("the app's map crossing a frame cell places no item again: each frame'
     session.close();
 }
 
+namespace {
+
+/// The frame the window holds last, read back (none before its first, or where it cannot be read).
+[[nodiscard]] std::optional<gpu::Pixels> last_picture(const KeptWindow& window) {
+    if (window.kept == nullptr) return std::nullopt;
+    auto pixels = window.kept->read(window.kept->latest());
+    if (!pixels) return std::nullopt;
+    return std::move(*pixels);
+}
+
+/// Draws `camera` until the picture is complete and nothing in it moves, then until two frames in a row read back the
+/// same (at most 60 more frames); that picture, or none where it never settled.
+[[nodiscard]] std::optional<gpu::Pixels> settled_picture(standin::Session& session, frame::MapFrame& map,
+                                                         const KeptWindow& window, const style::CameraState& camera) {
+    if (draw_until_complete(session, map, camera) <= 0 || !draw_until_still(session, map, camera)) return std::nullopt;
+    std::optional<gpu::Pixels> last;
+    for (int i = 0; i < 60; ++i) {
+        if (session.draw(camera, {}).stale) session.remake();
+        std::optional<gpu::Pixels> now = last_picture(window);
+        if (!now) return std::nullopt;
+        if (last && *last == *now) return now;
+        last = std::move(now);
+    }
+    return std::nullopt;
+}
+
+/// How many pixels of `a` and `b` (the same size) differ in any channel.
+[[nodiscard]] std::size_t pixels_apart(const gpu::Pixels& a, const gpu::Pixels& b) {
+    if (a.rgba.size() != b.rgba.size()) return a.rgba.size() / 4;
+    std::size_t n = 0;
+    for (std::size_t i = 0; i + 4 <= a.rgba.size(); i += 4) {
+        bool same = true;
+        for (std::size_t k = 0; k < 4; ++k) same = same && a.rgba[i + k] == b.rgba[i + k];
+        n += same ? 0U : 1U;
+    }
+    return n;
+}
+
+/// The last frame's draws and dispatches of the layers a frame at rest keeps (made_anew): those it made anew.
+[[nodiscard]] std::uint64_t layers_made(const frame::FrameBuilder& b) {
+    std::uint64_t n = 0;
+    for (const frame::PassCounters& c : b.counters()) {
+        for (const frame::KindCount& k : c.kinds()) {
+            if (std::ranges::find(made_anew, k.kind) != made_anew.end()) n += k.count.draws + k.count.dispatches;
+        }
+    }
+    return n;
+}
+
+/// The wet night's hour dry (palette_vk_test.cpp's night): its lit streets and their glow, the ripple under the wind,
+/// and no rain, whose rings move from one frame to the next.
+[[nodiscard]] style::ThemeBlock dry_night() {
+    style::ThemeBlock b = wet_night();
+    b.flags &= ~flag::wet;
+    b.weather_code = 0;
+    b.rain = 0.0;
+    return b;
+}
+
+/// The last frame's draws and dispatches, every pass's.
+[[nodiscard]] std::uint64_t all_work(const frame::FrameBuilder& b) {
+    std::uint64_t n = 0;
+    for (const frame::PassCounters& c : b.counters()) n += c.total().draws + c.total().dispatches;
+    return n;
+}
+
+} // namespace
+
+TEST_CASE("a frame that never ran: the frame of a camera's step fails to begin (the clear alone), or is recorded and "
+          "not submitted (made again as after a device's loss), by day and at night; after either the picture at rest "
+          "is the one drawn without the failure, to the pixel, and validation stays clean") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("unsent");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    auto window = std::make_unique<KeptWindow>();
+    const KeptWindow& kept = *window;
+    std::string why;
+    ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
+    // the step: the home turned by 4 degrees in one frame, at rest before and after (its reflections, its lit streets
+    // and its labels move on the screen, so the layers a frame at rest keeps are made anew in it)
+    const style::CameraState from = home(1);
+    style::CameraState to = from;
+    to.bearing += 4.0;
+    const std::array<std::pair<const char*, style::ThemeBlock>, 2> moments{std::pair{"by day", sunny()},
+                                                                           std::pair{"at night", dry_night()}};
+    int lost = 0;
+    for (const auto& [moment, theme] : moments) {
+        const std::string_view moment_name = moment;
+        CAPTURE(moment_name);
+        map.set_theme(theme);
+
+        // Without a failure: the step's frame makes the kept layers anew, and the picture at rest after it.
+        ATLAS_REQUIRE(settled_picture(session, map, kept, from).has_value(), "the home never settled");
+        CHECK(session.draw(to, {}).drawn);
+        const std::uint64_t step_made = layers_made(*map.builder());
+        CHECK(step_made > 0);
+        const std::optional<gpu::Pixels> drawn = settled_picture(session, map, kept, to);
+        ATLAS_REQUIRE(drawn.has_value(), "the step's picture never settled");
+
+        // The step's frame fails to begin: the clear alone, no pass recorded (frame/FrameBuilder.cpp's begin_frame).
+        // The next frame makes the kept layers anew, as the step's did (their keys count once their frame recorded).
+        ATLAS_REQUIRE(settled_picture(session, map, kept, from).has_value(), "the home never settled again");
+        map.builder()->layout().fail_next_begin();
+        CHECK(session.draw(to, {}).drawn);
+        CHECK(all_work(*map.builder()) == 0);
+        CHECK(session.draw(to, {}).drawn);
+        const std::uint64_t begun_made = layers_made(*map.builder());
+        CHECK(begun_made > 0);
+        const std::optional<gpu::Pixels> begun = settled_picture(session, map, kept, to);
+        ATLAS_REQUIRE(begun.has_value(), "the step's picture never settled after a frame that did not begin");
+        const std::size_t begun_apart = pixels_apart(*begun, *drawn);
+        CHECK(begun_apart == 0);
+
+        // The step's frame is recorded and its submit fails: what its recording moved on (the kept layers' keys and
+        // results, the layouts and uploads it let go of) is not what the GPU holds, and the session makes it all
+        // again as after a device's loss (standin/Session.cpp's draw), the map complete again.
+        ATLAS_REQUIRE(settled_picture(session, map, kept, from).has_value(), "the home never settled a third time");
+        session.fail_next_submit();
+        const standin::Drawn unsent = session.draw(to, {});
+        CHECK_FALSE(unsent.drawn);
+        CHECK(unsent.rebuilt);
+        ++lost;
+        CHECK(map.made());
+        CHECK(session.drawing());
+        const std::string health = session.health();
+        CHECK_MESSAGE(health.find(std::format("lost {}", lost)) != std::string::npos, health);
+        const std::optional<gpu::Pixels> resent = settled_picture(session, map, kept, to);
+        ATLAS_REQUIRE(resent.has_value(), "the step's picture never settled after a frame that was not submitted");
+        const std::size_t resent_apart = pixels_apart(*resent, *drawn);
+        CHECK(resent_apart == 0);
+        MESSAGE(
+            std::format("{}: the step's frame made {} of the kept layers' draws and dispatches, the frame after the "
+                        "one that did not begin {}; {} and {} pixels apart from the picture without a failure",
+                        moment, step_made, begun_made, begun_apart, resent_apart));
+    }
+    const std::vector<std::string> messages = started->instance->messages().take();
+    CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+    session.close();
+}
+
 #endif

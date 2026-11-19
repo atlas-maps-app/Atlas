@@ -133,6 +133,12 @@ Result<void> Frames::submit(FrameSlot& slot, bool acquired, vk::Semaphore render
     const vk::raii::CommandBuffer& cmd = slot.cmd;
     if (*statistics_) cmd.endQuery(*statistics_, slot.slot);
     ATLAS_VK_CHECK(cmd.end(), "ending a frame's commands");
+#if defined(ATLAS_TESTS)
+    if (fail_submit_) {
+        fail_submit_ = false;
+        return fail(vk::Result::eErrorOutOfDeviceMemory, std::format("submitting frame {} (a test's)", slot.number));
+    }
+#endif
     const vk::Semaphore wait = *slot.acquired;
     // The acquired image is first touched by the main pass's colour writes (or the barrier before them).
     const vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;

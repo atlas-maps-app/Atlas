@@ -265,6 +265,13 @@ public:
     [[nodiscard]] const std::string& off_reason() const noexcept { return session_off_; }
     /// The tests' device loss: what a frame does when the device is lost.
     void lose_device() { device_lost(); }
+#if defined(ATLAS_TESTS)
+    /// A test's: the next frame is recorded and its submit fails (gpu::Frames::fail_next_submit), once a renderer is
+    /// made.
+    void fail_next_submit() {
+        if (renderer_) renderer_->frames().fail_next_submit();
+    }
+#endif
 
 private:
     /// Runs `step` behind the guard's `stage` (D5.10), then goes back to the frames stage while the first frames are

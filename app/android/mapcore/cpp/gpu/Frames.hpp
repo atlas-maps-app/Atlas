@@ -131,6 +131,11 @@ public:
     /// alone, which the GPU then signals. A held slot's earlier frame is waited for first.
     [[nodiscard]] Result<void> hold_next();
     [[nodiscard]] Result<void> let_go();
+#if defined(ATLAS_TESTS)
+    /// A test's: the next submit ends its frame's commands, then fails as a queue that refuses them does (out of device
+    /// memory) before they reach the GPU: a frame recorded and never submitted.
+    void fail_next_submit() noexcept { fail_submit_ = true; }
+#endif
     /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests): without a
     /// bound, since what follows destroys or remakes what those frames use.
     void drain();
@@ -146,6 +151,9 @@ private:
     std::uint32_t next_ = 0;
     std::uint64_t slot_wait_ns_ = 0;
     std::uint32_t held_ = in_flight; // the slot hold_next() holds, else in_flight
+#if defined(ATLAS_TESTS)
+    bool fail_submit_ = false; // fail_next_submit
+#endif
     double period_ns_ = 1.0;
     std::uint64_t mask_ = 0;
     GpuTimes last_;
