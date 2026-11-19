@@ -60,11 +60,21 @@ object HereContext {
     private const val LOOK_M = 2_000.0
     private const val SAMPLE = 400
 
+    /**
+     * How many points' answers are kept ([said]): a list of saved places across a country is asked once, not at each
+     * opening (the app maintainer, 18 November 2026, batch 5 B12: past 256 they were all let go, so a list of 500
+     * cafés across the Netherlands asked every one of its kilometres again each time it opened).
+     */
+    private const val KEPT = 4_096
+
     /** Within this far of the phone a place keeps the phone's clock (the same zone, in practice). */
     internal const val NEAR_PHONE_M = 300_000.0
 
     /** What the regions said, per point ([key]): the country and the state or nation most of the places there name. */
     private val said = ConcurrentHashMap<String, HereRegion>()
+
+    /** The points being asked now, each with the turn those asking it take: the rows of one kilometre ask once. */
+    private val asking = ConcurrentHashMap<String, Any>()
 
     /** Where the phone is, as the screens that need "here" take it: its fix, else where the map started, else the Westerkerk. */
     fun phoneAt(services: Services): LatLon =
@@ -187,7 +197,9 @@ object HereContext {
      * What the regions on the phone say at [at]: the `addr:country` most of the places around name, else the country of
      * the region whose store holds the point ([app.atlas.services.PackCountries.ofRegionAt], its pack's), and the state or
      * nation most name, each read in its place's country; null with no region downloaded. Kept per kilometre and per
-     * count of regions (a download changes it).
+     * count of regions (a download changes it), [KEPT] at most. A point is asked once at a time: the rows of a list in
+     * one kilometre, read together, take the first one's answer (the app maintainer, 18 November 2026, batch 5 B12: 500
+     * saved places in 14 kilometres asked 136 times, the store's lock 64 deep).
      */
     private fun regionsSay(services: Services, at: LatLon): HereRegion? {
         val store = services.placeStores
@@ -196,13 +208,22 @@ object HereContext {
         if (size == 0) return null
         val key = key(size, at)
         said[key]?.let { return it }
-        val sample = runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull().orEmpty()
-        val country = commonest(sample) { PlaceCountry.tagged(it.tags) } ?: services.packCountries.ofRegionAt(store.stores, at)
-        val around = country ?: tilesCountry(services, at, services.packCountries::of) ?: Countries.of(at)
-        val found = HereRegion(country, commonest(sample) { PlaceCountry.subdivision(it.tags, PlaceCountry.of(it.tags, around)) })
-        if (said.size > 256) said.clear()
-        said[key] = found
-        return found
+        val turn = asking.computeIfAbsent(key) { Any() }
+        try {
+            return synchronized(turn) {
+                said[key] ?: run {
+                    val sample = runCatching { store.inBox(BBox.around(at, LOOK_M), SAMPLE) }.getOrNull().orEmpty()
+                    val country = commonest(sample) { PlaceCountry.tagged(it.tags) } ?: services.packCountries.ofRegionAt(store.stores, at)
+                    val around = country ?: tilesCountry(services, at, services.packCountries::of) ?: Countries.of(at)
+                    val found = HereRegion(country, commonest(sample) { PlaceCountry.subdivision(it.tags, PlaceCountry.of(it.tags, around)) })
+                    if (said.size >= KEPT) said.clear()
+                    said[key] = found
+                    found
+                }
+            }
+        } finally {
+            asking.remove(key, turn)
+        }
     }
 
     private inline fun commonest(records: List<PlaceRecord>, of: (PlaceRecord) -> String?): String? {
