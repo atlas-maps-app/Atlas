@@ -744,6 +744,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             while (core === c) {
                 withFrameNanos { }
                 frameTick.intValue++
+                if (coverReady(c)) c.cover.faded++ else c.cover.waited++
                 if (!advanceCover(c)) break
             }
             // the core's picture shows alone: the puck goes to the core with the camera, and the status says so
@@ -753,14 +754,22 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         }
     }
 
+    /** Whether the core's picture is complete for the first camera published once the packs were known. */
+    private fun coverReady(c: CoreMap) = startRevision >= 0 && c.complete && c.completeRevision >= startRevision
+
     /** One step of the start's paper; true while it still covers the core. */
     private fun advanceCover(c: CoreMap): Boolean {
         if (c.cover.started) return false
-        val coreReady = startRevision >= 0 && c.complete && c.completeRevision >= startRevision
         val before = c.cover.canvas
-        val due = c.cover.update(SystemClock.uptimeMillis(), coreReady)
+        val due = c.cover.update(SystemClock.uptimeMillis(), coverReady(c))
         if (c.cover.canvas != before) canvasTick.intValue++
-        if (c.cover.started) Log.i(MapEngine.TAG, "vk cover gone: the core draws ${drawnPack()?.id ?: "its own cover"} alone")
+        if (c.cover.started) {
+            Log.i(
+                MapEngine.TAG,
+                "vk cover gone: the core draws ${drawnPack()?.id ?: "its own cover"} alone; the paper drawn again for " +
+                    "${c.cover.waited} frames while it waited for the core's picture, ${c.cover.faded} of its fade",
+            )
+        }
         noteFrame()
         noteChrome()
         return due

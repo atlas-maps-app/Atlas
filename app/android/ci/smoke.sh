@@ -881,6 +881,10 @@ map_phase() {
     line=$(first_frame "$run"); ms=${line% *}; kind=${line#* }
     limit=45000
     echo "map: $run first frame ${line:-none} (limit ${limit} ms)"
+    # The start's frames (ENGINE.md's audit, B1): the paper's, drawn again while it waits for the core's first complete
+    # picture and while it fades (its `vk cover gone` line), and the core's from its surface to that picture.
+    wait_line "$run" 10 "vk cover gone: " > /dev/null
+    echo "map: $run start: $(since_marker "$run" | grep -m1 -o 'vk cover gone: .*' | tr -d '\r' | sed 's/.*alone; //'); the core drew $(since_marker "$run" | sed -n '/AtlasMap: vk surface /,/AtlasMap: vk first frame /p' | grep -c 'AtlasMap: vk frame ') frames before its first complete one"
     if ! [[ $ms =~ ^[0-9]+$ ]] || [ "$ms" -gt "$limit" ]; then echo "MAP FAILED: the core's first frame ($run): ${line:-none}"; FAIL=1; fi
     [ "$run" = mapwarm ] && [ "$kind" != warm ] && { echo "MAP FAILED: the second launch was not warm (${line:-none})"; FAIL=1; }
     vk_crashes "$run"; vk_anr "$run"

@@ -20,6 +20,12 @@ internal class StartCover {
     /** Whether the core's first picture has been shown (the start's paper gone). */
     val started: Boolean get() = canvas <= 0f
 
+    /** The frames the paper was drawn again for while it waited for the core's picture (its `vk cover gone` line's). */
+    var waited = 0
+
+    /** The frames the paper was drawn again for while it faded. */
+    var faded = 0
+
     private var lastMs = -1L
     private var fading = false
 
