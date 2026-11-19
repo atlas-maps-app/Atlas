@@ -109,6 +109,9 @@ struct SunStats {
     /// or made again where the decks near its quay walls changed).
     std::uint64_t parts_kept = 0;
     std::uint64_t parts_made = 0;
+    /// Of those made, the parts taken from the scene before and made again where the decks near their quay walls
+    /// changed.
+    std::uint64_t parts_remade = 0;
     /// Every lane's tallest solids worked out (sun::scene_maxh's, a tile's kept by its chunk and level): their
     /// milliseconds, and the tiles decoded for them.
     double maxh_ms = 0;

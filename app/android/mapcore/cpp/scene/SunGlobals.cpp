@@ -680,6 +680,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
     };
     std::uint64_t kept = 0;
     std::uint64_t made = 0;
+    std::uint64_t remade = 0;
     // Each tile decoded once where its part is not taken: its bridges (the quays' decks, every tile's before any quay
     // wall is made: the pack's own tiles', then the other packs'), and with them the rest of its part of the scene
     // (sun::start_tile), or its solids alone where no one asks for its bits (the halo's: ask makes the wanted tiles'
@@ -770,11 +771,13 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         part.near = near;
         --kept;
         ++made;
+        ++remade;
     }
     {
         const std::scoped_lock lock(mutex_);
         stats_.parts_kept += kept;
         stats_.parts_made += made;
+        stats_.parts_remade += remade;
     }
     // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds, at
     // each zoom it holds tiles of. A frame cell's L13 holds its places' records as stage P derived them from all the
