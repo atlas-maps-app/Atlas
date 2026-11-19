@@ -90,4 +90,28 @@ class SourcesGateTest {
         }
         services.close()
     }
+
+    @Test
+    fun anArticleReadThisRunIsReadAgainWithWikipediaOffAndNothingIsSent() = runBlocking {
+        val services = testServices()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().code(200).body(page).build())
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val watch = Watch()
+            val wiki = Wikipedia(watched(services, watch)) { l -> "http://$l.wikipedia.org:${server.port}/w/api.php" }
+            services.switch(emptySet())
+            val read = wiki.article("en", "Westerkerk")
+            assertEquals(1, server.requestCount)
+            services.switch(setOf("wikipedia"))
+            // the reader asks article() again: it answers from what this run read, before it asks
+            assertEquals(read, wiki.article("en", "Westerkerk"))
+            assertEquals("nothing more was sent", 1, server.requestCount)
+            assertEquals(listOf("en.wikipedia.org"), watch.looked.toList())
+            assertEquals(1, watch.connects.size)
+            // another article is not read: it would be asked
+            assertTrue(runCatching { wiki.article("en", "Noorderkerk") }.exceptionOrNull() is SwitchedOffException)
+            assertEquals(1, server.requestCount)
+        }
+        services.close()
+    }
 }
