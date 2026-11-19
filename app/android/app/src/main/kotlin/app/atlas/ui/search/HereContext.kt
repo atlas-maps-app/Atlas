@@ -13,6 +13,7 @@ import app.atlas.search.PlaceRecord
 import app.atlas.services.PackCountries
 import app.atlas.tiles.WindowTiles
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -70,7 +71,11 @@ object HereContext {
      */
     private const val KEPT = 4_096
 
-    /** Within this far of the phone a place keeps the phone's clock (the same zone, in practice). */
+    /**
+     * Within this far of the phone a place in the phone's country keeps the phone's clock (the same zone, in practice),
+     * and one over a border a zone of its own country like the phone's where its country keeps several
+     * ([PlaceZone.besidePhone]).
+     */
     internal const val NEAR_PHONE_M = 300_000.0
 
     /** What the regions said, per point ([key]): the country and the state or nation most of the places there name. */
@@ -132,32 +137,45 @@ object HereContext {
     /**
      * The country and clock of [place], seen from a phone at [phone] whose own zone is [phoneZone]: its country its own
      * `addr:country`, else [country] at its point ([PlaceCountry]); its clock the phone's near the phone in the phone's
-     * country, else its country's ([PlaceZone]), else the sun's own hour. Asks the regions: off the main thread.
+     * country, near it over a border one of its country's like the phone's where its country keeps several
+     * ([PlaceZone.besidePhone]), else its country's ([PlaceZone]), else the sun's own hour. Asks the regions: off the
+     * main thread.
      */
     fun localeOf(services: Services, place: Place, phone: LatLon, phoneZone: ZoneId): PlaceLocale =
-        localeAmong(region(services, place.location), place, phone, phoneZone) { HereContext.country(services, phone) }
+        localeAmong(region(services, place.location), place, phone, phoneZone, services.clock.instant()) { HereContext.country(services, phone) }
 
     /** [localeOf] as far as it is known without asking the regions ([regionNow]), for a frame that cannot wait. */
     fun localeNow(services: Services, place: Place, phone: LatLon, phoneZone: ZoneId): PlaceLocale =
-        localeAmong(regionNow(services, place.location), place, phone, phoneZone) { countryNow(services, phone) }
+        localeAmong(regionNow(services, place.location), place, phone, phoneZone, services.clock.instant()) { countryNow(services, phone) }
 
-    /** [place]'s country and state or nation, its own first, else of [around], and its clock ([locale]). */
-    private fun localeAmong(around: HereRegion, place: Place, phone: LatLon, phoneZone: ZoneId, phoneCountry: () -> String?): PlaceLocale {
+    /** [place]'s country and state or nation, its own first, else of [around], and its clock at [now] ([locale]). */
+    private fun localeAmong(around: HereRegion, place: Place, phone: LatLon, phoneZone: ZoneId, now: Instant, phoneCountry: () -> String?): PlaceLocale {
         val country = PlaceCountry.of(place.tags, around.country)
         val subdivision = PlaceCountry.subdivision(place.tags, country) ?: around.subdivision?.takeIf { country != null && it.startsWith("$country-") }
-        return locale(HereRegion(country, subdivision), place.location, phone, phoneZone, phoneCountry)
+        return locale(HereRegion(country, subdivision), place.location, phone, phoneZone, now, phoneCountry)
     }
 
     /** The same for a point and the places around it, as an area's screens read them all ([localeOf]). */
     fun localeAt(services: Services, at: LatLon, phone: LatLon, phoneZone: ZoneId): PlaceLocale =
-        locale(region(services, at), at, phone, phoneZone) { HereContext.country(services, phone) }
+        locale(region(services, at), at, phone, phoneZone, services.clock.instant()) { HereContext.country(services, phone) }
 
-    /** [region]'s clock at [at] from a phone at [phone] on [phoneZone], in [phoneCountry], asked only within [NEAR_PHONE_M]. */
-    private fun locale(region: HereRegion, at: LatLon, phone: LatLon, phoneZone: ZoneId, phoneCountry: () -> String?): PlaceLocale {
-        // the phone's clock near it only in its own country, or where the place's is unknown: a border between may be a
-        // clock between (the app maintainer, 18 November 2026, batch 4 B15: Porto from Vigo read Spain's)
-        val near = Geo.distance(phone, at) <= NEAR_PHONE_M && (region.country == null || region.country == phoneCountry())
-        return PlaceLocale(region.country, if (near) phoneZone else PlaceZone.guess(region.country, at), region.subdivision)
+    /**
+     * [region]'s clock at [at] from a phone at [phone] on [phoneZone], in [phoneCountry], asked only within
+     * [NEAR_PHONE_M]; [now] the app's moment.
+     */
+    private fun locale(region: HereRegion, at: LatLon, phone: LatLon, phoneZone: ZoneId, now: Instant, phoneCountry: () -> String?): PlaceLocale {
+        val country = region.country
+        val zone = when {
+            Geo.distance(phone, at) > NEAR_PHONE_M -> PlaceZone.guess(country, at)
+            // the phone's clock near it in its own country, or where the place's is unknown: a border between may be a
+            // clock between (the app maintainer, 18 November 2026, batch 4 B15: Porto from Vigo read Spain's)
+            country == null || country == phoneCountry() -> phoneZone
+            // over a border near it, in a country of several clocks: one of its zones like the phone's, else the guess
+            // (19 November 2026, batch 6 A6: Windsor from Detroit read Edmonton's clock, Toronto from Buffalo
+            // Atikokan's)
+            else -> PlaceZone.besidePhone(country, at, phoneZone, now) ?: PlaceZone.guess(country, at)
+        }
+        return PlaceLocale(country, zone, region.subdivision)
     }
 
     /**
@@ -284,11 +302,41 @@ object PlaceZone {
      * sun's whole hour itself where the country is unknown.
      */
     fun guess(country: String?, p: LatLon, at: Instant = Instant.now()): ZoneId {
-        islands(country, p)?.let { return ZoneId.of(it) }
-        if (country !in SEVERAL) Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull()?.let { return it } }
+        own(country, p)?.let { return it }
         val sun = p.lon / 15.0
         val best = zonesOf(country).minByOrNull { id -> abs(ZoneId.of(id).rules.getStandardOffset(at).totalSeconds / 3600.0 - sun) }
         return best?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.ofHours(sun.roundToInt().coerceIn(-12, 14))
+    }
+
+    /**
+     * The clock at [p] in [country], not the phone's, near a phone on [phoneZone] ([HereContext.NEAR_PHONE_M]), where
+     * [guess] reads it by the sun's hour (a country of several clocks, or one the table names none for): the phone's
+     * zone where [country] keeps one with its offsets [now] and half a year on; else the one of its zones with the
+     * phone's offset now nearest the sun's hour there, as [guess] picks; null where it keeps none such, or where
+     * [guess] reads the country's own ([own]): [guess] then (the app maintainer, 19 November 2026, batch 6 A6: Windsor
+     * from Detroit read Edmonton's clock, Toronto from Buffalo Atikokan's, Smolensk from Orsha Kaliningrad's, where
+     * 38ddafa1 took the phone's within 300 km whatever the country). Vigo from Porto keeps Madrid's, though the
+     * Canaries keep Lisbon's offsets.
+     */
+    fun besidePhone(country: String, p: LatLon, phoneZone: ZoneId, now: Instant): ZoneId? {
+        if (own(country, p) != null) return null
+        val zones = zoneIdsOf(country)
+        val later = now.plus(HALF_YEAR)
+        val atNow = phoneZone.rules.getOffset(now)
+        val atLater = phoneZone.rules.getOffset(later)
+        if (zones.any { it.rules.getOffset(now) == atNow && it.rules.getOffset(later) == atLater }) return phoneZone
+        val sun = p.lon / 15.0
+        return zones.filter { it.rules.getOffset(now) == atNow }.minByOrNull { abs(it.rules.getStandardOffset(now).totalSeconds / 3600.0 - sun) }
+    }
+
+    /**
+     * [country]'s own clock at [p], where [guess] does not read it by the sun's hour: its islands' ([islands]), else
+     * the table's ([Countries.timezone]), but in [SEVERAL].
+     */
+    private fun own(country: String?, p: LatLon): ZoneId? {
+        islands(country, p)?.let { return ZoneId.of(it) }
+        if (country in SEVERAL) return null
+        return Countries.timezone(country, p).takeIf { it != "UTC" }?.let { id -> runCatching { ZoneId.of(id) }.getOrNull() }
     }
 
     /**
@@ -308,6 +356,14 @@ object PlaceZone {
      * names none for (Kazakhstan, Mongolia, both Congos), so they stay so if it ever does.
      */
     private val SEVERAL = setOf("US", "CA", "MX", "BR", "RU", "AU", "ID", "KZ", "MN", "CD", "CG")
+
+    /** Half a year: the offsets [besidePhone] compares are now's and this far on. */
+    private val HALF_YEAR: Duration = Duration.ofDays(182)
+
+    /** [zonesOf] as zones, listed once a country: [besidePhone] runs in a frame ([HereContext.localeNow]). */
+    private val zones = ConcurrentHashMap<String, List<ZoneId>>()
+
+    private fun zoneIdsOf(country: String): List<ZoneId> = zones.getOrPut(country) { zonesOf(country).map { ZoneId.of(it) } }
 
     /** The zone ids of [country] (ISO 3166 alpha-2), from the system's ICU data; none when unknown. */
     private fun zonesOf(country: String?): List<String> {
