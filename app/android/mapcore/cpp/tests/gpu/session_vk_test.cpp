@@ -645,9 +645,9 @@ TEST_CASE("the pipeline cache is written only where the driver's data is not wha
                                   << "second, " << third->driver.size() << " after the third ("
                                   << gpu::name_of(configurations[0]) << ", then " << gpu::name_of(configurations[1])
                                   << "), "
-                                  << (more ? "written once"
-                                           : "the same as the file's: the driver kept nothing more, "
-                                             "and nothing was written"));
+                                  << (more ? std::string_view("written once")
+                                           : std::string_view("the same as the file's: the driver kept nothing more, "
+                                                              "and nothing was written")));
     // A fourth as the third, its file gone once the start read it: the driver's data is the one the start loaded, and
     // still written again, the file it was in being gone (a stat at the save). The same bytes as the third's.
     const auto fourth = launch(configurations[1], true);
