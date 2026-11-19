@@ -11,10 +11,12 @@
 // whenever the frame is one the facts would not pick; a cell the guard turned off is refused, the pick never; mode 0
 // lets go of everything whatever it names and makes nothing; and the pipeline cache is written back only where a
 // pipeline was made through it since its last write and the driver's data is not what its file holds (launches one
-// after another on its folder: the second writes nothing, a third with more pipelines once). ATLAS_SESSION_FULL=1
-// takes the colour stage over every configuration, as VK bench does (the layer run's order, which notes the guard's
-// marker at every driver call: every call is behind one, and named only while it runs).
+// after another on its folder: the second writes nothing, a third with more pipelines once where the driver keeps them
+// in its data). ATLAS_SESSION_FULL=1 takes the colour stage over every configuration, as VK bench does (the layer
+// run's order, which notes the guard's marker at every driver call: every call is behind one, and named only while it
+// runs).
 #include "gpu/Guard.hpp"
+#include "gpu/PipelineCache.hpp"
 #include "standin/City.hpp"
 #include "standin/Session.hpp"
 #include "standin/View.hpp"
@@ -24,6 +26,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -234,6 +237,11 @@ struct OnDisk {
     std::ifstream in(path, std::ios::binary);
     d.bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     return d;
+}
+/// The driver's data a cache file holds behind its header.
+[[nodiscard]] std::vector<char> body_of(const OnDisk& file) {
+    if (file.bytes.size() < sizeof(gpu::CacheHeader)) return {};
+    return {file.bytes.begin() + static_cast<std::ptrdiff_t>(sizeof(gpu::CacheHeader)), file.bytes.end()};
 }
 
 } // namespace
@@ -559,7 +567,7 @@ TEST_CASE("the pipeline cache is written back only where a pipeline was made thr
 
 TEST_CASE("the pipeline cache is written only where the driver's data is not what its file holds: a second launch "
           "on its folder writes nothing and leaves the first's file byte for byte, a third with one more "
-          "configuration's pipelines writes once") {
+          "configuration's pipelines writes once where the driver keeps them") {
     if (!test::open_session()) return;
     const Folder folder("launches");
     const fs::path& dir = folder.path();
@@ -571,22 +579,32 @@ TEST_CASE("the pipeline cache is written only where the driver's data is not wha
     }();
     ATLAS_REQUIRE(configurations.size() >= 2, "the device draws " << configurations.size() << " configurations");
     // A launch as the app's: a guarded start on the folder, a session that draws `configuration`'s frame and its first
-    // 120 frames (each asks for a write), a trim's write, the close; what the start found of the file, and the file
-    // after the frame's pipelines were made (the session's first write).
+    // 120 frames (each asks for a write), a trim's write, the close; what the start found of the file, the file after
+    // the frame's pipelines were made (the session's first write), and the driver's data then, which the file holds.
+    // With `forget`, the file goes once the start has read it, as when the system clears an app's cache folder.
     struct Launch {
         std::string status;
         OnDisk made;
+        std::vector<char> driver;
     };
-    const auto launch = [&](const gpu::Configuration& configuration) -> std::optional<Launch> {
+    const auto launch = [&](const gpu::Configuration& configuration, bool forget = false) -> std::optional<Launch> {
         auto started = gpu::start_guarded(start_in(dir));
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, started.has_value(), started.error().reason);
         Launch l{.status = started->cache->status()};
+        if (forget) {
+            const bool gone = fs::remove(file);
+            CHECK(gone);
+        }
         standin::Session session(*started, session_in(dir));
         std::string why;
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, session.attach(std::make_unique<test::OffscreenWindow>(), size, why),
                                 why);
         ATLAS_REQUIRE_OR_RETURN(std::nullopt, session.bench(1, configuration, pills).empty());
         l.made = on_disk(file);
+        const auto data = started->cache->handle().getData();
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, data.has_value(), "the pipeline cache's data");
+        l.driver.assign(data->begin(), data->end());
+        CHECK(body_of(l.made) == l.driver);
         CHECK(draw(session, 121) == 121);
         session.save_cache();
         session.close();
@@ -608,16 +626,35 @@ TEST_CASE("the pipeline cache is written only where the driver's data is not wha
     CHECK(second->status == "hit");
     CHECK(second->made.inode == first->made.inode);
     CHECK(second->made.bytes == first->made.bytes);
-    // the third makes another configuration's pipelines besides: the driver's data grows, written once
+    CHECK(second->driver == first->driver);
+    // The third makes another configuration's pipelines besides. Where the driver keeps them in its data, the data is
+    // not the file's and is written once: a new file, holding it (each launch checks that). Where the driver keeps
+    // nothing more (lavapipe's data is its 32-byte header whatever it makes), the data is the file's: nothing written.
     const auto third = launch(configurations[1]);
     ATLAS_REQUIRE(third.has_value());
     CHECK(third->status == "hit");
-    CHECK(third->made.inode != first->made.inode);
-    CHECK(third->made.bytes != first->made.bytes);
-    MESSAGE("the cache's file: " << first->made.bytes.size() << " bytes after the first launch, the same after the "
-                                 << "second, " << third->made.bytes.size() << " after the third ("
-                                 << gpu::name_of(configurations[0]) << ", then " << gpu::name_of(configurations[1])
-                                 << ")");
+    const bool more = third->driver != first->driver;
+    if (more) {
+        CHECK(third->made.inode != first->made.inode);
+        CHECK(third->made.bytes != first->made.bytes);
+    } else {
+        CHECK(third->made.inode == first->made.inode);
+        CHECK(third->made.bytes == first->made.bytes);
+    }
+    MESSAGE("the driver's data: " << first->driver.size() << " bytes after the first launch, the same after the "
+                                  << "second, " << third->driver.size() << " after the third ("
+                                  << gpu::name_of(configurations[0]) << ", then " << gpu::name_of(configurations[1])
+                                  << "), "
+                                  << (more ? "written once"
+                                           : "the same as the file's: the driver kept nothing more, "
+                                             "and nothing was written"));
+    // A fourth as the third, its file gone once the start read it: the driver's data is the one the start loaded, and
+    // still written again, the file it was in being gone (a stat at the save). The same bytes as the third's.
+    const auto fourth = launch(configurations[1], true);
+    ATLAS_REQUIRE(fourth.has_value());
+    CHECK(fourth->status == "hit");
+    CHECK(fourth->driver == third->driver);
+    CHECK(fourth->made.bytes == third->made.bytes);
 }
 
 TEST_CASE("the colour stage closes as soon as nothing of 10 bits is left: refused outputs, a refused remake, a refused "
