@@ -20,11 +20,13 @@
 #pragma once
 
 #include "load/Coasters.hpp"
+#include "load/Scene.hpp"
 #include "load/Tradition.hpp"
 #include "load/Woods.hpp"
 #include "osm/Overpass.hpp"
 #include "tiles/Checksums.hpp"
 #include "tiles/Chunks.hpp"
+#include "tiles/Payload.hpp"
 #include "tiles/Sections.hpp"
 
 #include <array>
@@ -128,6 +130,11 @@ struct BuiltWindow {
     double load_ms = 0;         ///< loading its scene at each tolerance
     double cut_ms = 0;
     double write_ms = 0; ///< encoding its tile, head, style and pack
+    /// What the loading and the cleaning counted of the buildings of the scene its tile was cut from (tolerance 0's
+    /// Scene::counts): the window's own and those in the margin about it (window_margin), which the scenes of the
+    /// windows beside it count too.
+    BuildingCounts counts;
+    std::uint32_t footprints = 0; ///< that scene's buildings and parts
 };
 
 /// Why a window could not be built: its data does not read, its scene does not load or cut.
@@ -144,5 +151,23 @@ struct WindowError {
 /// Builds window `tile` at `place` from its data: Overpass's JSON for window_box(tile).
 [[nodiscard]] std::expected<BuiltWindow, WindowError>
 build_window(std::span<const std::byte> json, const tiles::TileKey& tile, const WindowPlace& place);
+
+/// The most windows stage T's walls can give the buildings and parts of `tile` at any level of the ladder
+/// (geometry/Walls.cpp: a row a storey, a bay every 2.1 m at the closest along a wall over 2.2 m long): each record's
+/// storeys, its own or a variant's where more (levels within 1 to tiles::building::most_levels; others have no
+/// windows), times its ring's length in `frame`'s metres over 2.1 m, but for an outline hidden at every level. A
+/// level's simplified ring is no longer than the record's and a seam carries no wall, so no level gives more: where
+/// this is within tiles::building::most_tile_windows, stage T cuts no wall's windows in the tile
+/// (TileBuildings::windows_cut), which it counts alone, and a pack's build (stage P) cannot.
+[[nodiscard]] std::uint64_t most_windows(const tiles::Tile& tile, const tiles::Frame& frame);
+
+/// What a window's pack holds of buildings, for the pack's build to print (stagep's `windows`).
+struct PackBuildings {
+    std::uint32_t records = 0;      ///< the buildings and parts of its tile
+    std::uint64_t most_windows = 0; ///< most_windows of its tile
+};
+
+/// The buildings of the window's tile in `pack`, a pack as build_window writes it (none where it has no tile).
+[[nodiscard]] std::expected<PackBuildings, WindowError> buildings_of(std::span<const std::byte> pack);
 
 } // namespace atlas::load
