@@ -236,7 +236,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         const auto ring = ring_points.subspan(first[k], first[k + 1] - first[k]);
         ATLAS_ASSERT(ring.size() >= 3, "a ring of fewer than three points");
         for (const atlas_clean_point& p : ring) {
-            ATLAS_ASSERT(g.s <= p.lat && p.lat <= g.n && g.w <= p.lon && p.lon <= g.e, "a point outside what was given");
+            ATLAS_ASSERT(g.s <= p.lat && p.lat <= g.n && g.w <= p.lon && p.lon <= g.e,
+                         "a point outside what was given");
         }
         for (std::size_t i = 0; i < ring.size(); ++i) {
             for (std::size_t j = i + 2; j < ring.size(); ++j) {
