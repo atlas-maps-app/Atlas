@@ -23,19 +23,26 @@ class SourcesTruthTest {
     private val shipped = listOf("app", "mapview", "providers", "tiles", "route", "search", "places", "render", "core", "guide", "anchor", "rendertiles", "mapcore")
 
     /**
-     * Hosts the code names but never asks: links the user opens, XML namespaces, and the page that finds the phone's
-     * browsers for signing in to OpenStreetMap (openInBrowser).
+     * Hosts the code names but never asks: links the user opens (a rating's page on Foursquare, a review's and a place's
+     * reviews on Mangrove), XML namespaces, and the page that finds the phone's browsers for signing in to OpenStreetMap
+     * (openInBrowser).
      */
-    private val links = setOf("afdc.energy.gov", "chargemap.com", "example.org", "map.openchargemap.io", "www.topografix.com", "www.w3.org")
+    private val links = setOf(
+        "afdc.energy.gov", "chargemap.com", "example.org", "foursquare.com", "mangrove.reviews", "map.openchargemap.io", "www.topografix.com", "www.w3.org",
+    )
 
     /**
-     * Addresses whose host is wholly built from a variable, by file, with what each is: a third shows up as a failure. A
-     * host whose first label alone is built (`https://$lang.wikipedia.org`) is no exception: it reads as `*.wikipedia.org`.
+     * The addresses whose host is wholly built from a variable, each by its file and its line's own code, with what it is:
+     * any other, in these files or another, shows up as a failure. A host whose first label alone is built
+     * (`https://$lang.wikipedia.org`) is no exception: it reads as `*.wikipedia.org`.
      */
     private val builtHosts = mapOf(
-        "app/src/main/kotlin/app/atlas/ui/search/PlaceParts.kt" to "a place's own website, opened in the browser",
-        "app/src/main/kotlin/app/atlas/ui/shop/ShopUi.kt" to "a shop's own website, opened in the browser",
+        ("app/src/main/kotlin/app/atlas/ui/search/PlaceParts.kt" to "else -> \"https://\$t\"") to "a place's own website, opened in the browser",
+        ("app/src/main/kotlin/app/atlas/ui/shop/ShopUi.kt" to "scheme == null -> \"https://\$t\"") to "a shop's own website, opened in the browser",
     )
+
+    /** The one request among Wikipedia's built addresses: the reader's API, which must be read as `*.wikipedia.org`. */
+    private val wikipediaRequest = "providers/src/main/kotlin/app/atlas/providers/Wikipedia.kt" to "\"https://\$lang.wikipedia.org/w/api.php\""
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
@@ -59,16 +66,59 @@ class SourcesTruthTest {
         File(android, "$m/src/main").walkTopDown().filter { it.isFile && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }.toList()
     }
 
-    /** Every host named by an address in the code of [files], comments left out. */
-    private fun hostsIn(files: List<File>): Map<String, String> {
+    /**
+     * An address in the code with a literal [host], [where] it is, and whether it stands as the `url` of a source's
+     * declaration (`ProviderInfo(… url = "…")`): the source's website, which the code declares and never asks.
+     */
+    private data class Address(val host: String, val where: String, val declared: Boolean) {
+        override fun toString() = "$where $host"
+    }
+
+    /** Every address with a literal host in the code of [files], comments left out, each where it stands. */
+    private fun addressesIn(files: List<File>): List<Address> {
         val url = Regex("""https?://([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)""")
-        val out = LinkedHashMap<String, String>()
+        val out = ArrayList<Address>()
         for (f in files) {
-            f.readLines().forEachIndexed { i, line ->
+            val lines = f.readLines()
+            val declaration = declarationLines(lines)
+            lines.forEachIndexed { i, line ->
                 val code = line.trim()
                 if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) return@forEachIndexed
-                for (m in url.findAll(code.replace(Regex("""\s//\s.*$"""), ""))) out.putIfAbsent(m.groupValues[1], "${f.relativeTo(android)}:${i + 1}")
+                val c = code.replace(Regex("""\s//\s.*$"""), "")
+                for (m in url.findAll(c)) {
+                    val declared = i in declaration && Regex("""(^|[\s,(])url = """" + Regex.escape(m.value)).containsMatchIn(c)
+                    out += Address(m.groupValues[1], "${f.relativeTo(android)}:${i + 1}", declared)
+                }
             }
+        }
+        return out
+    }
+
+    /** The indexes of [lines] inside a `ProviderInfo(…)` call, by its parentheses, what is in quotes skipped. */
+    private fun declarationLines(lines: List<String>): Set<Int> {
+        val out = HashSet<Int>()
+        val text = lines.joinToString("\n")
+        var from = 0
+        while (true) {
+            val start = text.indexOf("ProviderInfo(", from).takeIf { it >= 0 } ?: break
+            var i = start + "ProviderInfo".length
+            var depth = 0
+            var quoted = false
+            while (i < text.length) {
+                val ch = text[i]
+                if (quoted) {
+                    if (ch == '\\') i++ else if (ch == '"') quoted = false
+                } else when (ch) {
+                    '"' -> quoted = true
+                    '(' -> depth++
+                    ')' -> if (--depth == 0) break
+                }
+                i++
+            }
+            val first = text.substring(0, start).count { it == '\n' }
+            val last = text.substring(0, minOf(i, text.length)).count { it == '\n' }
+            for (l in first..last) out += l
+            from = i
         }
         return out
     }
@@ -76,22 +126,27 @@ class SourcesTruthTest {
     /**
      * Every address in the code of [files] whose host is built from a variable, comments left out, read as its host: a
      * first label that is a template as `*.rest` (`https://${wiki.first}.wikipedia.org` is `*.wikipedia.org`), a host that
-     * is wholly one as `*`; each with where it is (file:line).
+     * is wholly one as `*`; each with where it is and its line's code.
      */
-    private fun builtHostsIn(files: List<File>): List<Pair<String, String>> {
+    private fun builtHostsIn(files: List<File>): List<Built> {
         val url = Regex("""https?://(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)((?:\.[A-Za-z0-9-]+)*)""")
-        val out = ArrayList<Pair<String, String>>()
+        val out = ArrayList<Built>()
         for (f in files) {
             f.readLines().forEachIndexed { i, line ->
                 val code = line.trim()
                 if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) return@forEachIndexed
                 for (m in url.findAll(code.replace(Regex("""\s//\s.*$"""), ""))) {
                     val rest = m.groupValues[1]
-                    out += (if (rest.isEmpty()) "*" else "*$rest") to "${f.relativeTo(android)}:${i + 1}"
+                    out += Built(if (rest.isEmpty()) "*" else "*$rest", "${f.relativeTo(android)}", i + 1, code)
                 }
             }
         }
         return out
+    }
+
+    /** An address with a built host: its [host] as read (`*.wikipedia.org`, or `*`), its [file] and [line], and that line's [code]. */
+    private data class Built(val host: String, val file: String, val line: Int, val code: String) {
+        override fun toString() = "$file:$line $host"
     }
 
     /** Whether [token] is in the app's wiring (the app and the map's view), other than where its class is declared. */
@@ -103,11 +158,12 @@ class SourcesTruthTest {
     @Test
     fun everyHostTheShippedCodeAsksIsAListedSources() {
         assertTrue("the Android sources at $android", File(android, "providers/src/main").isDirectory)
-        val listed = SourcesModel.ALL.flatMap { it.hosts }.toSet()
-        val unwired = Catalogue.NOT_WIRED.flatMap { it.hosts }.toSet()
+        // a host is listed as the gate asks: a source holds it, by its name or below its pattern
+        val listed = SourcesModel.ALL + Catalogue.NOT_WIRED
+        // a source's website is excused only where the code declares it so, as the `url` of its declaration: named
+        // anywhere else (a client's base, a request) it is asked, and must be listed
         val websites = (SourcesModel.ALL + Catalogue.NOT_WIRED + Catalogue.BUNDLED).mapNotNull { java.net.URI(it.url).host }.toSet()
-        val named = hostsIn(sources(shipped))
-        val unknown = named.filterKeys { it !in listed && it !in unwired && it !in websites && it !in links }
+        val unknown = addressesIn(sources(shipped)).filter { a -> !(a.declared && a.host in websites) && a.host !in links && listed.none { it.holds(a.host) } }
         assertTrue("hosts the code names that no source lists: $unknown", unknown.isEmpty())
     }
 
@@ -115,13 +171,15 @@ class SourcesTruthTest {
     fun aHostBuiltFromAVariableIsHeldToAListedPattern() {
         val built = builtHostsIn(sources(shipped))
         val patterns = SourcesModel.ALL.flatMap { it.hosts }.filter { it.startsWith("*.") }
-        for ((host, where) in built.filter { it.first != "*" }) {
-            assertTrue("$where builds a host $host that no listed pattern holds", patterns.any { p -> app.atlas.providers.hostHolds(p, host) })
+        for (b in built.filter { it.host != "*" }) {
+            assertTrue("$b: no listed pattern holds it", patterns.any { p -> app.atlas.providers.hostHolds(p, b.host) })
         }
-        val whole = built.filter { it.first == "*" }.map { it.second }
-        assertEquals("hosts wholly built from a variable: $whole", builtHosts.keys, whole.map { it.substringBeforeLast(':') }.toSet())
-        // Wikipedia's four (the reader's address, its links), as the two websites: read, not skipped
-        assertTrue("$built", built.count { it.first == "*.wikipedia.org" } >= 4)
+        // a host wholly built from a variable only where it is named, by its line's own code: one a line
+        val whole = built.filter { it.host == "*" }.map { it.file to it.code }
+        assertEquals("hosts wholly built from a variable: $whole", builtHosts.keys.toList().sortedBy { it.first }, whole.sortedBy { it.first })
+        // Wikipedia's one request is read, and held to Wikipedia's pattern: the links for the browser are not what counts
+        val request = built.filter { it.file == wikipediaRequest.first && wikipediaRequest.second in it.code }
+        assertEquals("Wikipedia's request, read as *.wikipedia.org: $built", listOf("*.wikipedia.org"), request.map { it.host })
     }
 
     @Test
@@ -160,11 +218,6 @@ class SourcesTruthTest {
                 assertNull("$name goes while ${s.id} is on", SourcesModel.blockedBy(name, all - s.id))
             }
         }
-        val held = owners.flatMap { o -> o.hosts.flatMap { namesFor(it) } }.toSet()
-        // a source asked through another's servers is held back where it is asked, never by host; one without a switch never
-        for (s in SourcesModel.ALL.filter { it.via != null || !it.switchable }) {
-            for (h in s.hosts) for (name in namesFor(h)) if (name !in held) assertNull("${s.id}'s $name", SourcesModel.blockedBy(name, setOf(s.id)))
-        }
         assertNull(SourcesModel.blockedBy("overpass-api.de", setOf("osm-chargers")))
         assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", setOf("overpass")))
         assertNull(SourcesModel.blockedBy("api.openstreetmap.org", setOf("osm-notes", "osm-edits")))
@@ -196,6 +249,21 @@ class SourcesTruthTest {
             assertEquals("$name is ${o.id}'s and listed by $others", emptyList<String>(), others)
             for (n in SourcesModel.ALL) assertEquals("$name through ${n.id}'s view", o.id, SourcesModel.blockedBy(name, setOf(o.id), named = n.id))
         }
+    }
+
+    @Test
+    fun aSourceWithoutASwitchIsHeldBackOnlyWhereASwitchableSourceListsThatVeryName() {
+        // every switch off: the hosts of a source without a switch (OpenStreetMap's notes, edits and sign-in), or of one
+        // asked through another's servers (the chargers, through Overpass's), are held back only where a switchable
+        // source lists that very name, never by a pattern that happens to reach them
+        val switchable = SourcesModel.ALL.filter { it.switchable && it.via == null }
+        val allOff = switchable.map { it.id }.toSet()
+        for (s in SourcesModel.ALL.filter { !it.switchable || it.via != null }) for (h in s.hosts) for (name in namesFor(h)) {
+            val listing = switchable.firstOrNull { o -> h in o.hosts }?.id
+            assertEquals("${s.id}'s $name", listing, SourcesModel.blockedBy(name, allOff))
+        }
+        assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", allOff))
+        assertNull(SourcesModel.blockedBy("api.openstreetmap.org", allOff))
     }
 
     @Test
