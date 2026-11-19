@@ -1,0 +1,6 @@
+# A trial, to be reverted by the next commit (the Rust road's brief): another Rust pinned in the crate's folder, which
+# no runner installs (.github/scripts/rust.sh installs app/android/rust-toolchain.toml's), so that the build shows how
+# it fails on a Rust that is not installed (RUSTUP_AUTO_INSTALL=0, cpp/cmake/Rust.cmake).
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
