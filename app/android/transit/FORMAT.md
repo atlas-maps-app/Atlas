@@ -87,7 +87,7 @@ All integers are little-endian `u32` unless said. `NONE` is `0xFFFFFFFF`.
   - between two stops of one station, however far: the same, and 120 s at least;
   - to or from a stop that is nowhere, inside its station: 120 s;
   - a rule of `transfers.txt` between two stops for everyone (no trip, no line) changes the walk: type 2 sets its seconds, type 3 removes it, type 0 or 1 adds one where none was.
-- **Transfer rules** are all kept as records, whatever their type. OVapi's are all between two trips: "not possible" (3), "the second vehicle waits" (1), and "recommended" (0).
+- **Transfer rules** are all kept as records, whatever their type. OVapi's are all between two trips: "not possible" (3), "the second vehicle waits" (1), and "recommended" (0). A rule that names a trip or a line and gives a least time (2) is kept as it is, and the packer's summary counts those whose time is under the stop's own or the walk's, and those between stops no walk joins: the planner holds to the longer and offers no change where there is none without the rule (README, "A least time is never less").
 - **Distances** are on the plane at the two points' mean latitude, in integers: a 1e-7 degree of latitude is 11.1195 mm (a sphere of 6,371.0 km), and the cosine comes from a table of 901 values by the tenth of a degree, scaled by 65,536. Divisions round down. The planner has the same table (a test holds the two together).
 - **A cut** (`--first`, `--days`, `--box`, `--agency`) keeps the days, the stops inside a box, or the operators named. A trip keeps its stops inside the box and needs two. The tests' files are cuts.
 

@@ -47,6 +47,10 @@ WALK_SPEED_MM_S = 1250          # 1.25 m/s
 WALK_DETOUR_PERCENT = 130       # a street is 30 % longer than the straight line
 WALK_CHANGE_S = 60              # what a change on foot costs besides the walk
 
+# what the summary counts of the rules that give a least time shorter than what holds without them
+UNDER = "transfer rules that name a trip or a line with a least time under the stop's own or the walk's, where the longer holds"
+NOT_OFFERED = "transfer rules that name a trip or a line with a least time where nobody changes or no walk leads, a change not offered"
+
 
 class Feed:
     """Reads a GTFS zip or folder by table, as rows of dicts or of lists."""
@@ -636,6 +640,28 @@ def main():
                 if s["place"] != 2 and o["place"] != 2:
                     walks[i][j] = walk_s(metres_mm(s["lat"], s["lon"], o["lat"], o["lon"]))
     rules.sort()
+    # A rule that names a trip or a line and gives a least time (type 2) only ever asks for more time than holds
+    # without it: the stop's own time to change, or the walk between the two stops. In GTFS the more specific rule
+    # counts, so a shorter time would make a change possible that is not possible otherwise; the planner holds to
+    # the longer (README, "A least time is never less"), and where nobody changes at the stop or no walk leads from
+    # the one stop to the other it does not offer the change. No feed packed so far has such a rule. The summary
+    # says how many this one has, 0 too, so that the first is seen.
+    own = {}
+    for i, j, *names, kind, mt in rules:
+        if i == j and names == [NONE] * 4:
+            if kind == 3:
+                own[i] = math.inf
+            elif kind == 2 and mt != NONE:
+                own[i] = max(own.get(i, 0), mt)
+    counted(UNDER, 0)
+    counted(NOT_OFFERED, 0)
+    for i, j, *names, kind, mt in rules:
+        if kind == 2 and mt != NONE and names != [NONE] * 4:
+            holds = own.get(i, WALK_SAME_STOP_S) if i == j else walks[i].get(j, math.inf)
+            if holds == math.inf:
+                counted(NOT_OFFERED)
+            elif mt < holds:
+                counted(UNDER)
     log("walks", sum(len(w) for w in walks), "transfer rules", len(rules))
 
     # ---- META

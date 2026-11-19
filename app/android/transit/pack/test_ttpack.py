@@ -8,6 +8,7 @@
   goes forward, autumn the night it goes back);
 - the cosine table is the planner's (planner/src/geo.rs), number for number, so both measure alike;
 - a table or a column the packer does not read is said, and with --strict refused with nothing written;
+- the rules that name a trip or a line and give a least time under what holds without them are counted in the summary;
 - ttlist.py writes the list of published files, and says when only a changed feed is wanted.
 
 Python 3's standard library only.
@@ -51,6 +52,9 @@ class Packer(unittest.TestCase):
             self.assertEqual(self.pack(os.path.join(tmp, "a.tt"), "edges"), kept, "edges.tt is stale: pack planner/tests/data/edges again")
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "edges"), kept)
             self.assertIn("the clock changes: the day after 2027-03-27 begins 82800 s after it", self.said)
+            # (its one least time under the walk, 120 s where the walk takes 271: planner/tests/edges.rs, Tijd)
+            self.assertIn(ttpack.UNDER + ": 1\n", self.said)
+            self.assertIn(ttpack.NOT_OFFERED + ": 0\n", self.said)
         self.assertIn(b"odd_days=20270327:82800", kept.replace(b"\0", b"="))
 
     def test_the_autumn_feed_packs_to_the_kept_bytes(self):
@@ -71,6 +75,40 @@ class Packer(unittest.TestCase):
             self.assertEqual(self.pack(os.path.join(tmp, "a.tt"), "waits"), kept, "waits.tt is stale: pack planner/tests/data/waits again")
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "waits"), kept)
             self.assertIn("47 trips, 0 walks, 1 transfer rules", self.said)
+
+    def test_a_least_time_under_what_holds_without_it_is_counted(self):
+        # A rule that names a trip or a line and gives a least time is held to the longer of that and what holds
+        # without it (the stop's own time to change, the walk between the two stops), and where nobody changes or no
+        # walk leads the change is not offered: GTFS has the more specific rule count. The summary says how many of
+        # each a feed has, 0 too. The edges feed has one; here it gets seven more, of which five count.
+        import shutil
+
+        more = [
+            "SS,SS,S1,S2,,,2,120",  # the stop's own time is 300 s: under
+            "SS,SS,S1,S2,,,2,300",  # the same: not under
+            "MS,MS,M1,M2,,,2,30",  # no time of its own, so the file's 60 s: under
+            "MS,MS,M1,M2,,,2,60",  # the same: not under
+            "TB,TC,T1,T2,,,2,270",  # the walk takes 271 s: under
+            "TB,TC,T1,T2,,,2,271",  # the same: not under
+            "ZB,ZC,Z1,Z2,,,2,90",  # no walk leads from ZB to ZC: not offered
+            "HS,HS,,,,,3,",  # nobody changes at HS,
+            "HS,HS,H1,H2,,,2,600",  # so this change is not offered
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            feed = os.path.join(tmp, "edges")
+            shutil.copytree(os.path.join(DATA, "edges"), feed)
+            with open(os.path.join(feed, "transfers.txt"), "a") as f:
+                f.write("\n".join(more) + "\n")
+            r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), feed, os.path.join(tmp, "out.tt")], check=True, capture_output=True, text=True)
+            self.assertIn("8 walks, 20 transfer rules", r.stdout)
+            self.assertIn(ttpack.UNDER + ": 4\n", r.stdout)
+            self.assertIn(ttpack.NOT_OFFERED + ": 2\n", r.stdout)
+        # the feeds without such a rule say 0 of each
+        for feed in ("tiny", "autumn", "waits"):
+            with tempfile.TemporaryDirectory() as tmp:
+                self.pack(os.path.join(tmp, "a.tt"), feed)
+                self.assertIn(ttpack.UNDER + ": 0\n", self.said)
+                self.assertIn(ttpack.NOT_OFFERED + ": 0\n", self.said)
 
     def test_the_days_the_clock_changes(self):
         day = datetime.date
