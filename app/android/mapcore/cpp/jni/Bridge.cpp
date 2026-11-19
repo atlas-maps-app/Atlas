@@ -46,6 +46,7 @@
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
+#include "text/SlugBands.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Kept.hpp"
 #include "tiles/Source.hpp"
@@ -293,6 +294,7 @@ public:
         return on_session([this] {
             std::string line = session_->stats();
             if (map_on_) line += "; " + map_->tiles_line();
+            line += "; " + text::slug::shared_glyphs().line(); // the process's glyphs, every frame's
             return line;
         });
     }

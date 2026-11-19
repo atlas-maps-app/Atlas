@@ -28,6 +28,7 @@
 #include <map>
 #include <mutex>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -148,6 +149,9 @@ public:
     /// How many glyphs it holds, and whether it refused one for want of room.
     [[nodiscard]] std::size_t size() const;
     [[nodiscard]] bool full() const;
+    /// Its part of the core's stats line (jni/Bridge.cpp, which the bench's table prints): `vk glyphs <n> in <c> of
+    /// <max> curve rows and <b> of <max> band rows`, then `, full` once it refused one for want of room.
+    [[nodiscard]] std::string line() const;
 
 private:
     mutable std::mutex mutex_;

@@ -6,7 +6,9 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <format>
 #include <numeric>
+#include <string>
 
 namespace atlas::text::slug {
 
@@ -391,6 +393,12 @@ std::size_t GlyphAtlas::size() const {
 bool GlyphAtlas::full() const {
     const std::lock_guard lock(mutex_);
     return full_;
+}
+
+std::string GlyphAtlas::line() const {
+    const std::lock_guard lock(mutex_);
+    return std::format("vk glyphs {} in {} of {} curve rows and {} of {} band rows{}", glyphs_.size(),
+                       atlas_.curve_rows(), max_rows, atlas_.band_rows(), max_rows, full_ ? ", full" : "");
 }
 
 GlyphAtlas& shared_glyphs() noexcept {
