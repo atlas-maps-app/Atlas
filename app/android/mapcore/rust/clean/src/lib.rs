@@ -17,6 +17,8 @@ pub mod bridge;
 pub mod clean;
 pub mod geom;
 #[cfg(test)]
+mod bounds;
+#[cfg(test)]
 mod props;
 
 use alloc::boxed::Box;
@@ -147,6 +149,64 @@ pub fn panic_message(at: Option<(&[u8], u32)>, out: &mut [u8; PANIC_MESSAGE]) ->
     }
     out[n] = 0;
     n
+}
+
+/// The C library's allocator, counted on each thread, for tests that bound what an operation holds at once.
+#[cfg(test)]
+pub(crate) mod counted {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    std::thread_local! {
+        static NOW: Cell<isize> = const { Cell::new(0) };
+        static PEAK: Cell<isize> = const { Cell::new(0) };
+    }
+
+    fn add(bytes: isize) {
+        let _ = NOW.try_with(|now| {
+            let v = now.get() + bytes;
+            now.set(v);
+            let _ = PEAK.try_with(|peak| peak.set(peak.get().max(v)));
+        });
+    }
+
+    struct Counted;
+
+    // SAFETY: the system's allocator, each call passed on as it came
+    unsafe impl GlobalAlloc for Counted {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            // SAFETY: passed on
+            let p = unsafe { System.alloc(l) };
+            if !p.is_null() {
+                add(l.size() as isize);
+            }
+            p
+        }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+            // SAFETY: passed on
+            unsafe { System.dealloc(p, l) };
+            add(-(l.size() as isize));
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
+            // SAFETY: passed on
+            let q = unsafe { System.realloc(p, l, size) };
+            if !q.is_null() {
+                add(size as isize - l.size() as isize);
+            }
+            q
+        }
+    }
+
+    #[global_allocator]
+    static COUNTED: Counted = Counted;
+
+    /// What `f` gives, and the most bytes this thread held at once while it ran, past what it held before.
+    pub fn peak<R>(f: impl FnOnce() -> R) -> (R, usize) {
+        let before = NOW.with(Cell::get);
+        PEAK.with(|p| p.set(before));
+        let r = f();
+        (r, (PEAK.with(Cell::get) - before) as usize)
+    }
 }
 
 /// A grid point: latitude and longitude in 1e-7 degrees.

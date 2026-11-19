@@ -88,8 +88,21 @@ fn segments(a: &[Vec<P>], b: &[Vec<P>]) -> Vec<Seg> {
     out
 }
 
+/// A segment's split points as its pieces take them: its ends left out, the rest in order along it, each once. The
+/// same however often it is done, so a round may settle its points before it ends.
+fn settle(pts: &mut Vec<P>, s: &Seg) {
+    pts.retain(|&p| p != s.a && p != s.b);
+    pts.sort_by_key(|&p| (dot(s.a, p, s.b), p));
+    pts.dedup();
+}
+
 /// Splits the segments where they cross or touch until none does: a crossing at its nearest grid point, a touch at
-/// the vertex that touches. None where it does not settle.
+/// the vertex that touches. None where it does not settle: past ROUNDS, or past MAX_SEGMENTS pieces. A round gives up
+/// as soon as its splits make more pieces than that, rather than at the next round's start: the pieces it would
+/// make are counted as it splits (its points settled once they could pass the limit, and again each time MAX_SEGMENTS
+/// more have come), so what a round holds stays within a few times the limit whatever it is given. Two footprints of
+/// 3,000 edges that all cross would otherwise split into 18 million pieces, about a gigabyte, before the next
+/// round's test sent them back as mapped. It gives up on what the next round would have: the result is the same.
 fn node(mut segs: Vec<Seg>) -> Option<Vec<Seg>> {
     for _ in 0..ROUNDS {
         let n = segs.len();
@@ -100,6 +113,9 @@ fn node(mut segs: Vec<Seg>) -> Option<Vec<Seg>> {
         order.sort_by_key(|&i| (segs[i].a.x.min(segs[i].b.x), i));
         let mut splits: Vec<Vec<P>> = vec![Vec::new(); n];
         let mut any = false;
+        // the points splits holds, and how many it may hold before they are settled and the pieces counted
+        let mut held = 0usize;
+        let mut count_at = MAX_SEGMENTS - n;
         for oi in 0..n {
             let i = order[oi];
             let s = segs[i];
@@ -116,15 +132,29 @@ fn node(mut segs: Vec<Seg>) -> Option<Vec<Seg>> {
                     let p = crossing(s.a, s.b, t.a, t.b);
                     splits[i].push(p);
                     splits[j].push(p);
+                    held += 2;
                     any = true;
                     continue;
                 }
                 for (p, on, k) in [(t.a, s, i), (t.b, s, i), (s.a, t, j), (s.b, t, j)] {
                     if strictly_inside_segment(p, on.a, on.b) {
                         splits[k].push(p);
+                        held += 1;
                         any = true;
                     }
                 }
+            }
+            if held > count_at {
+                // a segment of k points becomes k + 1 pieces
+                held = 0;
+                for (k, pts) in splits.iter_mut().enumerate() {
+                    settle(pts, &segs[k]);
+                    held += pts.len();
+                }
+                if n + held > MAX_SEGMENTS {
+                    return None;
+                }
+                count_at = held + MAX_SEGMENTS;
             }
         }
         if !any {
@@ -137,9 +167,7 @@ fn node(mut segs: Vec<Seg>) -> Option<Vec<Seg>> {
                 out.push(*s);
                 continue;
             }
-            pts.retain(|&p| p != s.a && p != s.b);
-            pts.sort_by_key(|&p| (dot(s.a, p, s.b), p));
-            pts.dedup();
+            settle(&mut pts, s);
             let mut prev = s.a;
             for p in pts {
                 if p != prev {
