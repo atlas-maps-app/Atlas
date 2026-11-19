@@ -20,9 +20,13 @@ ${CXX:-c++} -std=c++17 -Wall -Wextra -Werror -pedantic -Iinclude "$T/host.cpp" "
 # What the library asks of whoever links it, read off the C program: the C library's memory and a few of its calls
 # (and what the program itself calls to read a file and print). Nothing of an unwinder, of the C++ runtime or of
 # Rust's standard library: those would be megabytes in the app, or a link that fails there.
-ASKS="$(nm -u "$T/atlas-transit-host" | awk '{ print $NF }' | sed -e 's/@.*//' -e 's/^_//' | sort -u)"
+# Names as C has them: a Mach-O file puts an underscore before each, an ELF file a version after some.
+UNDERSCORE=''
+[ "$(uname -s)" = Darwin ] && UNDERSCORE='s/^_//'
+ASKS="$(nm -u "$T/atlas-transit-host" | awk '{ print $NF }' | sed -e 's/@.*//' -e "$UNDERSCORE" | sort -u)"
 echo "check.sh: the C program and the library in it ask for:" $ASKS >&2
-if echo "$ASKS" | grep -E '^_?(_Unwind|rust_|_rust|_ZN|_R[a-zA-Z0-9]|__cxa|__gxx)' >&2; then
+# (__cxa_finalize and __cxa_atexit are the C library's own, for a program's end)
+if echo "$ASKS" | grep -E '^(_Unwind|_?_?rust_|_ZN|_R[a-zA-Z0-9]|__cxa|__gxx)' | grep -vE '^__cxa_(finalize|atexit)$' >&2; then
     echo "check.sh: the library asks for more than the C library has (the lines above)" >&2
     exit 1
 fi
