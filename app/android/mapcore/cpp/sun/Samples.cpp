@@ -1085,6 +1085,26 @@ private:
 
 // ---------------------------------------------------------------- quay walls (Amsterdam.waterLayer)
 
+} // namespace
+
+QuayMark quay_mark(double ax, double az, double bx, double bz) noexcept {
+    return {.mx = (ax + bx) / 2, .mz = (az + bz) / 2, .el = dist(V2{ax, az}, V2{bx, bz})};
+}
+
+bool deck_near(const QuayMark& q, const Deck& deck) noexcept {
+    const auto& bb = deck.box;
+    return bb[0] - q.el <= q.mx && q.mx <= bb[1] + q.el && bb[2] - q.el <= q.mz && q.mz <= bb[3] + q.el;
+}
+
+std::vector<QuayMark> quay_marks(const TileStart& start) {
+    std::vector<QuayMark> out;
+    out.reserve(start.quays.size());
+    for (const TileStart::Quay& q : start.quays) out.push_back(quay_mark(q.ax, q.az, q.bx, q.bz));
+    return out;
+}
+
+namespace {
+
 /// Whether (x, z) lies under a bridge's deck (waterLayer's underDeck).
 [[nodiscard]] bool under_deck(double x, double z, std::span<const Deck> decks) {
     std::vector<V2> ring;
@@ -1123,13 +1143,9 @@ void quay_samples(TileSamples& out, const Region& region, std::uint32_t record, 
         V2 b;
     };
     std::vector<Piece> pieces;
-    const double mx = (a.x + b.x) / 2;
-    const double mz = (a.z + b.z) / 2;
-    const double el = dist(a, b);
-    const bool near_deck = std::ranges::any_of(decks, [&](const Deck& dk) {
-        const auto& bb = dk.box;
-        return bb[0] - el <= mx && mx <= bb[1] + el && bb[2] - el <= mz && mz <= bb[3] + el;
-    });
+    const QuayMark mark = quay_mark(a.x, a.z, b.x, b.z);
+    const double el = mark.el;
+    const bool near_deck = std::ranges::any_of(decks, [&](const Deck& dk) { return deck_near(mark, dk); });
     if (near_deck) {
         const int k = std::max(1, kt_int(el / 2.0));
         std::optional<V2> run;
