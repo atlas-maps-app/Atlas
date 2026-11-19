@@ -1,6 +1,7 @@
 //! The second opinion: a connection scan (Dibbelt, Pajor, Strasser and Wagner) over the same file, with nothing of
-//! the search by rounds in it. It answers two questions only (the earliest arrival, the latest departure) and holds
-//! a whole day's connections in memory, so it is the tests' and the tool's, not the phone's.
+//! the search by rounds in it. It answers the earliest arrival and the latest departure, and every best way by
+//! time, cost and rides from a moment or to one (`ways`, `ways_back`); it holds a whole day's connections in
+//! memory, so it is the tests' and the tool's, not the phone's.
 //!
 //! What a search could get wrong it reads from the file by itself, in its own way: when each service day begins
 //! (the days the clock changes, `day_start`), which days' trips reach into the seconds asked for, what a
@@ -12,13 +13,16 @@
 //!
 //! What the wishes close and what they cost it works out from the wish list, a wish and a ride or a stop at a time
 //! (`Reference::asked`, `wished`), where the search adds up tables made beforehand; and a scan of its own carries
-//! the cost (`cheapest`), so the options of a query with wishes are held to it too (`costs_differ`). What it has in
+//! the cost and the rides beside the time (`ways`), so every option of an answer for one moment is held to it,
+//! with wishes or without (`moment_differs`). What it has in
 //! common with the search is what a wish means of one thing, which is not the search's either: whether a point
 //! lies in an area ([`crate::query::Area::contains`]), which kind of vehicle a line's type is
 //! ([`Mode::of`]), and how far a query is followed ([`Query::followed`]). tests/tiny.rs holds the first to paper
 //! (an area's edge a metre from a stop), and a station's stops.
 //!
-//! It knows no cap on rides: a query it is compared on sets `max_rides` high. It keeps to the
+//! The earliest arrival, the latest departure and a window's pairs know no cap on rides: a query they are compared
+//! on sets `max_rides` high. The ways by time, cost and rides have no more rides than the query lets a journey
+//! have. It keeps to the
 //! seconds the query follows ([`Query::followed`]): what ends past them is no answer to either. And it holds to the
 //! feed's rules between trips where the query does, in its own way: where a rule speaks of the trip to be boarded, it
 //! goes through the arrivals one by one, each with the trip it came by, where the search by rounds holds such an
@@ -214,6 +218,12 @@ pub struct Asked {
     closed: Vec<bool>,
     closed_through: Vec<bool>,
     ride_closed: Vec<bool>,
+    /// What the wishes that cost come to, in seconds: by ride of this scan, for riding it; by stop, for a boarding
+    /// or an alighting there, and for a call there where riding past counts. From the wish list too (`worth`);
+    /// empty where no wish costs.
+    ride_costs: Vec<u32>,
+    used: Vec<u32>,
+    called: Vec<u32>,
 }
 
 impl Asked {
@@ -227,6 +237,18 @@ impl Asked {
 
     fn ride_closed(&self, ride: u32) -> bool {
         self.ride_closed.get(ride as usize).copied().unwrap_or(false)
+    }
+
+    fn ride_cost(&self, ride: u32) -> u32 {
+        self.ride_costs.get(ride as usize).copied().unwrap_or(0)
+    }
+
+    fn used(&self, stop: u32) -> u32 {
+        self.used.get(stop as usize).copied().unwrap_or(0)
+    }
+
+    fn called(&self, stop: u32) -> u32 {
+        self.called.get(stop as usize).copied().unwrap_or(0)
     }
 }
 
@@ -364,9 +386,16 @@ pub fn places(planner: &Planner, q: &Query) -> Places {
     })
 }
 
-/// The most a wish's seconds count for, and the most a journey's cost comes to (query.rs).
+/// The most a wish's seconds count for, the most a journey's cost comes to, and the most rides a journey may have
+/// (query.rs).
 const WISH_MOST: u32 = 86_400;
 const COST_MOST: u32 = 64 * 86_400;
+const RIDES_MOST: u32 = 16;
+
+/// Costs added up, to the most a journey's comes to.
+fn sum(costs: impl IntoIterator<Item = u32>) -> u32 {
+    costs.into_iter().fold(0u32, |a, b| a.saturating_add(b)).min(COST_MOST)
+}
 
 /// What a wish that costs makes of one use: avoided, the thing itself costs; preferred, anything else does.
 fn worth(how: How, is: bool) -> u32 {
@@ -439,12 +468,17 @@ pub fn wished(tt: &Timetable, q: &Query, j: &Journey) -> Result<u32, String> {
     Ok(cost)
 }
 
-/// Adds a pair to those of which none is no better in both: whether it was added.
-fn offer(bag: &mut Vec<(i32, u32)>, new: (i32, u32)) -> bool {
-    if bag.iter().any(|l| l.0 <= new.0 && l.1 <= new.1) {
+/// A way so far, or a whole one: a moment, its cost in the wishes and its rides. The moment is the one that counts
+/// where it is kept, the less the better: an arrival; scanning back, a departure negated; 0 aboard a vehicle, whose
+/// time is the vehicle's.
+type Way = (i32, u32, u32);
+
+/// Adds a way to those of which none is no worse than another in all three: whether it was added.
+fn offer(bag: &mut Vec<Way>, new: Way) -> bool {
+    if bag.iter().any(|l| l.0 <= new.0 && l.1 <= new.1 && l.2 <= new.2) {
         return false;
     }
-    bag.retain(|l| !(new.0 <= l.0 && new.1 <= l.1));
+    bag.retain(|l| !(new.0 <= l.0 && new.1 <= l.1 && new.2 <= l.2));
     bag.push(new);
     true
 }
@@ -593,7 +627,14 @@ impl Reference {
             closed_through = said.iter().map(|is| *is == Some((true, true))).collect();
             ride_closed = self.rides.iter().map(|&(trip, line)| never.iter().any(|w| of_ride(tt, w, trip, line) == Some(true))).collect();
         }
-        Asked { places: self.places(planner, q), closed, closed_through, ride_closed }
+        let costly: Vec<&Wish> = q.wishes.iter().take(64).filter(|w| w.how != How::Never).collect();
+        let (mut ride_costs, mut used, mut called) = (Vec::new(), Vec::new(), Vec::new());
+        if !costly.is_empty() {
+            ride_costs = self.rides.iter().map(|&(trip, line)| sum(costly.iter().filter_map(|w| of_ride(tt, w, trip, line).map(|is| worth(w.how, is))))).collect();
+            let at_stops = |through: bool| -> Vec<u32> { (0..tt.stops()).map(|s| sum(costly.iter().filter_map(|w| of_stop(tt, w, s).filter(|is| is.1 == through).map(|is| worth(w.how, is.0))))).collect() };
+            (used, called) = (at_stops(false), at_stops(true));
+        }
+        Asked { places: self.places(planner, q), closed, closed_through, ride_closed, ride_costs, used, called }
     }
 
     /// A query's places as the scan reads them (`stops_of`).
@@ -821,15 +862,21 @@ impl Reference {
         (best != i32::MAX).then_some((best, best_rides))
     }
 
-    /// The least cost so far with which the ride `to` leaving `stop` at `depart` can be boarded, where a
-    /// rule speaks of boarding it there: `boards` with a cost, over every arrival the rules let change and not the
-    /// first found.
+    /// With what cost and how many rides so far the ride `to` leaving `stop` at `depart` can be boarded, where a
+    /// rule speaks of boarding it there: `boards` over every arrival the rules let change and not the first
+    /// found, each with its cost and its rides; of these the best (none is no worse than another in both).
     #[allow(clippy::too_many_arguments)]
-    fn boards_at_cost(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32, u32)>], stop: u32, to: u32, depart: i32) -> Option<u32> {
+    fn boards_ways(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32, u32, u32)>], stop: u32, to: u32, depart: i32) -> Vec<Way> {
         let tt = planner.timetable();
-        let mut best = (origin[stop as usize] <= depart).then_some(0u32);
+        let mut best: Vec<Way> = Vec::new();
+        if origin[stop as usize] <= depart {
+            best.push((0, 0, 0));
+        }
         let mut from_there = |s: u32, base: Option<i32>| {
-            for &(t, x, cost) in arrivals[s as usize].iter().filter(|a| a.0 <= depart) {
+            for &(t, x, cost, rides) in arrivals[s as usize].iter().filter(|a| a.0 <= depart) {
+                if best.iter().any(|b| b.1 <= cost && b.2 <= rides) {
+                    continue;
+                }
                 let (barred, waits, least) = self.ruled(tt, (s, x, t), (stop, to, depart));
                 let needs = match (waits, base) {
                     (true, _) => 0,
@@ -837,7 +884,7 @@ impl Reference {
                     (false, None) => continue,
                 };
                 if !barred && depart >= t.saturating_add(needs) {
-                    best = Some(best.map_or(cost, |b| b.min(cost)));
+                    offer(&mut best, (0, cost, rides));
                 }
             }
         };
@@ -854,40 +901,76 @@ impl Reference {
         best
     }
 
-    /// With wishes that cost: every best pair of arrival and cost among the journeys with a ride that leave the
-    /// query's origin at `time` or later (no other arrives no later at no more cost), by arrival. The query's own
-    /// moment, window and direction are not read; the feed's rules are held to as in `earliest_arrival`.
-    ///
-    /// The scan with a cost beside the time: at a stop it keeps every pair of the moment one is ready to board
-    /// and the cost so far that no other beats in both, aboard a vehicle the least cost (the time is the
-    /// vehicle's), and what each wish costs it takes from `of_ride` and `of_stop`, a wish at a time.
-    pub fn cheapest(&self, planner: &Planner, q: &Query, time: i32) -> Vec<(i32, u32)> {
-        self.cheapest_in(planner, q, &self.asked(planner, q), time)
+    /// The same turned round: at what cost and with how many rides the ride `from` that arrives at `stop` at
+    /// `arrive` leads on, where a rule speaks of changing from it there.
+    #[allow(clippy::too_many_arguments)]
+    fn leads_on_ways(&self, planner: &Planner, q: &Query, destination: &[i32], departures: &[Vec<(i32, u32, u32, u32)>], stop: u32, from: u32, arrive: i32) -> Vec<Way> {
+        let tt = planner.timetable();
+        let mut best: Vec<Way> = Vec::new();
+        if destination[stop as usize] >= arrive {
+            best.push((0, 0, 0));
+        }
+        let mut to_there = |s: u32, base: Option<i32>| {
+            for &(d, y, cost, rides) in departures[s as usize].iter().filter(|d| d.0 >= arrive) {
+                if best.iter().any(|b| b.1 <= cost && b.2 <= rides) {
+                    continue;
+                }
+                let (barred, waits, least) = self.ruled(tt, (stop, from, arrive), (s, y, d));
+                let needs = match (waits, base) {
+                    (true, _) => 0,
+                    (false, Some(base)) => base.max(least),
+                    (false, None) => continue,
+                };
+                if !barred && d >= arrive.saturating_add(needs) {
+                    offer(&mut best, (0, cost, rides));
+                }
+            }
+        };
+        to_there(stop, Some(self.change(tt, q, stop)));
+        let (lo, hi) = tt.walks_from(stop);
+        for (y, secs) in (lo..hi).map(|w| tt.walk(w)) {
+            if (y as usize) < departures.len() {
+                to_there(y, Some(secs as i32));
+            }
+        }
+        for r in self.rules_out_of(stop).iter().map(|i| tt.rule(*i)) {
+            if matches!(r.kind, 1 | 4) && r.to_stop != stop && !(lo..hi).any(|w| tt.walk(w).0 == r.to_stop) {
+                to_there(r.to_stop, None);
+            }
+        }
+        best
     }
 
-    fn cheapest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Vec<(i32, u32)> {
+    /// Every best way with a ride from the query's origin to its destination that leaves at `time` or later and
+    /// is in by `by`: each as its arrival, its cost in the query's wishes and its rides, and none is no worse than
+    /// another in all three; by arrival. With no more rides than the query lets a journey have. The query's own
+    /// moment, window and direction are not read; the feed's rules are held to as in `earliest_arrival`.
+    ///
+    /// The scan with a cost and a count of rides beside the time: at a stop it keeps every way that is ready to
+    /// board there which no other beats in all three, aboard a vehicle every pair of cost and rides (the time is
+    /// the vehicle's). What each wish costs it has from `of_ride` and `of_stop`, a wish at a time (`asked`). So
+    /// it says of a query without wishes which journeys with fewer rides there are, and of one with wishes what
+    /// each way costs.
+    pub fn ways(&self, planner: &Planner, q: &Query, time: i32, by: i32) -> Vec<(i32, u32, u32)> {
+        self.ways_in(planner, q, &self.asked(planner, q), time, by)
+    }
+
+    fn ways_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32, by: i32) -> Vec<Way> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
         let ends = &asked.places;
         let stops = tt.stops() as usize;
-        let wishes: Vec<&Wish> = q.wishes.iter().take(64).filter(|w| w.how != How::Never).collect();
-        let sum = |costs: &mut dyn Iterator<Item = u32>| costs.fold(0u32, |a, b| a.saturating_add(b)).min(COST_MOST);
-        // a ride; a boarding or an alighting at a stop; a call there
-        let ride_costs: Vec<u32> = self.rides.iter().map(|&(trip, line)| sum(&mut wishes.iter().filter_map(|w| of_ride(tt, w, trip, line).map(|is| worth(w.how, is))))).collect();
-        let stop_costs = |through: bool| -> Vec<u32> { (0..tt.stops()).map(|s| sum(&mut wishes.iter().filter_map(|w| of_stop(tt, w, s).filter(|is| is.1 == through).map(|is| worth(w.how, is.0))))).collect() };
-        let (used, called) = (stop_costs(false), stop_costs(true));
-        let (mut ready, mut arrived): (Vec<Vec<(i32, u32)>>, Vec<Vec<(i32, u32)>>) = (vec![Vec::new(); stops], vec![Vec::new(); stops]);
+        let most = q.max_rides.clamp(1, RIDES_MOST);
+        let (mut ready, mut arrived): (Vec<Vec<Way>>, Vec<Vec<Way>>) = (vec![Vec::new(); stops], vec![Vec::new(); stops]);
         let mut last = vec![NONE; stops];
-        let mut aboard: Vec<Option<u32>> = vec![None; self.rides.len()];
+        let mut aboard: Vec<Vec<Way>> = vec![Vec::new(); self.rides.len()];
         let ruled = q.rules && !self.into.is_empty();
         let mut origin = vec![i32::MAX; if ruled { stops } else { 0 }];
-        let mut arrivals: Vec<Vec<(i32, u32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
+        let mut arrivals: Vec<Vec<(i32, u32, u32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
         for &(s, secs) in ends.from.iter() {
             if !asked.closed(s) {
                 let at = time + secs as i32;
-                if ready[s as usize].first().is_none_or(|l| at < l.0) {
-                    ready[s as usize] = vec![(at, 0)];
-                }
+                offer(&mut ready[s as usize], (at, 0, 0));
                 if ruled {
                     origin[s as usize] = origin[s as usize].min(at);
                 }
@@ -895,54 +978,66 @@ impl Reference {
         }
         for &(s, secs) in ends.to.iter() {
             if !asked.closed(s) {
-                last[s as usize] = secs;
+                last[s as usize] = last[s as usize].min(secs);
             }
         }
-        let mut front: Vec<(i32, u32)> = Vec::new();
-        let until = q.followed().1.max(time);
+        let mut front: Vec<Way> = Vec::new();
+        let until = q.followed().1.max(time).min(by);
         let start = self.connections.partition_point(|c| c.depart < time);
         for c in &self.connections[start..] {
-            // (what leaves once a way that costs nothing is in can only be later and no cheaper)
-            if c.depart > until || front.iter().any(|f| f.1 == 0 && f.0 <= c.depart) {
+            // (what leaves once a way of one ride that costs nothing is in can only be in later, and no better)
+            if c.depart > until || front.iter().any(|f| f.0 <= c.depart && f.1 == 0 && f.2 <= 1) {
                 break;
             }
-            let (trip, line) = self.rides[c.ride as usize];
+            if c.arrive > until {
+                continue;
+            }
+            let ride = c.ride as usize;
             if c.board && !asked.closed(c.from) && !asked.ride_closed(c.ride) {
-                let spoken_of = ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line));
-                let so_far = if spoken_of {
-                    self.boards_at_cost(planner, q, &origin, &arrivals, c.from, c.ride, c.depart)
-                } else {
-                    ready[c.from as usize].iter().filter(|l| l.0 <= c.depart).map(|l| l.1).min()
+                let (trip, line) = self.rides[ride];
+                let here = sum([asked.used(c.from), asked.called(c.from), asked.ride_cost(c.ride)]);
+                // no use boarding where a way that is in already is no worse than anything this can come to
+                let mut board = |so_far: Way| {
+                    if so_far.2 < most && !front.iter().any(|f| f.0 <= c.depart && f.1 <= so_far.1 && f.2 <= so_far.2 + 1) {
+                        offer(&mut aboard[ride], (0, sum([so_far.1, here]), so_far.2 + 1));
+                    }
                 };
-                if let Some(so_far) = so_far {
-                    let cost = sum(&mut [so_far, used[c.from as usize], called[c.from as usize], ride_costs[c.ride as usize]].into_iter());
-                    aboard[c.ride as usize] = Some(aboard[c.ride as usize].map_or(cost, |a| a.min(cost)));
+                if ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line)) {
+                    self.boards_ways(planner, q, &origin, &arrivals, c.from, c.ride, c.depart).into_iter().for_each(&mut board);
+                } else {
+                    ready[c.from as usize].iter().filter(|l| l.0 <= c.depart).copied().for_each(&mut board);
                 }
             }
-            let Some(riding) = aboard[c.ride as usize] else { continue };
+            if aboard[ride].is_empty() {
+                continue;
+            }
             if asked.closed_through(c.to) {
-                aboard[c.ride as usize] = None;
+                aboard[ride].clear();
                 continue;
             }
-            let riding = sum(&mut [riding, called[c.to as usize]].into_iter());
-            aboard[c.ride as usize] = Some(riding);
-            if !c.alight || asked.closed(c.to) || c.arrive > until {
+            if asked.called(c.to) > 0 {
+                aboard[ride].iter_mut().for_each(|a| a.1 = sum([a.1, asked.called(c.to)]));
+            }
+            if !c.alight || asked.closed(c.to) {
                 continue;
             }
-            let cost = sum(&mut [riding, used[c.to as usize]].into_iter());
-            if last[c.to as usize] != NONE && c.arrive + last[c.to as usize] as i32 <= until {
-                offer(&mut front, (c.arrive + last[c.to as usize] as i32, cost));
-            }
-            if ruled && self.arrivals_kept[c.to as usize] {
-                arrivals[c.to as usize].push((c.arrive, c.ride, cost));
-            }
-            if offer(&mut arrived[c.to as usize], (c.arrive, cost)) {
-                offer(&mut ready[c.to as usize], (c.arrive.saturating_add(self.change(tt, q, c.to)), cost));
-                let (lo, hi) = tt.walks_from(c.to);
-                for i in lo..hi {
-                    let (y, secs) = tt.walk(i);
-                    if (y as usize) < stops && !asked.closed(y) {
-                        offer(&mut ready[y as usize], (c.arrive + secs as i32, cost));
+            let to = c.to as usize;
+            for k in 0..aboard[ride].len() {
+                let (cost, rides) = (sum([aboard[ride][k].1, asked.used(c.to)]), aboard[ride][k].2);
+                if last[to] != NONE && c.arrive + last[to] as i32 <= until {
+                    offer(&mut front, (c.arrive + last[to] as i32, cost, rides));
+                }
+                if ruled && self.arrivals_kept[to] {
+                    arrivals[to].push((c.arrive, c.ride, cost, rides));
+                }
+                if offer(&mut arrived[to], (c.arrive, cost, rides)) {
+                    offer(&mut ready[to], (c.arrive.saturating_add(self.change(tt, q, c.to)), cost, rides));
+                    let (lo, hi) = tt.walks_from(c.to);
+                    for i in lo..hi {
+                        let (y, secs) = tt.walk(i);
+                        if (y as usize) < stops && !asked.closed(y) {
+                            offer(&mut ready[y as usize], (c.arrive + secs as i32, cost, rides));
+                        }
                     }
                 }
             }
@@ -951,53 +1046,162 @@ impl Reference {
         front
     }
 
-    /// How the answer to a query with wishes that cost, asked for one moment, differs from what the scan with a
-    /// cost finds, in words; `None` when they agree, and for a window, which it does not judge.
-    ///
-    /// Leaving at a moment: of the answer's pairs of arrival and cost, those that no other beats in both are the
-    /// scan's, pair for pair. Weighed ([`Query::weigh`]), the same of what the rule leaves of each: a pair goes
-    /// where another arrives no later and is no later with its cost added.
-    ///
-    /// Arriving by a moment, every option asked for: the scan is asked forward from each option's departure and
-    /// from the second after it, and from as early as the query follows: the least cost that still arrives in
-    /// time must be the least among the options that leave no earlier. So an option between two of the answer's
-    /// that it lacks is found, and one that costs more than it need. (Weighed, arriving by: not judged; the
-    /// tests hold that answer to the rule put to every option.)
-    pub fn costs_differ(&self, planner: &Planner, q: &Query, journeys: &[Journey]) -> Option<String> {
-        if q.window > 0 || journeys.iter().any(|j| j.rides == 0) {
-            return None;
-        }
-        let time = q.time as i32;
-        let asked = self.asked(planner, q);
-        let best = |all: &mut Vec<(i32, u32)>, weigh: bool| {
-            all.sort_unstable();
-            all.dedup();
-            let beaten = |a: &(i32, u32)| all.iter().any(|b| b != a && b.0 <= a.0 && if weigh { b.0 as i64 + b.1 as i64 <= a.0 as i64 + a.1 as i64 } else { b.1 <= a.1 });
-            all.iter().filter(|a| !beaten(a)).copied().collect::<Vec<_>>()
-        };
-        if !q.arrive_by {
-            let ours = best(&mut journeys.iter().map(|j| (j.arrive, j.penalty)).collect(), q.weigh);
-            let theirs = best(&mut self.cheapest_in(planner, q, &asked, time), q.weigh);
-            if ours != theirs {
-                let only = |a: &[(i32, u32)], b: &[(i32, u32)]| a.iter().filter(|p| !b.contains(p)).copied().collect::<Vec<_>>();
-                return Some(format!("arrival and cost: the planner alone has {:?}, the scan alone {:?}", only(&ours, &theirs), only(&theirs, &ours)));
+    /// The same turned round: every best way with a ride that is in by `time` and leaves at `since` or later, each
+    /// as its departure, its cost and its rides: none leaves no earlier than another at no more cost with no more
+    /// rides; by departure. Scanned back from the destination, as `latest_departure` is.
+    pub fn ways_back(&self, planner: &Planner, q: &Query, time: i32, since: i32) -> Vec<(i32, u32, u32)> {
+        self.ways_back_in(planner, q, &self.asked(planner, q), time, since)
+    }
+
+    fn ways_back_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32, since: i32) -> Vec<Way> {
+        debug_assert_eq!(self.day, q.day);
+        let tt = planner.timetable();
+        let ends = &asked.places;
+        let stops = tt.stops() as usize;
+        let most = q.max_rides.clamp(1, RIDES_MOST);
+        // by when one must be at a stop, off a ride, with the cost and the rides of the way on from there; and the
+        // departures from it; every moment negated, so the later is the less
+        let (mut due, mut left): (Vec<Vec<Way>>, Vec<Vec<Way>>) = (vec![Vec::new(); stops], vec![Vec::new(); stops]);
+        let mut first = vec![NONE; stops];
+        let mut on: Vec<Vec<Way>> = vec![Vec::new(); self.rides.len()];
+        let ruled = q.rules && !self.out.is_empty();
+        let mut destination = vec![i32::MIN; if ruled { stops } else { 0 }];
+        let mut departures: Vec<Vec<(i32, u32, u32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
+        for &(s, secs) in ends.to.iter() {
+            if !asked.closed(s) {
+                let at = time - secs as i32;
+                offer(&mut due[s as usize], (-at, 0, 0));
+                if ruled {
+                    destination[s as usize] = destination[s as usize].max(at);
+                }
             }
-            return None;
         }
+        for &(s, secs) in ends.from.iter() {
+            if !asked.closed(s) {
+                first[s as usize] = first[s as usize].min(secs);
+            }
+        }
+        let mut front: Vec<Way> = Vec::new();
+        let since = q.followed().0.min(time).max(since);
+        let start = self.by_arrival.partition_point(|i| self.connections[*i as usize].arrive > time);
+        for i in &self.by_arrival[start..] {
+            let c = &self.connections[*i as usize];
+            if c.arrive < since || front.iter().any(|f| -f.0 >= c.arrive && f.1 == 0 && f.2 <= 1) {
+                break;
+            }
+            if c.depart < since {
+                continue;
+            }
+            let ride = c.ride as usize;
+            if c.alight && !asked.closed(c.to) && !asked.ride_closed(c.ride) {
+                let (trip, line) = self.rides[ride];
+                let here = sum([asked.used(c.to), asked.called(c.to), asked.ride_cost(c.ride)]);
+                let mut alight = |onward: Way| {
+                    if onward.2 < most && !front.iter().any(|f| -f.0 >= c.arrive && f.1 <= onward.1 && f.2 <= onward.2 + 1) {
+                        offer(&mut on[ride], (0, sum([onward.1, here]), onward.2 + 1));
+                    }
+                };
+                if ruled && self.rules_out_of(c.to).iter().any(|i| fits(tt.rule(*i).from_trip, trip) && fits(tt.rule(*i).from_line, line)) {
+                    self.leads_on_ways(planner, q, &destination, &departures, c.to, c.ride, c.arrive).into_iter().for_each(&mut alight);
+                } else {
+                    due[c.to as usize].iter().filter(|l| -l.0 >= c.arrive).copied().for_each(&mut alight);
+                }
+            }
+            if on[ride].is_empty() {
+                continue;
+            }
+            if asked.closed_through(c.from) {
+                on[ride].clear();
+                continue;
+            }
+            if asked.called(c.from) > 0 {
+                on[ride].iter_mut().for_each(|a| a.1 = sum([a.1, asked.called(c.from)]));
+            }
+            if !c.board || asked.closed(c.from) {
+                continue;
+            }
+            let from = c.from as usize;
+            for k in 0..on[ride].len() {
+                let (cost, rides) = (sum([on[ride][k].1, asked.used(c.from)]), on[ride][k].2);
+                if first[from] != NONE && c.depart - first[from] as i32 >= since {
+                    offer(&mut front, (-(c.depart - first[from] as i32), cost, rides));
+                }
+                if ruled && self.departures_kept[from] {
+                    departures[from].push((c.depart, c.ride, cost, rides));
+                }
+                if offer(&mut left[from], (-c.depart, cost, rides)) {
+                    offer(&mut due[from], (-c.depart.saturating_sub(self.change(tt, q, c.from)), cost, rides));
+                    for &(y, secs) in self.walks_into(c.from) {
+                        if !asked.closed(y) {
+                            offer(&mut due[y as usize], (-(c.depart - secs as i32), cost, rides));
+                        }
+                    }
+                }
+            }
+        }
+        let mut ways: Vec<Way> = front.into_iter().map(|f| (-f.0, f.1, f.2)).collect();
+        ways.sort_unstable();
+        ways
+    }
+
+    /// How an answer for one moment differs from what the scan with a cost and a count of rides finds, in words;
+    /// `None` when they agree. With wishes or without, weighed or not, with a walk all the way or without. (A
+    /// window is `window_differs`'s.)
+    ///
+    /// Leaving at a moment, the answer's options with a ride, each as its arrival, its cost and its rides, are
+    /// the scan's best ways from that moment (`ways`): every one of them and no other. Weighed
+    /// ([`Query::weigh`]), they are what the rule leaves of the scan's: a way goes where another arrives no later
+    /// with no more rides and is no later with its cost added. And each option leaves as late as it can: from
+    /// the second after its departure the scan has no way that arrives no later at no more cost with no more
+    /// rides.
+    ///
+    /// Arriving by a moment, the same turned round (`ways_back`): the options are the scan's best ways by
+    /// departure, cost and rides (weighed: a way goes where another leaves no earlier with no more rides and no
+    /// earlier with its cost taken off), and each is over as early as its departure allows.
+    ///
+    /// Between two points near enough to walk all the way, the walk is held as a window's is (`walk_of`), and the
+    /// options with a ride are the ways that are in before the walk from the asked moment is (arriving by: that
+    /// leave after the walk to it does).
+    pub fn moment_differs(&self, planner: &Planner, q: &Query, journeys: &[Journey]) -> Option<String> {
+        let asked = self.asked(planner, q);
+        let walk = match walk_of(&asked.places, q, journeys) {
+            Ok(walk) => walk,
+            Err(wrong) => return Some(wrong),
+        };
+        let (time, back) = (q.time as i32, q.arrive_by);
+        // an option and a way alike, by the end that counts: the arrival; arriving by, the departure negated
+        let turned = |ways: Vec<Way>| -> Vec<Way> { if back { ways.into_iter().map(|w| (-w.0, w.1, w.2)).collect() } else { ways } };
+        let mut ours: Vec<Way> = journeys.iter().filter(|j| j.rides > 0).map(|j| (if back { -j.depart } else { j.arrive }, j.penalty, j.rides)).collect();
+        ours.sort_unstable();
+        if let Some(twice) = ours.windows(2).find(|w| w[0] == w[1]) {
+            return Some(format!("two options alike: {:?}", turned(vec![twice[0]])));
+        }
+        let mut theirs = if back {
+            turned(self.ways_back_in(planner, q, &asked, time, walk.map_or(i32::MIN, |secs| time - secs + 1)))
+        } else {
+            self.ways_in(planner, q, &asked, time, walk.map_or(i32::MAX, |secs| time + secs - 1))
+        };
         if q.weigh {
-            return None;
+            let all = theirs.clone();
+            theirs.retain(|a| !all.iter().any(|b| b != a && b.0 <= a.0 && b.2 <= a.2 && b.0 as i64 + b.1 as i64 <= a.0 as i64 + a.1 as i64));
         }
-        let mut moments = vec![q.followed().0];
-        for j in journeys.iter() {
-            moments.extend([j.depart, j.depart + 1]);
+        theirs.sort_unstable();
+        if ours != theirs {
+            let only = |a: &[Way], b: &[Way]| turned(a.iter().filter(|w| !b.contains(w)).copied().collect());
+            return Some(format!("{}, cost and rides: the planner alone has {:?}, the scan alone {:?}", if back { "departure" } else { "arrival" }, only(&ours, &theirs), only(&theirs, &ours)));
         }
-        moments.sort_unstable();
-        moments.dedup();
-        for m in moments {
-            let ours = journeys.iter().filter(|j| j.depart >= m).map(|j| j.penalty).min();
-            let theirs = self.cheapest_in(planner, q, &asked, m).iter().filter(|p| p.0 <= time).map(|p| p.1).min();
-            if ours != theirs {
-                return Some(format!("leaving at {m} or later to arrive by {time}: the least cost among the planner's options is {ours:?}, the scan's {theirs:?}"));
+        for j in journeys.iter().filter(|j| j.rides > 0) {
+            let better = if back {
+                self.ways_back_in(planner, q, &asked, j.arrive - 1, j.depart).into_iter().find(|w| w.0 >= j.depart && w.1 <= j.penalty && w.2 <= j.rides)
+            } else {
+                self.ways_in(planner, q, &asked, j.depart + 1, j.arrive).into_iter().find(|w| w.0 <= j.arrive && w.1 <= j.penalty && w.2 <= j.rides)
+            };
+            if let Some(w) = better {
+                return Some(if back {
+                    format!("the option leaving {} is over at {} with cost {} and {} rides: the scan has a way over before that, leaving {} with cost {} and {} rides", j.depart, j.arrive, j.penalty, j.rides, w.0, w.1, w.2)
+                } else {
+                    format!("the option arriving {} leaves at {} with cost {} and {} rides: the scan has a way that leaves after that, arriving {} with cost {} and {} rides", j.arrive, j.depart, j.penalty, j.rides, w.0, w.1, w.2)
+                });
             }
         }
         None
