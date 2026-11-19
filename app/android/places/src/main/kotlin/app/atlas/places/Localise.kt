@@ -63,8 +63,9 @@ object Localise {
      * map at the feature, which every caller gives (the reviewer, 17 November, finding 11): street and number, then
      * postcode and place. Where the number comes first, a unit (`addr:unit`) follows the street in America, "1600
      * Pennsylvania Avenue NW, Suite 200", and comes before it in Britain and France, "Flat 2, 10 Downing Street" (the
-     * app maintainer, 18 November 2026, batch 4 B23), but for a unit of one letter, which joins a number of digits
-     * alone there, "10A Downing Street" (batch 5 B11). Empty when no address is mapped.
+     * app maintainer, 18 November 2026, batch 4 B23), but for a unit of one letter in Britain, Ireland and the Crown
+     * dependencies, which joins a number of digits alone there, "10A Downing Street" (batch 5 B11; in France,
+     * Luxembourg and Monaco it is mostly a building: batch 6 B14). Empty when no address is mapped.
      */
     fun addressLines(tags: Map<String, String>, country: String?): List<String> {
         fun t(k: String) = tags["addr:$k"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -83,9 +84,11 @@ object Localise {
             style == AddressStyle.AMERICAN -> listOfNotNull(t("housenumber")?.let { "$it $street" } ?: street, unit).joinToString(", ")
             else -> {
                 val house = t("housenumber")
-                // a unit of one letter joins a number of digits alone: "10A Downing Street", where "10A" with "B" or
-                // "10-12" with "A" would read as another number (batch 5 B11)
-                val letter = unit?.takeIf { house != null && house.all(Char::isDigit) && it.length == 1 && it[0].isLetter() }
+                // in Britain, Ireland and the Crown dependencies a unit of one letter joins a number of digits alone:
+                // "10A Downing Street", where "10A" with "B" or "10-12" with "A" would read as another number (batch 5
+                // B11); in France, Luxembourg and Monaco such a unit is mostly a building, and "12A Rue de Rivoli"
+                // reads as another number (batch 6 B14)
+                val letter = unit?.takeIf { style == AddressStyle.BRITISH && house != null && house.all(Char::isDigit) && it.length == 1 && it[0].isLetter() }
                 listOfNotNull(unit.takeIf { letter == null }, house?.let { "$it${letter.orEmpty()} $street" } ?: street).joinToString(", ")
             }
         }

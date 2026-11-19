@@ -117,20 +117,28 @@ class TextAndNamesTest {
     }
 
     /**
-     * A unit of one letter joins its number where the number comes before the street: "10A Downing Street", not "A, 10
-     * Downing Street" (the app maintainer, 18 November 2026, batch 5 B11). A longer unit stays before the street there,
-     * and where the street comes first after the number, as before.
+     * A unit of one letter joins its number in Britain, Ireland and the Crown dependencies: "10A Downing Street", not
+     * "A, 10 Downing Street" (the app maintainer, 18 November 2026, batch 5 B11). In France, Luxembourg and Monaco such
+     * a unit is mostly a building and "12B Rue de Rivoli" reads as another number: it stays before the street, as batch
+     * 4 left it (19 November 2026, batch 6 B14). A longer unit stays before the street, and where the street comes
+     * first after the number, as before.
      */
     @Test
     fun aUnitOfOneLetterJoinsItsNumber() {
         val gb = mapOf("addr:street" to "Downing Street", "addr:housenumber" to "10", "addr:unit" to "A", "addr:city" to "London")
-        assertEquals("10A Downing Street, London", Localise.address(gb, "GB"))
-        assertEquals("10A Downing Street, London", Localise.address(gb, "IE"))
+        for (c in listOf("GB", "IE", "IM", "JE", "GG")) assertEquals(c, "10A Downing Street, London", Localise.address(gb, c))
         val fr = mapOf("addr:street" to "Rue de Rivoli", "addr:housenumber" to "12", "addr:unit" to "B", "addr:postcode" to "75004", "addr:city" to "Paris")
-        assertEquals("12B Rue de Rivoli, 75004 Paris", Localise.address(fr, "FR"))
-        assertEquals("12B Rue de Rivoli, 75004 Paris", Localise.address(fr, "LU"))
+        for (c in listOf("FR", "LU", "MC")) assertEquals(c, "B, 12 Rue de Rivoli, 75004 Paris", Localise.address(fr, c))
         assertEquals("Flat 2, 10 Downing Street, London", Localise.address(gb + ("addr:unit" to "Flat 2"), "GB"))
         assertEquals("Downing Street 10 A, London", Localise.address(gb, "NL"))
+    }
+
+    /** A digit is no letter: a unit "2" at number 10 stays before the street, never "102 Downing Street" (batch 6). */
+    @Test
+    fun aUnitOfOneDigitStaysApart() {
+        val gb = mapOf("addr:street" to "Downing Street", "addr:housenumber" to "10", "addr:unit" to "2", "addr:city" to "London")
+        assertEquals("2, 10 Downing Street, London", Localise.address(gb, "GB"))
+        assertEquals("2, 10 Downing Street, London", Localise.address(gb, "IE"))
     }
 
     /**
