@@ -233,9 +233,10 @@ fn the_header_names_the_same_numbers() {
     }
     assert_eq!(atlas_transit_abi(), ABI);
     // what the header says in words, where the words were wrong or missing once: the kinds of stop a file has, how
-    // "no such stop" is told where -1 is a place on the map, and that the library is built for 64 bits alone
+    // "no such stop" is told where -1 is a place on the map, that the library is built for 64 bits alone, and
+    // what holds between threads
     let said = header.split_whitespace().filter(|word| *word != "*").collect::<Vec<_>>().join(" ");
-    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other", "built for 64-bit targets alone"] {
+    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other", "built for 64-bit targets alone", "after every other call on that timetable has returned", "a second atlas_transit_plan on that timetable is refused (0), and so is atlas_transit_answer"] {
         assert!(said.contains(words), "the header no longer says: {words}");
     }
     // and each function the library gives is declared there
@@ -872,3 +873,70 @@ fn a_timetable_is_read_while_it_plans() {
         }
     });
 }
+
+/// A question on Utrecht's day that takes a while: two hours between two points, with wishes that cost and every
+/// option asked for.
+fn a_long_question(tt: &Timetable) -> Query {
+    let stops: Vec<u32> = (0..tt.stops()).filter(|s| tt.stop(*s).kind == 0 && tt.routes_at(*s).0 != tt.routes_at(*s).1).collect();
+    let (a, z) = (tt.stop(stops[stops.len() / 7]), tt.stop(stops[stops.len() * 5 / 7]));
+    let mut q = Query::new(Place::Point { lat: a.lat + 2500, lon: a.lon - 1500 }, Place::Point { lat: z.lat - 1500, lon: z.lon + 2500 }, 0, 7 * 3600);
+    (q.window, q.weigh, q.max_rides, q.limits.options, q.limits.bag) = (7200, false, 16, 1024, 16);
+    q.wishes = vec![Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) }, Wish { what: What::Stop { stop: stops[stops.len() / 2], through: true }, how: How::Avoid(300) }];
+    q
+}
+
+/// One plan at a time on a timetable, and the library holds to it: while a plan runs, a second plan is refused and
+/// so is a reading of the answer (0, both), and neither touches what the plan is writing. So three threads that
+/// plan the same question and read its answer, with no lock between them, each get the whole answer or nothing.
+#[test]
+fn a_plan_under_way_refuses_a_second_plan_and_a_reading() {
+    struct Shared(*mut AtlasTransit);
+    // SAFETY: the interface's own word since this test: a plan or a reading that meets a plan under way is refused
+    unsafe impl Sync for Shared {}
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let t = Open::of(&b);
+    let shared = Shared(t.0);
+    let sent = send(&a_long_question(&tt));
+    let whole = t.plan(&sent);
+    assert!(whole.len() > A_HEAD + J_HEAD && whole[A_CUT_SHORT] == 0 && whole[A_STEPS_K] > 100, "{:?}", &whole[..A_HEAD.min(whole.len())]);
+    let counts = std::thread::scope(|scope| {
+        let threads: Vec<_> = (0..3)
+            .map(|_| {
+                let (shared, sent, whole) = (&shared, &sent, &whole);
+                scope.spawn(move || {
+                    let (mut planned, mut refused, mut read, mut unread) = (0u32, 0u32, 0u32, 0u32);
+                    let mut out = vec![0i32; whole.len()];
+                    // (until this thread has made forty plans of its own, so that the three are at it together
+                    // for the whole run and not one after the others have given up)
+                    while planned < 40 {
+                        // SAFETY: an open timetable and four arrays with their lengths
+                        let n = unsafe { atlas_transit_plan(shared.0, sent.query.as_ptr(), sent.query.len(), sent.from.as_ptr(), sent.from.len(), sent.to.as_ptr(), sent.to.len(), sent.wishes.as_ptr(), sent.wishes.len()) };
+                        if n == 0 {
+                            refused += 1;
+                            std::thread::yield_now();
+                        } else {
+                            assert_eq!(n, whole.len());
+                            planned += 1;
+                        }
+                        // SAFETY: an open timetable, and room for as many numbers as said
+                        let m = unsafe { atlas_transit_answer(shared.0, out.as_mut_ptr(), out.len()) };
+                        if m == 0 {
+                            unread += 1;
+                        } else {
+                            assert_eq!((m, &out), (whole.len(), whole));
+                            read += 1;
+                        }
+                    }
+                    [planned, refused, read, unread]
+                })
+            })
+            .collect();
+        threads.into_iter().map(|h| h.join().unwrap()).fold([0u32; 4], |sum, one| core::array::from_fn(|k| sum[k] + one[k]))
+    });
+    println!("three threads at one timetable: {} plans made and {} refused, {} answers read and {} refused", counts[0], counts[1], counts[2], counts[3]);
+    assert!(counts[0] == 120 && counts[1] > 100 && counts[2] > 0 && counts[3] > 100, "{counts:?}");
+    // and when all is quiet the answer is there, whole
+    assert_eq!(t.plan(&sent), whole);
+}
+

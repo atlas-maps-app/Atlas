@@ -14,7 +14,9 @@
 //!
 //! One timetable may be read from any thread at any time (its numbers and names: the file is never written). A
 //! plan uses the planner's working memory and leaves its answer with the timetable: one plan at a time, and the
-//! answer read before the next.
+//! answer read before the next. The handle holds to that itself (`doing`): a plan, or a reading of the answer,
+//! that meets a plan under way is refused and touches nothing. What it cannot hold is the close: that comes when
+//! every other call has returned, and it is the caller's to see to.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 // The core and alloc alone, so that none of the standard library's panic and backtrace machinery is linked into the
@@ -31,6 +33,7 @@ compile_error!("atlas_transit_abi is built for 64-bit targets alone: its allocat
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU8, Ordering};
 use atlas_transit::file::{LineText, OperatorText, StopText, TripText};
 use atlas_transit::{Answer, Area, How, Leg, Limits, Mode, OpenError, Place, Planner, Query, Spot, Timetable, What, Wish};
 
@@ -452,12 +455,39 @@ pub const NAMES: &[(&str, i64)] = &[
 ];
 
 /// An open timetable: the file as it is read, the planner over it with its working memory, and the last answer.
-/// The first is read by any thread; the other two by one plan at a time. So no function here makes a reference to
-/// the whole of it: each takes the part it uses.
+/// The first is read by any thread; the other two by one call at a time, which `doing` says. So no function here
+/// makes a reference to the whole of it: each takes the part it uses.
 pub struct AtlasTransit {
     tt: Timetable<'static>,
     planner: Planner<'static>,
     answer: Vec<i32>,
+    /// Who has the planner and the answer now: nobody (`IDLE`), a plan (`PLANNING`), or a call that reads the
+    /// answer (`READING`).
+    doing: AtomicU8,
+}
+
+const IDLE: u8 = 0;
+const PLANNING: u8 = 1;
+const READING: u8 = 3;
+
+/// An open timetable's planner and answer, taken for one call: given back when this goes.
+struct Taken<'t>(&'t AtomicU8);
+
+impl Drop for Taken<'_> {
+    fn drop(&mut self) {
+        self.0.store(IDLE, Ordering::Release);
+    }
+}
+
+/// Takes an open timetable's planner and answer for a call that is `doing` this, or nothing where another call
+/// has them: a plan under way, a reading.
+///
+/// # Safety
+/// `t` is an open timetable.
+unsafe fn take<'t>(t: *const AtlasTransit, doing: u8) -> Option<Taken<'t>> {
+    // SAFETY: an open timetable; the flag is read and written by any thread, as an atomic is
+    let flag = unsafe { &(*t).doing };
+    flag.compare_exchange(IDLE, doing, Ordering::Acquire, Ordering::Relaxed).ok().map(|_| Taken(flag))
 }
 
 /// The caller's array. One of no numbers is the empty array, wherever its pointer points. One that has numbers
@@ -526,7 +556,7 @@ pub unsafe extern "C" fn atlas_transit_open(bytes: *const u8, len: usize, index_
         unsafe { why.write(opened.as_ref().err().copied().unwrap_or(OPENED)) };
     }
     match opened {
-        Ok((tt, planner)) => Box::into_raw(Box::new(AtlasTransit { tt, planner, answer: Vec::new() })),
+        Ok((tt, planner)) => Box::into_raw(Box::new(AtlasTransit { tt, planner, answer: Vec::new(), doing: AtomicU8::new(IDLE) })),
         Err(_) => core::ptr::null_mut(),
     }
 }
@@ -721,11 +751,11 @@ pub unsafe extern "C" fn atlas_transit_meta(t: *const AtlasTransit, key: *const 
 /// place of kind `P_WALKS` as pairs of a stop and the seconds on foot, `wishes` the wishes one after another
 /// (`W_*`). Gives how many numbers the answer has; it stays with the timetable until the next plan, and
 /// `atlas_transit_answer` reads it. 0: the query could not be read and nothing was planned; an array that has
-/// numbers and cannot be read (`numbers`) is such a query, whichever of the four it is.
+/// numbers and cannot be read (`numbers`) is such a query, whichever of the four it is. 0 too, with nothing
+/// touched, where another plan on this timetable is under way or its answer is being read.
 ///
 /// # Safety
-/// `t` is null or an open timetable that no other plan or reading of an answer uses meanwhile; each array is null
-/// or as long as its length says.
+/// `t` is null or an open timetable; each array is null or as long as its length says.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atlas_transit_plan(
     t: *mut AtlasTransit,
@@ -741,10 +771,14 @@ pub unsafe extern "C" fn atlas_transit_plan(
     if t.is_null() {
         return 0;
     }
+    // SAFETY: an open timetable
+    let Some(_taken) = (unsafe { take(t, PLANNING) }) else {
+        return 0;
+    };
     // SAFETY: the caller's arrays, each as long as it says
     let arrays = unsafe { (numbers(query, query_len), numbers(from_walks, from_walks_len), numbers(to_walks, to_walks_len), numbers(wishes, wishes_len)) };
-    // SAFETY: an open timetable, and by the caller's word nothing else uses its planner or its answer during this
-    // call; the file beside them is not touched through these two
+    // SAFETY: an open timetable, whose planner and answer are this call's alone for as long as it has taken them;
+    // the file beside them is not touched through these two
     let (planner, answer) = unsafe { (&mut (*t).planner, &mut (*t).answer) };
     answer.clear();
     let (Some(q), Some(from), Some(to), Some(wishes)) = arrays else {
@@ -757,16 +791,21 @@ pub unsafe extern "C" fn atlas_transit_plan(
     answer.len()
 }
 
-/// Copies the last answer's numbers into `out`, `cap` of them at most, and gives how many the answer has.
+/// Copies the last answer's numbers into `out`, `cap` of them at most, and gives how many the answer has. 0, with
+/// nothing copied, while a plan on this timetable is under way: its answer is not there yet.
 ///
 /// # Safety
-/// `t` is null or an open timetable that no plan uses meanwhile; `out` is null or has room for `cap` numbers.
+/// `t` is null or an open timetable; `out` is null or has room for `cap` numbers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn atlas_transit_answer(t: *const AtlasTransit, out: *mut i32, cap: usize) -> usize {
     if t.is_null() {
         return 0;
     }
-    // SAFETY: an open timetable, and by the caller's word no plan writes its answer during this call
+    // SAFETY: an open timetable
+    let Some(_taken) = (unsafe { take(t, READING) }) else {
+        return 0;
+    };
+    // SAFETY: an open timetable, whose answer no plan writes for as long as this call has taken it
     let answer = unsafe { &(*t).answer };
     if !out.is_null() && out.is_aligned() {
         // SAFETY: room for `cap` numbers by the caller's word, of which no more than the answer has are written;

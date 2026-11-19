@@ -11,8 +11,16 @@
  *   GetIntArrayElements gives null when memory is short, and whoever hands that on with the array's length gets no
  *   answer, never the answer to a query without its wishes;
  * - the file's bytes stay where they are, unchanged, from atlas_transit_open until atlas_transit_close;
- * - one plan at a time on a timetable, and its answer read before the next plan. A timetable's numbers and names
- *   (atlas_transit_number, _text, _meta) may be read from any thread at any time while it is open.
+ * - atlas_transit_close comes last: after every other call on that timetable has returned, on every thread, and
+ *   with none begun later. The library cannot hold to this for the caller (a call that meets a close reads memory
+ *   that is gone): whoever closes holds the lock under which every plan, answer and close of that timetable is
+ *   made.
+ *
+ * Threads otherwise: a timetable's numbers and names (atlas_transit_number, _text, _meta) may be read from any
+ * thread at any time while it is open, during a plan too. One plan at a time on a timetable, and its answer read
+ * before the next plan: here the library holds to it itself. While a plan is under way, a second atlas_transit_plan
+ * on that timetable is refused (0), and so is atlas_transit_answer (0: the answer is not there yet); neither
+ * touches anything. Two timetables know nothing of each other.
  *
  * What it gets: a query that cannot be read is refused whole (atlas_transit_plan gives 0) and never planned without
  * the part that was not understood; a number out of range names nothing (ATLAS_TRANSIT_NONE, or no bytes); a null
@@ -64,7 +72,8 @@ uint32_t atlas_transit_abi(void);
  * fetched file is held to its size and hash before it comes here. */
 atlas_transit *atlas_transit_open(const uint8_t *bytes, size_t len, int32_t index_most, int32_t *why);
 
-/* Closes it; the bytes are the caller's again. Null closes nothing. */
+/* Closes it; the bytes are the caller's again. Null closes nothing. After every other call on it has returned (see
+ * the head of this file): never during a plan, an answer or a name being read. */
 void atlas_transit_close(atlas_transit *t);
 
 /* A number of the timetable: `what` says which; `id` is the stop, line, route or trip; `at` the place along a route
@@ -146,7 +155,8 @@ const uint8_t *atlas_transit_text(const atlas_transit *t, uint32_t what, uint32_
 const uint8_t *atlas_transit_meta(const atlas_transit *t, const uint8_t *key, size_t key_len, size_t *len);
 
 /* Plans. Gives how many numbers the answer has: it stays with the timetable until the next plan, and
- * atlas_transit_answer reads it. 0: the query could not be read, and nothing was planned.
+ * atlas_transit_answer reads it. 0: the query could not be read, and nothing was planned; or another plan on this
+ * timetable is under way, or its answer is being read, and nothing was touched.
  *
  * `query` holds the query's numbers, each at its place, ATLAS_TRANSIT_Q_NEEDED of them at least and
  * ATLAS_TRANSIT_Q_LEN at most (a longer query is refused: its sender reads another header than the library's):
@@ -196,7 +206,8 @@ size_t atlas_transit_plan(atlas_transit *t, const int32_t *query, size_t query_l
                           size_t from_walks_len, const int32_t *to_walks, size_t to_walks_len, const int32_t *wishes,
                           size_t wishes_len);
 
-/* Copies the last answer's numbers to `out`, `cap` of them at most, and gives how many it has.
+/* Copies the last answer's numbers to `out`, `cap` of them at most, and gives how many it has. 0, with nothing
+ * copied, while a plan on this timetable is under way.
  *
  * An answer: ATLAS_TRANSIT_A_HEAD numbers, then each journey, by departure. Of the head:
  *   ATLAS_TRANSIT_A_JOURNEYS    how many journeys follow
