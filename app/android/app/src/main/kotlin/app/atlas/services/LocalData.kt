@@ -461,6 +461,8 @@ class LocalData(
      * wait, so the phone's answer read after it holds them. So no answer comes later than on 38ddafa1, which waited for
      * the windows before it asked. Null where [ask] was not asked (the windows made the box whole, or there is none).
      * Offline, where a region's store covers [at], where a pack covers the whole box, or with no windows: [ask] alone.
+     * The windows are let go once they came or the wait is over, not when [ask] answers (the app maintainer, 19
+     * November 2026, batch 6 B15: up to 40 s a server, so the lookups meanwhile had their windows go in theirs).
      */
     private suspend fun <T> windowsBeside(
         at: LatLon,
@@ -497,11 +499,18 @@ class LocalData(
         return fetch.use { f ->
             // what the packs and the windows hold once those asked for came, or the wait is over; null where none. A
             // pack that does not read holds nothing there, as where there is none, so Overpass is asked (the app
-            // maintainer, 19 November 2026, batch 6 A5: it threw through the lookup, where 38ddafa1 asked Overpass)
+            // maintainer, 19 November 2026, batch 6 A5: it threw through the lookup, where 38ddafa1 asked Overpass);
+            // and the windows let go then, read, cancelled or failed: Overpass may take 40 s a server, and the lookups
+            // meanwhile would have their windows go in these (batch 6 B15). What they brought is shown, and a
+            // failure's answer holds what was shown (batch 6 A3)
             val landed = suspend {
-                withContext(Dispatchers.IO) {
-                    val held = orNull { f.landed() }
-                    orNull { joined(pack, held, box, accept) } ?: joined(null, held, box, accept)
+                try {
+                    withContext(Dispatchers.IO) {
+                        val held = orNull { f.landed() }
+                        orNull { joined(pack, held, box, accept) } ?: joined(null, held, box, accept)
+                    }
+                } finally {
+                    f.close()
                 }
             }
             if (!f.asks || f.makesWhole || ask == null) {

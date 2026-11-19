@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
@@ -409,6 +410,10 @@ class SearchSheetModel(
                 if (s.inside && (p.mode != s.prefs.mode || rejoined)) reload() else if (s.inside) rerank()
             }
         }
+        // a published country's tiles' index came into memory (the camera's, a window's): the country near a border may
+        // read otherwise now, so the moment is made again as when the sky changed (the app maintainer, 19 November
+        // 2026, batch 6 B15: at Antwerp on a Dutch phone it read the Netherlands till the next move)
+        viewModelScope.launch { services.packCountries.indexesRead.drop(1).collect { skyChanged() } }
     }
 
     /** The search opened here, or the searcher moved: the grid's places are read, again once it is [POOL_MOVE_M] away. */

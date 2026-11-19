@@ -109,6 +109,15 @@ class PackCountryTest {
     /** A phone whose language and region are [tag]'s, as its settings make it. */
     private fun onPhone(tag: String) = Locale.setDefault(Locale.forLanguageTag(tag))
 
+    /** Runs the main thread's queue until [done], at most 20 s. */
+    private fun until(done: () -> Boolean) {
+        val end = System.currentTimeMillis() + 20_000
+        while (!done() && System.currentTimeMillis() < end) {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(50))
+            Thread.sleep(20)
+        }
+    }
+
     private fun dutchHolidays(at: LatLon, hours: app.atlas.places.OpeningHoursContext) {
         assertEquals("$at", "NL", hours.country)
         // King's Day, not Belgium's national day
@@ -489,5 +498,46 @@ class PackCountryTest {
             }
         }
         bare.close()
+    }
+
+    /**
+     * The sheet reads the country again once a published country's tiles' index came into memory (the app maintainer,
+     * 19 November 2026, batch 6 B15, the rest of A2): at Antwerp on a Dutch phone, the Netherlands published and its
+     * index not read yet, the moment reads the phone's country, as nothing says Antwerp is not its; once the camera or
+     * a window has read the index, which lists nothing there, Belgium, where it kept the Netherlands till it moved.
+     */
+    @Test
+    fun theSheetReadsTheCountryAgainOnceAnIndexCame() {
+        onPhone("nl-NL")
+        val root = TempFiles.dir("atlas-index")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        s.packCountries.learn(PackCatalog.parse(published).packs)
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        val came = java.util.concurrent.atomic.AtomicBoolean(false)
+        val done = java.util.concurrent.CountDownLatch(1)
+        // the index not in memory, then in memory and listing nothing at Antwerp; once it is, the sheet's own ask of
+        // the regions off the main thread waits till the test is done, so only the index's coming changes the moment
+        s.packCountries.tiles = PackCountries.Tiles { _, _, _ ->
+            if (!came.get()) null
+            else {
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) done.await(20, java.util.concurrent.TimeUnit.SECONDS)
+                0
+            }
+        }
+        try {
+            runBlocking { s.settings.edit { it[app.atlas.services.SettingsKeys.SEARCH_MODE] = app.atlas.search.TravelMode.BIKE.name } }
+            val m = SearchSheetModel(s, antwerp, "en")
+            // the settings read: the moment made again with them, before the index comes
+            until { m.state.value.prefs.mode == app.atlas.search.TravelMode.BIKE }
+            assertEquals("NL", m.state.value.moment.hours.country)
+            came.set(true)
+            s.packCountries.indexRead()
+            until { m.state.value.moment.hours.country == "BE" }
+            assertEquals("BE", m.state.value.moment.hours.country)
+        } finally {
+            done.countDown()
+        }
+        s.close()
     }
 }

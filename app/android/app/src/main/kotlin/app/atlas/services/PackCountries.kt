@@ -8,6 +8,10 @@ import app.atlas.search.covers
 import app.atlas.tiles.Pack
 import app.atlas.tiles.PackCatalog
 import app.atlas.ui.mine.offline.RegionFiles
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.io.File
 import java.util.Locale
 import java.util.WeakHashMap
@@ -44,6 +48,24 @@ class PackCountries(
          * cell's level tile over it, 0 none; null where the pack's index is not in memory.
          */
         fun level(id: String, lat: Double, lon: Double): Int?
+    }
+
+    private val indexes = MutableStateFlow(0)
+
+    /**
+     * How many published countries' tiles' indexes came into memory this run ([indexRead]): what [tiles] says near a
+     * border may be otherwise after each, so a screen that read the country there reads it again (the app maintainer,
+     * 19 November 2026, batch 6 B15: at Antwerp on a Dutch phone the sheet's moment read the phone's country till the
+     * next move, where the Netherlands' index, read by the camera, lists nothing).
+     */
+    val indexesRead: StateFlow<Int> = indexes.asStateFlow()
+
+    /**
+     * Tells [indexesRead] that a published country's tiles' index came into memory ([app.atlas.tiles.WindowTiles]).
+     * Never blocks.
+     */
+    fun indexRead() {
+        indexes.update { it + 1 }
     }
 
     /** When the copies were last read, so a pack the list names no country for does not read them at each ask. */

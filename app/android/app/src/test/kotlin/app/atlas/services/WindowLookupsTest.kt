@@ -832,6 +832,41 @@ class WindowLookupsTest {
     }
 
     /**
+     * A lookup's windows are let go once they came, though Overpass is still to answer (the app maintainer, 19 November
+     * 2026, batch 6 B15): they stayed waited for until it answered, up to 40 s a server, so the lookups meanwhile had
+     * their windows go in theirs. Here the first lookup's windows have come and shown while Overpass waits; then a
+     * lookup east, one farther east, and the first east again: its windows are still held, so the packs are not asked
+     * for them again.
+     */
+    @Test
+    fun aLookupsWindowsGoOnceTheyCameThoughOverpassWaits() = runBlocking {
+        val sent = AtomicInteger()
+        val empty = tmp.newFolder("answering")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val shown = CountDownLatch(1)
+        val answer = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        // twelve windows meet 2 km around [off] and nine are asked of the packs: Overpass is asked beside them
+        val lookup = launch(Dispatchers.IO) {
+            local.beside<Boolean>(off, 2_000.0, cafe, show = { if (it.value.map { p -> p.name() }.toSet() == nearOff) shown.countDown() }, failed = { !it }, ask = { answer.await() })
+        }
+        val again = try {
+            assertTrue("the first lookup's windows showed", shown.await(10, TimeUnit.SECONDS))
+            val east = TileId(WindowPlaces.LEVEL, tile.x + 10, tile.y)
+            val farther = TileId(WindowPlaces.LEVEL, tile.x + 20, tile.y)
+            assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+            assertEquals(9, windows.fetched(nine(farther), farther.bbox.center, 10_000L)?.places?.size)
+            val before = sent.get()
+            assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+            sent.get() - before
+        } finally {
+            answer.complete(true)
+        }
+        lookup.join()
+        assertEquals("the windows east asked of the packs again", 0, again)
+    }
+
+    /**
      * A pack that does not read (cut short, or its disk failing) holds nothing, and Overpass is asked for the circle
      * (the app maintainer, 19 November 2026, batch 6 A5): it threw through the windows step, so the category row's and
      * the shop screens' lookups threw, and the wheel showed no kind, where 38ddafa1 asked Overpass. The pack holds

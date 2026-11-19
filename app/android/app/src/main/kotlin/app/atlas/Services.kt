@@ -220,6 +220,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      * How many places and addresses the downloaded regions held when [app.atlas.ui.search.HereContext] last asked them,
      * off the main thread; -1 before it has. What a frame that cannot wait reads their answers by, so it touches no
      * store: the first to read [placeStores] opens every region's file (the app maintainer, 18 November 2026, batch 5 A5).
+     * -1 again as a region's store goes ([syncPlaceStores]; 19 November 2026, batch 6 B15: a deleted region's state and
+     * holidays were read on by the old count till the regions were next asked).
      */
     @Volatile
     internal var regionsCounted: Int = -1
@@ -238,6 +240,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         val files = dirs.places.listFiles { f -> f.isFile && f.name.endsWith(".db") }.orEmpty().toSet()
         for (gone in openStores.keys - files) {
             openStores.remove(gone)?.let { regions.detach(it); runCatching { it.close() } }
+            // what the regions said with it a frame reads no more, till they are asked again ([regionsCounted])
+            regionsCounted = -1
         }
         val refused = HashMap<File, UnreadableStore>()
         for (f in files - openStores.keys) {

@@ -54,6 +54,9 @@ class StoreOffTheMainThreadTest {
     /** A third, for the regions' own files. */
     private val nuremberg = LatLon(49.4521, 11.0767)
 
+    /** A fourth, for a region deleted: only Germany's box holds it, as the map reads a country no region holds. */
+    private val bayreuth = LatLon(49.9456, 11.5713)
+
     /** Epiphany 2026, a Tuesday, at 10:00 in Bavaria: a holiday there, not in Germany as a whole. */
     private val epiphany: Clock = Clock.fixed(Instant.parse("2026-01-06T09:00:00Z"), ZoneId.of("Europe/Berlin"))
 
@@ -149,6 +152,32 @@ class StoreOffTheMainThreadTest {
         assertEquals(setOf(damaged), s.unreadableStores.value.keys)
         // and the main thread reads what they said
         assertEquals("DE", HereContext.regionNow(s, nuremberg).country)
+        s.close()
+    }
+
+    /**
+     * A frame reads nothing a deleted region said (the app maintainer, 19 November 2026, batch 6 B15): what the regions
+     * said is kept by the count of places they held when last asked ([HereContext.regionNow]), which nothing forgot as
+     * a region's store went, so the frames read its state and its holidays on till the regions were next asked.
+     */
+    @Test
+    fun aFrameReadsNothingADeletedRegionSaid() {
+        val root = TempFiles.dir("atlas-deleted")
+        val places = File(root, "places").apply { mkdirs() }
+        val bavaria = File(places, "bavaria.db")
+        PlaceStore.open(bavaria).apply { importPlaces(quarter(bayreuth), regionName = "Bavaria") }.close()
+        val s = Services(RuntimeEnvironment.getApplication(), ServicesConfig(root = root, offline = true, mapEngine = false, clock = epiphany))
+        assertEquals("DE-BY", runBlocking(Dispatchers.IO) { HereContext.region(s, bayreuth) }.subdivision)
+        assertEquals("DE-BY", HereContext.regionNow(s, bayreuth).subdivision)
+        // the region deleted, as the Maps board deletes it
+        assertTrue(bavaria.delete())
+        s.reloadRegions()
+        until { s.placeStores.stores.isEmpty() && HereContext.regionNow(s, bayreuth).subdivision == null }
+        assertTrue("the store let go", s.placeStores.stores.isEmpty())
+        val now = HereContext.regionNow(s, bayreuth)
+        assertEquals("DE", now.country)
+        assertEquals(null, now.subdivision)
+        assertTrue("no Epiphany in Germany as a whole", now.hours(bayreuth, epiphany.zone).publicHolidays?.isHoliday(LocalDate.of(2026, 1, 6)) != true)
         s.close()
     }
 

@@ -144,12 +144,12 @@ class MapData(private val services: Services) {
 
     /**
      * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
-     * thread.
+     * thread; each index that comes into memory told to the country question ([PackCountries.indexRead]).
      */
     private val windowTiles: WindowTiles by lazy {
         WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client, local = { _, set ->
             set.tiles.sha256?.let(regionFiles::keptTiles)?.let { (tiles, index) -> WindowTiles.Local(tiles, index) }
-        })
+        }, indexRead = { services.packCountries.indexRead() })
     }
 
     /** When each country's tiles' index was last asked for ([countryHolds]), by its id, ms of the uptime clock. */
