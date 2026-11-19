@@ -176,8 +176,10 @@ def main():
             rel = p.relative_to(ANDROID)
             if rel.parts[0] in ("gradle", "build.gradle.kts", "settings.gradle.kts", "gradle.properties"):
                 gradle_changed.add("*")
-            elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "rust":
-                # the buildings' cleaning, a Rust library stage P links: its loads and what draws them, and its fuzzer
+            elif rel == Path("rust-toolchain.toml") or (rel.parts[0] == "mapcore" and len(rel.parts) > 1
+                                                         and rel.parts[1] == "rust"):
+                # the buildings' cleaning, a Rust library stage P links, or the Rust it is built with (the pin): its
+                # loads and what draws them, and its fuzzer
                 labels.update(["load", "building"])
                 fuzz = True
                 packages.update(CHECK_PACKAGES["load"] + CHECK_PACKAGES["geometry"])

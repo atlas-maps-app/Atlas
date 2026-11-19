@@ -1,10 +1,10 @@
 #!/bin/sh
-# rust.sh [android]: the Rust the core's stage P is built with, as app/android/mapcore/rust/rust-toolchain.toml pins it
+# rust.sh [android]: the Rust the core's stage P is built with, as app/android/rust-toolchain.toml pins it
 # (cpp/cmake/Rust.cmake builds the buildings' cleaning with it), on a runner: rustup's toolchain in its minimal profile,
 # and with `android` the targets of the two ABIs the NDK builds. GitHub's Ubuntu images carry rustup; where one does
 # not, rustup's own installer brings it, with no toolchain of its own. A fetch that fails is tried again, three times.
 set -eu
-toml="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}/app/android/mapcore/rust/rust-toolchain.toml"
+toml="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}/app/android/rust-toolchain.toml"
 channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$toml")
 [ -n "$channel" ] || { echo "::error::no channel in $toml"; exit 1; }
 export PATH="$HOME/.cargo/bin:$PATH"

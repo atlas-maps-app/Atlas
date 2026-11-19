@@ -182,6 +182,20 @@ list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAK
      "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
 list(REMOVE_ITEM _core_sources ${_stage_p_sources})
 
+# The buildings' cleaning (load/Clean.hpp), a Rust library: app/android/mapcore/rust/clean, built by cargo as a static
+# library (cmake/Rust.cmake) and linked into stage P (atlas_clean). Release settings in its Cargo.toml (opt-level s,
+# LTO over the crate and the standard library, one unit, panic = abort) keep it small. A fuzz build instruments it for
+# libFuzzer as the C++ is (sanitizer coverage); the other sanitizers leave it as it is (it holds no C++ and shares no
+# memory it does not own).
+set(_clean_crate "${CMAKE_CURRENT_SOURCE_DIR}/../rust/clean")
+set(_clean_rustflags "")
+if(ATLAS_SANITIZE STREQUAL "fuzzer")
+    string(JOIN " " _clean_rustflags -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
+        -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
+        -Cllvm-args=-sanitizer-coverage-trace-compares)
+endif()
+atlas_rust_library(atlas_clean CRATE "${_clean_crate}" LIB atlas_clean RUSTFLAGS "${_clean_rustflags}")
+
 # What stage P's code links: dialect, warnings, sanitizers, zstd, the buildings' cleaning, and the generated headers
 # under the build directory (gen/data/*: the style file and the traditions).
 find_package(Threads REQUIRED)
@@ -396,8 +410,9 @@ if(ATLAS_TESTS)
     set_tests_properties(atlas_tests_rest atlas_tests_split PROPERTIES LABELS atlas_tests)
     # the buildings' cleaning's own tests (rust/clean, cargo's), built in a folder of their own
     if(ATLAS_HOST)
-        add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests" --
-                 "${ATLAS_CARGO}" test --offline --locked --quiet --features std WORKING_DIRECTORY "${ATLAS_RUST_DIR}/clean")
+        add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests"
+                 RUSTUP_AUTO_INSTALL=0 -- "${ATLAS_CARGO}" test --offline --locked --quiet --features std
+                 WORKING_DIRECTORY "${_clean_crate}")
         set_tests_properties(rust/clean PROPERTIES LABELS "atlas_tests;load")
     endif()
 endif()
