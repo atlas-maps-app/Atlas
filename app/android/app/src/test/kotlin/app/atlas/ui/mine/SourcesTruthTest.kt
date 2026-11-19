@@ -160,15 +160,25 @@ class SourcesTruthTest {
                 assertNull("$name goes while ${s.id} is on", SourcesModel.blockedBy(name, all - s.id))
             }
         }
-        val held = owners.flatMap { o -> o.hosts.flatMap { namesFor(it) } }.toSet()
-        // a source asked through another's servers is held back where it is asked, never by host; one without a switch never
-        for (s in SourcesModel.ALL.filter { it.via != null || !it.switchable }) {
-            for (h in s.hosts) for (name in namesFor(h)) if (name !in held) assertNull("${s.id}'s $name", SourcesModel.blockedBy(name, setOf(s.id)))
-        }
         assertNull(SourcesModel.blockedBy("overpass-api.de", setOf("osm-chargers")))
         assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", setOf("overpass")))
         assertNull(SourcesModel.blockedBy("api.openstreetmap.org", setOf("osm-notes", "osm-edits")))
         assertNull(SourcesModel.blockedBy("example.org", all))
+    }
+
+    @Test
+    fun aSourceWithoutASwitchIsHeldBackOnlyWhereASwitchableSourceListsThatVeryName() {
+        // every switch off: the hosts of a source without a switch (OpenStreetMap's notes, edits and sign-in), or of one
+        // asked through another's servers (the chargers, through Overpass's), are held back only where a switchable
+        // source lists that very name, never by a pattern that happens to reach them
+        val switchable = SourcesModel.ALL.filter { it.switchable && it.via == null }
+        val allOff = switchable.map { it.id }.toSet()
+        for (s in SourcesModel.ALL.filter { !it.switchable || it.via != null }) for (h in s.hosts) for (name in namesFor(h)) {
+            val listing = switchable.firstOrNull { o -> h in o.hosts }?.id
+            assertEquals("${s.id}'s $name", listing, SourcesModel.blockedBy(name, allOff))
+        }
+        assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", allOff))
+        assertNull(SourcesModel.blockedBy("api.openstreetmap.org", allOff))
     }
 
     @Test
