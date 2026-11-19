@@ -189,6 +189,27 @@ class FindReviewTest {
     }
 
     /**
+     * Where a country's zones tie at the standard offset nearest the sun's hour, the table's for the point comes before
+     * the alphabet's first (the app maintainer, 19 November 2026, batch 6 B13): Toronto, Montréal and Ottawa read
+     * Atikokan's clock, which keeps no summer time (an hour off in July, on 38ddafa1 too), and Honolulu Adak's, which
+     * does. Where the table's is not among them, the first as before: Halifax and Moncton keep Blanc-Sablon's, as the
+     * table cuts Canada at 60° W (the far list above).
+     */
+    @Test
+    fun whereZonesTieTheTablesComesFirst() {
+        val jul = java.time.Instant.parse("2026-07-15T12:00:00Z")
+        val toronto = ZoneId.of("America/Toronto")
+        assertEquals(toronto, PlaceZone.guess("CA", LatLon(43.6532, -79.3832), jul))
+        assertEquals(toronto, PlaceZone.guess("CA", LatLon(45.5019, -73.5674), jul))
+        assertEquals(toronto, PlaceZone.guess("CA", LatLon(45.4215, -75.6972), jul))
+        assertEquals(ZoneId.of("Pacific/Honolulu"), PlaceZone.guess("US", LatLon(21.3069, -157.8583), jul))
+        // as a place's page reads it, far from the phone
+        val s = testServices()
+        val montreal = Place(OsmId(OsmType.NODE, 9_310L), LatLon(45.5019, -73.5674), mapOf("name" to "X", "addr:country" to "CA"))
+        assertEquals(toronto, HereContext.localeOf(s, montreal, LatLon(52.37, 4.89), ZoneId.of("Europe/Amsterdam")).zone)
+    }
+
+    /**
      * Near the phone over a border, a place in a country of several clocks reads one of its country's zones like the
      * phone's (the app maintainer, 19 November 2026, batch 6 A6): Windsor from Detroit read Edmonton's clock, Detroit
      * from Windsor Chicago's, Toronto from Buffalo and Montréal from Burlington Atikokan's (no summer time), Nuevo

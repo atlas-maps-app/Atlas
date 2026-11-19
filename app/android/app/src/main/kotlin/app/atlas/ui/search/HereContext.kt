@@ -304,15 +304,13 @@ object PlaceZone {
      * several clocks ([SEVERAL]) the country's zone nearest the sun's hour there, as before batch 4 (the app maintainer,
      * 18 November 2026, batch 5 A8: the engine's table cuts them by longitude, or gives them one zone, and put Halifax on
      * Toronto's clock, Manaus on São Paulo's, Tijuana on Mexico City's, Nashville on New York's and Kaliningrad on
-     * Moscow's); in every other its own ([Countries.timezone]; batch 4 B15: the zone nearest the sun's hour put Madrid on
-     * the Canaries' clock, Porto on the Azores' and Chengdu on Urumqi's), else the one nearest the sun's hour there; the
-     * sun's whole hour itself where the country is unknown.
+     * Moscow's), the table's where several tie ([nearestSun]); in every other its own ([Countries.timezone]; batch 4
+     * B15: the zone nearest the sun's hour put Madrid on the Canaries' clock, Porto on the Azores' and Chengdu on
+     * Urumqi's), else the one nearest the sun's hour there; the sun's whole hour itself where the country is unknown.
      */
     fun guess(country: String?, p: LatLon, at: Instant = Instant.now()): ZoneId {
         own(country, p)?.let { return it }
-        val sun = p.lon / 15.0
-        val best = zonesOf(country).minByOrNull { id -> abs(ZoneId.of(id).rules.getStandardOffset(at).totalSeconds / 3600.0 - sun) }
-        return best?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.ofHours(sun.roundToInt().coerceIn(-12, 14))
+        return country?.let { nearestSun(zoneIdsOf(it), it, p, at) } ?: ZoneOffset.ofHours((p.lon / 15.0).roundToInt().coerceIn(-12, 14))
     }
 
     /**
@@ -332,8 +330,22 @@ object PlaceZone {
         val atNow = phoneZone.rules.getOffset(now)
         val atLater = phoneZone.rules.getOffset(later)
         if (zones.any { it.rules.getOffset(now) == atNow && it.rules.getOffset(later) == atLater }) return phoneZone
+        return nearestSun(zones.filter { it.rules.getOffset(now) == atNow }, country, p, now)
+    }
+
+    /**
+     * Of [zones], the one whose standard offset [at] is nearest the sun's hour at [p]; of several at that offset, the
+     * table's for the point ([Countries.timezone]) where it is one of them, else the first (the app maintainer, 19
+     * November 2026, batch 6 B13: ICU lists them by name, so Toronto, Montréal and Ottawa read Atikokan's clock, which
+     * keeps no summer time, and Honolulu Adak's, which does); none of none.
+     */
+    private fun nearestSun(zones: List<ZoneId>, country: String, p: LatLon, at: Instant): ZoneId? {
         val sun = p.lon / 15.0
-        return zones.filter { it.rules.getOffset(now) == atNow }.minByOrNull { abs(it.rules.getStandardOffset(now).totalSeconds / 3600.0 - sun) }
+        fun gap(z: ZoneId) = abs(z.rules.getStandardOffset(at).totalSeconds / 3600.0 - sun)
+        val least = zones.minOfOrNull(::gap) ?: return null
+        val ties = zones.filter { gap(it) == least }
+        val table = Countries.timezone(country, p)
+        return ties.firstOrNull { it.id == table } ?: ties.first()
     }
 
     /**
