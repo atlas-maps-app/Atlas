@@ -4594,3 +4594,125 @@ TEST_CASE("the sun left out while a run is under way: once it is out, no bits of
     std::filesystem::remove_all(disk, ignored);
     (void)session->take_messages();
 }
+
+TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: over the same steps across the canal "
+          "ring, every drawn tile's bits are those of scenes built whole, word for word, from fewer tiles decoded") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path path = std::filesystem::path(dir) / "grachten.atlas";
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the sun's kept parts are not checked over the bundled packs here");
+        return;
+    }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // straight down from 300 m, northward across the canal ring in steps of 250 m: the resident tiles change, and
+    // with them the sun's scene, which takes again the parts of the tiles it held before
+    const auto above = [](double latitude) {
+        style::CameraState c = home();
+        c.latitude = latitude;
+        c.longitude = 4.8880;
+        c.bearing = 0.0;
+        c.pitch = 0.0;
+        c.distance = 300.0;
+        return c;
+    };
+    constexpr int steps = 6;
+    struct Bits {
+        std::vector<std::uint64_t> words;
+        std::uint32_t count = 0;
+        std::uint32_t windows_from = 0;
+        std::uint32_t crowns_from = 0;
+        bool windows = false;
+        std::uint64_t context = 0;
+        std::size_t quays = 0;
+        bool operator==(const Bits&) const = default;
+    };
+    struct Run {
+        std::vector<std::map<std::uint64_t, Bits>> steps; // each step's drawn tiles' bits, by packed key
+        scene::SunStats stats;
+    };
+    // (filling `out`: a failed ATLAS_REQUIRE returns from the lambda)
+    const auto run = [&](bool keep, Run& out) {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE(world.has_value(), world.error().text());
+        scene::World& w = **world;
+        auto added = w.store().add({.id = "grachten", .kind = tiles::PackKind::bundled, .path = path.string()});
+        ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+        std::uint64_t n = 0;
+        const auto settle = [&](const style::CameraState& camera) {
+            (*builder)->set_inputs({.camera = camera, .scene = &w});
+            for (int i = 0; i < 20; ++i) {
+                now = static_cast<double>(++n) * 0.016;
+                ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+                w.update((*builder)->state());
+                if (w.sun() != nullptr) w.sun()->keep_parts(keep);
+                w.residency().wait_idle();
+                if (w.sun() != nullptr) w.sun()->wait_idle();
+            }
+            now = static_cast<double>(++n) * 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+        };
+        for (int s = 0; s < steps; ++s) {
+            settle(above(52.3660 + (s * (250.0 / 111250.0))));
+            REQUIRE(w.sun() != nullptr);
+            std::map<std::uint64_t, Bits>& got = out.steps.emplace_back();
+            for (const scene::CoverTile& t : w.cover()->tiles()) {
+                if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
+                const auto v = w.sun()->bits().view(t.key, now);
+                if (!v || !v->now) continue;
+                const sun::TileBits& b = *v->now;
+                got[t.key.packed()] = {.words = b.words,
+                                       .count = b.count,
+                                       .windows_from = b.windows_from,
+                                       .crowns_from = b.crowns_from,
+                                       .windows = b.windows,
+                                       .context = b.context,
+                                       .quays = b.quays ? b.quays->size() : 0};
+            }
+        }
+        out.stats = w.sun()->stats();
+    };
+
+    Run kept;
+    Run whole;
+    run(true, kept);
+    run(false, whole);
+    REQUIRE(kept.steps.size() == whole.steps.size());
+    std::size_t tiles = 0;
+    for (std::size_t s = 0; s < kept.steps.size(); ++s) {
+        CAPTURE(s);
+        CHECK(!kept.steps[s].empty());
+        CHECK(kept.steps[s].size() == whole.steps[s].size());
+        for (const auto& [key, bits] : whole.steps[s]) {
+            const auto it = kept.steps[s].find(key);
+            const tiles::TileKey k = tiles::TileKey::unpack(key);
+            CHECK_MESSAGE(it != kept.steps[s].end(),
+                          std::format("{}/{}/{} has no bits with parts kept", k.z, k.x, k.y));
+            if (it == kept.steps[s].end()) continue;
+            CHECK_MESSAGE(it->second == bits,
+                          std::format("{}/{}/{}'s bits differ from a whole build's", k.z, k.x, k.y));
+            ++tiles;
+        }
+    }
+    // more than one scene, each after the first taking parts from the one before, and built whole none
+    CHECK(kept.stats.scenes > 1);
+    CHECK(kept.stats.parts_kept > 0);
+    CHECK(kept.stats.parts_made < whole.stats.parts_made);
+    CHECK(whole.stats.parts_kept == 0);
+    MESSAGE(std::format("{} steps, {} tiles' bits equal; kept: {} scenes, {} parts kept, {} made, {:.0f} ms; whole: {} "
+                        "scenes, {} parts made, {:.0f} ms",
+                        steps, tiles, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made,
+                        kept.stats.scenes_ms, whole.stats.scenes, whole.stats.parts_made, whole.stats.scenes_ms));
+    (void)session->take_messages();
+}
