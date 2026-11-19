@@ -90,10 +90,10 @@ TEST_CASE("load: a window counts its scene's buildings, and its tile's buildings
     const auto tile = pack->decode(pack->chunks().chunks().front(), zstd, decoder, arena, raw, scratch);
     ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
     CHECK(load::most_windows(*tile, pack->head()->frame) == held->most_windows);
-    for (std::uint8_t level = 0; level < tl::keep::tolerances.size(); ++level) {
-        INFO("the ladder's level " << int{level});
-        const gm::TileBuildings g =
-            gm::build_buildings({.tile = &*tile, .head = pack->head(), .level = level, .kind = 1});
+    for (std::size_t level = 0; level < tl::keep::tolerances.size(); ++level) {
+        INFO("the ladder's level " << level);
+        const gm::TileBuildings g = gm::build_buildings(
+            {.tile = &*tile, .head = pack->head(), .level = static_cast<std::uint8_t>(level), .kind = 1});
         CHECK(g.windows <= held->most_windows);
         CHECK(g.windows_cut == 0);
         if (level == 0) CHECK(g.windows > 0);
