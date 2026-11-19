@@ -65,7 +65,7 @@ struct Bucket {
 /// A scene's tiles in order, each one's part (shared between scenes) read as `const SunTile&`.
 class SceneTiles {
 public:
-    class iterator {
+    class Iterator {
     public:
         using iterator_concept = std::forward_iterator_tag;
         using iterator_category = std::forward_iterator_tag;
@@ -73,31 +73,31 @@ public:
         using difference_type = std::ptrdiff_t;
         using reference = const SunTile&;
         using pointer = const SunTile*;
-        iterator() = default;
-        explicit iterator(std::span<const std::shared_ptr<const SunTile>>::iterator at) noexcept : at_(at) {}
+        Iterator() = default;
+        explicit Iterator(std::span<const std::shared_ptr<const SunTile>>::iterator at) noexcept : at_(at) {}
         [[nodiscard]] reference operator*() const noexcept { return **at_; }
         [[nodiscard]] pointer operator->() const noexcept { return at_->get(); }
-        iterator& operator++() noexcept {
+        Iterator& operator++() noexcept {
             ++at_;
             return *this;
         }
-        iterator operator++(int) noexcept {
-            const iterator was = *this;
+        Iterator operator++(int) noexcept {
+            const Iterator was = *this;
             ++at_;
             return was;
         }
-        [[nodiscard]] bool operator==(const iterator&) const = default;
+        [[nodiscard]] bool operator==(const Iterator&) const = default;
 
     private:
-        std::span<const std::shared_ptr<const SunTile>>::iterator at_{};
+        std::span<const std::shared_ptr<const SunTile>>::iterator at_;
     };
 
     explicit SceneTiles(std::span<const std::shared_ptr<const SunTile>> parts) noexcept : parts_(parts) {}
     [[nodiscard]] std::size_t size() const noexcept { return parts_.size(); }
     [[nodiscard]] bool empty() const noexcept { return parts_.empty(); }
     [[nodiscard]] const SunTile& operator[](std::size_t t) const noexcept { return *parts_[t]; }
-    [[nodiscard]] iterator begin() const noexcept { return iterator(parts_.begin()); }
-    [[nodiscard]] iterator end() const noexcept { return iterator(parts_.end()); }
+    [[nodiscard]] Iterator begin() const noexcept { return Iterator(parts_.begin()); }
+    [[nodiscard]] Iterator end() const noexcept { return Iterator(parts_.end()); }
 
 private:
     std::span<const std::shared_ptr<const SunTile>> parts_;

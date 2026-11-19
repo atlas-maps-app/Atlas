@@ -607,7 +607,8 @@ namespace {
     const double w = most + 1.0;
     for (std::size_t d = 0; d < decks.size(); ++d) {
         const auto& bb = decks[d].box;
-        if (!(bb[0] <= x1 + w && bb[1] >= x0 - w && bb[2] <= z1 + w && bb[3] >= z0 - w)) continue;
+        const bool meets = bb[0] <= x1 + w && bb[1] >= x0 - w && bb[2] <= z1 + w && bb[3] >= z0 - w;
+        if (!meets) continue;
         if (std::ranges::any_of(quays, [&](const sun::QuayMark& q) { return sun::deck_near(q, decks[d]); })) {
             hits.push_back(digests[d]);
         }
@@ -705,8 +706,9 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
             Part n{.kind = kind, .key = key, .chunk = chunk->sha256, .level = t.level, .live = t.live};
             sun::collect_decks(*tile, *head, t.level, n.decks);
             if (wanted) {
-                starts[i] = sun::start_tile(*tile, *head, region, t.level, t.live);
-                n.quays = sun::quay_marks(*starts[i]);
+                sun::TileStart start = sun::start_tile(*tile, *head, region, t.level, t.live);
+                n.quays = sun::quay_marks(start);
+                starts[i] = std::move(start);
             } else {
                 n.tile = std::make_shared<const sun::SunTile>(sun::solids_tile(*tile, head->frame, t.level, t.live));
             }
