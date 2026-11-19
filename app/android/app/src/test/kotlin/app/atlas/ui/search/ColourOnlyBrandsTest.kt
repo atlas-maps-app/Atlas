@@ -3,7 +3,6 @@ package app.atlas.ui.search
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.captureToImage
-import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -15,6 +14,10 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import app.atlas.Services
 import app.atlas.geo.LatLon
 import app.atlas.mapview.MarkerStyle
+import app.atlas.mapview.Marker
+import app.atlas.mapview.MarkerPainter
+import app.atlas.ui.kit.BrandSigns
+import androidx.compose.ui.test.hasAnyAncestor
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
@@ -217,35 +220,44 @@ class ColourOnlyBrandsTest {
     }
 
     /**
-     * A name that begins with a mark wears its first letter or digit, on a row as on its pin, where the row wore the mark
-     * ("'t Zusje": an apostrophe on the row, a T on the pin); a name with neither, "?" on both, as the map's painter draws.
-     * Each is drawn as a name beginning with that letter is, pixel for pixel.
+     * The letter on a sign with no logo is the name's first letter or digit, upper case, else "?" ([BrandSigns.letter]),
+     * the rule the map's painter draws a pin's by: "'t Zusje" a T, where the row wrote the apostrophe.
      */
     @Test
-    fun aSignsLetterIsTheNamesFirstLetterOrDigitOnARowAsOnItsPin() {
+    fun aSignsLetterIsTheNamesFirstLetterOrDigit() {
+        val letters = mapOf(
+            "'t Zusje" to "T", "(A)ngelo" to "A", "#1 Kapsalon" to "1", "★★" to "?", "" to "?", "   " to "?",
+            "jumbo" to "J", "'9 Straatjes" to "9", "Albert Heijn" to "A",
+        )
+        for ((name, letter) in letters) assertEquals("the letter of \"$name\"", letter, BrandSigns.letter(name))
+    }
+
+    /**
+     * A row and its pin wear the same letter: the row's sign writes [BrandSigns.letter] of the name, and the painter's pin
+     * drawn from the name is the pin drawn from that letter alone, pixel for pixel; so either side's rule moving by
+     * itself fails here.
+     */
+    @Test
+    fun aRowAndItsPinWearTheSameLetter() {
         var name by androidx.compose.runtime.mutableStateOf("'t Zusje")
         compose.setContent {
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.testTag("sign")) {
                 app.atlas.ui.kit.BrandSign(null, name, ROW_TILE)
             }
         }
-        fun row(n: String): androidx.compose.ui.graphics.PixelMap {
-            compose.runOnIdle { name = n }
-            compose.waitForIdle()
-            return compose.onNode(hasTestTag("sign")).captureToImage().toPixelMap()
-        }
-        fun pin(n: String): android.graphics.Bitmap {
-            val painter = app.atlas.mapview.MarkerPainter(2f)
+        fun pin(label: String): android.graphics.Bitmap {
             val side = 120
             val b = android.graphics.Bitmap.createBitmap(side, side, android.graphics.Bitmap.Config.ARGB_8888)
-            painter.draw(android.graphics.Canvas(b), app.atlas.mapview.Marker("p", here, "shop", 0xFF5A5F6C, MarkerStyle.BRAND, label = n, logo = "nobrand"), side / 2f, side / 2f, 0)
+            MarkerPainter(2f).draw(android.graphics.Canvas(b), Marker("p", here, "shop", 0xFF5A5F6C, MarkerStyle.BRAND, label = label, logo = "nobrand"), side / 2f, side / 2f, 0)
             return b
         }
-        fun same(a: androidx.compose.ui.graphics.PixelMap, b: androidx.compose.ui.graphics.PixelMap): Boolean =
-            a.width == b.width && a.height == b.height && (0 until a.height).all { y -> (0 until a.width).all { x -> a[x, y] == b[x, y] } }
-        for ((odd, plain) in listOf("'t Zusje" to "T Zusje", "(A)ngelo" to "Angelo", "#1 Kapsalon" to "1 Kapsalon", "★★" to "?")) {
-            assertTrue("$odd on a pin as $plain", pin(odd).sameAs(pin(plain)))
-            assertTrue("$odd on a row as $plain", same(row(odd), row(plain)))
+        for (n in listOf("'t Zusje", "(A)ngelo", "#1 Kapsalon", "★★", "jumbo", "'9 Straatjes")) {
+            val letter = BrandSigns.letter(n)
+            compose.runOnIdle { name = n }
+            compose.waitForIdle()
+            compose.onNode(hasTestTag("sign")).assertExists()
+            assertTrue("the row of \"$n\" writes $letter", compose.onAllNodes(hasText(letter) and hasAnyAncestor(hasTestTag("sign")), useUnmergedTree = true).fetchSemanticsNodes().size == 1)
+            assertTrue("the pin of \"$n\" is the pin of $letter", pin(n).sameAs(pin(letter)))
         }
     }
 
