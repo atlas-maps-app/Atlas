@@ -158,12 +158,12 @@ class SourcesTruthTest {
     @Test
     fun everyHostTheShippedCodeAsksIsAListedSources() {
         assertTrue("the Android sources at $android", File(android, "providers/src/main").isDirectory)
-        val listed = SourcesModel.ALL.flatMap { it.hosts }.toSet()
-        val unwired = Catalogue.NOT_WIRED.flatMap { it.hosts }.toSet()
+        // a host is listed as the gate asks: a source holds it, by its name or below its pattern
+        val listed = SourcesModel.ALL + Catalogue.NOT_WIRED
         // a source's website is excused only where the code declares it so, as the `url` of its declaration: named
         // anywhere else (a client's base, a request) it is asked, and must be listed
         val websites = (SourcesModel.ALL + Catalogue.NOT_WIRED + Catalogue.BUNDLED).mapNotNull { java.net.URI(it.url).host }.toSet()
-        val unknown = addressesIn(sources(shipped)).filter { a -> !(a.declared && a.host in websites) && a.host !in links && a.host !in listed && a.host !in unwired }
+        val unknown = addressesIn(sources(shipped)).filter { a -> !(a.declared && a.host in websites) && a.host !in links && listed.none { it.holds(a.host) } }
         assertTrue("hosts the code names that no source lists: $unknown", unknown.isEmpty())
     }
 
