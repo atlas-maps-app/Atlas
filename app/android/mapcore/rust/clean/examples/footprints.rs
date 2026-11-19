@@ -5,6 +5,12 @@
 //!
 //! The file holds, per footprint, `F <part 0|1> <min> <top> <id> <rings>` and each ring as `<n> <lat> <lon> ...` in
 //! grid units. It prints the counts and the time the cleaning took.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "a tool run by hand: a bad file or argument stops it, saying what was wrong"
+)]
 
 use atlas_clean::clean::{clean, Footprint, Params};
 use atlas_clean::geom::P;

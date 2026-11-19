@@ -1,0 +1,4 @@
+# rustfmt for the core's Rust (each crate under mapcore/rust: rustfmt reads the nearest rustfmt.toml above a crate's
+# files), as CI's tidy job checks it (.github/scripts/rust-lint.sh): the C++'s 120 columns (cpp/.clang-format), and
+# otherwise rustfmt's own style for the crate's edition.
+max_width = 120
