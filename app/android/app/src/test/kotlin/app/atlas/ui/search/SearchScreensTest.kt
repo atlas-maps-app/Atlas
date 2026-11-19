@@ -45,6 +45,7 @@ import app.atlas.providers.Wikidata
 import app.atlas.providers.WikidataRef
 import app.atlas.search.MemoryPlaces
 import app.atlas.testing.Fixtures
+import app.atlas.testing.direct
 import app.atlas.testing.keepFixtureForecast
 import app.atlas.testing.settle
 import app.atlas.testing.shotsDir
@@ -274,7 +275,7 @@ class SearchScreensTest {
         val services = testServices()
         runBlocking { services.settings.set(app.atlas.services.SettingsKeys.PROVIDERS_OFF, setOf("wikipedia")) }
         val looked = java.util.Collections.synchronizedList(ArrayList<String>())
-        val http = app.atlas.providers.Http(base = services.http.client.newBuilder().dns { looked += it; throw java.net.UnknownHostException(it) }.build())
+        val http = app.atlas.providers.Http(base = services.http.client.newBuilder().direct().dns { looked += it; throw java.net.UnknownHostException(it) }.build())
         val wiki = app.atlas.providers.Wikipedia(http)
         compose.setContent {
             app.atlas.ui.kit.AtlasTheme(dark = false) {

@@ -5,6 +5,7 @@ import app.atlas.providers.Http
 import app.atlas.providers.SwitchedOffException
 import app.atlas.providers.Wikipedia
 import app.atlas.services.SettingsKeys
+import app.atlas.testing.direct
 import app.atlas.testing.testServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -34,6 +35,29 @@ import java.util.Collections
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SourcesGateTest {
+    /**
+     * A proxy of the JVM's, set where the tests run, would carry a switched-on request out past the test's own [Dns]: every
+     * test here runs with one set to a port nobody listens on, so a client that is not [app.atlas.testing.direct] fails.
+     */
+    private val proxyKeys = listOf("http.proxyHost", "https.proxyHost", "socksProxyHost").associateWith { it.replace("Host", "Port") }
+    private val kept = HashMap<String, String?>()
+
+    @org.junit.Before
+    fun aProxyThatGoesNowhere() {
+        val port = java.net.ServerSocket(0).use { it.localPort }
+        for ((host, portKey) in proxyKeys) {
+            kept[host] = System.getProperty(host)
+            kept[portKey] = System.getProperty(portKey)
+            System.setProperty(host, "127.0.0.1")
+            System.setProperty(portKey, "$port")
+        }
+    }
+
+    @org.junit.After
+    fun theProxyAsItWas() {
+        for ((k, v) in kept) if (v == null) System.clearProperty(k) else System.setProperty(k, v)
+    }
+
     /** What a client asked of the names and the sockets: nothing leaves this machine, whatever the gate does. */
     private class Watch : EventListener() {
         val looked: MutableList<String> = Collections.synchronizedList(ArrayList())
@@ -50,9 +74,9 @@ class SourcesGateTest {
         }
     }
 
-    /** The app's [Services.http], its gate and all, with [watch]'s names and sockets. */
+    /** The app's [Services.http], its gate and all, with [watch]'s names and sockets, and no proxy of the JVM's. */
     private fun watched(services: Services, watch: Watch): Http =
-        Http(base = services.http.client.newBuilder().dns(watch.dns).eventListener(watch).build())
+        Http(base = services.http.client.newBuilder().direct().dns(watch.dns).eventListener(watch).build())
 
     private suspend fun Services.switch(off: Set<String>) {
         settings.set(SettingsKeys.PROVIDERS_OFF, off.takeIf { it.isNotEmpty() })
