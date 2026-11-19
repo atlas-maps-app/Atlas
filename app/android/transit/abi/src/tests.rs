@@ -623,10 +623,45 @@ fn null_pointers_and_short_buffers_do_no_harm() {
         len = 7;
         assert!(!atlas_transit_meta(t.0, [0xFFu8, 0xFE].as_ptr(), 2, &mut len).is_null() && len == 0);
         assert!(!atlas_transit_meta(t.0, b"first_day".as_ptr(), 9, null_mut()).is_null());
-        // arrays that are not there are empty arrays: no query, so none is planned; and no wishes, so none hold
-        assert_eq!(atlas_transit_plan(t.0, null(), q.len(), null(), 0, null(), 0, null(), 0), 0);
-        let n = atlas_transit_plan(t.0, q.as_ptr(), q.len(), null(), 4, null(), 4, null(), 40);
-        assert_eq!(n, A_HEAD + J_HEAD + 3 * L_LEN);
+        // An array of no numbers is the empty array, wherever its pointer points. An array that has numbers and
+        // cannot be read (no pointer, one that is not a number's place, more numbers than memory holds) refuses
+        // the plan, whichever of the four it is: a plan without the wishes it was sent with would pass for the
+        // answer to them.
+        let whole = A_HEAD + J_HEAD + 3 * L_LEN;
+        let dangling = core::ptr::NonNull::<i32>::dangling().as_ptr() as *const i32;
+        assert_eq!(atlas_transit_plan(t.0, q.as_ptr(), q.len(), null(), 0, null(), 0, null(), 0), whole);
+        assert_eq!(atlas_transit_plan(t.0, q.as_ptr(), q.len(), dangling, 0, dangling, 0, dangling, 0), whole);
+        assert_eq!(atlas_transit_plan(t.0, q.as_ptr(), q.len(), q.as_ptr().byte_add(1), 0, null(), 0, q.as_ptr().byte_add(3), 0), whole);
+        let wish = [W_NO_WHEELCHAIR, H_NEVER, 0, 0];
+        let walk = [stop("WA"), 60];
+        let good: [&[i32]; 4] = [&q, &walk, &walk, &wish];
+        let plan = |a: [(*const i32, usize); 4]| atlas_transit_plan(t.0, a[0].0, a[0].1, a[1].0, a[1].1, a[2].0, a[2].1, a[3].0, a[3].1);
+        let sent = good.map(|a| (a.as_ptr(), a.len()));
+        assert_eq!(plan(sent), whole);
+        // (the same numbers one byte off a number's place, in memory of their own)
+        let mut kept = Vec::new();
+        let mut askew = |numbers: &[i32]| {
+            let mut b = vec![0u8; numbers.len() * 4 + 8];
+            let at = b.as_ptr().align_offset(4) + 1;
+            for (k, n) in numbers.iter().enumerate() {
+                b[at + k * 4..at + k * 4 + 4].copy_from_slice(&n.to_le_bytes());
+            }
+            let p = b[at..].as_ptr() as *const i32;
+            kept.push(b);
+            p
+        };
+        for (which, name) in ["the query", "the walks from", "the walks to", "the wishes"].into_iter().enumerate() {
+            let a = good[which];
+            for (unreadable, why) in [((null(), a.len()), "no pointer"), ((askew(a), a.len()), "askew"), ((a.as_ptr(), isize::MAX as usize / 4 + 1), "too long"), ((a.as_ptr(), usize::MAX), "longer still")] {
+                let mut with = sent;
+                with[which] = unreadable;
+                assert_eq!(plan(with), 0, "{name}: {why}");
+                // (and a refused plan leaves no answer of the plan before)
+                assert_eq!(atlas_transit_answer(t.0, null_mut(), 0), 0);
+            }
+        }
+        let n = atlas_transit_plan(t.0, q.as_ptr(), q.len(), null(), 0, null(), 0, null(), 0);
+        assert_eq!(n, whole);
         // the answer into no buffer, into one too short, into one just long enough, into a longer one
         assert_eq!(atlas_transit_answer(t.0, null_mut(), 100), n);
         assert_eq!(atlas_transit_answer(t.0, out.as_mut_ptr(), 0), n);
@@ -640,10 +675,45 @@ fn null_pointers_and_short_buffers_do_no_harm() {
         assert_eq!(atlas_transit_answer(t.0, again.as_mut_ptr(), n + 3), n);
         assert_eq!(again, whole);
         assert_eq!(received(&whole[..n]).0.len(), 1);
-        // a place of walks with no array: no stop to begin at, so no journey, but a query all the same
+        // and into a buffer that is no number's place nothing is written
+        let mut bytes = [0x55u8; 64];
+        let odd = bytes.as_mut_ptr().add(bytes.as_ptr().align_offset(4) + 1) as *mut i32;
+        assert_eq!(atlas_transit_answer(t.0, odd, 8), n);
+        assert_eq!(bytes, [0x55u8; 64]);
+        // a place of walks with an empty array: no stop to begin at, so no journey, but a query all the same
         let walks = [P_WALKS, 0, 0, P_STOP, stop("WZ"), 0, 0, hm(7, 55) as i32];
-        assert_eq!(atlas_transit_plan(t.0, walks.as_ptr(), walks.len(), null(), 2, null(), 0, null(), 0), A_HEAD);
+        assert_eq!(atlas_transit_plan(t.0, walks.as_ptr(), walks.len(), null(), 0, null(), 0, null(), 0), A_HEAD);
     }
+}
+
+/// The file with one line more in its description of itself (its `META` put anew at the end).
+fn with_meta(b: &[u8], line: &str) -> Vec<u8> {
+    let word = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+    let at = (0..word(12) as usize).map(|i| 16 + i * 16).find(|o| &b[*o..*o + 4] == b"META").unwrap();
+    let (off, len, n) = (word(at + 4) as usize, word(at + 8) as usize, word(at + 12));
+    let mut out = b.to_vec();
+    out.resize(out.len().div_ceil(8) * 8, 0);
+    let to = out.len() as u32;
+    out.extend_from_slice(&b[off..off + len]);
+    out.extend_from_slice(line.as_bytes());
+    out.push(b'\n');
+    for (k, v) in [to, (len + line.len() + 1) as u32, n + 1].into_iter().enumerate() {
+        out[at + 4 + k * 4..at + 8 + k * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+/// A key of the file's description is read up to 4,096 bytes, as the header says: a longer one names no line,
+/// though the file has it.
+#[test]
+fn a_key_longer_than_the_header_says_names_no_line() {
+    let (at_most, longer) = ("k".repeat(4096), "k".repeat(4097));
+    let b = with_meta(&with_meta(&bytes("edges.tt"), &format!("{at_most}=the longest")), &format!("{longer}=too long"));
+    let tt = Timetable::open(&b).unwrap();
+    assert_eq!((tt.meta(&at_most), tt.meta(&longer), tt.meta("days")), (Some("the longest"), Some("too long"), Some("4")));
+    let t = Open::of(&b);
+    assert_eq!((t.meta(&at_most), t.meta(&longer), t.meta("days")), ("the longest", "", "4"));
+    assert!(include_str!("../include/atlas_transit.h").contains("4,096 bytes"));
 }
 
 /// Bytes that are no timetable are not opened, and the reason is said; where no reason is asked for, none is

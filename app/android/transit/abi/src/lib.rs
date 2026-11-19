@@ -452,16 +452,22 @@ pub struct AtlasTransit {
     answer: Vec<i32>,
 }
 
-/// The caller's array, or an empty one where it gave none.
+/// The caller's array. One of no numbers is the empty array, wherever its pointer points. One that has numbers
+/// and cannot be read (no pointer, a pointer that is no number's place, more numbers than memory holds) is
+/// nothing, and never the empty array: a plan made without the wishes it was sent with would pass for the answer
+/// to them.
 ///
 /// # Safety
 /// `p`, where it is not null, points to `len` numbers that nothing writes while the slice is used.
-unsafe fn numbers<'a>(p: *const i32, len: usize) -> &'a [i32] {
-    if p.is_null() || len == 0 || !p.is_aligned() || len > isize::MAX as usize / 4 {
-        return &[];
+unsafe fn numbers<'a>(p: *const i32, len: usize) -> Option<&'a [i32]> {
+    if len == 0 {
+        return Some(&[]);
+    }
+    if p.is_null() || !p.is_aligned() || len > isize::MAX as usize / 4 {
+        return None;
     }
     // SAFETY: not null, aligned, `len` numbers by the caller's word, and no longer than a slice may be
-    unsafe { core::slice::from_raw_parts(p, len) }
+    Some(unsafe { core::slice::from_raw_parts(p, len) })
 }
 
 /// A number of the file as the interface gives it: `NONE` for the file's "nothing", and never past what 32 bits
@@ -704,7 +710,8 @@ pub unsafe extern "C" fn atlas_transit_meta(t: *const AtlasTransit, key: *const 
 /// Plans. `query` is the query's numbers (`Q_*`; `Q_NEEDED` at least), `from_walks` and `to_walks` the stops of a
 /// place of kind `P_WALKS` as pairs of a stop and the seconds on foot, `wishes` the wishes one after another
 /// (`W_*`). Gives how many numbers the answer has; it stays with the timetable until the next plan, and
-/// `atlas_transit_answer` reads it. 0: the query could not be read and nothing was planned.
+/// `atlas_transit_answer` reads it. 0: the query could not be read and nothing was planned; an array that has
+/// numbers and cannot be read (`numbers`) is such a query, whichever of the four it is.
 ///
 /// # Safety
 /// `t` is null or an open timetable that no other plan or reading of an answer uses meanwhile; each array is null
@@ -725,11 +732,14 @@ pub unsafe extern "C" fn atlas_transit_plan(
         return 0;
     }
     // SAFETY: the caller's arrays, each as long as it says
-    let (q, from, to, wishes) = unsafe { (numbers(query, query_len), numbers(from_walks, from_walks_len), numbers(to_walks, to_walks_len), numbers(wishes, wishes_len)) };
+    let arrays = unsafe { (numbers(query, query_len), numbers(from_walks, from_walks_len), numbers(to_walks, to_walks_len), numbers(wishes, wishes_len)) };
     // SAFETY: an open timetable, and by the caller's word nothing else uses its planner or its answer during this
     // call; the file beside them is not touched through these two
     let (planner, answer) = unsafe { (&mut (*t).planner, &mut (*t).answer) };
     answer.clear();
+    let (Some(q), Some(from), Some(to), Some(wishes)) = arrays else {
+        return 0;
+    };
     let Some(query) = read(q, from, to, wishes) else {
         return 0;
     };

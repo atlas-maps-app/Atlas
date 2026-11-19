@@ -5,7 +5,11 @@
  * bytes of UTF-8 with their length. There is no structure whose layout the two sides could see differently.
  *
  * What a caller owes:
- * - an array is as long as its length says (a null pointer is an empty array);
+ * - an array is as long as its length says. An array of no numbers is the empty array, whatever its pointer (null
+ *   too). A plan sent an array that has numbers and cannot be read (a null pointer with a length above 0, a pointer
+ *   that is not aligned for a number, a length no memory holds) is refused, whichever array it is: JNI's
+ *   GetIntArrayElements gives null when memory is short, and whoever hands that on with the array's length gets no
+ *   answer, never the answer to a query without its wishes;
  * - the file's bytes stay where they are, unchanged, from atlas_transit_open until atlas_transit_close;
  * - one plan at a time on a timetable, and its answer read before the next plan. A timetable's numbers and names
  *   (atlas_transit_number, _text, _meta) may be read from any thread at any time while it is open.
@@ -127,8 +131,9 @@ const uint8_t *atlas_transit_text(const atlas_transit *t, uint32_t what, uint32_
 #define ATLAS_TRANSIT_T_TRIP_BLOCK 52
 #define ATLAS_TRANSIT_T_ROUTE_HEADSIGN 64  /* id: a route; what its vehicles show from place `at` on */
 
-/* A line of the file's description of itself (../FORMAT.md, META), by its key: "feed_version", "feed_publisher".
- * As atlas_transit_text gives a name; no bytes where the file has no such line. */
+/* A line of the file's description of itself (../FORMAT.md, META), by its key: "feed_version",
+ * "feed_publisher_name". As atlas_transit_text gives a name; no bytes where the file has no such line, where the
+ * key is not UTF-8, or where it is longer than 4,096 bytes. */
 const uint8_t *atlas_transit_meta(const atlas_transit *t, const uint8_t *key, size_t key_len, size_t *len);
 
 /* Plans. Gives how many numbers the answer has: it stays with the timetable until the next plan, and
