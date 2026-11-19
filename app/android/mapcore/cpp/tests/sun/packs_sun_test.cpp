@@ -132,6 +132,31 @@ std::map<std::uint64_t, std::vector<std::uint64_t>> bits_of(const Scene& scene, 
     return out;
 }
 
+/// Whether two parts of one tile are the same as the march reads them: every list of their samples in order, their
+/// quay pieces and their mirrors' first reflection samples.
+bool same_part(const SunTile& a, const SunTile& b) {
+    const TileSamples& s = a.samples;
+    const TileSamples& t = b.samples;
+    const bool samples = s.x == t.x && s.y == t.y && s.z == t.z && s.face == t.face && s.skip == t.skip &&
+                         s.kind == t.kind && s.source == t.source && s.owner == t.owner && s.edge == t.edge &&
+                         s.part == t.part && s.nx == t.nx && s.ny == t.ny && s.nz == t.nz && s.crown_r == t.crown_r &&
+                         s.crowns_first == t.crowns_first && s.crowns_end == t.crowns_end &&
+                         s.windows_first == t.windows_first;
+    if (!samples) return false;
+    const std::vector<std::uint32_t> none;
+    if ((a.reflections ? *a.reflections : none) != (b.reflections ? *b.reflections : none)) return false;
+    const std::size_t pieces = a.quays ? a.quays->size() : 0;
+    if (pieces != (b.quays ? b.quays->size() : 0)) return false;
+    for (std::size_t i = 0; i < pieces; ++i) {
+        const QuayPiece& p = (*a.quays)[i];
+        const QuayPiece& q = (*b.quays)[i];
+        if (p.record != q.record || p.ax != q.ax || p.az != q.az || p.bx != q.bx || p.bz != q.bz ||
+            p.sample != q.sample || p.bands != q.bands || p.columns != q.columns)
+            return false;
+    }
+    return true;
+}
+
 } // namespace
 
 TEST_CASE("sun: a tile's bits from its 220 m halo alone are its bits in the whole pack") {
@@ -273,6 +298,63 @@ TEST_CASE(
     CHECK(both_bits.at(halo[next].packed()) == before.at(halo[next].packed()));
     MESSAGE("tile ", resident.x, "/", resident.y, " and ", halo[next].x, "/", halo[next].y, ": a halo of ", halo.size(),
             " tiles, ", decks.size(), " decks");
+}
+
+TEST_CASE("sun: a whole tile's quay walls are those the decks near its quay edges alone make, in any order (the sun's "
+          "scenes keep a tile's part while those decks stay the same)") {
+    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the real packs are not checked here");
+        return;
+    }
+    auto pack = atlas::test::open_pack((std::filesystem::path(dir) / "grachten.atlas").string());
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    const auto view = pack->head()->view("grachten_home");
+    ATLAS_REQUIRE(view.has_value());
+    const std::uint8_t level = view->tolerance;
+    const tl::RenderHead& head = *pack->head();
+    const Region region = region_of(*pack->style());
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    atlas::Arena arena(4U << 20U, atlas::Growth::grows, "sun near decks test");
+    // every tile of the pack's finest level started, and every deck of them (the scene of the whole pack's)
+    std::vector<Deck> decks;
+    std::vector<TileStart> starts;
+    for (const tl::ChunkRef& c : pack->chunks().level(head.levels.front())) {
+        arena.reset();
+        auto tile = pack->decode(c, zstd, decoder, arena, raw, scratch);
+        ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+        collect_decks(*tile, head, level, decks);
+        starts.push_back(start_tile(*tile, head, region, level));
+    }
+    ATLAS_REQUIRE(!decks.empty());
+    std::size_t quayed = 0; // the tiles with quay walls
+    std::size_t cut = 0;    // of those, the tiles whose quay walls their near decks change
+    std::size_t near_decks = 0;
+    for (const TileStart& start : starts) {
+        const std::vector<QuayMark> marks = quay_marks(start);
+        if (marks.empty()) continue;
+        ++quayed;
+        CAPTURE(start.tile.key.x);
+        CAPTURE(start.tile.key.y);
+        // the decks near its quay edges alone, the other way round
+        std::vector<Deck> near;
+        for (const Deck& d : decks) {
+            if (std::ranges::any_of(marks, [&](const QuayMark& q) { return deck_near(q, d); })) near.push_back(d);
+        }
+        std::ranges::reverse(near);
+        near_decks += near.size();
+        const SunTile all = finish_tile(start, region, decks);
+        CHECK(same_part(finish_tile(start, region, near), all));
+        if (!same_part(finish_tile(start, region, {}), all)) ++cut;
+    }
+    // tiles with quay walls, and bridges that cut them: the near decks are what a kept part must hold to
+    CHECK(quayed > 0);
+    CHECK(cut > 0);
+    MESSAGE(quayed, " of ", starts.size(), " tiles with quay walls, ", cut, " of them cut by bridges; ", decks.size(),
+            " decks, ", near_decks, " near a tile's quay edges in all");
 }
 
 TEST_CASE("sun: the Westerkerk's bits, over the app's pack the core cuts, are the host build's") {
