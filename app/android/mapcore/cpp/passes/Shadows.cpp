@@ -776,7 +776,8 @@ void Ground::record_shadows(const frame::Recording& r) {
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const Words& w = *words_;
     if (drew_soft_) {
-        // the frame slot's blurred mask drawn back over the frame at the shadows' slot
+        // the frame's entry's blurred mask, made this frame or kept, drawn back over the frame at the shadows' slot:
+        // its own kind, so a kept mask's frame still counts the soft shadows' work
         const SoftShadows& s = *pipelines_->soft;
         const style::ThemeBlock& th = r.state.theme;
         Push pc{};
@@ -789,7 +790,7 @@ void Ground::record_shadows(const frame::Recording& r) {
                                {});
         cmd.pushConstants<Push>(*pipelines_->layout, frame::push_stages, 0, pc);
         cmd.draw(3, 1, 0, 0);
-        r.counters.draw("ground shadows", 1);
+        r.counters.draw("ground soft shadows", 1);
         return;
     }
     layouts::ground_ground::PushConstants pc{};
