@@ -40,6 +40,9 @@ class SourcesGateTest {
      * test here runs with one set to a port nobody listens on, so a client that is not [app.atlas.testing.direct] fails.
      */
     private val proxyKeys = listOf("http.proxyHost", "https.proxyHost", "socksProxyHost").associateWith { it.replace("Host", "Port") }
+
+    /** Hosts the JVM would send past a proxy: emptied, so a setting from outside (`*`) cannot skip the dead proxy. */
+    private val bypassKeys = listOf("http.nonProxyHosts", "socksNonProxyHosts")
     private val kept = HashMap<String, String?>()
 
     @org.junit.Before
@@ -50,6 +53,10 @@ class SourcesGateTest {
             kept[portKey] = System.getProperty(portKey)
             System.setProperty(host, "127.0.0.1")
             System.setProperty(portKey, "$port")
+        }
+        for (k in bypassKeys) {
+            kept[k] = System.getProperty(k)
+            System.setProperty(k, "")
         }
     }
 
