@@ -38,6 +38,7 @@ MAGIC = b"ATLASTT\0"
 VERSION = 1
 NONE = 0xFFFFFFFF
 MAX_DAYS = 400                  # a file's most (the planner's file.rs, MAX_DAYS)
+INDEX_MOST = 256 << 20          # bytes a planner's index may take (the planner's query.rs, Limits::default().index)
 
 # walks between stops (FORMAT.md, "Walks"): a change at the same stop, between stops of one station, to any stop near
 WALK_SAME_STOP_S = 60
@@ -93,6 +94,35 @@ def peak_memory():
         return None
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, kilobytes elsewhere
     return peak if sys.platform == "darwin" else peak * 1024
+
+
+def index_bytes(stops, walks, pattern_stops, profiles, rules, odd):
+    """The bytes of memory a planner asks for to make its index of a file: of so many stops, walks, stops along
+    patterns and profiles, with these transfer rules (each as the file has it: from stop, to stop, from line, to
+    line, from trip, to trip, type, least time) and so many days the clock changes. It is the planner's own sum
+    (planner/src/plan.rs, `Room::bytes`), which a planner works out before it asks for any memory and holds to its
+    bound; the two are held together by the files written by hand, whose numbers test_ttpack.py and
+    planner/tests/memory.rs both have."""
+    bits = 8 * ((stops + 63) // 64)
+    n = 4 * stops + 4 * (stops + 1) + 8 * walks + 2 * bits + 4 * pattern_stops + 4 * profiles + 8 * min(odd, 64)
+    own = waits = False
+    for i, j, from_line, to_line, from_trip, to_trip, kind, mt in rules:
+        if from_line == to_line == from_trip == to_trip == NONE:
+            # for everyone: only a stop's own time to change is kept, a number a stop where any stop has one
+            own = own or (i == j and (kind == 3 or (kind == 2 and mt != NONE)))
+            continue
+        # a side by the trip or the line it names takes a pair of numbers, by its stop alone one
+        sides = sum(8 if trip != NONE or line != NONE else 4 for trip, line in ((from_trip, from_line), (to_trip, to_line)))
+        n += 4
+        if kind in (1, 4):
+            # a vehicle waits: what the change takes at each end, and between two stops the pair each way
+            n += 2 * 12 + sides
+            if i != j:
+                n += 2 * 8
+                waits = True
+        if 1 <= kind <= 4:
+            n += sides
+    return n + (4 * stops if own else 0) + (2 * bits if waits else 0)
 
 
 def secs(h):
@@ -246,6 +276,8 @@ def main():
     ap.add_argument("--agency")
     ap.add_argument("--sizes", action="store_true")
     ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--index-most", type=int, default=INDEX_MOST, metavar="BYTES",
+                    help="write no file whose planner's index would take more memory (default: the planner's own bound, %(default)s)")
     a = ap.parse_args()
     feed = Feed(a.feed)
     S = Strings()
@@ -807,6 +839,11 @@ def main():
     out += body
     if len(out) >= 1 << 32:
         sys.exit("the file would pass 4 GiB")
+    # what a planner asks for to work with the file: it refuses a file over its bound, so none is written
+    index = index_bytes(len(stop_list), len(xf) // 2, len(pst), len(prof_by_new), rules, len(odd or ()))
+    if index > a.index_most:
+        sys.exit("refused: a planner's index for this file would take %d bytes of memory, and %d are allowed (over its own bound, %d, "
+                 "a planner does not open the file). Nothing was written." % (index, a.index_most, INDEX_MOST))
     tmp = a.out + ".part"
     with open(tmp, "wb") as f:
         f.write(out)
@@ -820,6 +857,7 @@ def main():
     for k, v in sorted(count.items()):
         print("  %s: %d" % (k, v))
     print("file: %d bytes" % len(out))
+    print("a planner's index: %d bytes" % index)
     peak = peak_memory()
     print("packed in %d s%s" % (time.time() - T0, "" if peak is None else ", with %d MB of memory at the most" % round(peak / 1e6)))
     if a.sizes:

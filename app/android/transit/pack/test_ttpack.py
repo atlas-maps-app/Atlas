@@ -76,6 +76,56 @@ class Packer(unittest.TestCase):
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "waits"), kept)
             self.assertIn("47 trips, 0 walks, 1 transfer rules", self.said)
 
+    def test_the_summary_says_what_a_planners_index_takes(self):
+        # (the planner says the same four numbers of the same four files, and holds what it asks for to them:
+        # planner/tests/memory.rs, an_index_takes_what_was_said_before_it_was_made)
+        with tempfile.TemporaryDirectory() as tmp:
+            for feed, takes in (("tiny", 352), ("edges", 1704), ("autumn", 152), ("waits", 160)):
+                self.pack(os.path.join(tmp, feed + ".tt"), feed)
+                self.assertIn("a planner's index: %d bytes\n" % takes, self.said, feed)
+        # by hand, of a file with 100 stops, 7 walks, 30 stops along patterns, 5 profiles and a day the clock changes:
+        # the stops by latitude and where each one's walks back begin, the walks back, a bit a stop for the rules
+        # from and to, a number a stop along a pattern, a number a profile, and the day
+        bare = 4 * 100 + 4 * 101 + 8 * 7 + 2 * 8 * 2 + 4 * 30 + 4 * 5 + 8
+        index = lambda *rules: ttpack.index_bytes(100, 7, 30, 5, rules, 1) - bare
+        N = ttpack.NONE
+        self.assertEqual(index(), 0)
+        # rules for everyone: nothing, but where one gives a stop its own time to change, a number a stop
+        self.assertEqual(index((1, 2, N, N, N, N, 2, 90), (3, 3, N, N, N, N, 0, N), (3, 3, N, N, N, N, 2, N), (4, 5, N, N, N, N, 3, N)), 0)
+        self.assertEqual(index((3, 3, N, N, N, N, 2, 90)), 400)
+        self.assertEqual(index((3, 3, N, N, N, N, 3, N), (4, 4, N, N, N, N, 2, 0)), 400)
+        # a rule that names a line or a trip: its number; one that binds (types 1 to 4), each side by what it names
+        self.assertEqual(index((1, 2, 7, N, N, N, 0, N)), 4)
+        self.assertEqual(index((1, 2, 7, N, N, N, 5, N)), 4)
+        self.assertEqual(index((1, 2, 7, N, N, N, 3, N)), 4 + 8 + 4)
+        self.assertEqual(index((1, 2, N, 7, N, 9, 2, 60)), 4 + 4 + 8)
+        self.assertEqual(index((1, 2, 7, 7, 9, 9, 2, 60)), 4 + 8 + 8)
+        # one by which a vehicle waits (types 1 and 4): that again, what the change takes at each end, and between
+        # two stops the pair each way and, once, a bit a stop each way
+        self.assertEqual(index((2, 2, 7, 8, N, N, 1, N)), 4 + 2 * 16 + 24)
+        self.assertEqual(index((1, 2, 7, N, N, N, 4, N)), 4 + 2 * 12 + 24 + 16 + 32)
+        self.assertEqual(index((1, 2, 7, N, N, N, 4, N), (5, 6, N, N, 9, 9, 1, N)), 4 + 2 * 12 + 24 + 16 + 4 + 2 * 16 + 24 + 16 + 32)
+        # no more than 64 days the clock changes are kept
+        self.assertEqual(ttpack.index_bytes(100, 7, 30, 5, (), 400) - bare, 8 * 63)
+
+    def test_a_file_whose_index_would_pass_the_planners_bound_is_not_written(self):
+        self.assertEqual(ttpack.INDEX_MOST, 256 << 20)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.tt")
+            run = lambda *more: subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), os.path.join(DATA, "tiny"), out, *more], capture_output=True, text=True)
+            r = run("--index-most", "351")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("a planner's index for this file would take 352 bytes of memory, and 351 are allowed", r.stderr)
+            self.assertIn("Nothing was written.", r.stderr)
+            self.assertEqual(os.listdir(tmp), [])
+            r = run("--index-most", "352")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            with open(out, "rb") as f, open(os.path.join(DATA, "tiny.tt"), "rb") as kept:
+                self.assertEqual(f.read(), kept.read())
+            # and without a word it is the planner's own bound, which the usage says
+            usage = subprocess.run([sys.executable, "-I", os.path.join(HERE, "ttpack.py"), "--help"], capture_output=True, text=True).stdout
+            self.assertIn(str(ttpack.INDEX_MOST), usage)
+
     def test_a_least_time_under_what_holds_without_it_is_counted(self):
         # A rule that names a trip or a line and gives a least time is held to the longer of that and what holds
         # without it (the stop's own time to change, the walk between the two stops), and where nobody changes or no
