@@ -293,8 +293,9 @@ public:
     [[nodiscard]] std::string stats() {
         return on_session([this] {
             std::string line = session_->stats();
-            if (map_on_) line += "; " + map_->tiles_line();
-            line += "; " + text::slug::shared_glyphs().line(); // the process's glyphs, every frame's
+            // while the map is on, its tiles and the glyphs its text has drawn (the process's atlas, every frame's);
+            // a core with no map on says what it always has ("vk no frames" before any)
+            if (map_on_) line += "; " + map_->tiles_line() + "; " + text::slug::shared_glyphs().line();
             return line;
         });
     }
