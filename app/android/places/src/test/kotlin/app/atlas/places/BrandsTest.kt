@@ -115,4 +115,22 @@ class BrandsTest {
         assertEquals("women;men;children", shoes.tags["shoes"])
         assertEquals("burger;pizza;seafood", Brands.byId("3brasseurs-17e7d6")!!.tags["cuisine"])
     }
+
+    /**
+     * By `brand` the entry whose own name or brand it is comes before one that lists it as a match name only (the app
+     * maintainer, 19 November 2026, batch 6 B12): Stars Coffee, the Russian chain, lists "starbucks" and "старбакс"
+     * among its match names, so `brand=Starbucks` named two entries and credited neither. Several of that own name
+     * still name none; a match name alone, one entry's, names that entry as before.
+     */
+    @Test
+    fun byBrandAnEntrysOwnNameComesBeforeAMatchName() {
+        fun named(vararg tags: Pair<String, String>) = Brands.named(tags.toMap()).map { it.id }
+        assertEquals(listOf("starbucks-795f60"), named("amenity" to "cafe", "brand" to "Starbucks"))
+        // the Serbian entry's brand
+        assertEquals(listOf("starbucks-95edc3"), named("amenity" to "cafe", "brand" to "Старбакс"))
+        assertEquals(listOf("starscoffee-1c12ef"), named("amenity" to "cafe", "brand" to "Stars Coffee"))
+        // eight chains' own name, and three more by their match names: none
+        assertEquals(emptyList<String>(), named("shop" to "supermarket", "brand" to "Coop"))
+        assertEquals(listOf("starbucks-795f60"), named("amenity" to "cafe", "brand" to "Starbucks Canada"))
+    }
 }
