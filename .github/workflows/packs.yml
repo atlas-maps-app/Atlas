@@ -296,9 +296,13 @@ jobs:
           app/android/packer/build/install/packer/bin/packer country "$WORK/out/$ID.windows" "$WORK/out/$ID.windows.idx" "$WORK/out" \
             --core "$ATLAS_STAGEP" --id "$ID" --allow-failed 50 | tee "$RUNNER_TEMP/country.txt"
           { grep '^not built' "$RUNNER_TEMP/country.txt" || true; } | sed 's/^/::warning::/'
+          # the buildings: the cleaning's counts summed over the windows' scenes, and the most windows a tile can hold
+          # (`packer country`'s report; the Architect's audit of 19 November, 7.3). No gate yet: the Netherlands' first
+          # numbers say where one can sit.
           {
             echo "- $ID: the country's tiles"
             { grep '^not built' "$RUNNER_TEMP/country.txt" || true; } | sed 's/^/  - /'
+            { grep -E '^  the buildings: |^the cleaning left ' "$RUNNER_TEMP/country.txt" || true; } | sed 's/^ */  - /'
             tail -4 "$RUNNER_TEMP/country.txt" | sed 's/^/  - /'
           } >> "$GITHUB_STEP_SUMMARY"
           df -h "$WORK"
