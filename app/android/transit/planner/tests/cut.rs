@@ -758,6 +758,65 @@ fn a_full_bag_says_so() {
     assert!(asked[0] > 200 && lost[0] > 20, "{asked:?} {lost:?}");
 }
 
+/// A plan can be told to stop. It asks every `LOOK_EVERY` steps whether to go on; told no, it ends where it next
+/// reads its steps, gives what it has, and says that it was stopped: by a bit of its own, and by no cap's, since
+/// it met none. It does not ask again. The same question asked afterwards is answered whole.
+#[test]
+fn a_plan_told_to_stop_ends_soon_and_says_so() {
+    use atlas_transit::plan::LOOK_EVERY;
+    use std::cell::Cell;
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt).unwrap();
+    let stops = served(&tt);
+    let (mut long, mut most_after) = (0, 0u64);
+    for (i, (a, z)) in pairs(&tt, 12, 311).into_iter().enumerate() {
+        // two hours with wishes that cost, and every option asked for: the longest kind of plan
+        let (sa, sz) = (tt.stop(a), tt.stop(z));
+        let mut q = Query::new(Place::Point { lat: sa.lat + 2500, lon: sa.lon - 1500 }, Place::Point { lat: sz.lat - 1500, lon: sz.lon + 2500 }, 0, 7 * 3600 + 900 * i as u32);
+        (q.window, q.weigh, q.arrive_by, q.limits.options) = (7200, i % 2 == 0, i % 3 == 1, 1024);
+        q.wishes = vec![Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) }, Wish { what: What::Stop { stop: stops[i * 7 % stops.len()], through: true }, how: How::Avoid(300) }];
+        let whole = p.plan(&q);
+        assert_eq!((whole.cut_short, whole.cut_by), (false, 0), "pair {i}");
+        // never told to stop: asked all along, and the same answer
+        let asked = Cell::new(0u64);
+        let again = p.plan_while(&q, &|| {
+            asked.set(asked.get() + 1);
+            true
+        });
+        assert_eq!((&again.journeys, again.steps, again.cut_by), (&whole.journeys, whole.steps, 0), "pair {i}");
+        assert!(asked.get() >= whole.steps / LOOK_EVERY / 8 && asked.get() <= whole.steps / LOOK_EVERY + 1, "pair {i}: asked {} times in {} steps", asked.get(), whole.steps);
+        if whole.steps < 200 * LOOK_EVERY {
+            continue;
+        }
+        long += 1;
+        for looks in [0u64, 1, 7, 60] {
+            let asked = Cell::new(0u64);
+            let got = p.plan_while(&q, &|| {
+                asked.set(asked.get() + 1);
+                asked.get() <= looks
+            });
+            // asked `looks` times and once more, and not again
+            assert_eq!(asked.get(), looks + 1, "pair {i}, told to stop at look {looks}");
+            assert_eq!((got.cut_short, got.cut_by), (true, Answer::STOPPED), "pair {i}, told to stop at look {looks}");
+            // it ended soon: within the steps to the look that said no, and what a loop under way still counts
+            let after = got.steps.saturating_sub((looks + 1) * LOOK_EVERY);
+            most_after = most_after.max(after);
+            assert!(got.steps >= (looks + 1) * LOOK_EVERY && got.steps < whole.steps / 2, "pair {i}, told to stop at look {looks}: {} steps of {}", got.steps, whole.steps);
+            // and what it has can be made
+            for j in got.journeys.iter() {
+                assert_eq!(impossible(&p, &q, j), None, "pair {i}, told to stop at look {looks}\n{j:?}");
+            }
+        }
+        // asked afterwards: whole again
+        let after = p.plan(&q);
+        assert_eq!((&after.journeys, after.steps, after.cut_by), (&whole.journeys, whole.steps, 0), "pair {i}");
+    }
+    println!("{long} long plans told to stop: at most {most_after} steps after the look that said no");
+    // (29,587 here: what the loops under way count before each reads that the search is over)
+    assert!(long >= 6 && most_after < 64 * LOOK_EVERY, "{long} long plans, {most_after} steps after");
+}
+
 /// The answers to a fixed set of questions, folded into one number: the same on every platform, or something in the
 /// search depends on the machine.
 #[test]

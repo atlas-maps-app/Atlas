@@ -731,7 +731,7 @@ fn caps(by: u32) -> String {
 
 /// How many answers met each cap, as they are counted and then said.
 #[derive(Default)]
-struct Caps([u32; 8]);
+struct Caps([u32; Answer::CAPS.len()]);
 
 impl Caps {
     fn count(&mut self, a: &Answer) {

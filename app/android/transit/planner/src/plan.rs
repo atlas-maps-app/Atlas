@@ -326,6 +326,51 @@ fn adds(r: &Rule, stops: u32) -> Adds {
     Adds { general: false, own: NONE, waits: waiting && r.from_stop != r.to_stop, waiting, binds: (1..=4).contains(&r.kind) }
 }
 
+/// A plan looks whether to go on every so many steps ([`Planner::plan_while`]).
+pub const LOOK_EVERY: u64 = 1024;
+
+/// A search's steps: how many it took, how many it may take, and whoever may tell it to stop. Every loop over the
+/// file's data counts here and reads `over` to know whether to end, so a search told to stop ends as one whose
+/// steps ran out does, wherever it is.
+struct Steps<'g> {
+    taken: u64,
+    most: u64,
+    /// The count at which to ask next.
+    look_at: u64,
+    go_on: &'g dyn Fn() -> bool,
+    /// It was told to stop, before its steps ran out: from then on `over` says yes.
+    stopped: bool,
+}
+
+impl<'g> Steps<'g> {
+    fn new(most: u64, go_on: &'g dyn Fn() -> bool) -> Steps<'g> {
+        Steps { taken: 0, most, look_at: LOOK_EVERY, go_on, stopped: false }
+    }
+
+    #[inline]
+    fn add(&mut self, n: u64) {
+        self.taken += n;
+        if self.taken >= self.look_at {
+            self.look();
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn look(&mut self) {
+        self.look_at = self.taken + LOOK_EVERY;
+        if !self.stopped && self.taken <= self.most && !(self.go_on)() {
+            self.stopped = true;
+        }
+    }
+
+    /// The steps passed their cap, or the search was told to stop: nothing more is searched.
+    #[inline]
+    fn over(&self) -> bool {
+        self.taken > self.most || self.stopped
+    }
+}
+
 /// The days the clock changes that an index keeps, at most (a file covers 400 days at most, a year's two).
 const ODD_DAYS: usize = 64;
 
@@ -566,8 +611,11 @@ impl Answer {
     pub const DAYS: u32 = 64;
     /// The steps met their cap while a boarding read on for a cheaper trip of its route (with `STEPS`).
     pub const CHEAPER: u32 = 128;
+    /// No cap: the plan was told to stop ([`Planner::plan_while`]) and gave what it had. Never with `STEPS` or
+    /// `CHEAPER`, whose steps it did not take.
+    pub const STOPPED: u32 = 256;
     /// Each cap's bit and its name, for a tool to say which.
-    pub const CAPS: [(u32, &'static str); 8] = [
+    pub const CAPS: [(u32, &'static str); 9] = [
         (Answer::STEPS, "steps"),
         (Answer::LABELS, "labels"),
         (Answer::MOMENTS, "moments"),
@@ -576,6 +624,7 @@ impl Answer {
         (Answer::PLACE, "a place of too many stops"),
         (Answer::DAYS, "service days"),
         (Answer::CHEAPER, "reading on for a cheaper trip"),
+        (Answer::STOPPED, "told to stop"),
     ];
 }
 
@@ -883,6 +932,15 @@ impl<'a> Planner<'a> {
 
     /// Finds the journeys a query asks for.
     pub fn plan(&mut self, q: &Query) -> Answer {
+        self.plan_while(q, &|| true)
+    }
+
+    /// Plans for as long as `go_on` says so. It is asked every [`LOOK_EVERY`] steps, wherever the search is; once
+    /// it says no, the search ends at the next place it reads its steps (as it does when they pass their cap),
+    /// and the answer is what it has by then, cut short, with [`Answer::STOPPED`] to say why. For a plan nobody
+    /// waits for any more: a new destination was typed, the screen was left.
+    pub fn plan_while(&mut self, q: &Query, go_on: &dyn Fn() -> bool) -> Answer {
+
         let ends = self.ends(q);
         let prefs = self.prefs(q);
         let back = q.arrive_by;
@@ -940,8 +998,7 @@ impl<'a> Planner<'a> {
             max_rides,
             bag: if prefs.soft() { q.limits.bag.clamp(1, 16) as usize } else { 1 },
             max_labels: q.limits.labels.clamp(1024, 16_000_000) as usize,
-            max_steps: q.limits.steps.clamp(10_000, 10_000_000_000),
-            steps: 0,
+            steps: Steps::new(q.limits.steps.clamp(10_000, 10_000_000_000), go_on),
             aimed: false,
             lazy: false,
             cut: false,
@@ -1081,7 +1138,7 @@ impl<'a> Planner<'a> {
         // Asked for one moment, each journey so far leaves when the first trip it caught does, which may be sooner
         // than it need: an earlier bus to the same train. Whoever asks is told when to leave at the latest (and,
         // asking to arrive by, when the journey is over at the earliest).
-        if window == 0 && !s.cut && s.steps <= s.max_steps {
+        if window == 0 && !s.cut && !s.steps.over() {
             let anchors: Vec<Anchor> = keep
                 .iter()
                 .filter(|j| j.rides > 0)
@@ -1103,9 +1160,12 @@ impl<'a> Planner<'a> {
         // And where a bag was full and a label went from it, an option may have gone with it. So may one have
         // where a place stood for more stops than a search begins at, or more service days could matter than a
         // search reads.
-        let mut cut = s.cut || s.steps > s.max_steps || too_many || s.dropped || ends.cut || !every_day;
+        let mut cut = s.cut || s.steps.over() || too_many || s.dropped || ends.cut || !every_day;
         let met = |is: bool, cap: u32| if is { cap } else { 0 };
-        let mut why = s.why | met(s.steps > s.max_steps, Answer::STEPS) | met(too_many, Answer::OPTIONS) | met(s.dropped, Answer::BAG) | met(ends.cut, Answer::PLACE) | met(!every_day, Answer::DAYS);
+        // (a search told to stop ended as one whose steps ran out does, and said so along the way: it met no cap of
+        // steps, and says that it was stopped)
+        let steps = if s.steps.stopped { Answer::STOPPED } else { (s.why & (Answer::STEPS | Answer::CHEAPER)) | met(s.steps.over(), Answer::STEPS) };
+        let mut why = (s.why & !(Answer::STEPS | Answer::CHEAPER)) | steps | met(too_many, Answer::OPTIONS) | met(s.dropped, Answer::BAG) | met(ends.cut, Answer::PLACE) | met(!every_day, Answer::DAYS);
         if keep.len() > options {
             // too many over a window: those nearest the asked moment stay
             if back {
@@ -1116,7 +1176,7 @@ impl<'a> Planner<'a> {
             (cut, why) = (true, why | Answer::OPTIONS);
         }
         debug_assert_eq!(cut, why != 0);
-        Answer { journeys: keep, cut_short: cut, cut_by: why, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps, later: s.later_most }
+        Answer { journeys: keep, cut_short: cut, cut_by: why, horizon: followed, searches, labels: s.w.labels.len() as u32, steps: s.steps.taken, later: s.later_most }
     }
 }
 
@@ -1145,8 +1205,7 @@ struct Search<'s, 'a> {
     max_rides: usize,
     bag: usize,
     max_labels: usize,
-    max_steps: u64,
-    steps: u64,
+    steps: Steps<'s>,
     cut: bool,
     /// Which caps were met ([`Answer::cut_by`]); the bag's bit is `dropped`'s.
     why: u32,
@@ -1256,7 +1315,7 @@ impl<'s> Search<'s, '_> {
             }
         }
         let mut events = self.departures(first, start, span - 1);
-        if self.steps > self.max_steps {
+        if self.steps.over() {
             // (the count from the journey's end or this list went past the cap: the list is not whole)
             self.why |= Answer::STEPS;
             self.cut = true;
@@ -1278,7 +1337,7 @@ impl<'s> Search<'s, '_> {
         }
         events.truncate(keep);
         let mut i = events.len();
-        while i > 0 && self.steps <= self.max_steps && self.w.labels.len() < self.max_labels {
+        while i > 0 && !self.steps.over() && self.w.labels.len() < self.max_labels {
             let moment = events[i - 1].0;
             self.begin();
             while i > 0 && events[i - 1].0 == moment {
@@ -1291,7 +1350,7 @@ impl<'s> Search<'s, '_> {
             self.note_cover(moment);
         }
         if i > 0 {
-            self.why |= if self.steps > self.max_steps { Answer::STEPS } else { Answer::LABELS };
+            self.why |= if self.steps.over() { Answer::STEPS } else { Answer::LABELS };
             self.cut = true;
         }
         searches
@@ -1369,8 +1428,8 @@ impl<'s> Search<'s, '_> {
         // (the moment of the search before, while this one can build on it; the journeys of each are in `found`)
         let (mut searches, mut before) = (0u32, i32::MIN);
         while let Some(target) = self.anchors.iter().position(|a| a.hi - a.lo > 1) {
-            if self.cut || self.steps > self.max_steps {
-                self.why |= if self.steps > self.max_steps { Answer::STEPS } else { 0 };
+            if self.cut || self.steps.over() {
+                self.why |= if self.steps.over() { Answer::STEPS } else { 0 };
                 self.cut = true;
                 break;
             }
@@ -1443,7 +1502,7 @@ impl<'s> Search<'s, '_> {
     /// journey there is none, which is how it mostly ends. `known` are journeys of another search to beat.
     /// Returns how many searches it took.
     fn fewer_rides(&mut self, first: &[(u32, u32)], last: &[(u32, u32)], start: i32, span: i32, cap: usize, known: &[Found]) -> u32 {
-        if self.short.is_none() || self.cut || self.steps > self.max_steps || !self.aimed || self.cover == 255 || self.cover < 2 {
+        if self.short.is_none() || self.cut || self.steps.over() || !self.aimed || self.cover == 255 || self.cover < 2 {
             return 0;
         }
         let fewer = (self.cover as usize - 1).min(self.max_rides);
@@ -1723,7 +1782,7 @@ impl<'s> Search<'s, '_> {
         }
         // the stop before this one on each route through it: over the pattern's fastest hop
         let (lo, hi) = self.tt.routes_at(v);
-        self.steps += (hi - lo) as u64 + 1 + waited.len() as u64;
+        self.steps.add((hi - lo) as u64 + 1 + waited.len() as u64);
         for e in lo..hi {
             let (r, pos) = self.tt.route_at(e);
             let route = self.tt.route(r);
@@ -1739,14 +1798,14 @@ impl<'s> Search<'s, '_> {
         // and the stops a walk leads here from
         if self.back {
             let (lo, hi) = self.tt.walks_from(v);
-            self.steps += (hi - lo) as u64;
+            self.steps.add((hi - lo) as u64);
             for i in lo..hi {
                 let (u, secs) = self.tt.walk(i);
                 relax(u, d.saturating_add(secs));
             }
         } else {
             let (lo, hi) = (self.ix.back_first[v as usize] as usize, self.ix.back_first[v as usize + 1] as usize);
-            self.steps += (hi - lo) as u64;
+            self.steps.add((hi - lo) as u64);
             for &(u, secs) in &self.ix.back[lo..hi] {
                 relax(u, d.saturating_add(secs));
             }
@@ -1865,7 +1924,7 @@ impl<'s> Search<'s, '_> {
             // a walk into v costs no ride: those stops are of v's level, and go first
             let walks: &[(u32, u32)] = if self.back { &[] } else { &self.ix.back[self.ix.back_first[v as usize] as usize..self.ix.back_first[v as usize + 1] as usize] };
             let (wlo, whi) = if self.back { self.tt.walks_from(v) } else { (0, walks.len() as u32) };
-            self.steps += (whi - wlo) as u64 + 1;
+            self.steps.add((whi - wlo) as u64 + 1);
             for i in wlo..whi {
                 let u = if self.back { self.tt.walk(i).0 } else { walks[i as usize].0 };
                 if within(self.w, u) && self.w.fewest[u as usize] > level {
@@ -1876,7 +1935,7 @@ impl<'s> Search<'s, '_> {
             }
             // nor does stepping over to a vehicle that waits
             let waited = self.waited_from(v);
-            self.steps += waited.len() as u64;
+            self.steps.add(waited.len() as u64);
             for &(_, u) in waited {
                 if within(self.w, u) && self.w.fewest[u as usize] > level {
                     note(self.w, u);
@@ -1908,7 +1967,7 @@ impl<'s> Search<'s, '_> {
                     patterns.push(p as u32);
                 }
                 self.w.along[p] = if self.back { pos + 1 } else { pos.saturating_sub(1) };
-                self.steps += (to - from) as u64;
+                self.steps.add((to - from) as u64);
                 for at in from..to {
                     let u = self.tt.pattern_stop(route.first_stop + at).stop;
                     if within(self.w, u) && self.w.fewest[u as usize] > level + 1 {
@@ -2052,10 +2111,10 @@ impl<'s> Search<'s, '_> {
                     }
                     let mut rank = self.first_rank(&run, pos, off, from);
                     while (rank as usize) < run.trips.len() {
-                        self.steps += 1;
+                        self.steps.add(1);
                         let (trip, times) = self.trip_at(&run, rank);
                         let t = self.board_time(times, pos, off);
-                        if t > from + window || self.steps > self.max_steps {
+                        if t > from + window || self.steps.over() {
                             break;
                         }
                         if !bit(&self.prefs.trip_closed, trip) {
@@ -2094,7 +2153,7 @@ impl<'s> Search<'s, '_> {
             for &stop in marks.iter() {
                 let (lo, hi) = self.tt.routes_at(stop);
                 for e in lo..hi {
-                    self.steps += 1;
+                    self.steps.add(1);
                     let (r, pos) = self.tt.route_at(e);
                     let i = if self.back { self.tt.route(r).stops.saturating_sub(pos + 1) } else { pos };
                     let (r, w) = (r as usize, &mut *self.w);
@@ -2114,7 +2173,7 @@ impl<'s> Search<'s, '_> {
             let list = core::mem::take(&mut self.w.route_list);
             for &r in list.iter() {
                 self.ride(r, self.w.route_from[r as usize], round);
-                if self.steps > self.max_steps {
+                if self.steps.over() {
                     self.why |= Answer::STEPS;
                     self.cut = true;
                     break;
@@ -2135,21 +2194,21 @@ impl<'s> Search<'s, '_> {
                         let (to, secs) = self.ix.back[i];
                         self.offer_ready(round, to, lab.time + secs as i32, lab.cost, l);
                     }
-                    self.steps += (hi - lo) as u64;
+                    self.steps.add((hi - lo) as u64);
                 } else {
                     let (lo, hi) = self.tt.walks_from(lab.stop);
                     for i in lo..hi {
                         let (to, secs) = self.tt.walk(i);
                         self.offer_ready(round, to, lab.time + secs as i32, lab.cost, l);
                     }
-                    self.steps += (hi - lo) as u64;
+                    self.steps.add((hi - lo) as u64);
                 }
             }
             self.w.fresh = fresh;
             // and from where a ride ended by a trip the feed has rules for: the same, held apart
             let special = core::mem::take(&mut self.w.special);
             for &l in special.iter() {
-                if self.steps > self.max_steps {
+                if self.steps.over() {
                     // (each reads its stop's rules, which a file may have any number of)
                     self.why |= Answer::STEPS;
                     self.cut = true;
@@ -2169,7 +2228,7 @@ impl<'s> Search<'s, '_> {
             // and for the later trips of a route ridden to a stop where a vehicle waits: what waits for each
             let later = core::mem::take(&mut self.w.later);
             for &l in later.iter() {
-                if self.steps > self.max_steps {
+                if self.steps.over() {
                     self.why |= Answer::STEPS;
                     self.cut = true;
                     break;
@@ -2188,7 +2247,7 @@ impl<'s> Search<'s, '_> {
         let lab = self.w.labels[l as usize];
         let line = self.tt.route(self.tt.route_of_trip(lab.trip)).line;
         let (lo, hi) = self.rules_from(lab.stop);
-        self.steps += (hi - lo) as u64 + 1;
+        self.steps.add((hi - lo) as u64 + 1);
         for i in lo..hi {
             let (rule, r) = self.rule_at(i);
             let (from, to) = self.sides(&r);
@@ -2242,12 +2301,12 @@ impl<'s> Search<'s, '_> {
                 let mid = lo + (hi - lo) / 2;
                 if self.alight_time(self.trip_at(&run, mid).1, pos, off) < came { lo = mid + 1 } else { hi = mid }
             }
-            self.steps += 1;
+            self.steps.add(1);
             for rank in lo..run.trips.len() as u32 {
-                self.steps += 1;
+                self.steps.add(1);
                 let (trip, times) = self.trip_at(&run, rank);
                 let time = self.alight_time(times, pos, off);
-                if time >= until || self.steps > self.max_steps {
+                if time >= until || self.steps.over() {
                     break;
                 }
                 if (trip, off) == (e.trip, e.off) || self.board_time(times, e.pos, off) < boarded || bit(&self.prefs.trip_closed, trip) || !self.named(&self.ix.waiting[self.back as usize], trip, stop) {
@@ -2259,7 +2318,7 @@ impl<'s> Search<'s, '_> {
                 }
                 let seen = |list: &Vec<(u32, u32, i32, u32)>| list.iter().any(|o| (o.0, o.1, o.2) == (stop, trip, off) && (!self.soft || o.3 <= cost));
                 let known = seen(&self.w.special_seen[round]) || seen(&self.w.later_seen[round]);
-                self.steps += (self.w.special_seen[round].len() + self.w.later_seen[round].len()) as u64 / 8;
+                self.steps.add((self.w.special_seen[round].len() + self.w.later_seen[round].len()) as u64 / 8);
                 if known {
                     continue;
                 }
@@ -2374,7 +2433,7 @@ impl<'s> Search<'s, '_> {
         let mut riding = core::mem::take(&mut self.w.riding);
         riding.clear();
         for i in from..route.stops {
-            self.steps += 1 + riding.len() as u64;
+            self.steps.add(1 + riding.len() as u64);
             let pos = if self.back { route.stops - 1 - i } else { i };
             let ps = self.tt.pattern_stop(route.first_stop + pos);
             let stop = ps.stop;
@@ -2416,7 +2475,7 @@ impl<'s> Search<'s, '_> {
                 if self.w.held_rounds[stop as usize] >> (round - 1) & 1 == 1 {
                     let held = core::mem::take(&mut self.w.held[round - 1]);
                     let from = self.w.held_from.get(round - 1).copied().unwrap_or(0).min(held.len());
-                    self.steps += (held.len() - from) as u64;
+                    self.steps.add((held.len() - from) as u64);
                     for h in held[from..].iter() {
                         let lab = self.w.labels[h.label as usize];
                         if lab.stop != stop {
@@ -2431,8 +2490,8 @@ impl<'s> Search<'s, '_> {
                     self.w.held[round - 1] = held;
                 }
             }
-            if self.steps > self.max_steps || self.cut {
-                self.why |= if self.steps > self.max_steps { Answer::STEPS } else { 0 };
+            if self.steps.over() || self.cut {
+                self.why |= if self.steps.over() { Answer::STEPS } else { 0 };
                 self.cut = true;
                 break;
             }
@@ -2461,7 +2520,7 @@ impl<'s> Search<'s, '_> {
         let index = if special {
             // the same ride at no less cost was held in an earlier search: nothing new
             let seen = &mut self.w.special_seen[round];
-            self.steps += seen.len() as u64 / 8;
+            self.steps.add(seen.len() as u64 / 8);
             if seen.iter().any(|o| (o.0, o.1, o.2) == (stop, e.trip, e.off) && (!self.soft || o.3 <= cost)) {
                 return;
             }
@@ -2586,7 +2645,7 @@ impl<'s> Search<'s, '_> {
         let mut first = NEVER;
         let (lo, hi) = self.tt.routes_at(stop);
         for e in lo..hi {
-            self.steps += 1;
+            self.steps.add(1);
             let (r, pos) = self.tt.route_at(e);
             let route = self.tt.route(r);
             let named = trip != NONE;
@@ -2594,7 +2653,7 @@ impl<'s> Search<'s, '_> {
                 continue;
             }
             for off in self.off_lo..=self.off_hi {
-                self.steps += 1;
+                self.steps.add(1);
                 let leaves = |times: (u32, u32)| self.zero(off) + self.tt.time(times, pos).1 as i32;
                 if named {
                     let at = leaves(self.tt.trip_times(trip));
@@ -2632,7 +2691,7 @@ impl<'s> Search<'s, '_> {
         };
         let (lo, hi) = self.tt.routes_at(stop);
         for e in lo..hi {
-            self.steps += 1;
+            self.steps.add(1);
             let (r, pos) = self.tt.route_at(e);
             let route = self.tt.route(r);
             let named = trip != NONE;
@@ -2640,7 +2699,7 @@ impl<'s> Search<'s, '_> {
                 continue;
             }
             for off in self.off_lo..=self.off_hi {
-                self.steps += 1;
+                self.steps.add(1);
                 let leaves = |times: (u32, u32)| self.zero(off) + self.tt.time(times, pos).1 as i32;
                 if named {
                     let at = leaves(self.tt.trip_times(trip));
@@ -2679,7 +2738,7 @@ impl<'s> Search<'s, '_> {
         for off in self.off_lo..=self.off_hi {
             let last = |trip: u32| if (trip, off) == h.own { h.own_last } else { h.last }.min(until);
             if named {
-                self.steps += 1;
+                self.steps.add(1);
                 let times = self.tt.trip_times(to.1);
                 let time = self.board_time(times, pos, off);
                 if self.tt.runs(self.tt.trip(to.1).service, self.day + off) && time >= lab.time && time <= last(to.1) && (to.1, off) != ride && !bit(&self.prefs.trip_closed, to.1) {
@@ -2694,8 +2753,8 @@ impl<'s> Search<'s, '_> {
             }
             let mut rank = self.first_rank(&run, pos, off, lab.time);
             let mut cheapest = u32::MAX;
-            while (rank as usize) < run.trips.len() && self.steps <= self.max_steps {
-                self.steps += 1;
+            while (rank as usize) < run.trips.len() && !self.steps.over() {
+                self.steps.add(1);
                 let (trip, times) = self.trip_at(&run, rank);
                 rank += 1;
                 let time = self.board_time(times, pos, off);
@@ -2715,7 +2774,7 @@ impl<'s> Search<'s, '_> {
                     break;
                 }
             }
-            if trip_costs && self.steps > self.max_steps && (rank as usize) < run.trips.len() {
+            if trip_costs && self.steps.over() && (rank as usize) < run.trips.len() {
                 self.why |= Answer::CHEAPER;
             }
         }
@@ -2758,8 +2817,8 @@ impl<'s> Search<'s, '_> {
             // (a trip the rules bar is passed over for the next, and reading the rules for it is counted: a file
             // may bar every trip of a day, with any number of rules; and so is each costlier trip passed over for
             // a cheaper one after it)
-            while (rank as usize) < run.trips.len() && self.steps <= self.max_steps {
-                self.steps += 1;
+            while (rank as usize) < run.trips.len() && !self.steps.over() {
+                self.steps.add(1);
                 let (trip, times) = self.trip_at(&run, rank);
                 rank += 1;
                 if bit(&self.prefs.trip_closed, trip) {
@@ -2770,7 +2829,7 @@ impl<'s> Search<'s, '_> {
                     break;
                 }
                 if let Some(b) = before {
-                    self.steps += (b.hi - b.lo) as u64;
+                    self.steps.add((b.hi - b.lo) as u64);
                     if self.barred(&b, trip, route.line, time) {
                         continue;
                     }
@@ -2788,7 +2847,7 @@ impl<'s> Search<'s, '_> {
                     break;
                 }
             }
-            if trip_costs && self.steps > self.max_steps && (rank as usize) < run.trips.len() {
+            if trip_costs && self.steps.over() && (rank as usize) < run.trips.len() {
                 self.why |= Answer::CHEAPER;
             }
             off += step;
