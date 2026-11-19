@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """The packer's checks: python3 -I app/android/transit/pack/test_ttpack.py
 
-- the hand-written feeds (planner/tests/data/tiny and edges) pack to the very bytes kept beside them (tiny.tt,
-  edges.tt), twice over: the planner's tests read those files, so they can't drift from the packer, and the same
-  feed gives the same bytes;
-- the days the clock changes are found from the feed's timezone and written into the file (edges has one);
+- the hand-written feeds (planner/tests/data/tiny, edges and autumn) pack to the very bytes kept beside them
+  (tiny.tt, edges.tt, autumn.tt), twice over: the planner's tests read those files, so they can't drift from the
+  packer, and the same feed gives the same bytes;
+- the days the clock changes are found from the feed's timezone and written into the file (edges has the night it
+  goes forward, autumn the night it goes back);
 - the cosine table is the planner's (planner/src/geo.rs), number for number, so both measure alike;
 - a table or a column the packer does not read is said, and with --strict refused with nothing written;
 - ttlist.py writes the list of published files, and says when only a changed feed is wanted.
@@ -51,6 +52,16 @@ class Packer(unittest.TestCase):
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "edges"), kept)
             self.assertIn("the clock changes: the day after 2027-03-27 begins 82800 s after it", self.said)
         self.assertIn(b"odd_days=20270327:82800", kept.replace(b"\0", b"="))
+
+    def test_the_autumn_feed_packs_to_the_kept_bytes(self):
+        # (planner/tests/autumn.rs: the night the clock goes back, Saturday 30 October 2027 lasts 25 hours)
+        with open(os.path.join(DATA, "autumn.tt"), "rb") as f:
+            kept = f.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.pack(os.path.join(tmp, "a.tt"), "autumn"), kept, "autumn.tt is stale: pack planner/tests/data/autumn again")
+            self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "autumn"), kept)
+            self.assertIn("the clock changes: the day after 2027-10-30 begins 90000 s after it", self.said)
+        self.assertIn(b"odd_days=20271030:90000", kept.replace(b"\0", b"="))
 
     def test_the_days_the_clock_changes(self):
         day = datetime.date

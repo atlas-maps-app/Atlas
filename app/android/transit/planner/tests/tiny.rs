@@ -38,15 +38,19 @@ fn ask(planner: &mut Planner, q: &Query) -> Vec<Journey> {
 /// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way, and knows
 /// no cap on rides and no on-foot journey): the earliest arrival, the latest departure, or a window's best pairs.
 fn held_to_the_scan(planner: &Planner, q: &Query, journeys: &[Journey]) {
-    if q.max_rides < 8 || q.day < 0 || journeys.iter().any(|j| j.rides == 0) || q.wishes.iter().any(|w| !matches!(w.how, How::Never)) {
+    if q.max_rides < 8 || q.day < 0 || journeys.iter().any(|j| j.rides == 0) {
         return;
     }
     let scan = Reference::new(planner, q.day, q.time as i32 - 86_400, q.time as i32 + 2 * 86_400);
+    if q.wishes.iter().any(|w| !matches!(w.how, How::Never)) {
+        // wishes that cost: the scan that carries a cost, which judges an answer for one moment
+        assert_eq!(scan.costs_differ(planner, q, journeys), None, "{q:?}");
+        return;
+    }
     match (q.window, q.arrive_by) {
         (0, false) => assert_eq!(journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
         (0, true) => assert_eq!(journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
-        (_, false) => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
-        _ => {}
+        _ => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
     }
 }
 
