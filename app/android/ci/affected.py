@@ -10,8 +10,8 @@ there is a build, else the test files that include it by name; a changed source 
 the same name) and the test files that include its header; the shaders pick the Vulkan tests (label vk) and the
 SPIR-V locks; the build's configuration or third-party code picks every entry. Every change of the core adds the JNI
 tests of :mapcorecheck that cover its area (the engine's references among them). A Kotlin module picks its own unit
-tests and those of each module that depends on it. The transit planner (app/android/transit) picks its own two: the
-packer's check and the crate's tests. Prints the commands; runs nothing.
+tests and those of each module that depends on it. The transit planner (app/android/transit) picks its own: the
+packer's check, the crate's tests, and the two checks of its C interface. Prints the commands; runs nothing.
 
 Python 3's standard library only.
 """
@@ -238,7 +238,9 @@ def main():
         print(f"The transit planner (in {ANDROID / 'transit'}; Rust from ~/.cargo/bin, a build folder outside the tree):")
         print("  python3 -I pack/test_ttpack.py   # the packer: the hand-written feed's bytes, the cosine table")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
-        print("  (.github/workflows/transit.yml runs them on x86_64 and arm64 Linux, on a push that changes app/android/transit)")
+        print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-abi cargo test --locked --manifest-path abi/Cargo.toml   # the C interface against the planner")
+        print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-abi abi/check.sh   # the interface from C: the release library in a C and a C++ program")
+        print("  (.github/workflows/transit.yml runs the first two on x86_64 and arm64 Linux, on a push that changes app/android/transit)")
     if other:
         print()
         print("Other paths, which no local suite covers (CI's do): " + ", ".join(other[:12]) + (" ..." if len(other) > 12 else ""))
