@@ -4,6 +4,7 @@ import app.atlas.geo.Geo
 import app.atlas.guide.Cue
 import app.atlas.guide.Detour
 import app.atlas.guide.EarconKind
+import app.atlas.guide.FeatureLookup
 import app.atlas.guide.GuideSettings
 import app.atlas.guide.HapticMeaning
 import app.atlas.guide.Priority
@@ -28,6 +29,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.ZoneId
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 
 /**
  * A guided trip end to end on the real demo routes (BRouter's, from the Westerkerk): the `:guide` navigator's cues
@@ -35,9 +41,9 @@ import java.time.ZoneId
  * are counted.
  */
 class NavSessionTest {
-    /** A voice that keeps every cue. */
+    /** A voice that keeps every cue, from whichever thread plays it. */
     class RecordingVoice : Voice {
-        val cues = ArrayList<Cue>()
+        val cues: MutableList<Cue> = Collections.synchronizedList(ArrayList())
         private val said = MutableStateFlow<String?>(null)
         override val ready: StateFlow<Boolean> = MutableStateFlow(true)
         override val lastSaid: StateFlow<String?> = said
@@ -54,11 +60,14 @@ class NavSessionTest {
     private val scope = CoroutineScope(Dispatchers.Unconfined)
     private val start = Instant.parse("2026-10-14T08:00:00Z")
 
-    private fun session(mode: Mode, voice: Voice = RecordingVoice(), router: Router = Router { RouteResult.NoRoute("none") }, tacho: TachoState? = null): NavSession {
+    private fun session(
+        mode: Mode, voice: Voice = RecordingVoice(), router: Router = Router { RouteResult.NoRoute("none") }, tacho: TachoState? = null,
+        features: FeatureLookup? = null, scope: CoroutineScope = this.scope,
+    ): NavSession {
         val route = GoFixtures.fixture(mode)!!
         val req = RouteRequest(mode, listOf(route.points.first(), route.points.last()), vehicle = GoStore.defaultVehicle(mode))
         val settings = GuideSettings(mode = mode, vehicle = req.vehicle, zone = ZoneId.of("Europe/Amsterdam"))
-        return NavSession(req, route, "Amsterdam Centraal", router, voice, settings, null, scope, demo = true, tachoStart = tacho)
+        return NavSession(req, route, "Amsterdam Centraal", router, voice, settings, features, scope, demo = true, tachoStart = tacho)
     }
 
     @Test
@@ -167,5 +176,48 @@ class NavSessionTest {
         assertEquals(5, fixes.size)
         assertEquals(start, fixes.first().time)
         assertTrue(Geo.distance(fixes.first().location, route.points.first()) < 1.0)
+    }
+
+    /**
+     * A repeat or a summary asked while a fix is being guided waits for no fix (the app maintainer, 19 November 2026,
+     * batch 6 B10): the screen's button, the notification's and the headset's ask on the main thread, and a fix holds
+     * the session while the next maneuver's landmark is looked up in the regions' stores, whose lock waits while a
+     * store is filed anew. Here the first lookup holds until it is let go; the repeat and the summary are said after.
+     */
+    @Test
+    fun aRepeatAndASummaryWaitForNoFix() {
+        val asked = CountDownLatch(1)
+        val letGo = CountDownLatch(1)
+        val answered = AtomicBoolean(false)
+        val held = FeatureLookup { _, _ ->
+            if (asked.count > 0L) {
+                asked.countDown()
+                letGo.await(5, TimeUnit.SECONDS)
+                answered.set(true)
+            }
+            emptyList()
+        }
+        val voice = RecordingVoice()
+        val s = session(Mode.BIKE, voice, features = held, scope = CoroutineScope(Dispatchers.Default))
+        val fixes = Simulator(s.view.value.route, start = start).fixes().toList()
+        // the fixes as the session's scope feeds them, until one has looked for a landmark
+        val feed = thread {
+            for (f in fixes) {
+                s.onFix(f)
+                if (answered.get()) break
+            }
+        }
+        assertTrue("a fix looked for a landmark", asked.await(10, TimeUnit.SECONDS))
+        s.repeat()
+        s.summary()
+        val waited = answered.get()
+        letGo.countDown()
+        feed.join(10_000)
+        assertFalse("the repeat and the summary waited for the fix's lookup", waited)
+        val end = System.currentTimeMillis() + 10_000
+        fun said() = synchronized(voice.cues) { voice.cues.filterIsInstance<Cue.Speak>().map { it.id } }
+        while (System.currentTimeMillis() < end && !(said().any { it.startsWith("repeat") } && "summary" in said())) Thread.sleep(20)
+        assertTrue("${said()}", said().any { it.startsWith("repeat") })
+        assertTrue("${said()}", "summary" in said())
     }
 }

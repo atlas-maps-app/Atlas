@@ -58,7 +58,7 @@ class StoreOffTheMainThreadTest {
     private val epiphany: Clock = Clock.fixed(Instant.parse("2026-01-06T09:00:00Z"), ZoneId.of("Europe/Berlin"))
 
     /** A store that notes each question it is asked on the main thread, with where it was asked from. */
-    private class Watched(private val inner: PlaceSource) : PlaceSource {
+    internal class Watched(private val inner: PlaceSource) : PlaceSource {
         val onMain: MutableList<String> = Collections.synchronizedList(ArrayList())
 
         private fun <T> asked(what: String, answer: () -> T): T {
@@ -178,6 +178,23 @@ class StoreOffTheMainThreadTest {
         val s = testServices(clock = epiphany, stores = listOf(store))
         // made on the main thread, as the sheet makes it: collected off it
         s.localData.branchesAsFound("albertheijn-0b5a2d", regensburg, 500.0)
+        assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
+        s.close()
+    }
+
+    /**
+     * The query builder counts the regions off the main thread too (the app maintainer, 19 November 2026, batch 6 B10):
+     * where the phone finds nothing, whether it holds any region at all says if Overpass is asked, and that count was
+     * made on the main thread as the answer landed, every store's places, where a store filed anew waits on its lock.
+     */
+    @Test
+    fun theQueryBuilderCountsTheRegionsOffTheMainThread() {
+        // a region that holds nothing the query finds
+        val store = Watched(MemoryPlaces(listOf(place(75, nuremberg, "shop" to "bakery", "name" to "Bäckerei")), country = null))
+        val s = testServices(clock = epiphany, stores = listOf(store))
+        val vm = QueryViewModel(s, "cafe near bicycle rental", { nuremberg }, "en", connected = { false })
+        until { vm.state.value.result != null && !vm.state.value.running }
+        assertTrue("found nothing", vm.state.value.result!!.hits.isEmpty())
         assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
         s.close()
     }
