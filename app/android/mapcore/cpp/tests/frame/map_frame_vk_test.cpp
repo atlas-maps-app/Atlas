@@ -686,11 +686,12 @@ struct Part {
 };
 
 /// The kinds a stage that keeps its result runs only where what the result is made of changed since the frame before
-/// (the ripple's layer and fused stages, the lit glow's layers and boxes): a frame may make its result anew for the
-/// frame before's sake, an input that changed at rest (on a slow machine a tile's sun bits that came meanwhile, say),
-/// and the next frame keep it.
-constexpr std::array<std::string_view, 5> made_anew{"ripple layer", "ripple fused", "lit glow layer", "lit glow box",
-                                                    "lit cores layer"};
+/// (the ripple's layer and fused stages, the lit glow's layers and boxes, the soft shadows' mask: Ground's
+/// key_shadow_mask): a frame may make its result anew for the frame before's sake, an input that changed at rest (on a
+/// slow machine a tile's sun bits that came meanwhile, say), and the next frame keep it.
+constexpr std::array<std::string_view, 9> made_anew{"ripple layer", "ripple fused",    "lit glow layer",
+                                                    "lit glow box", "lit cores layer", "shadow box",
+                                                    "shadow grid",  "shadow mask",     "shadow blur"};
 
 /// A part's work in the last frame: its own kinds' draws and dispatches (and of them, those of the kinds made anew),
 /// its shared kinds' triangles and dispatches but those of the kinds made anew, which a frame makes or keeps as their
@@ -752,12 +753,12 @@ const std::vector<Part>& every_part() {
         // (drawn sharp without their blur: a draw a tile)
         {.name = "building shadows",
          .bit = part::building_shadows,
-         .own = {"shadow mask", "shadow grid", "shadow box", "shadow blur", "ground shadows"},
+         .own = {"shadow mask", "shadow grid", "shadow box", "shadow blur", "ground soft shadows", "ground shadows"},
          .changes = part::shadow_blur},
-        // (drawn sharp without it: the stencil's union)
+        // (drawn sharp without it: the stencil's union; its mask kept at rest, drawn back every frame)
         {.name = "soft shadows",
          .bit = part::shadow_blur,
-         .own = {"shadow mask", "shadow grid", "shadow box", "shadow blur"},
+         .own = {"shadow mask", "shadow grid", "shadow box", "shadow blur", "ground soft shadows"},
          .needs = part::building_shadows},
         {.name = "park shadows", .bit = part::park_shadows, .own = {"ground woods' shadows"}},
         {.name = "cloud shadows", .bit = part::cloud_shadows, .step = shaders::COMPOSITE_CLOUD_SHADOWS},
