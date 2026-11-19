@@ -65,7 +65,12 @@ atlas_transit *atlas_transit_open(const uint8_t *bytes, size_t len, int32_t inde
 void atlas_transit_close(atlas_transit *t);
 
 /* A number of the timetable: `what` says which; `id` is the stop, line, route or trip; `at` the place along a route
- * (0 for its first stop), where one is asked for. ATLAS_TRANSIT_NONE where there is none. */
+ * (0 for its first stop), where one is asked for. ATLAS_TRANSIT_NONE where there is none: no such stop, line, route
+ * or trip, no such place along it, no such `what`, no timetable. Three numbers have -1 as a value of their own:
+ * ATLAS_TRANSIT_N_DAY_OF gives ATLAS_TRANSIT_NO_DAY for nothing (for no timetable too); and for a stop -1 is a
+ * latitude and a longitude like any other (1e-7 degree south of the equator, west of Greenwich), so whether there is
+ * such a stop is told by its number (below ATLAS_TRANSIT_N_STOPS) or by ATLAS_TRANSIT_N_STOP_PLACE, never by these
+ * two. */
 int32_t atlas_transit_number(const atlas_transit *t, uint32_t what, uint32_t id, uint32_t at);
 
 #define ATLAS_TRANSIT_N_FIRST_DAY 0      /* the file's first day, as YYYYMMDD: day 0 */
@@ -82,7 +87,8 @@ int32_t atlas_transit_number(const atlas_transit *t, uint32_t what, uint32_t id,
 #define ATLAS_TRANSIT_N_STOP_LAT 16
 #define ATLAS_TRANSIT_N_STOP_LON 17
 #define ATLAS_TRANSIT_N_STOP_STATION 18    /* the station it is part of */
-#define ATLAS_TRANSIT_N_STOP_KIND 19       /* GTFS location_type: 0 a stop or platform, 1 a station, 2 an entrance */
+#define ATLAS_TRANSIT_N_STOP_KIND 19       /* GTFS location_type: 0 a stop or platform, 1 a station, 2 an entrance,
+                                              3 a generic node, 4 a boarding area */
 #define ATLAS_TRANSIT_N_STOP_WHEELCHAIR 20 /* GTFS wheelchair_boarding: 0 not said, 1 possible, 2 not possible */
 #define ATLAS_TRANSIT_N_STOP_PLACE 21      /* whose place the latitude and longitude are: 0 its own, 1 its station's,
                                               2 nobody's (0, 0: the stop is nowhere) */
@@ -200,6 +206,7 @@ size_t atlas_transit_plan(atlas_transit *t, const int32_t *query, size_t query_l
  *                               on for a cheaper trip). An app says "cut short" for any of them.
  *   ATLAS_TRANSIT_A_HORIZON     how long past the asked moment journeys were followed, in seconds
  *   ATLAS_TRANSIT_A_SEARCHES, _A_LABELS, _A_STEPS_K, _A_LATER   what the search did, for a timing overlay
+ *   ATLAS_TRANSIT_A_SPARE       0; nothing yet
  * A journey: ATLAS_TRANSIT_J_HEAD numbers, then its legs:
  *   ATLAS_TRANSIT_J_DEPART, _J_ARRIVE   seconds from the start of the asked service day
  *   ATLAS_TRANSIT_J_RIDES
@@ -272,6 +279,7 @@ size_t atlas_transit_answer(const atlas_transit *t, int32_t *out, size_t cap);
 #define ATLAS_TRANSIT_A_LABELS 4
 #define ATLAS_TRANSIT_A_STEPS_K 5
 #define ATLAS_TRANSIT_A_LATER 6
+#define ATLAS_TRANSIT_A_SPARE 7
 #define ATLAS_TRANSIT_CUT_STEPS 1
 #define ATLAS_TRANSIT_CUT_LABELS 2
 #define ATLAS_TRANSIT_CUT_MOMENTS 4

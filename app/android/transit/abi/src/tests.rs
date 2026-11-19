@@ -232,6 +232,12 @@ fn the_header_names_the_same_numbers() {
         assert!(seen.contains(name), "the library has {name}, the header has no ATLAS_TRANSIT_{name}");
     }
     assert_eq!(atlas_transit_abi(), ABI);
+    // what the header says in words, where the words were wrong or missing once: the kinds of stop a file has, how
+    // "no such stop" is told where -1 is a place on the map
+    let said = header.split_whitespace().filter(|word| *word != "*").collect::<Vec<_>>().join(" ");
+    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other"] {
+        assert!(said.contains(words), "the header no longer says: {words}");
+    }
     // and each function the library gives is declared there
     for function in ["abi", "open", "close", "number", "text", "meta", "plan", "answer"] {
         assert!(header.contains(&format!("atlas_transit_{function}(")), "{function}");
@@ -361,7 +367,7 @@ fn the_paper_answers_come_through() {
     assert_eq!((v[A_JOURNEYS], v[A_CUT_SHORT]), (1, 0));
     // its legs: a ride to B, the walk that is none (the bus waits at another stop), a ride from C
     let (journeys, head) = received(&v);
-    assert!(head[A_SEARCHES] >= 1 && head[A_STEPS_K] >= 1 && head[A_HORIZON] > 0 && head[A_HEAD - 1] == 0, "{head:?}");
+    assert!(head[A_SEARCHES] >= 1 && head[A_STEPS_K] >= 1 && head[A_HORIZON] > 0 && head[A_SPARE] == 0 && A_SPARE == A_HEAD - 1, "{head:?}");
     let kinds: Vec<(i32, i32)> = journeys[0].legs.iter().map(|l| match l { Leg::Walk { .. } => (L_WALK, -1), Leg::Ride { from, .. } => (L_RIDE, *from as i32) }).collect();
     assert_eq!(kinds, [(L_RIDE, stop("WA")), (L_WALK, -1), (L_RIDE, stop("WC"))]);
     assert_eq!((journeys[0].rides, journeys[0].penalty), (2, 0));
@@ -608,6 +614,10 @@ fn null_pointers_and_short_buffers_do_no_harm() {
         let none: *mut AtlasTransit = null_mut();
         atlas_transit_close(none);
         assert_eq!(atlas_transit_number(none, N_STOPS, 0, 0), NONE);
+        // (-1 is a day like any other, the day before the file's first: no timetable knows no day)
+        assert_eq!(atlas_transit_number(none, N_DAY_OF, 20270326, 0), NO_DAY);
+        assert_eq!(atlas_transit_number(t.0, N_DAY_OF, 20270325, 0), -1);
+        assert_eq!(atlas_transit_number(t.0, N_DAY_OF, 20270230, 0), NO_DAY);
         let mut len = 7usize;
         assert!(!atlas_transit_text(none, T_STOP_NAME, 0, 0, &mut len).is_null() && len == 0);
         assert!(!atlas_transit_text(none, T_STOP_NAME, 0, 0, null_mut()).is_null());
@@ -715,7 +725,7 @@ fn a_key_longer_than_the_header_says_names_no_line() {
     assert_eq!((tt.meta(&at_most), tt.meta(&longer), tt.meta("days")), (Some("the longest"), Some("too long"), Some("4")));
     let t = Open::of(&b);
     assert_eq!((t.meta(&at_most), t.meta(&longer), t.meta("days")), ("the longest", "", "4"));
-    assert!(include_str!("../include/atlas_transit.h").contains("4,096 bytes"));
+    assert!(include_str!("../include/atlas_transit.h").contains("longer than 4,096 bytes"));
 }
 
 /// Bytes that are no timetable are not opened, and the reason is said; where no reason is asked for, none is

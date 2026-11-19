@@ -260,6 +260,8 @@ pub const A_SEARCHES: usize = 3;
 pub const A_LABELS: usize = 4;
 pub const A_STEPS_K: usize = 5;
 pub const A_LATER: usize = 6;
+/// The head's last number: 0, and nothing yet.
+pub const A_SPARE: usize = 7;
 // Which caps an answer met, a bit each, in its head at `A_CUT_SHORT`: the planner's own numbers.
 pub const CUT_STEPS: i32 = Answer::STEPS as i32;
 pub const CUT_LABELS: i32 = Answer::LABELS as i32;
@@ -411,6 +413,7 @@ pub const NAMES: &[(&str, i64)] = &[
     ("A_LABELS", A_LABELS as i64),
     ("A_STEPS_K", A_STEPS_K as i64),
     ("A_LATER", A_LATER as i64),
+    ("A_SPARE", A_SPARE as i64),
     ("CUT_STEPS", CUT_STEPS as i64),
     ("CUT_LABELS", CUT_LABELS as i64),
     ("CUT_MOMENTS", CUT_MOMENTS as i64),
@@ -558,6 +561,8 @@ pub unsafe extern "C" fn atlas_transit_number(t: *const AtlasTransit, what: u32,
     // SAFETY: the caller's word
     match unsafe { file(t) } {
         Some(tt) => number(&tt, what, id, at),
+        // (no timetable knows no day; -1 is a day, the one before a file's first)
+        None if what == N_DAY_OF => NO_DAY,
         None => NONE,
     }
 }
