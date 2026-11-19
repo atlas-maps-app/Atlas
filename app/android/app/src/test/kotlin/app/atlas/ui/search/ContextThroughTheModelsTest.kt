@@ -89,8 +89,9 @@ class ContextThroughTheModelsTest {
         m.moveTo(here)
         val drinks = CategoryTree.category("drinks")!!.id
         assertTrue("the grid came", until { m.state.value.gridOrigin != null && m.state.value.pulses[drinks] != null })
-        // the regions are asked off the main thread, and the tiles counted again in what they say
-        until(1_000) { false }
+        // the regions are asked off the main thread, and the tiles counted again in what they say: waited for until they
+        // are (the app maintainer, 18 November 2026, batch 5 C14: a fixed second, which a slow machine could miss)
+        until { m.state.value.moment.hours.country != null && m.state.value.pulses.getValue(drinks).let { it.count == 1 && it.open == 0 } }
         val tile = m.state.value.pulses.getValue(drinks)
         assertEquals(1, tile.count)
         assertEquals("open on King's Day, read in ${m.state.value.moment.hours.country}", 0, tile.open)
@@ -104,8 +105,9 @@ class ContextThroughTheModelsTest {
         val s = testServices(clock = kingsDay, stores = listOf(MemoryPlaces(listOf(play) + benches, country = null)))
         compose.setContent { ProvideServices(s) { PicnicScreen(Dest.Picnic(), BackStackNavigator(listOf(Dest.Home()))) } }
         compose.waitUntil(20_000) { "Speeltuin" in texts() }
-        // the hours where it looks are asked of the regions off the main thread
-        until(2_000) { texts().any { "closed · opens" in it } }
+        // the hours where it looks are asked of the regions off the main thread: waited for until the card says so (batch 5
+        // C14: two seconds at most)
+        until { texts().any { "closed · opens" in it } }
         val said = texts()
         assertTrue("$said", said.any { "closed · opens" in it })
         assertFalse("$said", said.any { "open until" in it })
@@ -130,8 +132,12 @@ class ContextThroughTheModelsTest {
         }
         fun pin(p: Place) = stage.shown()?.overlays?.markers?.firstOrNull { it.place?.key == p.key }
         assertTrue("the saved places were pinned", until { compose.waitForIdle(); pin(ah) != null && pin(aral) != null })
-        // the sheet's moment asks the regions off the main thread, and the pins are drawn again in what they say
-        until(2_000) { false }
+        // the sheet's moment asks the regions off the main thread, and the pins are drawn again in what they say: waited
+        // for until they are (batch 5 C14: two fixed seconds)
+        until {
+            compose.waitForIdle()
+            pin(ah)?.symbol == "logo-albertheijn" && pin(aral)?.symbol?.startsWith("logo-") == false
+        }
         compose.waitForIdle()
         assertEquals("logo-albertheijn", pin(ah)!!.symbol)
         val symbol = pin(aral)!!.symbol
