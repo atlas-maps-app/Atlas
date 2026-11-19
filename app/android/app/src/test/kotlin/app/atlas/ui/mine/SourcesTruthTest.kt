@@ -28,6 +28,15 @@ class SourcesTruthTest {
      */
     private val links = setOf("afdc.energy.gov", "chargemap.com", "example.org", "map.openchargemap.io", "www.topografix.com", "www.w3.org")
 
+    /**
+     * Addresses whose host is wholly built from a variable, by file, with what each is: a third shows up as a failure. A
+     * host whose first label alone is built (`https://$lang.wikipedia.org`) is no exception: it reads as `*.wikipedia.org`.
+     */
+    private val builtHosts = mapOf(
+        "app/src/main/kotlin/app/atlas/ui/search/PlaceParts.kt" to "a place's own website, opened in the browser",
+        "app/src/main/kotlin/app/atlas/ui/shop/ShopUi.kt" to "a shop's own website, opened in the browser",
+    )
+
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
         "overpass" to "Overpass(http, servers = overpassServers)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
@@ -64,6 +73,27 @@ class SourcesTruthTest {
         return out
     }
 
+    /**
+     * Every address in the code of [files] whose host is built from a variable, comments left out, read as its host: a
+     * first label that is a template as `*.rest` (`https://${wiki.first}.wikipedia.org` is `*.wikipedia.org`), a host that
+     * is wholly one as `*`; each with where it is (file:line).
+     */
+    private fun builtHostsIn(files: List<File>): List<Pair<String, String>> {
+        val url = Regex("""https?://(?:\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*)((?:\.[A-Za-z0-9-]+)*)""")
+        val out = ArrayList<Pair<String, String>>()
+        for (f in files) {
+            f.readLines().forEachIndexed { i, line ->
+                val code = line.trim()
+                if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) return@forEachIndexed
+                for (m in url.findAll(code.replace(Regex("""\s//\s.*$"""), ""))) {
+                    val rest = m.groupValues[1]
+                    out += (if (rest.isEmpty()) "*" else "*$rest") to "${f.relativeTo(android)}:${i + 1}"
+                }
+            }
+        }
+        return out
+    }
+
     /** Whether [token] is in the app's wiring (the app and the map's view), other than where its class is declared. */
     private fun wired(token: String): Boolean {
         val pattern = Regex("(?<!class )" + Regex.escape(token))
@@ -79,6 +109,19 @@ class SourcesTruthTest {
         val named = hostsIn(sources(shipped))
         val unknown = named.filterKeys { it !in listed && it !in unwired && it !in websites && it !in links }
         assertTrue("hosts the code names that no source lists: $unknown", unknown.isEmpty())
+    }
+
+    @Test
+    fun aHostBuiltFromAVariableIsHeldToAListedPattern() {
+        val built = builtHostsIn(sources(shipped))
+        val patterns = SourcesModel.ALL.flatMap { it.hosts }.filter { it.startsWith("*.") }
+        for ((host, where) in built.filter { it.first != "*" }) {
+            assertTrue("$where builds a host $host that no listed pattern holds", patterns.any { p -> app.atlas.providers.hostHolds(p, host) })
+        }
+        val whole = built.filter { it.first == "*" }.map { it.second }
+        assertEquals("hosts wholly built from a variable: $whole", builtHosts.keys, whole.map { it.substringBeforeLast(':') }.toSet())
+        // Wikipedia's four (the reader's address, its links), as the two websites: read, not skipped
+        assertTrue("$built", built.count { it.first == "*.wikipedia.org" } >= 4)
     }
 
     @Test
