@@ -375,6 +375,9 @@ struct TileBuildings {
     std::vector<WindowWall> window_walls;
     std::vector<std::uint32_t> window_walls_first;
     std::uint32_t windows = 0;
+    /// The windowed walls left without their windows, which would have taken the tile past the most it holds
+    /// (tiles::building::most_tile_windows): none in a real tile but where its buildings hold millions of windows.
+    std::uint32_t windows_cut = 0;
     /// Each item's plinth's and cornice's painter slots (the plinth's near | far << 16, the cornice's the next), after
     /// all its walls; no_facade where it has neither.
     std::vector<std::uint32_t> item_facades;
@@ -500,10 +503,16 @@ struct Building {
     std::int64_t id = 0; ///< its OpenStreetMap id (a guessed flat roof's mid grey goes by it)
     Values v;
     std::vector<V2> poly;
-    double h = 0.0;                       ///< the top
-    double y0 = 0.0;                      ///< the walls' base
-    double rh = 0.0;                      ///< the roof's height where its shape is pitched and it has one, else 0
-    double wall_top = 0.0;                ///< h - rh
+    /// Per edge of `poly`, 1 where it is a seam (geometry/Seams.hpp: it joins a courtyard or a piece and draws
+    /// nothing); empty where it has none.
+    std::vector<std::uint8_t> seam;
+    /// Where it is one piece of its record's ring (geometry::pieces_of), drawn as a building of its own: each of its
+    /// edges' number on that ring, which its primitives and sun samples go by. Empty where it is the ring itself.
+    std::vector<std::uint32_t> edges;
+    double h = 0.0;        ///< the top
+    double y0 = 0.0;       ///< the walls' base
+    double rh = 0.0;       ///< the roof's height where its shape is pitched, it has one and no courtyard, else 0
+    double wall_top = 0.0; ///< h - rh
     std::optional<std::string_view> roof; ///< the shape drawn (quadruple_saltbox as hipped)
     bool skillion = false;                ///< a skillion with a height: its slope
     V2 dirv;                              ///< its downhill direction
@@ -516,6 +525,8 @@ struct Building {
 
     /// A skillion's top above footprint point p: h - rh * ((p · dirv) - p0) / span.
     [[nodiscard]] double sk_top(const V2& p) const noexcept;
+    /// Whether edge i (from vertex i to i + 1) is a seam.
+    [[nodiscard]] bool seam_at(std::size_t i) const noexcept { return !seam.empty() && seam[i] != 0; }
 };
 
 /// Appends one tile's primitives, faces and n-gons, with the current building's cell, item, sun sample and slots.
@@ -548,17 +559,19 @@ public:
     /// (fanned from a corner on their edge, it fills the same two triangles), each triangle in one piece.
     void polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind kind, std::uint16_t flags, std::uint32_t face,
                  std::uint32_t sun, std::uint16_t near, std::uint16_t far, double area);
-    /// A painter slot within an item, checked to fit the primitives' 16 bits.
+    /// A painter slot within an item, at most the primitives' 16 bits hold (past them, the last).
     [[nodiscard]] static std::uint16_t slot(std::uint32_t value) noexcept;
 
     TileBuildings& out;
     std::uint8_t cell = 0;
     std::uint32_t item = 0;
+    /// The current building's edges' numbers on its record's ring where it is a piece of one (Building::edges): a
+    /// primitive is given its edge on the piece and keeps the ring's, an n-gon its piece's first edge's.
+    std::span<const std::uint32_t> edges;
     std::uint32_t sample = 0; ///< the next sun sample, in K8's order
     std::uint32_t near_slot = 0;
     std::uint32_t far_slot = 0;
     std::uint32_t boat_slot = 0;
-    std::uint32_t windows = 0;              ///< the next window, in the order of the tile's window group of sun samples
     bool paris = false;                     ///< the region's WIN_STYLE is Paris's
     std::optional<double> kit_eaves;        ///< the region's tradition's eaves, where it has a kit (BuildingRegion's)
     std::optional<tiles::KitBand> kit_band; ///< and its band and boards, where it has them
@@ -573,6 +586,10 @@ public:
     bool lean = false;
 
 private:
+    /// The record's ring's number of the current building's edge `edge` (Builder::edges).
+    [[nodiscard]] std::uint32_t ring_edge(std::uint32_t edge) const noexcept {
+        return edge < edges.size() ? edges[edge] : edge;
+    }
     struct Earcut; ///< earcut's state, whose memory serves each n-gon of the walk in turn
     std::unique_ptr<Earcut> earcut_;
     std::vector<std::uint32_t> triangles_;
@@ -588,8 +605,13 @@ private:
 };
 
 /// The walls of `bl` (its cells in both variants, a skillion's walls and each wall's windows) into `b`, flagged
-/// `variant` (prim_flag::dry for a houseboat's building).
-void walls(Builder& b, const Building& bl, std::uint16_t variant);
+/// `variant` (prim_flag::dry for a houseboat's building). Whether they have a plinth or a cornice, whose paths' slots
+/// follow all its building's walls (facade_slots).
+[[nodiscard]] bool walls(Builder& b, const Building& bl, std::uint16_t variant);
+
+/// The current building's plinth's and cornice's slots, after its walls and before its roof, where any of its walls
+/// has one (`any`: walls' answer, of any of its pieces); else none (Builder::facade).
+void facade_slots(Builder& b, bool any);
 
 /// The bays of a wall `elen` m long in `style` (`int(elen / (2.9 if paris else 3.4 if modern else 2.1))`, at least
 /// one).

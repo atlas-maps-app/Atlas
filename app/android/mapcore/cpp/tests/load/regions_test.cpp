@@ -1,30 +1,155 @@
-// A region's load (load/Regions.hpp): a multipolygon building's outer ways joined into its ring, a water relation and
+// A region's load (load/Regions.hpp): a multipolygon building's outer ways joined into its ring, and loaded whatever
+// corner its ring starts at (a neighbour's first point too), a water relation and
 // its island, land cover in LAND's order, a big road in a tunnel left out, the closest roof shape, Douglas-Peucker's
 // simplify, a theme park's coaster tracks (load/Coasters.hpp) and Python's float() they read a layer with, and where
-// ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it
-// (its counts are RegionsParityTest's, which holds every record to the port's Regions.load).
+// ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json loaded whole as the packer loads it,
+// with nothing that cannot be there (load/Clean.hpp; ATLAS_CLEAN_DUMP writes its buildings for the fault detectors).
+// No tag's number, however large, ends a load or refuses one, in any look or cut.
+#include "base/pymath/PyMath.hpp"
+#include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
+#include "load/Amsterdam.hpp"
+#include "load/Cut.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
 #include "load/Regions.hpp"
+#include "load/Tradition.hpp"
+#include "load/Window.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
+#include "tiles/Grid.hpp"
+#include "tiles/Json.hpp"
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <map>
+#include <memory>
+#include <set>
+#include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
 
 namespace load = atlas::load;
 namespace osm = atlas::osm;
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+/// A region's rings with seams under a roof stage T draws pitched, which it roofs piece by piece (geometry/Seams.hpp):
+/// those flat over a piece with a courtyard, what is left for the roofs built from any footprint, and those with every
+/// piece roofed by itself; each by what made its seams (m: a courtyard as mapped, p: its own parts cut it, a: another
+/// building did), and how many ba4a2acc did not draw at all (its hide(): an outline with a part's centroid in it,
+/// within 80 m of its own, over the outlines and parts as mapped). ATLAS_ROOFS_LIST: a file each such ring is added
+/// to, a line each (region, element, part, lat, lon, roof, its height, pieces with a courtyard, pieces roofed, causes,
+/// not drawn at ba4a2acc, m²).
+std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& region, const load::Scene& loaded) {
+    namespace gm = atlas::geometry;
+    std::set<std::pair<bool, std::int64_t>> hid;
+    if (const auto mapped = load::load_living(doc, region.frame, region.palette)) {
+        std::vector<load::V2> centres;
+        for (const load::Building& p : mapped->parts) centres.push_back(gm::centroid(p.poly));
+        for (const load::Building& b : mapped->buildings) {
+            const load::V2 bc = gm::centroid(b.poly);
+            for (const load::V2& c : centres) {
+                if (std::fabs(c.x - bc.x) < 80.0 && std::fabs(c.z - bc.z) < 80.0 && gm::pip(c.x, c.z, b.poly)) {
+                    hid.emplace(b.relation, b.id);
+                    break;
+                }
+            }
+        }
+    }
+    struct Group {
+        std::uint32_t all = 0;
+        std::uint32_t hidden_before = 0;
+        std::map<std::string, std::uint32_t> by;
+    };
+    Group flat;   // a piece with a courtyard, flat
+    Group roofed; // every piece roofed by itself
+    std::uint32_t both = 0;
+    std::uint32_t pieces = 0;
+    std::uint32_t narrow = 0;
+    std::ofstream listed;
+    if (const std::string out = atlas::test::environment("ATLAS_ROOFS_LIST"); !out.empty()) {
+        listed.open(out, std::ios::app);
+    }
+    for (const auto* list : {&loaded.buildings, &loaded.parts}) {
+        for (const load::Building& b : *list) {
+            const double roof_h = b.roof_h.value_or(0.0);
+            if (b.hidden || !gm::drawn_pitched(b.roof, roof_h, false)) continue;
+            const std::vector<std::uint8_t> seam = gm::seams(b.poly);
+            if (seam.empty()) continue;
+            bool courtyard = false;
+            bool alone = false;
+            std::uint32_t with_courtyard = 0;
+            std::uint32_t by_itself = 0;
+            for (const std::vector<std::uint32_t>& piece : gm::pieces_of(b.poly, seam)) {
+                if (gm::has_courtyard(piece, seam)) {
+                    courtyard = true;
+                    ++with_courtyard;
+                    continue;
+                }
+                alone = true;
+                ++by_itself;
+                ++pieces;
+                // narrower than its roof is high: four times its area by its perimeter, a square's side
+                double area2 = 0.0;
+                double around = 0.0;
+                for (std::size_t k = 0; k < piece.size(); ++k) {
+                    const load::V2 p = b.poly[piece[k]];
+                    const load::V2 q = b.poly[piece[(k + 1) % piece.size()]];
+                    area2 += (p.x * q.z) - (q.x * p.z);
+                    around += std::sqrt(((q.x - p.x) * (q.x - p.x)) + ((q.z - p.z) * (q.z - p.z)));
+                }
+                if (around > 0.0 && 2.0 * std::fabs(area2) / around < roof_h) ++narrow;
+            }
+            both += courtyard && alone ? 1U : 0U;
+            Group& g = courtyard ? flat : roofed;
+            ++g.all;
+            const std::string cause = std::string((b.cleaned & load::courtyard_mapped) != 0 ? "m" : "") +
+                                      ((b.cleaned & load::cut_by_parts) != 0 ? "p" : "") +
+                                      ((b.cleaned & load::cut_by_another) != 0 ? "a" : "");
+            ++g.by[cause.empty() ? "-" : cause];
+            const bool hidden_before = list == &loaded.buildings && hid.contains({b.relation, b.id});
+            if (hidden_before) ++g.hidden_before;
+            if (listed.is_open()) {
+                const load::V2 at = b.at.value_or(gm::centroid(b.poly));
+                const atlas::tiles::GridPoint on = atlas::tiles::nearest_grid(region.frame, at.x, at.z);
+                listed << std::format("{}\t{}{}\t{}\t{:.7f}\t{:.7f}\t{}\t{:.1f}\t{}\t{}\t{}\t{}\t{:.0f}\n", region.name,
+                                      b.relation ? "r" : "w", b.id, list == &loaded.parts ? "part" : "building",
+                                      on.lat / 1e7, on.lon / 1e7, b.roof.value_or(""), roof_h, with_courtyard,
+                                      by_itself, cause.empty() ? "-" : cause, hidden_before ? 1 : 0,
+                                      std::fabs(gm::signed_area(b.poly)));
+            }
+        }
+    }
+    const auto causes = [](const Group& g) {
+        std::string out;
+        for (const auto& [cause, count] : g.by) out += std::format(" {} {}", cause, count);
+        return out;
+    };
+    return std::format("flat over a courtyard {} (by{}; {} not drawn at ba4a2acc; {} of them with a piece roofed too), "
+                       "every piece roofed {} (by{}; {} not drawn at ba4a2acc); {} pieces roofed by themselves, {} "
+                       "narrower than their roof is high",
+                       flat.all, causes(flat), flat.hidden_before, both, roofed.all, causes(roofed),
+                       roofed.hidden_before, pieces, narrow);
+}
 
 std::expected<osm::Document, osm::ReadError> read(std::string_view s) {
     return osm::read_overpass(std::as_bytes(std::span(s.data(), s.size())));
@@ -59,6 +184,35 @@ constexpr std::string_view document = R"({"elements": [
 {"type": "way", "id": 6, "tags": {"highway": "primary", "layer": "1"}, "geometry": [{"lat": 52.37, "lon": 4.87}, {"lat": 52.38, "lon": 4.88}]}
 ]})";
 
+// A terrace of four houses in a row, west to east, wall to wall, and a part over the east half of the first. Each
+// relation's ring starts at a corner where a neighbour's ring starts too: 2 (two outer ways) and the part 5 (two
+// outer ways) at way 1's first point, 4 (two outer ways) at the first point of 3 (one closed outer way). Every ring is
+// mapped clockwise, so none is turned and each keeps its first point.
+constexpr std::string_view terrace = R"({"elements": [
+{"type": "way", "id": 1, "tags": {"building": "house", "building:levels": "3"}, "geometry": [
+  {"lat": 52.3700, "lon": 4.88015}, {"lat": 52.3700, "lon": 4.8800}, {"lat": 52.3701, "lon": 4.8800},
+  {"lat": 52.3701, "lon": 4.88015}, {"lat": 52.3700, "lon": 4.88015}]},
+{"type": "relation", "id": 2, "tags": {"type": "multipolygon", "building": "house"}, "members": [
+  {"type": "way", "ref": 20, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88015},
+   {"lat": 52.3701, "lon": 4.88015}, {"lat": 52.3701, "lon": 4.8803}]},
+  {"type": "way", "ref": 21, "role": "outer", "geometry": [{"lat": 52.3701, "lon": 4.8803},
+   {"lat": 52.3700, "lon": 4.8803}, {"lat": 52.3700, "lon": 4.88015}]}]},
+{"type": "relation", "id": 3, "tags": {"type": "multipolygon", "building": "house"}, "members": [
+  {"type": "way", "ref": 22, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88045},
+   {"lat": 52.3700, "lon": 4.8803}, {"lat": 52.3701, "lon": 4.8803}, {"lat": 52.3701, "lon": 4.88045},
+   {"lat": 52.3700, "lon": 4.88045}]}]},
+{"type": "relation", "id": 4, "tags": {"type": "multipolygon", "building": "house"}, "members": [
+  {"type": "way", "ref": 23, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88045},
+   {"lat": 52.3701, "lon": 4.88045}, {"lat": 52.3701, "lon": 4.8806}]},
+  {"type": "way", "ref": 24, "role": "outer", "geometry": [{"lat": 52.3701, "lon": 4.8806},
+   {"lat": 52.3700, "lon": 4.8806}, {"lat": 52.3700, "lon": 4.88045}]}]},
+{"type": "relation", "id": 5, "tags": {"type": "multipolygon", "building:part": "yes", "height": "12"}, "members": [
+  {"type": "way", "ref": 25, "role": "outer", "geometry": [{"lat": 52.3700, "lon": 4.88015},
+   {"lat": 52.3700, "lon": 4.880075}, {"lat": 52.3701, "lon": 4.880075}]},
+  {"type": "way", "ref": 26, "role": "outer", "geometry": [{"lat": 52.3701, "lon": 4.880075},
+   {"lat": 52.3701, "lon": 4.88015}, {"lat": 52.3700, "lon": 4.88015}]}]}
+]})";
+
 } // namespace
 
 TEST_CASE("load: a region's relations, land cover, big roads and closest roof shapes") {
@@ -90,6 +244,53 @@ TEST_CASE("load: a region's relations, land cover, big roads and closest roof sh
     CHECK(s.big[0].layer == 1.0);
 }
 
+// The port told a relation's ring from one already loaded by its first point alone, to the decimetre (regions.py's
+// load and load/Regions.cpp's relation_buildings until core-p14), so a relation whose ring started where a neighbour's
+// did was never loaded: here 2, 4 and the part 5 (the engine audit, 17 Nov 2026). A relation's ring is known by its
+// ways since.
+TEST_CASE("load: a relation whose ring starts at a neighbour's first point is loaded") {
+    const auto doc = read(terrace);
+    ATLAS_REQUIRE(doc.has_value());
+    const auto ids = [](const std::vector<load::Building>& list) {
+        std::string out;
+        for (const load::Building& record : list) out += std::format("{} ", record.id);
+        return out;
+    };
+    // as read, before the cleaning
+    const auto read_as = load::load_living(*doc, load::westerkerk_frame(), load::amsterdam_palette());
+    ATLAS_REQUIRE(read_as.has_value());
+    ATLAS_REQUIRE(ids(read_as->buildings) == "1 2 3 4 ", ids(read_as->buildings));
+    ATLAS_REQUIRE(ids(read_as->parts) == "5 ", ids(read_as->parts));
+    const std::vector<load::Building>& b = read_as->buildings;
+    // the case itself: the rings do start at the same point
+    CHECK(b[1].poly[0] == b[0].poly[0]);
+    CHECK(read_as->parts[0].poly[0] == b[0].poly[0]);
+    CHECK(b[3].poly[0] == b[2].poly[0]);
+    CHECK(!b[0].relation);
+    CHECK(b[1].relation);
+    CHECK(b[2].relation);
+    CHECK(b[3].relation);
+    CHECK(read_as->parts[0].relation);
+    for (const load::Building& house : b) CHECK(house.poly.size() == 4);
+    CHECK(read_as->parts[0].poly.size() == 4);
+    CHECK(read_as->counts.doubles == 0); // no way here is a building of its own and a relation's ring
+    // as a region loads it: every house stands, the part too, and the first house is drawn less its part
+    const auto loaded = load::load_region(*doc, amsterdam_region());
+    ATLAS_REQUIRE(loaded.has_value());
+    const load::Scene& s = *loaded;
+    CHECK(ids(s.buildings) == "1 2 3 4 ");
+    ATLAS_REQUIRE(ids(s.parts) == "5 ", ids(s.parts));
+    CHECK(std::ranges::none_of(s.buildings, &load::Building::hidden));
+    CHECK(!s.parts[0].hidden);
+    CHECK(s.parts[0].parent_id == 1);
+    CHECK(s.parts[0].h == 12.0);
+    CHECK(s.counts.covered == 1);
+    CHECK(s.counts.hidden == 0);
+    CHECK(s.counts.vanished == 0);
+    CHECK(s.counts.overlapping_pairs == 0);
+    CHECK(s.counts.uncovered_outlines == 0);
+}
+
 TEST_CASE("load: simplify drops the corners within its tolerance of a straight wall") {
     // a 20 x 10 m ring with a corner 0.3 m off its long side
     const std::vector<load::V2> ring = {{0, 0}, {10, 0.3}, {20, 0}, {20, 10}, {10, 10}, {0, 10}};
@@ -101,7 +302,10 @@ TEST_CASE("load: simplify drops the corners within its tolerance of a straight w
     CHECK(load::simplify(small, 5.0).size() == 4);
 }
 
-TEST_CASE("load: the canal ring's raw.json loaded as a region, as the packer loads it (ATLAS_REGIONS_DIR)") {
+TEST_CASE("load: the canal ring's raw.json loaded as a region, with nothing that cannot be there (ATLAS_REGIONS_DIR)") {
+    // the canal ring's buildings and parts once cleaned (load/Clean.hpp), recorded 17 Nov 2026
+    constexpr std::size_t buildings_after = 25953;
+    constexpr std::size_t parts_after = 648;
     const std::string dir = atlas::test::environment("ATLAS_REGIONS_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_REGIONS_DIR is not set: the renderer's data are not loaded here");
@@ -129,10 +333,122 @@ TEST_CASE("load: the canal ring's raw.json loaded as a region, as the packer loa
     MESSAGE("grachten as a region: ", loaded->buildings.size(), " buildings, ", loaded->parts.size(), " parts, ",
             loaded->land.size(), " land covers, ", loaded->water.size(), " water rings, ", loaded->water_holes.size(),
             " islands, in ", ms, " ms");
-    CHECK(loaded->buildings.size() == 25961);
-    CHECK(loaded->parts.size() == 696);
+    const load::BuildingCounts& c = loaded->counts;
+    MESSAGE("grachten's buildings: ", c.underground, " below the ground by location and ", c.underground_layer,
+            " by layer, ", c.doubles, " doubles (", c.doubles_disagree, " disagreeing), ", c.bounded,
+            " with numbers past the bounds, ", c.courtyards, " with courtyards, ", c.covered,
+            " outlines drawn less their "
+            "parts, ",
+            c.hidden, " covered whole, ", c.clipped, " clipped, ", c.raised, " raised, ", c.vanished, " vanished, ",
+            c.seamed, " seamed; ", c.overlapping_pairs, " pairs overlapping, ", c.uncovered_outlines,
+            " outlines uncovered (", c.uncovered_m2, " m², slivers ", c.sliver_m2, " m²), ", c.flat_roofs,
+            " pitched roofs drawn flat");
+    CHECK(c.overlapping_pairs == 0);
+    CHECK(c.uncovered_outlines == 0);
+    CHECK(c.unsettled == 0);
+    CHECK(c.unmeasured == 0);
+    CHECK(c.underground == 17);       // location=underground
+    CHECK(c.underground_layer == 11); // a layer below 0 alone
+    CHECK(c.doubles == 11);           // 8 ways with the role outer, and the three of r20772608 without a role
+    CHECK(loaded->buildings.size() == buildings_after);
+    CHECK(loaded->parts.size() == parts_after);
     CHECK(loaded->land.size() == 2384);
     CHECK(loaded->water.size() == 331);
+    // ATLAS_CLEAN_DUMP: what is drawn, as Overpass's JSON, for the fault detectors (an outline not drawn tagged
+    // atlas:drawn=no, and atlas:underground=yes where that is by the rule for what lies below the ground)
+    if (const std::string out = atlas::test::environment("ATLAS_CLEAN_DUMP"); !out.empty()) {
+        std::ofstream f(out, std::ios::binary);
+        f << R"({"version":0.6,"elements":[)";
+        bool first = true;
+        for (const auto* list : {&loaded->buildings, &loaded->parts}) {
+            const bool part = list == &loaded->parts;
+            for (const load::Building& b : *list) {
+                f << (first ? "" : ",") << R"({"type":"way","id":)" << (b.relation ? 9000000000000 + b.id : b.id)
+                  << R"(,"tags":{")" << (part ? "building:part" : "building") << R"(":"yes","height":")" << b.h
+                  << R"(","min_height":")" << b.min << R"(","atlas:drawn":")" << (b.hidden ? "no" : "yes")
+                  << R"(","atlas:underground":")" << (b.underground ? "yes" : "no") << R"("},"geometry":[)";
+                first = false;
+                for (std::size_t i = 0; i <= b.poly.size(); ++i) {
+                    const load::V2 p = b.poly[i % b.poly.size()];
+                    const auto lat = atlas::tiles::grid_lat(region.frame, p.z);
+                    const auto lon = atlas::tiles::grid_lon(region.frame, p.x);
+                    // all seven decimals: a stream's six digits would move a corner by metres
+                    f << (i == 0 ? "" : ",")
+                      << std::format(R"({{"lat":{:.7f},"lon":{:.7f}}})", (lat ? *lat : 0) / 1e7,
+                                     (lon ? *lon : 0) / 1e7);
+                }
+                f << "]}";
+            }
+        }
+        f << "]}\n";
+        MESSAGE("grachten's buildings written to ", out);
+    }
+}
+
+TEST_CASE("load: every region's buildings, with nothing that cannot be there and what the cleaning did "
+          "(ATLAS_REGIONS_DIR)") {
+    const std::string dir = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: the regions are not loaded here");
+        return;
+    }
+    std::vector<std::filesystem::path> regions;
+    for (const auto& e : std::filesystem::directory_iterator(dir)) {
+        if (std::filesystem::exists(e.path() / "raw.json") && std::filesystem::exists(e.path() / "region.json")) {
+            regions.push_back(e.path());
+        }
+    }
+    std::ranges::sort(regions);
+    for (const std::filesystem::path& folder : regions) {
+        const std::string name = folder.filename().string();
+        const std::string text = read_text(folder / "raw.json");
+        const std::string json = read_text(folder / "region.json");
+        const auto doc = read(text);
+        const auto r = atlas::tiles::read_json(std::as_bytes(std::span(json.data(), json.size())));
+        if (!doc || !r) {
+            MESSAGE(name, ": does not read");
+            continue;
+        }
+        const atlas::tiles::Value origin = r->root().find("origin").value_or(atlas::tiles::Value());
+        const atlas::tiles::Value bbox = r->root().find("bbox").value_or(atlas::tiles::Value());
+        if (origin.size() != 2 || bbox.size() != 4) continue;
+        const double lat0 = origin.child(0).number().value_or(0);
+        std::shared_ptr<const load::Tradition> tradition;
+        if (const auto t = r->root().find("tradition")) {
+            if (const auto named = t->string()) tradition = load::tradition_named(*named);
+        }
+        const load::RegionConfig region{.name = name,
+                                        .frame = {.lat0 = lat0,
+                                                  .lon0 = origin.child(1).number().value_or(0),
+                                                  .kx = 111320 * atlas::pymath::cos(atlas::pymath::radians(lat0)),
+                                                  .kz = 110540},
+                                        .bbox = {bbox.child(0).number().value_or(0), bbox.child(1).number().value_or(0),
+                                                 bbox.child(2).number().value_or(0),
+                                                 bbox.child(3).number().value_or(0)},
+                                        .tradition = tradition,
+                                        .palette = load::region_palette(name)};
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto loaded = load::load_region(*doc, region);
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        ATLAS_REQUIRE(loaded.has_value(), name);
+        const load::BuildingCounts& c = loaded->counts;
+        const std::string line = std::format(
+            "region {}: {} buildings, {} parts; pairs {} uncovered {} flat {} (over a courtyard {}) roofed by piece "
+            "{}; underground {}+{} doubles {} (disagreeing {}) bounded {} courtyards {} covered {} hidden {} clipped "
+            "{} raised {} vanished {} seamed {} unsettled {} unmeasured {}; uncovered {:.1f} m², slivers {:.1f} m², "
+            "dropped {:.1f} m²; {:.0f} ms",
+            name, loaded->buildings.size(), loaded->parts.size(), c.overlapping_pairs, c.uncovered_outlines,
+            c.flat_roofs, c.flat_by_seam, c.roofed_by_piece, c.underground, c.underground_layer, c.doubles,
+            c.doubles_disagree, c.bounded, c.courtyards, c.covered, c.hidden, c.clipped, c.raised, c.vanished, c.seamed,
+            c.unsettled, c.unmeasured, c.uncovered_m2, c.sliver_m2, c.dropped_m2, ms);
+        MESSAGE(line);
+        (void)std::printf("%s\n", line.c_str()); // NOLINT: the lines a run's log keeps
+        const std::string roofs = std::format("region {} roofs: {}", name, seamed_roofs(*doc, region, *loaded));
+        MESSAGE(roofs);
+        (void)std::printf("%s\n", roofs.c_str()); // NOLINT: the lines a run's log keeps
+        CHECK_MESSAGE(c.overlapping_pairs == 0, name);
+        CHECK_MESSAGE(c.uncovered_outlines == 0, name);
+    }
 }
 
 TEST_CASE("load: generic.py's colours: a colour word or hex form read, a guessed colour varied per building") {
@@ -232,15 +548,107 @@ TEST_CASE("load: a theme park's coaster tracks, as coasters.py loads them") {
     CHECK(t[5].ride == "Mono");
     CHECK(t[5].role == "mono");
     CHECK(t[5].ys.front() == 3.5);
-    // a layer Python's float() cannot read refuses the load, as the renders stop there
-    std::string bad(park);
-    bad.replace(bad.find(R"("layer": "2")"), 12, R"("layer": "2;3")");
-    const auto refused = read(bad);
-    ATLAS_REQUIRE(refused.has_value());
-    const auto failed = load::load_region(*refused, region);
-    ATLAS_REQUIRE(!failed.has_value());
-    CHECK(failed.error().fault == load::LoadError::Fault::not_a_number);
-    CHECK(failed.error().element == 12);
+    // a layer Python's float() cannot read, where the renders stopped, never refuses the load: it is the number it
+    // starts with ("2;3" is 2), or 0 ("inf", "high")
+    const auto ys_with = [&](std::string_view layer) -> std::vector<double> {
+        std::string other(park);
+        other.replace(other.find(R"("layer": "2")"), 12, std::format(R"("layer": "{}")", layer));
+        const auto d = read(other);
+        ATLAS_REQUIRE_OR_RETURN({}, d.has_value());
+        const auto l = load::load_region(*d, region);
+        ATLAS_REQUIRE_OR_RETURN({}, l.has_value(), layer);
+        ATLAS_REQUIRE_OR_RETURN({}, l->coasters.size() == 6, layer);
+        return l->coasters[2].ys;
+    };
+    CHECK(ys_with("2;3") == t[2].ys);
+    CHECK(ys_with("inf") == ys_with("0"));
+    CHECK(ys_with("high") == ys_with("0"));
+    CHECK(ys_with("0") != t[2].ys);
     // no park, no tracks
     CHECK(load::load_region(*doc, amsterdam_region())->coasters.empty());
+}
+
+TEST_CASE("load: no tag's number ends the load, however large, in every look and cut") {
+    // CI's fuzz_load, 14 and 16 Nov 2026: a `height` of 7e26 m ended the process in a tradition's look, where the
+    // levels were round((h - roof_h) / floor_h) as a Long. Every number the loader reads from a tag, past any Long's
+    // floors, past the largest double (infinite) and negative, on each kind of record that reads one.
+    const std::string huge = "7" + std::string(26, '0');
+    const std::string endless(400, '9');
+    load::RideProfiles rides;
+    const auto tradition = load::read_tradition(std::as_bytes(std::span(std::string_view(R"(
+{"name": "n", "says": "s", "floor_h": 3.0, "levels": {"default": 2}, "walls": {"default": [["brick", "#8E5A46", 1]]},
+ "roof": {"default": {"shapes": [["mansard", 1], ["gabled", 1], ["skillion", 1], ["flat", 1]], "material": "metal",
+                      "colours": ["#737E88"]}}})"))));
+    ATLAS_REQUIRE(tradition.has_value());
+    for (const std::string& v : {huge, "-" + huge, endless, "-" + endless}) {
+        std::string doc = R"({"elements": [)";
+        std::int64_t id = 0;
+        const auto square = [&](std::string_view tags) {
+            // a 12 m square, each a little east of the last
+            const double lon = 4.8800 + (0.0003 * static_cast<double>(id));
+            doc += std::format(
+                R"({}{{"type": "way", "id": {}, "tags": {{{}}}, "geometry": [{{"lat": 52.3700, "lon": {:.4f}}},
+ {{"lat": 52.3700, "lon": {:.4f}}}, {{"lat": 52.37011, "lon": {:.4f}}}, {{"lat": 52.37011, "lon": {:.4f}}},
+ {{"lat": 52.3700, "lon": {:.4f}}}]}})",
+                id == 0 ? "" : ",\n", id + 1, tags, lon, lon + 0.00018, lon + 0.00018, lon, lon);
+            ++id;
+        };
+        const auto line = [&](std::string_view tags) {
+            doc += std::format(R"(,
+{{"type": "way", "id": {}, "tags": {{{}}}, "geometry": [{{"lat": 52.3720, "lon": 4.8800}}, {{"lat": 52.3725, "lon": 4.8830}}]}})",
+                               ++id, tags);
+        };
+        const auto node = [&](std::string_view tags) {
+            ++id;
+            doc += std::format(R"(,
+{{"type": "node", "id": {}, "lat": 52.3740, "lon": {:.4f}, "tags": {{{}}}}})",
+                               id, 4.8800 + (0.0002 * static_cast<double>(id)), tags);
+        };
+        for (const std::string_view b : {"house", "apartments", "yes", "office"}) {
+            square(std::format(R"("building": "{}", "height": "{}")", b, v));
+            square(std::format(R"("building": "{}", "height": "15", "roof:levels": "{}")", b, v));
+            square(std::format(R"("building": "{}", "building:levels": "{}", "roof:levels": "{}")", b, v, v));
+            square(std::format(R"("building": "{}", "roof:shape": "gabled", "roof:height": "{}")", b, v));
+            square(std::format(R"("building": "{}", "roof:shape": "mansard", "height": "{}", "roof:levels": "{}")", b,
+                               v, v));
+            square(std::format(R"("building": "{}", "min_height": "{}", "height": "{}")", b, v, v));
+        }
+        square(std::format(R"("building:part": "yes", "height": "{}", "roof:levels": "{}")", v, v));
+        line(std::format(R"("highway": "primary", "width": "{}", "lanes": "{}", "layer": "{}")", v, v, v));
+        line(std::format(R"("highway": "motorway", "lanes": "{}")", v));
+        line(std::format(R"("aeroway": "runway", "width": "{}")", v));
+        line(std::format(R"("roller_coaster": "track", "layer": "{}")", v));
+        line(std::format(R"("man_made": "gantry", "height": "{}")", v));
+        node(std::format(R"("natural": "tree", "height": "{}", "diameter_crown": "{}")", v, v));
+        node(std::format(R"("man_made": "mast", "height": "{}")", v));
+        node(std::format(R"("man_made": "tower", "height": "{}")", v));
+        node(std::format(R"("power": "tower", "height": "{}")", v));
+        node(std::format(R"("power": "generator", "generator:source": "wind", "height": "{}", "rotor:diameter": "{}")",
+                         v, v));
+        doc += "]}";
+        const auto read_doc = read(doc);
+        ATLAS_REQUIRE(read_doc.has_value(), osm::name_of(read_doc.error().fault), " at ", read_doc.error().at);
+        for (const std::string_view name : {"test", "paris"}) {
+            for (const std::shared_ptr<const load::Tradition>& t :
+                 {std::shared_ptr<const load::Tradition>(), *tradition}) {
+                load::RegionConfig region = amsterdam_region();
+                region.name = name;
+                region.tradition = t;
+                region.park = &rides;
+                const auto loaded = load::load_region(*read_doc, region);
+                ATLAS_REQUIRE(loaded.has_value(), v.size(), " ", name);
+                CHECK(loaded->buildings.size() == 24);
+                for (const load::Building& b : loaded->buildings) CHECK(b.levels >= 1);
+                // a track below ground is left out; one infinitely far below is read as layer 0
+                CHECK(loaded->coasters.size() == (v.starts_with("-7") ? 0U : 1U));
+                CHECK(load::cut_region(*loaded, region.frame, {}).has_value());
+            }
+        }
+        const load::Looks looks{.region = "ams", .landuse = load::LandUseFrom::areas, .keep_homes = true};
+        for (const load::Looks* l : {&looks, static_cast<const load::Looks*>(nullptr)}) {
+            const auto living = load::load_amsterdam(*read_doc, load::westerkerk_frame(), load::amsterdam_palette(), l);
+            ATLAS_REQUIRE(living.has_value());
+            CHECK(load::cut_living(*living, load::westerkerk_frame()).has_value());
+        }
+    }
 }

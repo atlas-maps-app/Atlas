@@ -55,6 +55,7 @@ import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.math.PI
@@ -92,6 +93,7 @@ fun SwimScreen(args: Dest.Swim, nav: Navigator) {
     val zone = clock.zone
     val now = remember(clock) { clock.instant() }
     val local = remember(clock) { LocalDateTime.ofInstant(now, zone) }
+    val opening = rememberHoursAt(here)
     var kind by rememberSaveable { mutableStateOf(args.kind?.takeIf { k -> WATERS.any { it.id == k } } ?: "indoor") }
     val found by produceState<Map<String, FindResult>?>(null, here) { value = services.local.finder.findMany(WATERS.associate { it.id to TagFilter.parse(it.filter) }, here, RADIUS, limit = 60) }
     val marine by produceState<app.atlas.providers.MarineForecast?>(null, here) { value = services.local.marine(here) }
@@ -167,9 +169,9 @@ fun SwimScreen(args: Dest.Swim, nav: Navigator) {
                                 when (t["fee"]) { "yes" -> add(stringResource(R.string.swim_paid)); "no" -> add(stringResource(R.string.swim_free)) }
                                 t["wheelchair"]?.takeIf { it == "yes" }?.let { add(stringResource(R.string.picnic_step_free)) }
                             }
-                            val shut = remember(f, local) { isShut(f.place, here, local) }
+                            val shut = remember(f, local, opening) { isShut(f.place, here, local, opening) }
                             PlaceCard(
-                                f, here, facts, local, SWIM_CARD, caution = shut,
+                                f, here, facts, local, opening, SWIM_CARD, caution = shut,
                                 tile = { Box(Modifier.size(46.dp).boardBox(0xFFE4F2FA, corners(14f)), contentAlignment = Alignment.Center) { Glyph(chosen.symbol, Blue, 24.dp) } },
                                 onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) },
                             )

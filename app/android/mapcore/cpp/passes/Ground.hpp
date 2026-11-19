@@ -1018,6 +1018,11 @@ struct GlowLayer;   // below
 inline constexpr std::uint32_t palette_pairs = 256;
 [[nodiscard]] std::vector<std::uint32_t> ground_palette(const tiles::Style& style, const style::PaletteBlock* palette,
                                                         bool night);
+/// The same for the fills of every style of `styles` (the packs a frame draws: the active one's, the coarser one's
+/// around it and its neighbours'), each style's colours after those of the styles before it; a colour two styles move
+/// alike takes the first's move.
+[[nodiscard]] std::vector<std::uint32_t> ground_palette(std::span<const tiles::Style* const> styles,
+                                                        const style::PaletteBlock* palette, bool night);
 /// The pair a colour word's search starts at (ground.slang's repainted).
 [[nodiscard]] constexpr std::uint32_t palette_hash(std::uint32_t c) noexcept { return (c * 2654435761U) >> 24U; }
 
@@ -1055,6 +1060,9 @@ public:
 
     /// The last frame's decisions (tests, and the twin).
     [[nodiscard]] const GroundFrame& decided() const noexcept { return frame_; }
+    /// The tests' look at the lines: the runs the last frame's words hold (at most 2^18, a segment's instance word's
+    /// bits of its run), 0 before the first frame.
+    [[nodiscard]] std::uint32_t line_runs() const noexcept;
     /// Whether this frame draws the canopy through its filter (canopy_fs): it is drawn, and the fields are bound in
     /// full mode; else its union is black at .55, as a frame without filters draws it.
     [[nodiscard]] bool canopy_filtered(const frame::FrameState& state) const noexcept;
@@ -1599,7 +1607,7 @@ private:
     /// The last palette table (write_palette) and what it was made of.
     std::vector<std::uint32_t> palette_table_;
     style::PaletteBlock palette_of_{};
-    const tiles::Style* palette_style_ = nullptr;
+    std::vector<const tiles::Style*> palette_styles_;
     bool palette_night_ = false;
     // scratch, reused frame to frame
     std::vector<view::Vec3> cam_;
@@ -1838,6 +1846,7 @@ struct Ground::Words {
     std::uint32_t slots = 0;                  ///< the slot table's
     std::uint32_t theme = 0;                  ///< the theme colours'
     std::uint32_t runs = 0;                   ///< the lines' runs'
+    std::uint32_t run_count = 0;              ///< and how many (at most 2^18: write_lines)
     std::array<std::uint32_t, 2> instances{}; ///< the over and marks phases' segments: first word and count, packed
     std::array<std::uint32_t, 2> instance_count{};
     std::uint32_t woods_split = 0;      ///< the over phase's segments before the woods' shadows' slot

@@ -21,12 +21,12 @@ object SourcesModel {
         hosts = listOf("creativecommons.tankerkoenig.de"),
     )
 
-    /** Atlas's own packs, released on GitHub: the map's windows read in place, and the regions taken offline. */
+    /** Atlas's own packs, released on GitHub: the map's windows read in place, the terrain's heights, and the regions taken offline. */
     val ATLAS_PACKS = ProviderInfo(
         id = "atlas-packs", name = "Atlas's packs", licence = "ODbL",
         attribution = "Map data © OpenStreetMap contributors; extracts by Geofabrik; house numbers OpenStreetMap lacks from OpenAddresses and its sources",
         url = "https://github.com/atlas-maps-app/Atlas/releases",
-        note = "The map's windows and offline regions, built on GitHub from OpenStreetMap's data; each window is read by its own bytes.",
+        note = "The map's windows and offline regions, built on GitHub from OpenStreetMap's data, and the terrain's heights, from Copernicus and the national elevation models; each is read by its own bytes.",
         hosts = listOf("github.com", "release-assets.githubusercontent.com"),
     )
 
@@ -95,12 +95,13 @@ object SourcesModel {
     fun keyed(rows: List<Row>): List<Row> = rows.filter { it.canTakeKey }
 
     /**
-     * The source that holds back a request to [host]: the one the host belongs to, where the user switched it off ([off],
-     * by id); null lets the request go. A source asked through another's servers (OpenStreetMap's chargers, through
-     * Overpass) is held back where it is asked, as those servers serve others too; one without a switch never is.
+     * The source that holds back a request to [host]: the one the host belongs to ([ProviderInfo.holds]: one of its hosts,
+     * or below its `*.name`), where the user switched it off ([off], by id); null lets the request go. A source asked
+     * through another's servers (OpenStreetMap's chargers, through Overpass) is held back where it is asked, as those
+     * servers serve others too; one without a switch never is.
      */
     fun blockedBy(host: String, off: Set<String>, all: List<ProviderInfo> = ALL): String? =
-        if (off.isEmpty()) null else all.firstOrNull { it.id in off && it.switchable && it.via == null && host in it.hosts }?.id
+        if (off.isEmpty()) null else all.firstOrNull { it.id in off && it.switchable && it.via == null && it.holds(host) }?.id
 
     /** A licence in a few characters for a tag: "ODbL", "CC BY 4.0", "open data", "own terms", "per source". */
     fun licenceLabel(licence: String): String {

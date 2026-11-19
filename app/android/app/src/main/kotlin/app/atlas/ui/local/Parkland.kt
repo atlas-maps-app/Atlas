@@ -7,14 +7,16 @@ import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
+import app.atlas.places.OpenState
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
+import app.atlas.places.statedSpans
 import app.atlas.providers.OverpassElement
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
-import java.time.LocalDateTime
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -359,18 +361,21 @@ object Parkland {
         return rings
     }
 
-    /** "6:00–1:00": the span a park is open today, from its `opening_hours`; "24/7" for always; null when unmapped. */
-    fun todaysSpan(hours: String?, today: LocalDate): String? {
+    /**
+     * "6:00–1:00": the span a park is open today, from its `opening_hours` read in [context] (the holidays and the sun
+     * there): the first of today's own as the week states them, never last night's run past midnight (the app
+     * maintainer, 18 November 2026, batch 4 B11: `Mo-Su 08:00-23:00+` read "0:00+", the night's tail named as an
+     * opening); "6:00–17:00+" or "17:00+" for an open end, which states no closing time; "0:00–24:00" for a day open
+     * whole; "24/7" for always; null when unmapped or not open today.
+     */
+    fun todaysSpan(hours: String?, today: LocalDate, context: OpeningHoursContext): String? {
         val parsed = OpeningHours.parseOrNull(hours) ?: return null
         if (parsed.isAlwaysOpen) return "24/7"
-        val start = LocalDateTime.of(today, java.time.LocalTime.MIDNIGHT)
-        val s0 = parsed.status(start)
-        if (s0.unknown) return null
-        val from = if (s0.isOpen) start else s0.changesAt ?: return null
-        if (from.toLocalDate() != today) return null
-        val close = parsed.status(from).changesAt ?: return null
+        val own = parsed.weekTable(today, context)[today.dayOfWeek.value - 1]
+        val s = statedSpans(own).firstOrNull { it.state == OpenState.OPEN } ?: return null
         val f = java.time.format.DateTimeFormatter.ofPattern("H:mm")
-        return "${f.format(from)}–${f.format(close)}"
+        val end = s.end?.let { e -> if (s.start == 0 && e >= 24 * 60 && !s.openEnd) "24:00" else f.format(s.endTime) }
+        return f.format(s.startTime) + (end?.let { "–$it" } ?: "") + if (s.openEnd) "+" else ""
     }
 
     /**

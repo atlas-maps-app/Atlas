@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 32
+    const val ABI = 34
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -185,6 +185,19 @@ object Native {
     /** Copies the frame records not read yet into [out] (a direct buffer of [FrameRecords.SIZE]-byte records). */
     @JvmStatic external fun records(handle: Long, out: ByteBuffer): Int
 
+    /**
+     * Every frame record written handed on now, whether or not the display has said when it showed its frame: where the
+     * device gives no presentation times (CI's emulator), [records] hands one on only eight frames later.
+     */
+    @JvmStatic external fun publishRecords(handle: Long)
+
+    /**
+     * The map's stage F part by part of the frames drawn since the last call: the parts a frame first (the scene's
+     * update, the globals, the ranks, then each pass's select and update in the registry's order), then each frame's,
+     * ms, oldest first; kept from now on for the next call where [keep] (VK bench, around a measurement), else none kept.
+     */
+    @JvmStatic external fun stageF(handle: Long, keep: Boolean): DoubleArray
+
     @JvmStatic external fun stats(handle: Long): String
 
     /**
@@ -308,7 +321,7 @@ object Native {
     /**
      * A world pack's head into the world's cache in [dir]: the pack of [kind] and [length] bytes whose SHA-256 is
      * [identity], its bytes but its `chunks` section as [ranges], each from its offset in [offsets]; kept once the pack
-     * opens from them alone. "" or why not.
+     * opens from them alone. "" or why not. A terrain pack's head comes the same way, of kind 5 (terrain_country).
      */
     @JvmStatic external fun worldHead(
         dir: String,
@@ -359,6 +372,32 @@ object Native {
      * where the map's world holds no such pack or no cache.
      */
     @JvmStatic external fun worldKeep(handle: Long, block: Long, identity: ByteArray, offset: Long, bytes: ByteArray): LongArray?
+
+    /**
+     * The terrain's tiles the map wants whose chunks are not on the phone (ENGINE.md part 6, step 2), nearest first, as
+     * [worldWants]': eight numbers each, its pack's L9 block and its tile (keys packed as [wantedWindows]'), the
+     * chunk's offset in the pack and its length, then the pack's SHA-256 as four big-endian longs.
+     */
+    @JvmStatic external fun terrainWants(handle: Long): LongArray
+
+    /**
+     * The L9 tiles the map's drawn tiles lie in, nearest first, keys packed as [wantedWindows]', whether or not a
+     * terrain pack is open for them: the app fetches the heads of their packs that are not held.
+     */
+    @JvmStatic external fun terrainBlocks(handle: Long): LongArray
+
+    /**
+     * A range of the bytes of the terrain pack of [identity] (its SHA-256) from [offset]: its whole chunks checked and
+     * kept in the world's cache. The chunks kept, then the refused ones' tiles (packed); null where the map holds no
+     * such pack or no cache.
+     */
+    @JvmStatic external fun terrainKeep(handle: Long, identity: ByteArray, offset: Long, bytes: ByteArray): LongArray?
+
+    /** The map's relief from the terrain's heights, [on] (the default) or off. */
+    @JvmStatic external fun terrain(handle: Long, on: Boolean)
+
+    /** The registry ids of the sources of the relief the map's last frame drew, comma-separated; "" for none. */
+    @JvmStatic external fun terrainSources(handle: Long): String
 
     /**
      * Window ([z], [x], [y])'s kept data (Overpass's JSON of its query, in the file at [kept], which the core maps)
@@ -445,6 +484,17 @@ object Native {
      * cannot, or not yet (no frame drawn since the map or its window was made).
      */
     @JvmStatic external fun shapeRecords(handle: Long, on: Boolean): String
+
+    /**
+     * The passes the map's frames record from now on, by their names in the core's registry (`CP/frame/PassRegistry.cpp`:
+     * composite, frosted, ground, buildings, …, world), comma-separated in [keep], or every one for "" (VK bench's
+     * configurations and its split of the GPU's time by pass; a pass left out still selects and updates, and records
+     * nothing). "" or why not ("no pass named …").
+     */
+    @JvmStatic external fun passes(handle: Long, keep: String): String
+
+    /** The map's last frame's counts by pass, `<name> <draws> <dispatches> <triangles>` a line in the registry's order; "" before its first frame builder. */
+    @JvmStatic external fun passCounts(handle: Long): String
 
     /**
      * Where the fling under way lands ([has]: none when false): the camera's target, bearing, pitch and distance at its

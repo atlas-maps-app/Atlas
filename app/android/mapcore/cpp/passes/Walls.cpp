@@ -13,6 +13,7 @@
 #include "scene/Cover.hpp"
 #include "scene/Packs.hpp"
 #include "scene/Residency.hpp"
+#include "style/Palette.hpp"
 #include "tiles/Style.hpp"
 #include "twin/Twin.hpp"
 #include "twin/building/BuildingShader.hpp"
@@ -131,6 +132,11 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
         in.blocks = std::size_t{helpers} + 1;
     }
     const geometry::TileBuildings g = geometry::build_buildings(in);
+    if (g.windows_cut > 0) {
+        const tiles::TileHeader& h = b.tile().header;
+        log::warn("vk buildings: {}/{}/{} holds more windows than a frame draws ({}): {} walls go without theirs",
+                  h.level, h.x, h.y, tiles::building::most_tile_windows, g.windows_cut);
+    }
     if (g.items.empty()) return {};
     auto layout = std::make_shared<BuildingTile>();
     const std::vector<Words> words = heap_words(g, b.origin().x, b.origin().z, *layout);
@@ -179,7 +185,10 @@ ShopGlass shop_glass_of(const frame::FrameState& state) noexcept {
     const scene::ResidentPack* pack = state.active_pack;
     const tiles::Style* style = pack != nullptr && pack->source ? pack->source->pack.style() : nullptr;
     if (style == nullptr) return {};
-    return {.open = style->windows.shop_glass_open, .closed = style->windows.shop_glass_closed};
+    // the glass of a shop open at night the user's lit windows (the style's own colour theirs exactly)
+    const tiles::StyleRgb open = style->windows.shop_glass_open;
+    return {.open = style::paint(state.palette, style::palette_slot::lit_windows, open, open),
+            .closed = style->windows.shop_glass_closed};
 }
 
 void Buildings::write_rows(scene::Heaps& heaps, const scene::ResidentTile& tile, const scene::PassTile& mine,
@@ -585,6 +594,7 @@ void Buildings::emit(const frame::FrameState& state, twin::Stream& out, std::uin
             {.depth = state.ranks->depth(), .focal = state.view ? state.view->camera().focal() : 0.0}, gradients,
             left_out, out, objects);
         twin.record_depths(&depths_, static_cast<std::uint32_t>(i));
+        twin.palette(state.palette);
         // its shop floors' glazing at night, lit where one of its building's places is open at the moment, as the jobs
         // take it (passes/Windows.cpp)
         if (wx && (state.block.theme.flags.x & shaders::THEME_NIGHT) != 0U) {

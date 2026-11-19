@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # The nightly alpha's choice (.github/workflows/alpha.yml): the latest commit of the work branch whose push Android
 # (android.yml) built green and whose core Core (core.yml) built and tested green, on that push or, where the push left
-# the core alone, on the nearest push before it that tested it (core_word), when the app (app/, and render/traditions,
-# which the core compiles in) changed between the last alpha and it. Writes `tag` and `sha` to $GITHUB_OUTPUT (stdout
-# outside Actions) and the release notes (the commits since the last alpha, each by its first sentence, ENGINE.md's own
-# left out) to $NOTES. With nothing to release it says why and writes neither. Reads GitHub's runs with gh; changes
-# nothing.
+# the core alone, on the nearest push before it that tested it (core_word), when the app (app/) changed between the
+# last alpha and it. Writes `tag` and `sha` to $GITHUB_OUTPUT (stdout outside Actions) and the release notes (the
+# commits since the last alpha, each by its first sentence, ENGINE.md's and engine-history's own left out) to $NOTES.
+# With nothing to release it says why and writes neither. Reads GitHub's runs with gh; changes nothing.
 set -euo pipefail
 
 repo="${GITHUB_REPOSITORY:-atlas-maps-app/Atlas}"
@@ -45,10 +44,9 @@ latest() {
 # Core's word on the core that commit $1 carries: the conclusion of the latest completed Core push run that built and
 # tested the core (core.yml's matrix, whose host-debug jobs are its build and tests) on the commit or, where it has none,
 # on the nearest commit before it with one: "success", "failure", "cancelled" and the like; "" while that run is under
-# way; "unknown" where none is found within 100 commits. A push that leaves the core alone starts no Core run, or one of
-# the rule table's check alone (render/**): its core is the one tested before it, red or green. (Such a push counted as
-# green, so a Kotlin push after a red Core run would have made an alpha of the red core.) A run that failed without the
-# matrix is no too.
+# way; "unknown" where none is found within 100 commits. A push that leaves the core alone starts no Core run: its core
+# is the one tested before it, red or green. (Such a push once counted as green, so a Kotlin push after a red Core run
+# would have made an alpha of the red core.) A run that failed without the matrix is no too.
 core_word() {
   local sha=$1 run tested n=0
   while [ "$n" -lt 100 ]; do
@@ -85,7 +83,7 @@ if [ -z "$green" ]; then
   echo "no commit of $branch since $last_tag is green in both Core and Android"
   exit 0
 fi
-if git diff --quiet "$last_sha" "$green" -- app render/traditions; then
+if git diff --quiet "$last_sha" "$green" -- app; then
   echo "the app has not changed between $last_tag and ${green:0:7}"
   exit 0
 fi
@@ -95,7 +93,7 @@ tag="v0.1.0-alpha.$((last + 1))"
   echo "Nightly alpha from ${green:0:7}, the latest commit of $branch that Core and Android built green."
   echo
   echo "Since $last_tag:"
-  git log --reverse --format='%s' "$last_sha..$green" -- . ':(exclude)ENGINE.md' |
+  git log --reverse --format='%s' "$last_sha..$green" -- . ':(exclude)ENGINE.md' ':(exclude)engine-history' |
     perl -pe 's/^(.*?\.)\s.*$/$1/' | cut -c1-240 | sed 's/^/- /'
 } > "$notes"
 echo "$tag from ${green:0:7} ($(git log -1 --format=%cs "$green")); its notes in $notes"

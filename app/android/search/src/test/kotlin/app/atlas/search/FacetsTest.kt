@@ -21,7 +21,7 @@ class FacetsTest {
         Fixtures.store.byCategory(listOf("restaurants"), null).filter { it.distanceTo(Fixtures.westerkerk) < 1_000 }
     }
 
-    private fun context(lang: String = "en") = FacetContext(now, lang, HoursBook(places))
+    private fun context(lang: String = "en") = FacetContext(now, lang, HoursBook(places), opening = Nowhere)
 
     @Test
     fun notASingleTagIsLeftOut() {
@@ -117,7 +117,7 @@ class FacetsTest {
 
     @Test
     fun priceFreeAndBands() {
-        fun place(id: Long, vararg tags: Pair<String, String>) = PlaceRecord.of(Place(OsmId(OsmType.NODE, id), LatLon(52.37, 4.88), mapOf("amenity" to "toilets") + tags))
+        fun place(id: Long, vararg tags: Pair<String, String>) = PlaceRecord.of(Place(OsmId(OsmType.NODE, id), LatLon(52.37, 4.88), mapOf("amenity" to "toilets") + tags), country = null)
         val toilets = listOf(
             place(1, "fee" to "no"),
             place(2, "fee" to "yes", "charge" to "0.50 EUR"),
@@ -126,12 +126,12 @@ class FacetsTest {
             place(5, "charge" to "EUR 3"),
             place(6),
         )
-        val price = Facets.of(toilets, context = FacetContext(now)).byId(Facets.PRICE)!!
+        val price = Facets.of(toilets, context = FacetContext(now, opening = Nowhere)).byId(Facets.PRICE)!!
         assertEquals(listOf("free", "paid", "band:0-2", "band:2-5", Facets.MISSING), price.values.map { it.id })
         assertEquals(listOf(1, 4, 2, 1, 1), price.values.map { it.count })
         assertEquals("≤ 2 €", price.value("band:0-2")!!.label)
         assertEquals(FacetSection.COST, price.section)
-        val free = Facets.of(toilets, FacetSelection.NONE.toggle(Facets.PRICE, "free"), FacetContext(now))
+        val free = Facets.of(toilets, FacetSelection.NONE.toggle(Facets.PRICE, "free"), FacetContext(now, opening = Nowhere))
         assertEquals(listOf(1L), free.kept.map { it.id!!.id })
         assertEquals(Facets.Amount(2.5, "€"), Facets.amount("€2,50"))
         assertEquals(Facets.Amount(2.0, "€"), Facets.amount("EUR2"))

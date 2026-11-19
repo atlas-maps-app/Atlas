@@ -96,6 +96,14 @@ struct BuildingTile {
     std::vector<std::uint16_t> near_items;
     /// Each windowed wall's first window among the tile's by cell (its windows: [window_at[i], window_at[i + 1])).
     std::vector<std::uint32_t> window_at;
+    /// The windows of windowed walls [first, first + n), exact: each wall's count is its levels times its bays (below
+    /// 2^32, as the shader counts them), so its difference in window_at is exact though the running count may wrap;
+    /// their sum, which may not fit 32 bits, in 64.
+    [[nodiscard]] std::uint64_t windows_of(std::uint32_t first, std::uint32_t n) const noexcept {
+        std::uint64_t sum = 0;
+        for (std::uint32_t i = first; i < first + n; ++i) sum += window_at[i + 1] - window_at[i];
+        return sum;
+    }
     /// Each windowed wall's item (its wall's), so the frame's jobs take only the walls whose windows it draws.
     std::vector<std::uint16_t> window_items;
     /// Each windowed wall's face (its wall's), whose light inputs its reveals' colour comes from.
@@ -146,6 +154,7 @@ struct BuildingTile {
         std::uint32_t k = 0;
         double rstep = 0.0;
         std::uint32_t rgb = 0;
+        std::uint32_t light = 0; ///< its slope's face (lights), whose colour it is a darker tone of (repainted)
         std::uint16_t near_slot = 0;
         std::uint16_t far_slot = 0;
     };
@@ -179,6 +188,9 @@ struct BuildingTile {
         std::uint32_t boards = 0;
         double spacing = 0.0;
         std::uint32_t rgb = 0;
+        /// its wall's face (lights), whose colour its lines are a darker tone of (repainted); no_light where they are
+        /// the kit's neutral grey's (a wall not drawn in its own colour)
+        std::uint32_t light = 0;
         bool shadow = false;
         std::array<std::array<float, 3>, 4> shade{};
         std::uint16_t lines_near = 0;
@@ -226,6 +238,16 @@ struct BuildingTile {
 /// colour is the plain clay (style::plain_building); with its flat greys a guessed flat roof moves from its own slot's
 /// colour to its mid grey's (style::flat_roof_slot).
 [[nodiscard]] std::uint32_t painted(const style::PaletteBlock* palette, const BuildingLight& light) noexcept;
+
+/// A BuildingTile::Courses' or KitWall's light for a colour that goes with no face.
+inline constexpr std::uint32_t no_light = 0xFFFF'FFFFU;
+
+/// A colour `made` (0xRRGGBB) darkened from a face's base as its geometry was built (a kit roof's tile courses, a
+/// metal wall's ribs, a kit wall's boards' lines), as the user's palette paints the face `light` (null: none): the
+/// same darker tone of the face's painted colour (style::palette_move, the palette's rule for the parts drawn with a
+/// colour), and `made` itself where the palette leaves the face as it is.
+[[nodiscard]] std::uint32_t repainted(const style::PaletteBlock* palette, const BuildingLight* light,
+                                      std::uint32_t made) noexcept;
 /// Every face's colours at the theme `theme` in the user's palette `palette` (null: today's), lit and unlit (0xBBGGRR:
 /// light.slang's light() and tohex in binary64, the port's bits), two words a face, into `out` (2 · lights.size()
 /// words).

@@ -1,0 +1,7 @@
+# The Rust the core's stage P is built with (cpp/cmake/Rust.cmake), pinned like the NDK and CMake. The Android ABIs'
+# targets (aarch64-linux-android, x86_64-linux-android) are added where the NDK builds: by .github/scripts/rust.sh
+# android on CI, by `rustup target add` on a machine (~/atlas/home/SETUP.md). They are not listed here, so that a host
+# build never fetches them.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"

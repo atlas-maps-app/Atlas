@@ -3,7 +3,7 @@ package app.atlas.mapview
 import app.atlas.mapview.svg.SvgFonts
 import java.io.File
 
-/** The repository and the bundled typefaces for the tests that draw the renders' SVG ([app.atlas.mapview.svg.SvgRaster]). */
+/** The repository and the bundled typefaces, for the tests that shape and draw the map's text. */
 object EngineTestKit {
     val repo: File get() = File(System.getProperty("atlas.repo") ?: "../../..").canonicalFile
 

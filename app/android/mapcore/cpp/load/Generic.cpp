@@ -3,6 +3,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Real.hpp"
 #include "text/Case.hpp"
@@ -332,7 +333,7 @@ struct Look {
     const std::optional<std::int64_t> yr = b.year;
     const bool yr_t = yr.has_value() && *yr != 0;
     const double h = b.h != 0.0 ? b.h : 0.0;
-    const auto lv_tag = num(t.get("building:levels"));
+    const auto lv_tag = building_num(t, "building:levels");
     const double lv = lv_tag.has_value() && *lv_tag != 0.0 ? *lv_tag : (h != 0.0 ? h / 3.1 : 2.0);
     auto [kind, why] = kind_of(t, landuse, region, std::fabs(geometry::signed_area(b.poly)), b.h);
     if (kind == "tower" && (in(t.get("tower:type"), {"bell_tower", "church"}) || t.truthy("historic") ||
@@ -495,6 +496,14 @@ constexpr std::array<std::string_view, 5> says_kind = {"home", "office", "hotel"
 /// `x or 0` of an optional float: 0 where None or zero.
 [[nodiscard]] double or0(std::optional<double> v) noexcept { return v.has_value() && *v != 0.0 ? *v : 0.0; }
 
+/// `max(1, int(round(floors)))` as the port's Int, its low 32 bits: the levels of a height. 1 where round() cannot
+/// take it: a tag's height or roof levels past any Long's floors, infinite or NaN (CI's fuzz_load, 14 and 16 Nov 2026:
+/// a `height` of 7e26 m ended the process here), as guess_tags's levels_from_height takes them.
+[[nodiscard]] std::int32_t levels_of(double floors) noexcept {
+    const auto rounded = pymath::checked::round(floors);
+    return rounded ? static_cast<std::int32_t>(std::max<std::int64_t>(1, *rounded)) : 1;
+}
+
 /// One cell of a grid of `cell`-metre squares, as `(int(x // cell), int(z // cell))`.
 [[nodiscard]] std::uint64_t cell_key(std::int64_t i, std::int64_t j) noexcept {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(i)) << 32U) | static_cast<std::uint32_t>(j);
@@ -613,13 +622,13 @@ bool paris_roof(Building& b, std::string_view kind, std::string_view wall, Guess
     }
     if (yr && *yr != 0 && (*yr < 1760 || *yr >= 1940)) return false;
     if (b.levels < 4 || b.levels > 9 || std::fabs(geometry::signed_area(b.poly)) < 80) return false;
-    const auto rl = num(t.get("roof:levels"));
+    const auto rl = building_num(t, "roof:levels");
     b.roof = "mansard";
     b.roof_h = rl && *rl != 0.0 ? *rl * 3.0 : 3.4;
     g.add(Guess::roof_height);
     if (b.src == HeightSource::height) {
         if (!t.truthy("building:levels")) {
-            b.levels = static_cast<std::int32_t>(std::max<std::int64_t>(1, pymath::round((b.h - *b.roof_h) / 3.1)));
+            b.levels = levels_of((b.h - *b.roof_h) / 3.1);
         }
     } else {
         b.h = (b.levels * 3.0) + *b.roof_h;
@@ -688,8 +697,10 @@ bool trad_look(Building& b, const Tradition& p, std::string_view kind, const std
     }
     const bool part = t.has("building:part");
     const std::vector<V2>& poly = b.poly;
+    const std::vector<std::uint8_t> seam = geometry::seams(poly); // a seam is no side
     double longest = 0.0;
     for (std::size_t i = 0; i < poly.size(); ++i) {
+        if (!seam.empty() && seam[i] != 0) continue;
         const double e = geometry::dist(poly[i], poly[(i + 1) % poly.size()]);
         if (i == 0 || e > longest) longest = e;
     }
@@ -767,7 +778,7 @@ bool trad_look(Building& b, const Tradition& p, std::string_view kind, const std
             g.add(Guess::roof_height);
             g.add(Guess::roof_direction);
         } else if (shape == "mansard") {
-            const auto rl = num(t.get("roof:levels"));
+            const auto rl = building_num(t, "roof:levels");
             b.roof_h = rl && *rl != 0.0 ? *rl * p.floor_h : (rule != nullptr ? rule->roof_h.value_or(3.4) : 3.4);
             g.add(Guess::roof_height);
         } else {
@@ -776,7 +787,7 @@ bool trad_look(Building& b, const Tradition& p, std::string_view kind, const std
         const double rh = or0(b.roof_h);
         if (b.src == HeightSource::height) {
             if (!t.truthy("building:levels")) {
-                b.levels = static_cast<std::int32_t>(std::max<std::int64_t>(1, pymath::round((b.h - rh) / p.floor_h)));
+                b.levels = levels_of((b.h - rh) / p.floor_h);
             }
         } else if (g.has(Guess::height) || b.src == HeightSource::levels) {
             b.h = (b.levels * p.floor_h) + rh;
@@ -970,12 +981,15 @@ void party_walls(Scene& s, double tol) {
         if (!b.hidden) bs.push_back(&b);
     }
     std::unordered_map<std::uint64_t, std::vector<Edge>> grid;
+    std::vector<std::vector<std::uint8_t>> seams(bs.size()); // a seam is no wall
+    for (std::size_t k = 0; k < bs.size(); ++k) seams[k] = geometry::seams(bs[k]->poly);
+    const auto seam = [&](std::size_t k, std::size_t i) { return !seams[k].empty() && seams[k][i] != 0; };
     for (std::size_t k = 0; k < bs.size(); ++k) {
         const std::vector<V2>& p = bs[k]->poly;
         for (std::size_t i = 0; i < p.size(); ++i) {
             const V2 a = p[i];
             const V2 c = p[(i + 1) % p.size()];
-            if (geometry::dist(a, c) < 1.5) continue;
+            if (seam(k, i) || geometry::dist(a, c) < 1.5) continue;
             const double mx = (a.x + c.x) / 2;
             const double mz = (a.z + c.z) / 2;
             grid[cell_key(cell_of(mx, cell), cell_of(mz, cell))].push_back(
@@ -989,7 +1003,7 @@ void party_walls(Scene& s, double tol) {
             const V2 a = p[i];
             const V2 c = p[(i + 1) % p.size()];
             const double len = geometry::dist(a, c);
-            if (len < 1.5) continue;
+            if (seam(k, i) || len < 1.5) continue;
             const double mx = (a.x + c.x) / 2;
             const double mz = (a.z + c.z) / 2;
             const double ux = (c.x - a.x) / len;

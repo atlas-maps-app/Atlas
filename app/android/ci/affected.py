@@ -9,8 +9,9 @@ header picks every test file that includes it, from the build folder's dependenc
 there is a build, else the test files that include it by name; a changed source picks its area's tests (the label of
 the same name) and the test files that include its header; the shaders pick the Vulkan tests (label vk) and the
 SPIR-V locks; the build's configuration or third-party code picks every entry. Every change of the core adds the JNI
-tests of :mapcorecheck that hold its area to the port. A Kotlin module picks its own unit tests and those of each
-module that depends on it. Prints the commands; runs nothing.
+tests of :mapcorecheck that cover its area (the engine's references among them). A Kotlin module picks its own unit
+tests and those of each module that depends on it. The transit planner (app/android/transit) picks its own two: the
+packer's check and the crate's tests. Prints the commands; runs nothing.
 
 Python 3's standard library only.
 """
@@ -26,15 +27,16 @@ ROOT = Path(__file__).resolve().parents[3]
 CORE = Path("app/android/mapcore/cpp")
 ANDROID = Path("app/android")
 
-# :mapcorecheck's test packages (app.atlas.mapcorecheck.<package>) that hold each of the core's areas to the port.
+# :mapcorecheck's test packages (app.atlas.mapcorecheck.<package>) that cover each of the core's areas: likeness holds
+# the engine's references, the frames drawn.
 CHECK_PACKAGES = {
-    "base": ["numerics"], "osm": ["osm", "load"], "load": ["load"], "tiles": ["tiles", "load"],
-    "style": ["style", "likeness"], "sun": ["sun"], "text": ["text", "likeness"], "fx": ["fx", "likeness"],
-    "geometry": ["buildings", "twin", "likeness"], "stagep": ["load"],
+    "base": ["numerics"], "osm": ["load"], "load": ["load"], "tiles": ["tiles", "load"],
+    "style": ["style", "likeness"], "sun": ["sun", "likeness"], "text": ["likeness"], "fx": ["likeness"],
+    "geometry": ["twin", "likeness"], "stagep": ["load"],
 }
-# the areas whose code draws the frame: the twin, the likeness candidates, the frame's own checks
+# the areas whose code draws the frame: the twin, the engine's references, the frame's own checks
 for _area in ["frame", "passes", "scene", "gpu", "view", "labels", "markers", "routes", "standin", "twin", "shaders"]:
-    CHECK_PACKAGES[_area] = ["twin", "likeness", "frame", "buildings"]
+    CHECK_PACKAGES[_area] = ["twin", "likeness", "frame"]
 
 
 def git(*args):
@@ -127,7 +129,7 @@ def main():
                 if f'"{include}"' in t.read_text(encoding="utf-8", errors="replace")}
 
     labels, names, packages = set(), set(), set()
-    everything = spirv = check_all = fuzz = bench = False
+    everything = spirv = check_all = fuzz = bench = transit = False
     gradle_changed, other = set(), []
     for path in paths:
         p = Path(path)
@@ -174,12 +176,24 @@ def main():
             rel = p.relative_to(ANDROID)
             if rel.parts[0] in ("gradle", "build.gradle.kts", "settings.gradle.kts", "gradle.properties"):
                 gradle_changed.add("*")
+            elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "rust":
+                # the buildings' cleaning, a Rust library stage P links: its loads and what draws them, and its fuzzer
+                labels.update(["load", "building"])
+                fuzz = True
+                packages.update(CHECK_PACKAGES["load"] + CHECK_PACKAGES["geometry"])
+                other.append(path)
             elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "style":
                 gradle_changed.update(["mapcore", "packer"])
                 check_all = True
                 labels.add("style")
+            elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "traditions":
+                # the building traditions the core embeds (CMakeLists.txt's atlas_embed_data) and reads typed
+                names.add("load/tradition_test")
+                gradle_changed.add("mapcore")
             elif rel.parts[0] == "ci":
                 other.append(path)
+            elif rel.parts[0] == "transit":
+                transit = True
             else:
                 gradle_changed.add(rel.parts[0])
         else:
@@ -214,12 +228,12 @@ def main():
     else:
         chosen = dependents(modules, {m for m in gradle_changed if m in modules})
     for name in sorted(chosen):
-        if name in ("mapcorecheck", "likeness"):
+        if name == "mapcorecheck":
             continue
         kind = modules[name][0]
         tasks.append(f":{name}:testDebugUnitTest" if kind == "android" else f":{name}:test")
     check = check_all or "mapcorecheck" in chosen or "*" in gradle_changed
-    if tasks or check or packages or "likeness" in chosen:
+    if tasks or check or packages:
         print()
         print(f"Gradle (in {ANDROID}, with ENGINE.md's flags):")
         if tasks:
@@ -229,13 +243,15 @@ def main():
         elif packages:
             filters = " ".join(f"--tests 'app.atlas.mapcorecheck.{p}.*'" for p in sorted(packages))
             print(f"  ./gradlew :mapcorecheck:test {filters}")
-        if "likeness" in chosen or "likeness" in packages or check:
-            print("  ./gradlew :likeness:testDebugUnitTest   # the likeness references (then :mapcorecheck's likeness.*)")
+    if transit:
+        print()
+        print(f"The transit planner (in {ANDROID / 'transit'}; Rust from ~/.cargo/bin, a build folder outside the tree):")
+        print("  python3 -I pack/test_ttpack.py   # the packer: the hand-written feed's bytes, the cosine table")
+        print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
+        print("  (.github/workflows/transit.yml runs them on x86_64 and arm64 Linux, on a push that changes app/android/transit)")
     if other:
         print()
         print("Other paths, which no local suite covers (CI's do): " + ", ".join(other[:12]) + (" ..." if len(other) > 12 else ""))
-        if any(o.startswith("render/") or o.startswith(str(CORE / "rules")) for o in other):
-            print("  python3 -I app/android/mapcore/rules/check_rules.py check   # the rule table against the renderer")
     print()
     print("The full suites are CI's: every ctest entry under ASan, TSan and the release flags on x86_64 and arm64, both")
     print("tidy databases, the fuzzers, the canaries, every Gradle test and the emulator's screens run on each push to app.")

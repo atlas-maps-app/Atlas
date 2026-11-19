@@ -260,19 +260,21 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
     val pin = vm.pin
     // closed places lighter, as their rows are: open or not then as now, the sheet's
     val now = rememberNow(found.results)
-    val markers = remember(findOpen, found.results, found.focus, found.prefs.cards, typedState.results, findText, highlights, pin, opened, edits, now) {
+    // the country of the map where the search is, which the brands on the pins are matched in
+    val country = found.moment.hours.country
+    val markers = remember(findOpen, found.results, found.focus, found.prefs.cards, typedState.results, findText, highlights, pin, opened, edits, now, country) {
         buildList {
             // The search's places replace the area's highlights.
-            if (!findOpen) addAll(HomeHighlights.markers(highlights))
+            if (!findOpen) addAll(HomeHighlights.markers(highlights, country))
             // The user's edits waiting to go or not sent, at their buildings: drawn as mapped once OpenStreetMap took them.
             addAll(EditMarkers.of(edits, editWaiting, editNotSent))
-            if (findOpen) addAll(if (findText.isNotBlank()) typedMarkers(typedState.results, now, found.centre, found.prefs.mode) else sheetMarkers(found, now))
+            if (findOpen) addAll(if (findText.isNotBlank()) typedMarkers(typedState.results, now, found.centre, found.prefs.mode, found.moment.hours) else sheetMarkers(found, now))
             // the point of a map view a link opened, until the map is moved away from it
             pin?.let { add(Marker("focus", it, "maki-marker", 0xFF2E5BFF, MarkerStyle.PIN, priority = 1_000)) }
             // An opened place's pin, chosen, as the Place board draws it: in place of its marker among the others.
             opened?.let { p ->
                 removeAll { it.place?.key == p.key }
-                val (symbol, colour) = markOf(p)
+                val (symbol, colour) = markOf(p, country)
                 add(Marker(p.key, p.location, symbol, colour.toLong() and 0xFFFFFFFFL, MarkerStyle.PIN, selected = true, priority = 1_000, place = p))
             }
         }
@@ -418,8 +420,9 @@ fun HomeScreen(args: Dest.Home, nav: Navigator) {
                 .padding(start = 12.dp, end = 12.dp, bottom = if (showingResults) 8.dp else barInset + 12.dp)
                 .keepsLabelsOff("bottom", lift),
         ) {
+            // the relief's sources after OpenStreetMap while the map draws it ("© OpenStreetMap · Copernicus · AHN")
             Text(
-                stringResource(R.string.home_attribution),
+                stringResource(R.string.home_attribution) + vm.map.credits.joinToString("") { " · $it" },
                 Modifier.align(Alignment.End).padding(end = 4.dp, bottom = 10.dp),
                 style = boardText(9f, FontWeight.Normal).copy(
                     shadow = androidx.compose.ui.graphics.Shadow(

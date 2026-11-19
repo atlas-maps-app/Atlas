@@ -77,6 +77,7 @@ import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssLinear
 import app.atlas.ui.kit.drawSymbol
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import app.atlas.ui.kit.shortDistance
 import java.time.LocalDate
 import java.time.Month
@@ -190,7 +191,7 @@ private fun Sign(park: Park, here: LatLon, today: LocalDate, kind: ParkKind?, pi
     val what = if (park.kind == GreenKind.PARK) null else Presets.match(park.place.tags)?.name(lang)?.uppercase(Locale.getDefault())
     val area = park.shape.areaM2?.takeIf { park.shape.outlined }?.let { Parkland.areaText(it) }
     val sub = listOfNotNull(what, area).joinToString(" · ").ifEmpty { null }
-    val hours = Parkland.todaysSpan(park.hours, today)
+    val hours = Parkland.todaysSpan(park.hours, today, rememberHoursAt(park.place.location))
     val big = nameSize(name)
     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
         // The posts: 16 wide, 44 px in from each side, from behind the board's foot to under the sheet's edge.
@@ -556,9 +557,10 @@ private fun DetailCard(poi: ParkPoi, park: Park, here: LatLon, today: LocalDate,
     val own = Localise.name(t, lang)
     val wild = poi.kind == ParkKind.SLEEP || poi.kind == ParkKind.VISITOR
     val name = own ?: (if (wild) Presets.match(t)?.name(lang) else null) ?: kindName(poi.kind)
+    val opening = rememberHoursAt(poi.place.location)
     val facts = buildList {
         if (own != null && poi.kind == ParkKind.SLEEP) Presets.match(t)?.name(lang)?.let { add(it) }
-        Parkland.todaysSpan(t["opening_hours"], today)?.let { add(it) }
+        Parkland.todaysSpan(t["opening_hours"], today, opening)?.let { add(it) }
         ageRange(t)?.let { add(stringResource(R.string.park_ages, it)) }
         if (fenced(t)) add(stringResource(R.string.picnic_fenced))
         if (t["wheelchair"] == "yes") add(stringResource(R.string.picnic_step_free))

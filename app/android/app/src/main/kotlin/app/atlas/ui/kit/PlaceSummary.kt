@@ -15,6 +15,7 @@ import app.atlas.places.KindColours
 import app.atlas.places.Localise
 import app.atlas.places.OpenStatus
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
 import java.time.Duration
@@ -42,22 +43,37 @@ data class PlaceSummary(
     val walk: String? get() = distanceM?.let { walkMinutes(WalkTime.seconds(it)) }
 
     companion object {
-        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime = LocalDateTime.now()): PlaceSummary {
+        /**
+         * [place] seen from [from], its hours read at [now] in [hours]: the holidays and the sun where it is, which every
+         * caller passes (the reviewer, 17 November, finding 7: `HereContext.hours`, never a default).
+         */
+        fun of(place: Place, from: LatLon?, lang: String?, now: LocalDateTime, hours: OpeningHoursContext): PlaceSummary {
+            val h = OpeningHours.parseOrNull(place.tags["opening_hours"])
+            return of(place, from, lang, h?.status(now, hours), h, hours.country)
+        }
+
+        /**
+         * [place] seen from [from], how it stands for opening [open] as its caller read it (a search's hit, a page's
+         * status); its mark the brand's of [country], the country of the map at it ([markOf]).
+         */
+        fun withOpen(place: Place, from: LatLon?, lang: String?, open: OpenStatus?, country: String?): PlaceSummary =
+            of(place, from, lang, open, OpeningHours.parseOrNull(place.tags["opening_hours"]), country)
+
+        private fun of(place: Place, from: LatLon?, lang: String?, open: OpenStatus?, hours: OpeningHours?, country: String?): PlaceSummary {
             val tags = place.tags
             val preset = Presets.match(tags)
             val kind = preset?.name(lang)
             val own = Localise.name(tags, lang)
             // A place with no name of its own is titled by what it is ("Gift Shop"), and no kind line repeats it ("Gifts")
             val name = own ?: preset?.fullName(lang) ?: place.id?.toString() ?: ""
-            val hours = OpeningHours.parseOrNull(tags["opening_hours"])
-            val (symbol, colour) = markOf(place)
+            val (symbol, colour) = markOf(place, country)
             return PlaceSummary(
                 place = place,
                 name = name,
                 kind = kind?.takeIf { own != null && it != name },
                 symbol = symbol,
                 colour = colour,
-                open = hours?.status(now),
+                open = open,
                 alwaysOpen = hours?.isAlwaysOpen == true,
                 distanceM = from?.let { Geo.distance(it, place.location) },
             )
@@ -70,26 +86,29 @@ data class PlaceSummary(
  * logo where the brand has one, else its kind's symbol (kinds.tsv), on its family's colour ([Symbols.markFor],
  * [Symbols.colourFor]) or its kind's own, its thing's ([KindColours]: a bakery's bread brown); the same mark on every
  * screen, so a place seen once is known again, but on the search's pins and rows, where a chain with a colour of its
- * own is on its sign ([signOf]). Kept by the place's key, for the maps and lists that ask on every frame.
+ * own is on its sign ([signOf]). Its brand is the one of [country], the country of the map at it, unless it names its
+ * own ([Brands.forTags]). Kept by the place's key, for the maps and lists that ask on every frame.
  */
-fun markOf(place: Place): Pair<String, Int> {
-    marks[place.key]?.let { (tags, mark) -> if (tags == place.tags) return mark }
-    val mark = Symbols.markFor(place.tags) to (KindColours.of(place.tags) ?: Symbols.colourFor(place.tags))
+fun markOf(place: Place, country: String?): Pair<String, Int> {
+    marks[place.key]?.let { m -> if (m.tags == place.tags && m.country == country) return m.mark }
+    val mark = Symbols.markFor(place.tags, country) to (KindColours.of(place.tags) ?: Symbols.colourFor(place.tags))
     if (marks.size >= MARKS) marks.clear()
-    marks[place.key] = place.tags to mark
+    marks[place.key] = Mark(place.tags, country, mark)
     return mark
 }
 
-private val marks = ConcurrentHashMap<String, Pair<Map<String, String>, Pair<String, Int>>>()
+private class Mark(val tags: Map<String, String>, val country: String?, val mark: Pair<String, Int>)
+
+private val marks = ConcurrentHashMap<String, Mark>()
 
 /**
  * The brand whose own sign [place] wears on the search's pins and rows, as on the brand's page: one with a logo and a
  * colour of its own, the Albert Heijn blue everyone knows from the street (the owner, 6 November, of a green Albert
  * Heijn among the groceries: "Why doesnt albert heijn get its color on this image?"). Null for the rest, a brand whose
- * colour is not known among them, which wear [markOf].
+ * colour is not known among them, which wear [markOf]. The brand of [country], as [markOf]'s.
  */
-fun signOf(place: Place): Brand? =
-    Brands.forTags(place.tags)?.takeIf { b -> b.colour != null && b.logoSlug?.let { Symbols.has("logo-$it") } == true }
+fun signOf(place: Place, country: String?): Brand? =
+    Brands.forTags(place.tags, country)?.takeIf { b -> b.colour != null && b.logoSlug?.let { Symbols.has("logo-$it") } == true }
 
 /** The most marks kept: a city's places in view and in the lists, a few times over. */
 private const val MARKS = 4096
@@ -135,7 +154,9 @@ sealed interface OpenWords {
             if (st.unknown) return null
             val at = st.changesAt
             if (st.isOpen) {
-                if (at == null) return Always
+                // no change within the year: open day and night, unless it runs on only through guessed tails
+                // (`Mo-Su 02:00-24:00+`; the app maintainer, 18 November 2026, batch 4 B9): open, and no end named
+                if (at == null) return if (st.openEnd) Open else Always
                 // Only a stated closing time is said; an open end's is a guess, and a change to "unknown" is no closing.
                 if (st.nextChangeKind != ChangeKind.CLOSES || st.openEnd) return Open
                 val left = Duration.between(now, at).toMinutes()

@@ -276,7 +276,7 @@ class RegionEngineTest {
         assertTrue("the map, search and routing were told after each layer: $changed", changed >= 3)
     }
 
-    /** [thePack] with its places of store [schema] as the list names it ("5", or "\"3\"" written as text), over [box]. */
+    /** [thePack] with its places of store [schema] as the list names it ("6", or "\"4\"" written as text), over [box]. */
     private fun packOfSchema(schema: String?, seed: Int = 1, box: BBox = pack, id: String = "test"): Pack {
         val places = data(80_000, seed + 1)
         served["/$id.places"] = places
@@ -295,7 +295,7 @@ class RegionEngineTest {
      */
     @Test
     fun aPacksPlacesOfASchemaThisAtlasCannotOpenAreNotDownloadedAndComeWhenThePackIsPublishedAgain() {
-        var current = packOfSchema("5")
+        var current = packOfSchema("6")
         val e = engine(deps({ listOf(current) }))
         assertNull(e.readablePlaces(current))
         assertEquals(300_000L, e.countryBytes(current))
@@ -315,7 +315,7 @@ class RegionEngineTest {
         // the same pack again: nothing to update
         assertTrue(runBlocking { e.checkUpdates() }.isEmpty())
         // published again with places this Atlas reads: an update, which takes them
-        current = packOfSchema("4", seed = 7)
+        current = packOfSchema("5", seed = 7)
         assertTrue(runBlocking { e.placesAgainReadable(id) })
         val found = runBlocking { e.checkUpdates() }
         assertEquals(setOf(RegionLayer.PLACES), found.getValue(id).layers)
@@ -326,10 +326,35 @@ class RegionEngineTest {
         assertEquals("pack", files.get(id)!!.layers.getValue(RegionLayer.PLACES).kind)
     }
 
-    /** A pack's places of schema 3 (packs-20261104, the last published) and of this Atlas's own are taken, however the list writes the number. */
+    /**
+     * Places left out because the published store was of a schema this Atlas could not open come once this Atlas reads
+     * that same file (the next alpha reads the schema: alpha.yml's guard has the packs published before the alpha that
+     * reads them). Here the same bytes, the same SHA-256, now of the schema this Atlas reads, which is all the engine
+     * sees of an updated app (the reviewer, 17 November 2026: until then only a pack of other bytes brought them).
+     */
     @Test
-    fun aPacksPlacesOfASchemaThisAtlasOpensAreTaken() {
-        for ((i, schema) in listOf("3", "\"3\"", "4", "4.0", null).withIndex()) {
+    fun placesLeftOutComeOnceThisAtlasReadsTheSamePublishedFile() {
+        var current = packOfSchema("6")
+        val e = engine(deps({ listOf(current) }))
+        val id = RegionEngine.idFor("Around Amsterdam")
+        e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.MAP, RegionLayer.PLACES))
+        runBlocking { e.resume(id) }
+        assertTrue(e.details.value.single().placesLeftOut)
+        // the same file, readable now
+        current = packOfSchema("5")
+        assertNotNull(e.readablePlaces(current))
+        assertTrue(runBlocking { e.placesAgainReadable(id) })
+        val found = runBlocking { e.checkUpdates() }
+        assertEquals("the places left out are offered once this Atlas reads them", setOf(RegionLayer.PLACES), found[id]?.layers)
+        runBlocking { e.resume(id, update = true) }
+        assertFalse(e.details.value.single().placesLeftOut)
+        assertEquals(80_000L, files.places(id).length())
+    }
+
+    /** A pack's places of this Atlas's own schema are taken, however the list writes the number, and those of a list that names none. */
+    @Test
+    fun aPacksPlacesOfThisAtlassSchemaAreTaken() {
+        for ((i, schema) in listOf("5", "\"5\"", "5.0", null).withIndex()) {
             val p = packOfSchema(schema, id = "p$i")
             val e = engine(deps({ listOf(p) }))
             assertNotNull("schema $schema", e.readablePlaces(p))
@@ -340,15 +365,15 @@ class RegionEngineTest {
             assertEquals("schema $schema", 80_000L, files.places(id).length())
             assertEquals(1, hitsOf("p$i.places"))
         }
-        // nor one it cannot read, nor one the list names in a way that is no number
-        for (schema in listOf("2", "x")) assertNull(schema, engine(deps({ emptyList() })).readablePlaces(packOfSchema(schema, id = "q$schema")))
+        // not those of the schema before it (packs-20261117's), nor one the list names in a way that is no number
+        for (schema in listOf("4", "x")) assertNull(schema, engine(deps({ emptyList() })).readablePlaces(packOfSchema(schema, id = "q$schema")))
     }
 
     /** Where the phone can build the area (a town), the places of a pack it cannot read are imported, as where there is no pack. */
     @Test
     fun aTownWhosePacksPlacesCannotBeOpenedImportsThem() {
         val around = BBox(4.84, 52.32, 4.96, 52.41)
-        val p = packOfSchema("5", box = around)
+        val p = packOfSchema("6", box = around)
         var imported = 0
         val e = engine(deps({ listOf(p) }, import = { _, _, f, _ -> imported++; f.writeText("imported") }))
         assertNotNull(e.choosePack(town, listOf(p)))
@@ -365,13 +390,13 @@ class RegionEngineTest {
     /** A region whose places were taken before keeps them where its pack is published again with places it cannot read. */
     @Test
     fun placesTakenBeforeStayWhereThePackIsPublishedAgainUnreadable() {
-        var current = packOfSchema("4")
+        var current = packOfSchema("5")
         val e = engine(deps({ listOf(current) }))
         val id = RegionEngine.idFor("Around Amsterdam")
         e.begin(id, "Around Amsterdam", inside, setOf(RegionLayer.PLACES))
         runBlocking { e.resume(id) }
         val before = files.places(id).readBytes()
-        current = packOfSchema("5", seed = 3)
+        current = packOfSchema("6", seed = 3)
         assertEquals(setOf(RegionLayer.PLACES), runBlocking { e.checkUpdates() }.getValue(id).layers)
         runBlocking { e.resume(id, update = true) }
         assertTrue(before.contentEquals(files.places(id).readBytes()))

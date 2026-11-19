@@ -13,9 +13,11 @@ import app.atlas.services.SettingsKeys
 import io.nayuki.qrcodegen.QrCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.math.abs
 
 /** The Map look's palette as the settings keep it, its switches and Tone, and the saved palettes' lines and names. */
@@ -43,12 +45,53 @@ class MapLookModelTest {
         assertEquals(0, off.flags)
         assertFalse(MapLookModel.on(off, PaletteFlags.FLAT_GREYS))
         assertNull(MapLookModel.withSwitch(off, PaletteFlags.FLAT_GREYS, true).flags)
-        assertNull(MapLookModel.withTone(Palette(), true, 1f).tone)
-        assertEquals(0f, MapLookModel.withTone(Palette(), false, 1.4f).tone)
-        assertEquals(1.4f, MapLookModel.withTone(Palette(), true, 1.4f).tone)
-        // alpha 22 brings the Tone off, and taking it turns it off at today's strength
-        assertEquals(false to 1f, MapLookModel.toneOf(a22))
-        assertEquals(true to 1.5f, MapLookModel.toneOf(Palette(tone = 1.5f)))
+        assertNull(MapLookModel.withTone(Palette(), 1f).tone)
+        assertEquals(0f, MapLookModel.withTone(Palette(), 0f).tone)
+        assertEquals(1.4f, MapLookModel.withTone(Palette(), 1.4f).tone)
+    }
+
+    @Test
+    fun aLookIsItsPresetItsChangedColoursItsToneAndItsSwitchesButNeverTheGuesses() {
+        val quiet = Palette(Preset.QUIET)
+        assertEquals(Look(Preset.QUIET, emptyMap(), 20, 0), MapLookModel.look(quiet))
+        // a colour kept that is the preset's own changes nothing
+        assertEquals(MapLookModel.look(quiet), MapLookModel.look(quiet.copy(colours = mapOf(Slot.WATER to Preset.QUIET.colour(Slot.WATER)))))
+        assertEquals(MapLookModel.look(quiet), MapLookModel.look(MapLookModel.withSwitch(quiet, PaletteFlags.NO_GUESSES, true)))
+        assertNotEquals(MapLookModel.look(quiet), MapLookModel.look(quiet, 1.4f))
+        assertNotEquals(MapLookModel.look(quiet), MapLookModel.look(MapLookModel.withSwitch(quiet, PaletteFlags.GRASS, true)))
+        assertEquals(Preset.QUIET, MapLookModel.ringed(MapLookModel.look(quiet)))
+        assertNull(MapLookModel.ringed(MapLookModel.look(quiet, 0f)))
+        assertNull(MapLookModel.ringed(MapLookModel.look(red)))
+    }
+
+    @Test
+    fun theLineNamesWhatTheMapDrawsAndSaysWhenItIsChanged() {
+        val saved = listOf(SavedPalette("Mine", PaletteCode.write(red.copy(tone = 1.4f))))
+        val mine = MapLookModel.look(red, 1.4f)
+        assertEquals(MapLookModel.Line.Saved("Mine"), MapLookModel.line(mine, saved, saved[0].code))
+        assertEquals(MapLookModel.Line.Changed("Mine", Preset.TODAY, 1), MapLookModel.line(MapLookModel.look(red, 1f), saved, saved[0].code))
+        assertEquals(MapLookModel.Line.Changed(null, Preset.TODAY, 1), MapLookModel.line(MapLookModel.look(red, 1f), saved, null))
+        assertEquals(MapLookModel.Line.Exact(Preset.ALPHA_22, isDefault = true), MapLookModel.line(MapLookModel.DEFAULT_LOOK, saved, null))
+        assertEquals(MapLookModel.Line.Exact(Preset.INK, isDefault = false), MapLookModel.line(MapLookModel.look(Palette(Preset.INK)), saved, null))
+        assertEquals(MapLookModel.Line.Changed(null, Preset.INK, 0), MapLookModel.line(MapLookModel.look(Palette(Preset.INK), 1f), saved, null))
+    }
+
+    @Test
+    fun aCodeTypedInIsAPaletteOrSaysWhatIsWrong() {
+        val code = PaletteCode.write(red)
+        assertEquals(MapLookModel.Found.Ok(red, null), MapLookModel.find(code))
+        assertEquals(MapLookModel.Found.Ok(red, "Canal red"), MapLookModel.find(MapLookModel.message("Canal red", code)))
+        assertEquals(MapLookModel.Found.Ok(red, null), MapLookModel.find(MapLookModel.link(code)))
+        assertEquals(MapLookModel.Found.Ok(red, null), MapLookModel.find(" " + code.lowercase().replace('-', ' ') + " "))
+        assertEquals(MapLookModel.Found.Empty, MapLookModel.find("  "))
+        assertEquals(MapLookModel.Found.Empty, MapLookModel.find(null))
+        assertEquals(MapLookModel.Found.NotCode, MapLookModel.find("hello"))
+        assertEquals(MapLookModel.Found.Mistyped, MapLookModel.find("AT1"))
+        assertEquals(MapLookModel.Found.Mistyped, MapLookModel.find("AT1-TODAY"))
+        assertEquals(MapLookModel.Found.Mistyped, MapLookModel.find(code.dropLast(1)))
+        assertEquals(MapLookModel.Found.Mistyped, MapLookModel.find(code.dropLast(1) + (if (code.last() == '0') '1' else '0')))
+        assertEquals(MapLookModel.Found.Newer, MapLookModel.find(code.replace("AT1", "AT2")))
+        assertEquals(MapLookModel.Found.Newer, MapLookModel.find(code.replace("TODAY", "DUSK")))
     }
 
     @Test
@@ -69,9 +112,10 @@ class MapLookModelTest {
         assertEquals("x".repeat(MapLookModel.NAME_MAX), MapLookModel.clean("  " + "x".repeat(60)))
         assertEquals("Quiet 1", MapLookModel.newName("Quiet", emptyList()))
         assertEquals("Quiet 3", MapLookModel.newName("Quiet", listOf("Quiet 1", "Quiet 2", "Sepia 3")))
-        // the saved palette the map draws, whatever its Tone
-        assertEquals(0, MapLookModel.savedIndex(saved, red.copy(tone = 0.4f)))
-        assertEquals(-1, MapLookModel.savedIndex(saved, Palette()))
+        // the saved palette that draws the look, its Tone with it
+        assertEquals(0, MapLookModel.savedIndex(saved, MapLookModel.look(red)))
+        assertEquals(-1, MapLookModel.savedIndex(saved, MapLookModel.look(red, 0.4f)))
+        assertEquals(-1, MapLookModel.savedIndex(saved, MapLookModel.look(Palette())))
     }
 
     @Test
@@ -109,7 +153,7 @@ class MapLookModelTest {
     }
 }
 
-/** The Map look's writes: what the map takes, and the saved palettes kept with it. */
+/** The Map look's writes: what the map takes, the one Tone, and the saved palettes kept with it. */
 class MapLookWritesTest {
     private val red = Palette(colours = mapOf(Slot.RED_TILES to 0x9E5038))
 
@@ -128,53 +172,102 @@ class MapLookWritesTest {
     }
 
     @Test
-    fun addingSavesOnceUnderANameAndTheMapTakesIt() {
+    fun aLookTakenKeepsTheUsersGuessesAndTheToneTheyHadForTheSwitch() {
         val m = mutablePreferencesOf()
-        assertEquals("Today 1", MapLookWrites.add(m, red, null, "Today"))
-        assertEquals("Today 1", MapLookWrites.add(m, red.copy(tone = 0.3f), "Other", "Today"))
-        assertEquals("Ink", MapLookWrites.add(m, Palette(Preset.INK), " Ink ", "Ink"))
-        val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
-        assertEquals(listOf("Today 1", "Ink"), saved.map { it.name })
-        assertEquals(Palette(Preset.INK), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
+        MapLookWrites.guesses(m, false)
+        MapLookWrites.toneTo(m, 1.4f)
+        MapLookWrites.take(m, Palette(Preset.INK))
+        assertTrue(MapLookModel.on(MapLookModel.current(m[SettingsKeys.MAP_PALETTE]), PaletteFlags.NO_GUESSES))
+        assertEquals(Tone(false, 1.4f), MapLookModel.tone(m))
+        assertEquals(MapLookModel.look(Palette(Preset.INK)), MapLookModel.drawn(m))
+        MapLookWrites.toneSwitch(m, true)
+        assertEquals(Tone(true, 1.4f), MapLookModel.tone(m))
+        // a tap on what the map draws changes nothing
+        val before = m.toPreferences()
+        assertFalse(MapLookWrites.pick(m, Palette(Preset.INK, tone = 1.4f)))
+        assertEquals(before, m.toPreferences())
+        assertTrue(MapLookWrites.pick(m, Palette(Preset.INK)))
+        assertEquals(Tone(false, 1.4f), MapLookModel.tone(m))
     }
 
     @Test
-    fun aSwitchOrTheToneChangedWhileASavedPaletteIsDrawnChangesItToo() {
+    fun theToneIsOneStateOffIsNothingAndTheSwitchBringsTheLastBack() {
         val m = mutablePreferencesOf()
-        MapLookWrites.add(m, red, "Mine", "Today")
+        MapLookWrites.toneTo(m, 1.43f)
+        assertEquals(Tone(true, 1.45f), MapLookModel.tone(m))
+        MapLookWrites.toneTo(m, 0f)
+        assertEquals(Tone(false, 1.45f), MapLookModel.tone(m))
+        assertEquals(0f, MapLookModel.tone(m).drawn)
+        MapLookWrites.toneSwitch(m, true)
+        assertEquals(1.45f, MapLookModel.tone(m).drawn)
+        // a strength of 0 kept while on, as the slider once wrote it, is off; on again brings today's
+        m[SettingsKeys.MAP_TONE] = 0f
+        m[SettingsKeys.MAP_TONE_ON] = true
+        assertEquals(Tone(false, 0f), MapLookModel.tone(m))
+        MapLookWrites.toneSwitch(m, true)
+        assertEquals(Tone(true, 1f), MapLookModel.tone(m))
+    }
+
+    @Test
+    fun addingSavesOnceUnderANameAndTheMapTakesIt() {
+        val m = mutablePreferencesOf()
+        assertEquals(MapLookWrites.Added.New("Sunlit 1"), MapLookWrites.add(m, red, null, "Sunlit"))
+        assertEquals(MapLookWrites.Added.Yours("Sunlit 1"), MapLookWrites.add(m, red, "Other", "Sunlit"))
+        assertEquals(MapLookWrites.Added.New("Ink"), MapLookWrites.add(m, Palette(Preset.INK), " Ink ", "Ink"))
+        val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
+        assertEquals(listOf("Sunlit 1", "Ink"), saved.map { it.name })
+        assertEquals(Palette(Preset.INK), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
+        assertEquals(saved[1].code, m[SettingsKeys.MAP_LOOK_FROM])
+        // a shared palette's guesses are none of it
+        val bare = MapLookModel.withSwitch(Palette(Preset.SEPIA), PaletteFlags.NO_GUESSES, true)
+        MapLookWrites.add(m, bare, "Print", "Sepia")
+        assertEquals(Palette(Preset.SEPIA), MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).last().palette)
+        assertFalse(MapLookModel.on(MapLookModel.current(m[SettingsKeys.MAP_PALETTE]), PaletteFlags.NO_GUESSES))
+    }
+
+    @Test
+    fun aSwitchOrTheToneChangesWhatTheMapDrawsAndNoSavedPalette() {
+        val m = mutablePreferencesOf()
+        MapLookWrites.add(m, red, "Mine", "Sunlit")
+        val code = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().code
         MapLookWrites.switch(m, PaletteFlags.GRASS, true)
-        val grass = MapLookModel.withSwitch(red, PaletteFlags.GRASS, true)
-        assertEquals(grass, MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
-        assertEquals(grass, MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().palette?.copy(tone = null))
-        MapLookWrites.tone(m, true, 1.5f)
-        assertEquals(1.5f, MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().palette?.tone)
+        MapLookWrites.toneTo(m, 1.5f)
+        assertEquals(code, MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().code)
+        assertEquals(MapLookModel.withSwitch(red, PaletteFlags.GRASS, true), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
+        val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
+        assertEquals(MapLookModel.Line.Changed("Mine", Preset.TODAY, 1), MapLookModel.line(MapLookModel.drawn(m), saved, m[SettingsKeys.MAP_LOOK_FROM]))
         // the map's own palette never carries the Tone
         assertNull(MapLookModel.current(m[SettingsKeys.MAP_PALETTE]).tone)
     }
 
     @Test
-    fun savingReplacesThePaletteItWasOpenedOnElseSavesAChangedOne() {
+    fun savingKeepsTheNameGivenReplacingThePaletteItCameFromOnlyUnderItsName() {
         val m = mutablePreferencesOf()
-        MapLookWrites.add(m, red, "Mine", "Today")
+        MapLookWrites.add(m, red, "Mine", "Sunlit")
         val from = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().code
+        MapLookWrites.toneTo(m, 1.5f)
         val bluer = red.copy(colours = red.colours + (Slot.WATER to 0x2244AA))
-        MapLookWrites.save(m, bluer, from, "Today")
+        assertEquals("Mine", MapLookWrites.save(m, bluer, " Mine ", from))
         val saved = MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES])
         assertEquals(listOf("Mine"), saved.map { it.name })
-        assertEquals(bluer, saved.single().palette?.copy(tone = null))
+        assertEquals(bluer.copy(tone = 1.5f), saved.single().palette)
         assertEquals(bluer, MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
-        // from a preset: a palette that changes a colour is saved, one that changes none is not
-        MapLookWrites.save(m, Palette(Preset.QUIET), null, "Quiet")
-        assertEquals(1, MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).size)
-        assertEquals(Palette(Preset.QUIET), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
-        MapLookWrites.save(m, Palette(Preset.QUIET, mapOf(Slot.LAWN to 0x00FF00)), null, "Quiet")
-        assertEquals(listOf("Mine", "Quiet 1"), MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).map { it.name })
+        assertEquals(MapLookModel.Line.Saved("Mine"), MapLookModel.line(MapLookModel.drawn(m), saved, m[SettingsKeys.MAP_LOOK_FROM]))
+        // under another name: a new one, the first kept
+        assertEquals("Bluer", MapLookWrites.save(m, bluer, "Bluer", saved.single().code.takeIf { false }))
+        assertEquals(listOf("Mine", "Bluer"), MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).map { it.name })
+        // a palette's guesses are none of what it saves
+        MapLookWrites.guesses(m, false)
+        val noGuess = MapLookModel.current(m[SettingsKeys.MAP_PALETTE])
+        MapLookWrites.save(m, noGuess, "Plain", null)
+        assertFalse(MapLookModel.on(MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).last().palette!!, PaletteFlags.NO_GUESSES))
+        assertTrue(MapLookModel.on(MapLookModel.current(m[SettingsKeys.MAP_PALETTE]), PaletteFlags.NO_GUESSES))
     }
 
     @Test
     fun removingAndRenaming() {
         val m = mutablePreferencesOf()
-        MapLookWrites.add(m, red, "Mine", "Today")
+        MapLookWrites.add(m, red, "Mine", "Sunlit")
         MapLookWrites.add(m, Palette(Preset.INK), "Ink", "Ink")
         MapLookWrites.rename(m, 0, "  Canal\tred ")
         MapLookWrites.rename(m, 1, "   ")
@@ -182,10 +275,48 @@ class MapLookWritesTest {
         assertEquals(listOf("Canal red", "Ink"), MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).map { it.name })
         MapLookWrites.remove(m, 0)
         assertEquals(listOf("Ink"), MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).map { it.name })
+        assertEquals(MapLookModel.savedOf(m[SettingsKeys.MAP_PALETTES]).single().code, m[SettingsKeys.MAP_LOOK_FROM])
         MapLookWrites.remove(m, 0)
         assertNull(m[SettingsKeys.MAP_PALETTES])
+        assertNull(m[SettingsKeys.MAP_LOOK_FROM])
         // the map draws what it drew
         assertEquals(Palette(Preset.INK), MapLookModel.current(m[SettingsKeys.MAP_PALETTE]))
+    }
+}
+
+/**
+ * The Map look's and Colour the map's words in all four languages: none of OpenStreetMap's tags, the palette review's
+ * working names or the colour scientists' units (the user, 17 November: the screens "dont make sense").
+ */
+class MapLookWordsTest {
+    @Test
+    fun theWordsArePlain() {
+        val res = File("src/main/res")
+        val words = Regex("""<(?:string|item)[^>]*>([^<]*)<""")
+        val key = Regex("""name="(mine_(?:look|colour|slot)_[a-z0-9_]+)"""")
+        for (lang in listOf("values", "values-nl", "values-de", "values-fr")) {
+            val text = File(res, "$lang/strings_mine.xml").readText()
+            val plurals = Regex("""<plurals name="mine_look_[a-z_]+">(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL).findAll(text).flatMap { it.groupValues[1].lines() }
+            val ours = text.lines().filter { key.containsMatchIn(it) } + plurals.filter { it.contains("<item") }
+            assertTrue(lang, ours.size > 150)
+            for (line in ours) {
+                val said = words.find(line)?.groupValues?.get(1) ?: continue
+                for (bad in listOf("=", ":colour", "review", "Review", "Alpha 22", "OKLCH", "New look")) {
+                    assertFalse("$lang: $line", said.contains(bad))
+                }
+            }
+        }
+    }
+
+    /** Every string of the Map look, Colour the map and the Tone is said somewhere: none left behind unused. */
+    @Test
+    fun noStringIsLeftUnused() {
+        val code = File("src/main/kotlin").walkTopDown().filter { it.isFile && it.extension == "kt" }.joinToString("\n") { it.readText() }
+        val text = File("src/main/res/values/strings_mine.xml").readText()
+        val names = Regex("""<(string|plurals) name="(mine_(?:look|colour|layers_tone)[a-z0-9_]*)"""").findAll(text).map { it.groupValues[1] to it.groupValues[2] }.toList()
+        assertTrue(names.size > 100)
+        val unused = names.filter { (kind, name) -> !Regex("""R\.${if (kind == "string") "string" else "plurals"}\.$name\b""").containsMatchIn(code) }
+        assertEquals(emptyList<Pair<String, String>>(), unused)
     }
 }
 
@@ -228,7 +359,7 @@ class ColourMapModelTest {
         assertTrue(ColourMapModel.changed(one, Slot.RED_TILES))
         // back to the preset's colour: none of its own
         assertEquals(emptyMap<Slot, Int>(), ColourMapModel.withColour(one, Slot.RED_TILES, Slot.RED_TILES.today).colours)
-        assertEquals(emptyMap<Slot, Int>(), ColourMapModel.reset(one, Slot.RED_TILES).colours)
+        assertEquals(emptyMap<Slot, Int>(), ColourMapModel.reset(one, Slot.RED_TILES, p).colours)
         // the group moves with it: the colour exactly, the others by the palette's move, none left as they were
         val all = ColourMapModel.withGroup(p, Slot.RED_TILES, 0x3E6E9E)
         assertEquals(0x3E6E9E, all.colour(Slot.RED_TILES))

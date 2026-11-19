@@ -125,7 +125,7 @@ fun FindScreen(initial: String, nav: Navigator) {
     var frontId by rememberSaveable(thing) { mutableStateOf<String?>(null) }
     val front = answer?.sellers?.firstOrNull { it.id == frontId } ?: answer?.sellers?.firstOrNull()
     val area by produceState(ShopArea.empty(here), here, front?.filter?.toText()) {
-        if (front != null) repo.area("find:" + front.filter.toText(), front.filter, here, FIND_RADIUS_M).collect { value = it } else value = ShopArea.empty(here).let { ShopArea(here, FIND_RADIUS_M, emptyList(), null, loading = false) }
+        if (front != null) repo.area("find:" + front.filter.toText(), front.filter, here, FIND_RADIUS_M).collect { value = it } else value = ShopArea.empty(here, FIND_RADIUS_M, loading = false)
     }
     val shops = remember(area, front, now, openNow) { front?.let { FindModel.shops(it, area.places, area, now, openNow) }.orEmpty() }
 

@@ -15,11 +15,10 @@
 # compiled units between pushes, and the tidy jobs keep the units that were clean, by a key of everything that
 # decides clang-tidy's word on them (tools/tidy/cached.py).
 #
-# Which job runs for which paths: the rule table's check (the rules job) holds app/android/mapcore/rules to the
-# renderer, render/*.py, so it runs for every trigger, a change to render/** alone included. The core's matrix (the
-# core job) runs when the push or pull request changes app/android/mapcore/**, this file or .github/docker/lavapipe/**
-# (core-changes decides, by a git diff), whatever else it changes, and on every nightly and run by hand; a change to
-# render/** alone runs the rules job and core-changes only.
+# Which job runs for which paths: the core's matrix (the core job) runs when the push or pull request changes
+# app/android/mapcore/** (the building traditions the core compiles in among them), this file or
+# .github/docker/lavapipe/** (core-changes decides, by a git diff), whatever else it changes, and on every nightly and
+# run by hand.
 #
 # Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
 # (every fuzz target for up to 30 minutes, clang-tidy on every file without its cache; it checks out `app`), the MODS
@@ -33,10 +32,10 @@ name: Core
 on:
   push:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**', 'render/**']
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
   pull_request:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**', 'render/**']
+    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
   schedule:
     - cron: '23 2 * * *' # nightly: every fuzz target for up to 30 minutes, clang-tidy on every file
   workflow_dispatch:
@@ -53,6 +52,10 @@ on:
         description: Keep this run's ccache and tidy entries for its branch, to measure warm runs of a change to CI (delete them after)
         type: boolean
         default: false
+      relief_pictures:
+        description: "Draw the relief's pictures over these terrain runs' artifacts (terrain.yml's artifact ids, comma-separated)"
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -92,8 +95,8 @@ env:
     mutex:libvulkan_lvp mutex:libLLVM mutex:libVkLayer_khronos_validation
 
 jobs:
-  # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above, less
-  # render/**), every nightly and every run by hand. Where the base commit is unknown (a new branch) or not in the
+  # Whether the core's matrix runs: a push or pull request that changes the core's own paths (the filter above), every
+  # nightly and every run by hand. Where the base commit is unknown (a new branch) or not in the
   # clone (a force push), it runs; and if this job fails, the matrix runs all the same (its condition below). It also
   # names the commit every job of the run checks out: the run's own, or for the nightly the work branch's tip as the
   # run begins. A job that waits for a runner would otherwise check out its branch as it is when it starts, and a push
@@ -131,29 +134,14 @@ jobs:
           echo "the core's matrix runs: $core"
           echo "core=$core" >> "$GITHUB_OUTPUT"
 
-  # The rule table (plan-vector K5, VF1) held to the renderer: every feature render/*.py draws has its record in
-  # app/android/mapcore/rules/rules.tsv, and no source changed since the recording (Python 3's standard library only;
-  # seconds). It runs on every trigger, so a change to the renderer alone is checked too.
-  rules:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # the nightly runs from the default branch's workflow; it checks the work branch
-          ref: ${{ github.event_name == 'schedule' && 'app' || github.sha }}
-      - name: The rule table covers the renderer
-        run: |
-          python3 --version
-          python3 -I app/android/mapcore/rules/check_rules.py check
-
   # The pack tests' render packs (the Westerkerk's living map and the canal ring, format 3, in the port's cut: the
   # reference the parity tests hold the core to), so the host jobs' pack tests run (ATLAS_TILES_DIR) instead of
   # skipping: made by the packer through Gradle (:mapcorecheck:bundledTiles, the set :mapcorecheck's own tests take;
   # the canal ring's element pack is fetched from packs-renders and checked against its SHA-256), and cached by their
   # inputs, so a push that leaves the port, the render tiles' compiler, the engine's style file and the packer alone
   # takes them from the cache in seconds. The APK carries none of them for a map (ENGINE.md step 3, one pack per
-  # country). A failure here leaves the host jobs to run without them, as before.
+  # country). A failure here fails the host jobs, once their tests have run: a pack test that skips for want of its
+  # packs would pass without a word.
   tiles:
     needs: core-changes
     if: ${{ !cancelled() && needs.core-changes.outputs.core != 'false' }}
@@ -306,6 +294,11 @@ jobs:
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | sed -n 1p
 
+      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with
+      # the Android ABIs' targets where the NDK builds
+      - name: Rust, as mapcore/rust pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ${{ (matrix.task == 'android' || matrix.task == 'tidy-android') && 'android' || '' }}
       - name: CMake ${{ env.CMAKE_VERSION }} and Ninja ${{ env.NINJA_VERSION }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
@@ -461,7 +454,8 @@ jobs:
           cat "$RUNNER_TEMP/vulkan.env"
 
       # ---- host-debug, host-tsan, host-release: build, unit tests (Vulkan on lavapipe), the feature probe, benchmarks.
-      # The pack tests' render packs (the tiles job's): ATLAS_TILES_DIR beside the Vulkan variables.
+      # The pack tests' render packs (the tiles job's): ATLAS_TILES_DIR beside the Vulkan variables. Without them the
+      # pack tests skip and count as passed, so the job still runs its tests and then fails (the step after Test).
       - id: tiles
         if: startsWith(matrix.task, 'host-') && needs.tiles.outputs.key != ''
         uses: actions/cache/restore@v6
@@ -469,13 +463,30 @@ jobs:
           path: ${{ runner.temp }}/tiles
           key: ${{ needs.tiles.outputs.key }}
       - name: The pack tests' render packs
+        id: packs
         if: startsWith(matrix.task, 'host-')
         run: |
           if [ -e "$RUNNER_TEMP/tiles/amsterdam.atlas" ] && [ -e "$RUNNER_TEMP/tiles/grachten.atlas" ]; then
             echo "ATLAS_TILES_DIR=$RUNNER_TEMP/tiles" >> "$RUNNER_TEMP/vulkan.env"
             ls -la "$RUNNER_TEMP/tiles"
           else
-            echo "::warning::no render packs from the tiles job: the pack tests skip"
+            echo "::error::no render packs from the tiles job: the pack tests skip, and this job fails once its tests have run"
+            echo "missing=render packs from the tiles job" >> "$GITHUB_OUTPUT"
+          fi
+      # The world's cases (frame/world_vk_test, tiles/world_test, load/pack_style_test): ATLAS_WORLD_DIR, a cut of the
+      # world the release world-latest names, as a phone takes it (tools/world/cut.py: world.idx and the globe whole,
+      # and the packs under the cases' views read by range, each checked against its SHA-256, about 1 GB of the 12).
+      # Without it, as without the render packs, the job runs its tests and then fails.
+      - name: The world's packs, from world-latest
+        id: world
+        if: startsWith(matrix.task, 'host-')
+        run: |
+          if python3 -I "$CP/tools/world/cut.py" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/world-latest" "$RUNNER_TEMP/world"; then
+            echo "ATLAS_WORLD_DIR=$RUNNER_TEMP/world" >> "$RUNNER_TEMP/vulkan.env"
+            ls -la "$RUNNER_TEMP/world"
+          else
+            echo "::error::no world from world-latest: the world's cases skip, and this job fails once its tests have run"
+            echo "missing=the world from world-latest" >> "$GITHUB_OUTPUT"
           fi
       # Each test entry runs under GNU time, so its peak memory is in its output (core-tests sums them up): what tells
       # how many entries a runner can run at once, TSan's above all.
@@ -563,6 +574,16 @@ jobs:
               done
             fi
           fi
+      # The data the tests read, when a step above found it missing: the tests ran without it, and the job fails.
+      - name: The tests' data
+        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && (steps.packs.outputs.missing != '' || steps.world.outputs.missing != '') }}
+        env:
+          PACKS: ${{ steps.packs.outputs.missing }}
+          WORLD: ${{ steps.world.outputs.missing }}
+        run: |
+          missing=$(printf '%s\n' "$PACKS" "$WORLD" | sed '/^$/d' | paste -sd ';' - | sed 's/;/; /g')
+          echo "::error::the tests ran without their data ($missing): the cases that need it skipped"
+          exit 1
       # The test entries' JUnit files and the shard's plan, for core-tests.
       - name: Keep the shard's test results
         if: startsWith(matrix.task, 'host-') && always()
@@ -580,6 +601,47 @@ jobs:
             ${{ env.CP }}/build/feature-probe-*.txt
             ${{ env.CP }}/build/bench-*.txt
           if-no-files-found: ignore
+      # ---- The relief's pictures (ENGINE.md part 6, terrain, step 2), on a dispatch that names terrain runs' artifacts
+      # (relief_pictures): the terrain packs around the boards' views are cut out of them (tools/relief/cut.py: the
+      # dunes' L9 tile and San Gimignano's, each with its neighbours), relief_vk_test's last case draws the dunes and San
+      # Gimignano over them on lavapipe (the terrain off, on, and on without its sky-view; sunny and overcast), and the
+      # frames are kept as PNGs (tools/relief/montage.py) in the run's artifact relief-pictures. Nothing is published.
+      - name: The relief's pictures
+        if: github.event_name == 'workflow_dispatch' && inputs.relief_pictures != '' && matrix.task == 'host-release' && matrix.arch == 'x86_64' && env.SHARD == '1' && steps.build.outcome == 'success'
+        working-directory: ${{ env.CP }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS: ${{ inputs.relief_pictures }}
+        run: |
+          work="$RUNNER_TEMP/relief"
+          packs="$work/packs"
+          out="$work/pictures"
+          mkdir -p "$packs" "$out"
+          for id in ${ARTIFACTS//,/ }; do
+            curl -fsSL --retry 5 -H "Authorization: Bearer $GH_TOKEN" -o "$work/terrain-$id.zip" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip"
+            unzip -q -o "$work/terrain-$id.zip" -d "$work/terrain-$id"
+            rm "$work/terrain-$id.zip"
+            run=$(dirname "$(find "$work/terrain-$id" -name '*-terrain.idx' | head -1)")
+            python3 -I tools/relief/cut.py "$run" "$packs" 9/262/168 9/271/187 --around 1
+            rm -rf "$work/terrain-$id"
+          done
+          status=0
+          (set -a; . "$RUNNER_TEMP/vulkan.env"; set +a; export LP_NUM_THREADS=4 ATLAS_RELIEF_PACKS="$packs" ATLAS_RELIEF_OUT="$out"
+            "build/$TASK/atlas_tests" "--source-file=*tests/frame/relief_vk_test.cpp" "--test-case=the boards' views*" \
+              --duration=true > "$out/views.log" 2>&1) || status=$?
+          grep -E 'MESSAGE|ERROR|FAILED|test cases|assertions' "$out/views.log" || true
+          python3 -I tools/relief/montage.py "$out"
+          rm -f "$out"/*.ppm
+          exit "$status"
+      - name: Keep the relief's pictures
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.relief_pictures != '' && matrix.task == 'host-release' && matrix.arch == 'x86_64' && env.SHARD == '1'
+        uses: actions/upload-artifact@v7
+        with:
+          name: relief-pictures
+          path: ${{ runner.temp }}/relief/pictures/
+          retention-days: 14
+          if-no-files-found: warn
       # A module that missed its spirv.lock (cmake/Shaders.cmake keeps it, as embedded and as slangc wrote it, with its
       # reflection): with spirv-dis's text beside it, so it can be diffed with another host's instead of guessed at.
       - name: The SPIR-V that missed its lock, disassembled
@@ -969,6 +1031,15 @@ jobs:
           python3 -I "$CP/tools/ctest/shards.py" costs --junit ctest --costs "$CP/tools/ctest/costs.tsv" \
             --into measured/costs.tsv --summary measured/summary.md
           { echo "### The host jobs' shards"; echo; cat measured/summary.md; } >> "$GITHUB_STEP_SUMMARY"
+      # The cases that skipped for a data folder CI does not set (tools/ctest/skips.py): they count as passed, so the
+      # run's summary names each, once for all the host jobs, as each job's own summary names the cases that skipped
+      # their Vulkan work.
+      - name: The cases that skipped for data
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p measured
+          python3 -I "$CP/tools/ctest/skips.py" --junit ctest --summary measured/skips.md
+          { echo "### The cases that skipped for data CI does not set"; echo; cat measured/skips.md; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v7
         if: always()
         with:

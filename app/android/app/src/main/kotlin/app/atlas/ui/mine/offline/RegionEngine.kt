@@ -202,7 +202,7 @@ class RegionEngine(
         (tilesOf(pack)?.let { it.tiles.bytes + it.index.bytes + worldBytes(pack) } ?: pack.atlas?.bytes ?: 0L) + (readablePlaces(pack)?.diskBytes ?: 0L)
 
     /**
-     * [pack]'s place store where this Atlas can read it ([PlaceStore.reads]: a store of a schema it opens, or one the list
+     * [pack]'s place store where this Atlas can read it ([PlaceStore.reads]: a store of its own schema, or one the list
      * names no schema for); null where it has none, or one this Atlas cannot open, which is then never downloaded (the
      * user, 12 November: "When I download the map in the latest alpha it says places are unreadable").
      */
@@ -496,9 +496,13 @@ class RegionEngine(
                         bytes = bytes?.plus(tiles.tiles.bytes + tiles.index.bytes)
                     }
                 } else if (atlas != null && mapSha != null && !mapSha.equals(atlas.sha256, true)) { stale += RegionLayer.MAP; bytes = bytes?.plus(atlas.bytes) }
-                val placesSha = m.layers[RegionLayer.PLACES]?.sha
+                val had = m.layers[RegionLayer.PLACES]
+                val placesSha = had?.sha
                 val places = pack.places
-                if (places != null && placesSha != null && !placesSha.equals(places.sha256, true)) { stale += RegionLayer.PLACES; bytes = bytes?.plus(places.bytes) }
+                // places left out because this Atlas could not open them are offered once it reads the published file,
+                // which is the same file with the same sum after an update of Atlas
+                val readableNow = had?.kind == PLACES_LEFT_OUT && readablePlaces(pack) != null
+                if (places != null && (readableNow || (placesSha != null && !placesSha.equals(places.sha256, true)))) { stale += RegionLayer.PLACES; bytes = bytes?.plus(places.bytes) }
             }
             for ((layer, rec) in m.layers) {
                 if (layer in stale) continue

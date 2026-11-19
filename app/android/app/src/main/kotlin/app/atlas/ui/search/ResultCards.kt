@@ -144,7 +144,7 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
     val h = item.first
     val p = h.record.place
     val lang = w.lang
-    val line = remember(h, w.now) { PlaceLine.of(p, null, lang, w.now, h.open, w.nameOf(h), h.metres) }
+    val line = remember(h, w.now, w.country) { PlaceLine.of(p, null, lang, w.now, h.open, w.country, w.nameOf(h), h.metres) }
     val eat = remember(p.key) { EatPlace.of(p, p.location, lang) }
     val house = remember(p.key) { eat?.let { CuisineHouse.of(it) } }
     val arrival = arrivalWords(h.open, h.minutes, w.now)
@@ -167,7 +167,7 @@ private fun ResultCard(item: ResultItem, w: RowWays, view: CategoryNode?, modifi
             .combinedClickable(onClick = { w.onPlace(p) }, onLongClick = { h.node?.let { w.onExplain(explained(it, h)) } })
             .testTag(PLACE_TAG),
     ) {
-        CardPicture(h, eat, house, view, Modifier.fillMaxWidth().height(PICTURE))
+        CardPicture(h, eat, house, view, w.country, Modifier.fillMaxWidth().height(PICTURE))
         Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
@@ -229,14 +229,14 @@ private fun RoutePill(minutes: Int, metres: Double, onClick: () -> Unit) {
  * what the place is, its pin does, with the mark the map draws it with ([markOf]).
  */
 @Composable
-private fun CardPicture(h: ResultHit, eat: EatPlace?, house: CuisineHouse?, view: CategoryNode?, modifier: Modifier) {
+private fun CardPicture(h: ResultHit, eat: EatPlace?, house: CuisineHouse?, view: CategoryNode?, country: String?, modifier: Modifier) {
     val p = h.record.place
     val photo = rememberPhoto(p)
     val dish = remember(p.key) { eat?.let { dishOf(it, null) }?.takeIf { it != Dish.EMPTY } }
     val node = h.node ?: view
-    val (mark, colour) = remember(p.key) { markOf(p) }
+    val (mark, colour) = remember(p.key, country) { markOf(p, country) }
     // a chain known by its logo and its colours, as the street knows it
-    val chain = remember(p.key) { Brands.forTags(p.tags)?.takeIf { it.logoSlug != null && it.colour != null } }
+    val chain = remember(p.key, country) { Brands.forTags(p.tags, country)?.takeIf { it.logoSlug != null && it.colour != null } }
     // the place's own symbol large, unless it wears a logo; its pin would only say it again
     val art = remember(p.key, node?.id) { (node?.let { artOf(it) } ?: Scene(Motif.CONTOURS)).let { a -> if (a is Emblem && !mark.startsWith("logo-")) Emblem(mark) else a } }
     Box(modifier) {

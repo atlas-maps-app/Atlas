@@ -21,7 +21,6 @@ dependencies {
     implementation(project(":tiles"))
     // the region pack format (PackWriter, PackReader, the Overpass client): plain Kotlin, shared with the phone
     implementation(project(":render"))
-    implementation(project(":anchor"))
     // render tiles (plan-vector K2): `packer render-tiles`
     implementation(project(":rendertiles"))
     // zstd's compressor for `packer country`, which stores the core's window packs with their chunks at level 19 (the

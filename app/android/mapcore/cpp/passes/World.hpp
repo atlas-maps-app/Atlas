@@ -23,6 +23,8 @@
 #include "frame/Pass.hpp"
 #include "gpu/Memory.hpp"
 #include "scene/WorldLook.hpp"
+#include "style/Palette.hpp"
+#include "tiles/WorldLadder.hpp"
 
 #include <array>
 #include <cstdint>
@@ -88,9 +90,21 @@ public:
     [[nodiscard]] std::span<const std::uint32_t> palette() const noexcept { return palette_; }
 
     /// The palette of the moment's theme `theme` (by day, or at night where `night`) and the world's style `style`
-    /// (null: its entries the land's).
+    /// (null: its entries the land's), as the user's `palette` has it (null: today's): the land kinds and the big
+    /// roads' asphalt moved as the ground's fills of their colours are (ground_palette), the theme's own (the ground,
+    /// the water, the roads) as the app moved them; the rails, the runways, the coast's line and the ice, which no
+    /// slot has near either, as the style has them.
     [[nodiscard]] static std::vector<std::uint32_t> palette_of(const style::ThemeBlock& theme, bool night,
-                                                               const tiles::Style* style);
+                                                               const tiles::Style* style,
+                                                               const style::PaletteBlock* palette = nullptr);
+    /// The world's ladder `ladder` (of the world's style `style`) as the user's `palette` has it (null or today's: the
+    /// ladder as it is): its day's ground, water and roads the live day's as the app moves them (the paper's, or the
+    /// lawns' with grass on bare ground; the water's; the streets'), which are today's slots' colours; the globe's sea
+    /// ramp moved as the water, its land ramp's greens and the coast's line as the lawns (the open green land the
+    /// ramp's land is), its night as the night's ground, its cities' lights as the lit windows. The ramp's snow and
+    /// the ice, the graticule, space, the atmosphere, the outline, the rim and the shine stay: no slot has them.
+    [[nodiscard]] static tiles::WorldLadder painted_ladder(const tiles::WorldLadder& ladder, const tiles::Style& style,
+                                                           const style::PaletteBlock* palette);
     /// How much of the moment's own ground, water and roads the far world's day palette has, by the sun's elevation at
     /// the moment's place: none at night, where the moment's are the night's, and none at the night flag's own
     /// threshold (style::night_below), all from 5 degrees up, smoothstep between. So the far world does not step
@@ -101,7 +115,8 @@ public:
     /// The day's palette, which the ladder draws under the night's caps: palette_of's by day with, for its ground,
     /// water and roads, the ladder's where the moment is night and the moment's own by day (day_share between).
     [[nodiscard]] static std::vector<std::uint32_t> day_palette_of(const style::ThemeBlock& theme,
-                                                                   const tiles::Style* style);
+                                                                   const tiles::Style* style,
+                                                                   const style::PaletteBlock* palette = nullptr);
     /// Every world pass of the process paints all the world in `colour` (RGBA8, r in the low byte; 0: its palette
     /// again), so a test tells the world's pixels from the countries', whose colours are the world's by design.
     static void paint_for_tests(std::uint32_t colour) noexcept;

@@ -2,6 +2,7 @@ package app.atlas.packer
 
 import app.atlas.geo.BBox
 import app.atlas.packer.pbf.PbfReader
+import app.atlas.places.PlaceCountry
 import app.atlas.render.data.OverpassClient
 import app.atlas.render.data.PackReader
 import app.atlas.render.data.PackWriter
@@ -20,10 +21,12 @@ import kotlin.system.exitProcess
 private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap extracts
 
   packer places <in.osm.pbf> <out.db> [--name NAME] [--langs en,nl,de,fr] [--bbox W,S,E,N]
-                [--edit-times] [--addresses W,S,E,N] [--threads N] [--no-gzip] [--keep-db] [--no-vacuum]
+                [--edit-times] [--addresses W,S,E,N] [--country XX] [--threads N] [--no-gzip] [--keep-db]
+                [--no-vacuum]
       Builds the place store :search reads, writes <out.db>.gz (unless --no-gzip) and the
       sidecar <out>.json that `manifest` reads. --addresses fills in, over the network, the house
-      numbers OpenStreetMap lacks in that box from OpenAddresses.
+      numbers OpenStreetMap lacks in that box from OpenAddresses. --country is the country the
+      region is of: brands are matched there where the places around name none.
 
   packer manifest <dir> <release-url-base> [--regions regions.json] [--previous packs.json] [--out FILE]
                   [--split-bytes N]
@@ -33,10 +36,6 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   packer info <in.osm.pbf> [--count]
       Prints the file's header and, with --count, what it holds.
-
-  packer renders <out-dir> [--only a,b] [--repo DIR]
-      The renders' own data as .atlas packs: every data/regions/<name>/raw.json with its places.py entry, dem*.json and
-      weather, and Amsterdam's data/ams/raw.json. --repo is the repo root (default: the current directory).
 
   packer region <W,S,E,N> <name> [--out FILE] [--id ID] [--country XX]
       Builds a .atlas pack from Overpass with fetch/regions.py's query (a big box is split, the parts merged by id).
@@ -48,8 +47,6 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   packer packinfo <file.atlas>
       Prints a pack's manifest, sections and sizes.
-
-  ${Anchors.USAGE}
 
   ${RenderTiles.USAGE}
 
@@ -77,13 +74,15 @@ private const val USAGE = """packer: Atlas's offline packs from OpenStreetMap ex
 
   ${app.atlas.packer.heights.HeightsBuild.USAGE}
 
-  ${app.atlas.packer.heights.HeightsCheck.USAGE}"""
+  ${app.atlas.packer.heights.HeightsCheck.USAGE}
+
+  ${app.atlas.packer.heights.HeightsList.USAGE}"""
 
 /**
- * The command line: `places`, `manifest`, `info`, the region packs (`renders`, `region`, `pbf`, `packinfo`), the windows'
+ * The command line: `places`, `manifest`, `info`, the region packs (`region`, `pbf`, `packinfo`), the windows'
  * data (`windows`, and `windows-join` for its shards), the country's tiles (`country`), and the world's (`world`, `globe`, and world.yml's `world-plan`,
  * `world-tags`, `world-assemble`, `world-check`, `world-refs` and `world-keep`), and the terrain's (`heights`,
- * `heights-check`).
+ * `heights-check`, `heights-list`).
  */
 fun main(args: Array<String>) {
     val code = try {
@@ -113,6 +112,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
                 langs = a.value("--langs")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: PlaceStore.DEFAULT_LANGS,
                 clip = a.value("--bbox")?.let(::parseBox),
                 addresses = a.value("--addresses")?.let(::parseBox),
+                country = a.value("--country")?.let { PlaceCountry.code(it) ?: throw UsageException("bad --country '$it': want a two-letter code such as NL") },
                 editTimes = a.flag("--edit-times"),
                 threads = a.value("--threads")?.let { it.toIntOrNull()?.takeIf { n -> n in 1..64 } ?: throw UsageException("bad --threads '$it': want 1 to 64") }
                     ?: PbfReader.defaultThreads(),
@@ -176,15 +176,6 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             }
             out(Manifest.pretty(info))
         }
-        "renders" -> {
-            val (dir) = a.files(1)
-            val only = a.value("--only")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet()
-            val repo = File(a.value("--repo") ?: ".").absoluteFile
-            a.done()
-            if (!File(repo, "data/regions/places.py").isFile) throw UsageException("$repo is not the repo root (no data/regions/places.py)")
-            val results = Renders.build(repo, File(dir), only) { out(it) }
-            out("${results.size} packs, ${results.sumOf { it.stats.bytes } shr 10} KiB in all")
-        }
         "region" -> {
             val (box, name) = a.files(2)
             val bbox = parseBox(box)
@@ -209,7 +200,6 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
             val stats = PackWriter.write(spec, file)
             out("${file.path}: ${stats.elements} elements (${stats.nodes} nodes, ${stats.ways} ways, ${stats.relations} relations), ${file.length() shr 10} KiB in ${stats.millis} ms")
         }
-        "anchors" -> return Anchors.run(args, out)
         "render-tiles" -> return RenderTiles.run(args, out)
         "windows" -> return WindowPacks.run(args, out)
         "windows-join" -> return WindowsJoin.run(args, out)
@@ -224,6 +214,7 @@ fun run(args: List<String>, out: (String) -> Unit): Int {
         "world-keep" -> return app.atlas.packer.world.WorldKeep.run(args, out)
         "heights" -> return app.atlas.packer.heights.HeightsBuild.run(args, out)
         "heights-check" -> return app.atlas.packer.heights.HeightsCheck.run(args, out)
+        "heights-list" -> return app.atlas.packer.heights.HeightsList.run(args, out)
         "packinfo" -> {
             val (path) = a.files(1)
             a.done()

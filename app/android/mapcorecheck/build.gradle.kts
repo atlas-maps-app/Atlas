@@ -3,10 +3,10 @@ import java.util.Properties
 import javax.inject.Inject
 
 // :mapcorecheck (plan-vector D19, T10): tests only, on the JVM, against the core's host build loaded through JNI.
-// MT/tiles holds the tile reader to the Kotlin writer (L0 (b), K3), MT/style the style's layouts and light (K5),
-// MT/likeness the likeness harness's candidates and gates (K4), MT/numerics pymath to StrictMath and PyMath (L0 (d),
-// K3b; -Datlas.numerics.n arguments a function, 10^7 when not given), MT/facade the façade's host entry points (K1).
-// -Datlas.l0.damages sets how many damaged tiles the tile reader's differential check decodes (1,500 when not given).
+// MT/tiles holds the tile reader to the Kotlin writer (L0 (b), K3), MT/style the style's layouts (K5), MT/likeness the
+// engine's references (its frames held by their pixels' SHA-256) and the tools that draw with the core, MT/facade the
+// façade's host entry points (K1). -Datlas.l0.damages sets how many damaged tiles the tile reader's differential check
+// decodes (1,500 when not given).
 //
 // The host build is the core's CMake project (mapcore/cpp) compiled for this machine without sanitizers (the JVM loads
 // it) into libatlasmap_host, with the test entry points (jni/Test*.cpp); the tests find it through -Datlas.mapcore.host.
@@ -143,6 +143,8 @@ abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperation
 val coreHost = tasks.register<CoreHostBuild>("coreHost") {
     description = "Builds the core's host library (libatlasmap_host) for the JNI tests."
     sources.from(fileTree(mapcoreDir.resolve("cpp")) { exclude("build/**", ".cache/**") })
+    // the buildings' cleaning, a Rust library stage P links (cpp/cmake/Rust.cmake)
+    sources.from(fileTree(mapcoreDir.resolve("rust")) { exclude("**/target/**") })
     sources.from(mapcoreDir.resolve("tools.properties"))
     sourceDir.set(mapcoreDir.resolve("cpp"))
     cmakeDir.set(layout.buildDirectory.dir("core-host"))
@@ -213,19 +215,13 @@ sourceSets {
         kotlin.srcDir(mapcoreKotlin)
         kotlin.exclude { it.file in androidOnly }
         // Files of :mapview, an Android library this module cannot depend on, that use no Android types, compiled here
-        // without their neighbours: K17a's field parity (MT/fx) runs the port's Turbulence beside the core's (it needs
-        // only :core's ExactMath), and the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and
-        // parts with the app's own CoreMoment and MapParts, and the palette CoreMoment recolours the theme by.
+        // without their neighbours: the phone look tool (MT/likeness/PhoneLook.kt) writes the core's moment and parts
+        // with the app's own CoreMoment and MapParts, and the palette CoreMoment recolours the theme by.
         val mapviewKotlin = rootProject.layout.projectDirectory.dir("mapview/src/main/kotlin/app/atlas/mapview").asFile
         // and the keeper of a kept country's world (MT/tiles/KeptWorldTest.kt), which runs over the core's own cache
         val mapviewShared = listOf("MapParts.kt", "vk/CoreMoment.kt", "vk/WorldKeeper.kt", "palette/Palette.kt", "palette/PaletteTheme.kt").map(mapviewKotlin::resolve).toSet()
         kotlin.srcDir(mapviewKotlin)
         kotlin.exclude { it.file.isFile && it.file.startsWith(mapviewKotlin) && it.file !in mapviewShared }
-        // The port's Turbulence, in mapview's raster sources (src/raster: in tests alone, ENGINE.md step 3).
-        val rasterKotlin = rootProject.layout.projectDirectory.dir("mapview/src/raster/kotlin/app/atlas/mapview").asFile
-        val rasterShared = listOf("svg/Turbulence.kt").map(rasterKotlin::resolve).toSet()
-        kotlin.srcDir(rasterKotlin)
-        kotlin.exclude { it.file.isFile && it.file.startsWith(rasterKotlin) && it.file !in rasterShared }
     }
 }
 
@@ -316,28 +312,19 @@ tasks.test {
     systemProperty("atlas.repo", repoDir.path)
     // K3's differential check: how many single-byte damages of the bundled tiles the core and Kotlin decode side by side
     providers.systemProperty("atlas.l0.damages").orNull?.let { systemProperty("atlas.l0.damages", it) }
-    // K3b's parity sweep: arguments a function (CI's build job runs 10^5; the nightly the plan's 10^7)
-    providers.systemProperty("atlas.numerics.n").orNull?.let { systemProperty("atlas.numerics.n", it) }
-    // Stage P's parity (load/AmsterdamParityTest.kt): more raw.json files the living map's load is held to the port
-    // over, a list split by the path separator (the renderer's data/regions on the Mac)
-    providers.systemProperty("atlas.load.raws").orNull?.let { systemProperty("atlas.load.raws", it) }
-    // and the regions' element packs load/RegionsParityTest holds to the port's Regions.load (a list of .atlas files)
-    providers.systemProperty("atlas.load.packs").orNull?.let { systemProperty("atlas.load.packs", it) }
     // a region's windows' data (`packer windows`: <id>.windows, its index beside it) load/WindowPackBuildTest builds from
     providers.systemProperty("atlas.windows").orNull?.let { systemProperty("atlas.windows", it) }
     // and where load/ZooWoodsTest keeps the windows about Artis it builds with and without their woods
     providers.systemProperty("atlas.zoowoods.out").orNull?.let { systemProperty("atlas.zoowoods.out", it) }
 
-    // K4's likeness harness: the references are inputs (they live outside the build folder), the report goes to
-    // atlas.likeness.report, and the harness's settings pass through.
+    // The engine's references (MT/likeness): the report (each frame as a PNG, a proposal of their hashes) goes to
+    // atlas.likeness.report; the platform they are held on and whether every frame must be drawn pass through.
     systemProperty("java.awt.headless", "true")
-    inputs.files(providers.systemProperty("atlas.likeness.refs").orElse(repoDir.resolve("cache/likeness/refs").absolutePath))
-        .withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("likenessReferences")
     systemProperty(
         "atlas.likeness.report",
         providers.systemProperty("atlas.likeness.report").getOrElse(layout.buildDirectory.dir("likeness").get().asFile.absolutePath),
     )
-    for (p in listOf("refs", "tier", "only", "phone", "style", "platform", "stage", "commit", "thresholds", "previous", "require")) {
+    for (p in listOf("platform", "require")) {
         providers.systemProperty("atlas.likeness.$p").orNull?.let { systemProperty("atlas.likeness.$p", it) }
     }
     // The desktop render tool (likeness/RenderTool.kt): what to draw, and the PNG it writes, which is drawn again on
@@ -346,9 +333,8 @@ tasks.test {
         providers.systemProperty("atlas.render.$p").orNull?.let { systemProperty("atlas.render.$p", it) }
     }
     if (providers.systemProperty("atlas.render.out").isPresent) outputs.upToDateWhen { false }
-    // The phone look tool (likeness/PhoneLook.kt): what to draw and where, and the folder it compares; it runs every
-    // time it is asked.
-    for (p in listOf("out", "views", "moment", "size", "parts", "path", "canal", "list", "work", "compare", "world", "under", "elements", "part")) {
+    // The phone look tool (likeness/PhoneLook.kt): what to draw and where; it runs every time it is asked.
+    for (p in listOf("out", "views", "moment", "size", "parts", "path", "canal", "list", "work", "world", "under", "elements", "part")) {
         providers.systemProperty("atlas.phonelook.$p").orNull?.let {
             systemProperty("atlas.phonelook.$p", it)
             outputs.upToDateWhen { false }

@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,18 +61,17 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.TextStyle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
+import app.atlas.mapview.MapEngine
 import app.atlas.mapview.Theme
 import app.atlas.mapview.palette.Palette
-import app.atlas.mapview.palette.PaletteCode
 import app.atlas.mapview.palette.PaletteFlags
 import app.atlas.mapview.palette.Preset
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.services.DEFAULT_PALETTE
-import app.atlas.services.DEFAULT_TONE_ON
 import app.atlas.services.SettingsKeys
 import app.atlas.services.SettingsStore
 import app.atlas.ui.kit.CssShadow
@@ -79,11 +79,13 @@ import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
- * The Map look (the Map look board, `Styles.dc.html`): the six presets as glyphs of their colours, the Tone and its
- * strength, Atlas's guesses, the bare ground and whether mapped colours follow, the palettes the user saved with a way to
- * share each as a code and a QR code and to add one from a code, and the way into Colour the map. Each choice is the
- * map's at once (MapLookWrites); a code handed to Atlas ([Dest.MapLook.code]: the QR's link, a shared message) is added
- * to the palettes and taken.
+ * The Map look (the Map look board, `Styles.dc.html`): day and night in the header, the six presets as glyphs of their
+ * colours, the Tone and its strength, Atlas's guesses, the bare ground and whether mapped colours follow, the palettes
+ * the user saved with a way to share each as a code and a QR code and to add one from a code, and the way into Colour
+ * the map. A preset's or a saved palette's tap brings its whole look, Atlas's guesses aside, and every control moves
+ * with it; a switch or the Tone changes what the map draws, and the line says so (MapLookWrites). A code handed to
+ * Atlas ([Dest.MapLook.code]: the QR's link, a shared message) is added and taken, or opens Add from a code saying why
+ * not.
  */
 @Composable
 fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
@@ -94,52 +96,68 @@ fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
     val themeName by settings.flow(SettingsKeys.MAP_THEME, Theme.AUTO.name).collectAsStateWithLifecycle(Theme.AUTO.name)
     val code by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
     val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
-    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, DEFAULT_TONE_ON).collectAsStateWithLifecycle(DEFAULT_TONE_ON)
-    val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
+    val from by settings.flow(SettingsKeys.MAP_LOOK_FROM).collectAsStateWithLifecycle(null)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON).collectAsStateWithLifecycle(null)
+    val toneKept by settings.flow(SettingsKeys.MAP_TONE).collectAsStateWithLifecycle(null)
     val current = remember(code) { MapLookModel.current(code) }
+    val tone = MapLookModel.tone(toneOn, toneKept)
+    val drawn = MapLookModel.look(current, tone.drawn)
     val saved = remember(savedText) { MapLookModel.savedOf(savedText) }
-    val savedAt = MapLookModel.savedIndex(saved, current)
+    val savedAt = MapLookModel.savedIndex(saved, drawn)
     var sharing by rememberSaveable { mutableStateOf<Int?>(null) }
+    // Add from a code: open, what is typed, and what was said of it
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var typed by rememberSaveable { mutableStateOf("") }
+    var said by rememberSaveable { mutableStateOf<String?>(null) }
     val names = presetNames()
     val words = AddWords.of()
     fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         scope.launch { settings.edit(block) }
     }
-    // a code handed to Atlas: added to the palettes and taken, once
+    // a code handed to Atlas: added and taken, once; where it can't be, Add from a code opens with it and says why
     var handed by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(args.code) {
         if (args.code != null && !handed) {
             handed = true
-            toast(context, addFrom(settings, args.code, names, words))
+            val r = addCode(settings, args.code, names, words)
+            if (r.done) toast(context, r.said) else {
+                typed = args.code.take(MAX_TYPED)
+                said = r.said
+                adding = true
+            }
         }
     }
-    val look = when (themeName) {
-        Theme.DAY.name -> stringResource(R.string.mine_theme_day)
-        Theme.NIGHT.name -> stringResource(R.string.mine_theme_night)
-        else -> stringResource(R.string.mine_settings_look_auto)
-    }
+    val theme = runCatching { Theme.valueOf(themeName) }.getOrDefault(Theme.AUTO)
     Box(Modifier.fillMaxSize()) {
         // the board's cards from y 98, 12 px apart; the page leaves room under the last for the button at the foot
         BoardPage(
             stringResource(R.string.mine_settings_look), onBack = { nav.back() }, bottomPadding = 90.dp,
-            trailing = { BText(look, bt(12f, 600, 15f), SOFT) },
+            trailing = { DayNight(theme) { t -> scope.launch { settings.set(SettingsKeys.MAP_THEME, t.name) } } },
         ) {
-            PresetsCard(current, saved.getOrNull(savedAt)?.name, names) { p -> edit { MapLookWrites.take(it, Palette(p)) } }
-            ToneCard(toneOn, tone) { on, strength -> edit { MapLookWrites.tone(it, on, strength) } }
+            PresetsCard(drawn, lookLine(MapLookModel.line(drawn, saved, from), names), names) { p ->
+                edit { MapLookWrites.pick(it, Palette(p)) }
+            }
+            ToneCard(
+                tone,
+                onSwitch = { on -> edit { MapLookWrites.toneSwitch(it, on) } },
+                onStrength = { s -> edit { MapLookWrites.toneTo(it, s) } },
+            )
             SwitchesCard(
                 guesses = !MapLookModel.on(current, PaletteFlags.NO_GUESSES),
                 grass = MapLookModel.on(current, PaletteFlags.GRASS),
                 follow = MapLookModel.on(current, PaletteFlags.MAPPED_FOLLOW),
-                onGuesses = { on -> edit { MapLookWrites.switch(it, PaletteFlags.NO_GUESSES, !on) } },
+                onGuesses = { on -> edit { MapLookWrites.guesses(it, on) } },
                 onGrass = { on -> edit { MapLookWrites.switch(it, PaletteFlags.GRASS, on) } },
                 onFollow = { on -> edit { MapLookWrites.switch(it, PaletteFlags.MAPPED_FOLLOW, on) } },
             )
             PalettesCard(
                 saved, savedAt, names,
-                onTake = { i -> saved[i].palette?.let { p -> edit { MapLookWrites.take(it, p) } } },
+                onTake = { i -> saved[i].palette?.let { p -> edit { MapLookWrites.pick(it, p, saved[i].code) } } },
                 onShare = { i -> sharing = i },
+                onDelete = { i -> edit { MapLookWrites.remove(it, i) } },
                 onAdd = {
-                    scope.launch { toast(context, addFrom(settings, clipboardText(context), names, words)) }
+                    said = null
+                    adding = true
                 },
             )
         }
@@ -157,7 +175,7 @@ fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
         if (shown != null) {
             val index = sharing!!
             PaletteSheet(
-                shown.name, shown.code,
+                shown.name, shown.code, saved.filterIndexed { i, _ -> i != index }.map { it.name },
                 onClose = { sharing = null },
                 onRename = { name -> edit { MapLookWrites.rename(it, index, name) } },
                 onDelete = {
@@ -166,15 +184,87 @@ fun MapLookScreen(args: Dest.MapLook, nav: Navigator) {
                 },
             )
         }
+        if (adding) {
+            AddSheet(
+                typed, said,
+                onType = {
+                    typed = it.take(MAX_TYPED)
+                    said = null
+                },
+                onPaste = {
+                    clipboardText(context)?.let { typed = it.take(MAX_TYPED) }
+                    said = null
+                },
+                onAdd = {
+                    scope.launch {
+                        val r = addCode(settings, typed, names, words)
+                        if (r.done) {
+                            toast(context, r.said)
+                            adding = false
+                            typed = ""
+                            said = null
+                        } else said = r.said
+                    }
+                },
+                onClose = { adding = false },
+            )
+        }
     }
 }
 
+/** The most of a code's text the field keeps: a long palette's code and its message's name, with room to spare. */
+private const val MAX_TYPED = 2000
+
+/**
+ * The board's "auto day / night", made the control it names: Auto, day (the sun) and night (the moon) in a white pill
+ * (32 high), the chosen one dark. It writes the map's theme, as the Layers sheet's chips do.
+ */
+@Composable
+private fun DayNight(theme: Theme, onPick: (Theme) -> Unit) {
+    Row(
+        Modifier.height(32.dp).bbox(WHITE, cr(16f)).padding(2.dp).selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        for (t in LayersModel.THEMES) {
+            val on = t == theme
+            val name = stringResource(
+                when (t) { Theme.DAY -> R.string.mine_theme_day; Theme.NIGHT -> R.string.mine_theme_night; else -> R.string.mine_theme_auto },
+            )
+            Box(
+                Modifier.height(28.dp).bbox(if (on) INK else WHITE, cr(14f))
+                    .selectable(selected = on, role = Role.RadioButton) { onPick(t) }
+                    .semantics { contentDescription = name }
+                    .padding(horizontal = if (t == Theme.AUTO) 10.dp else 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                when (t) {
+                    Theme.DAY -> MSy("weather.sun", 16f, if (on) WHITE else INK)
+                    Theme.NIGHT -> MSy("ui.moon", 16f, if (on) WHITE else INK)
+                    else -> BText(name, bt(12f, 800, 15f), if (on) WHITE else INK)
+                }
+            }
+        }
+    }
+}
+
+/** What a code typed in, pasted or handed to Atlas did, and what to tell the user: [done] where it was added. */
+internal data class AddResult(val done: Boolean, val said: String)
+
 /** The words a code added (or not) is told with, read where a composable can. */
-internal class AddWords(val added: String, val none: String, val mistyped: String, val newer: String, val not: String) {
+internal class AddWords(
+    val added: String,
+    val yours: String,
+    val empty: String,
+    val mistyped: String,
+    val newer: String,
+    val not: String,
+) {
     companion object {
         @Composable
         fun of() = AddWords(
-            stringResource(R.string.mine_look_added), stringResource(R.string.mine_look_no_code), stringResource(R.string.mine_look_bad_code),
+            stringResource(R.string.mine_look_added), stringResource(R.string.mine_look_yours_already),
+            stringResource(R.string.mine_look_no_code), stringResource(R.string.mine_look_bad_code),
             stringResource(R.string.mine_look_newer_code), stringResource(R.string.mine_look_not_code),
         )
     }
@@ -182,23 +272,23 @@ internal class AddWords(val added: String, val none: String, val mistyped: Strin
 
 /**
  * Adds the palette whose code [text] holds (a code alone, the QR's link, a shared message with its name before the code)
- * and the map takes it; what to tell the user.
+ * and the map takes it; or why not: nothing typed, no code, mistyped, from a newer Atlas, or the user's already.
  */
-internal suspend fun addFrom(settings: SettingsStore, text: String?, names: Map<Preset, String>, words: AddWords): String {
-    val code = MapLookModel.codeIn(text) ?: return words.none
-    return when (val read = PaletteCode.read(code)) {
-        is PaletteCode.Read.Ok -> {
-            var name = ""
-            settings.edit { name = MapLookWrites.add(it, read.palette, MapLookModel.nameIn(text), names.getValue(read.palette.base)) }
-            words.added.format(name)
+internal suspend fun addCode(settings: SettingsStore, text: String?, names: Map<Preset, String>, words: AddWords): AddResult =
+    when (val found = MapLookModel.find(text)) {
+        is MapLookModel.Found.Ok -> {
+            var added: MapLookWrites.Added? = null
+            settings.edit { added = MapLookWrites.add(it, found.palette, found.name, names.getValue(found.palette.base)) }
+            when (val a = added!!) {
+                is MapLookWrites.Added.New -> AddResult(true, words.added.format(a.name))
+                is MapLookWrites.Added.Yours -> AddResult(false, words.yours.format(a.name))
+            }
         }
-        is PaletteCode.Read.Bad -> when (read.fault) {
-            PaletteCode.Fault.CHECK, PaletteCode.Fault.LETTER -> words.mistyped
-            PaletteCode.Fault.PRESET, PaletteCode.Fault.SLOT -> words.newer
-            PaletteCode.Fault.FORM -> words.not
-        }
+        MapLookModel.Found.Empty -> AddResult(false, words.empty)
+        MapLookModel.Found.NotCode -> AddResult(false, words.not)
+        MapLookModel.Found.Mistyped -> AddResult(false, words.mistyped)
+        MapLookModel.Found.Newer -> AddResult(false, words.newer)
     }
-}
 
 /** The clipboard's text, or null. */
 private fun clipboardText(context: Context): String? = runCatching {
@@ -232,13 +322,13 @@ private fun presetSub(p: Preset): Int = when (p) {
 }
 
 /**
- * The board's presets card (radius 22, 12 px above, 14 under): PRESETS and what the map draws at the right, then the
- * glyphs 112 px wide and 10 apart, the one the map draws ringed, each with its name (13, 800) and its line (11, 500).
+ * The board's presets card (radius 22, 12 px above, 14 under): PRESETS and what the map draws at the right ([line]),
+ * then the glyphs 112 px wide and 10 apart, ringed only while the map draws exactly that preset, each with its name
+ * (13, 800) and its line (11, 500).
  */
 @Composable
-private fun PresetsCard(current: Palette, savedName: String?, names: Map<Preset, String>, onPick: (Preset) -> Unit) {
-    val ringed = MapLookModel.ringed(current)
-    val line = paletteLine(current, savedName, names)
+private fun PresetsCard(drawn: Look, line: String, names: Map<Preset, String>, onPick: (Preset) -> Unit) {
+    val ringed = MapLookModel.ringed(drawn)
     BoardCard(padding = PaddingValues(top = 12.dp, bottom = 14.dp)) {
         Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             CardLabel(stringResource(R.string.mine_look_presets), Modifier.weight(1f))
@@ -264,18 +354,48 @@ private fun PresetsCard(current: Palette, savedName: String?, names: Map<Preset,
 }
 
 /**
- * What the map draws, in a few words: the saved palette's name ([savedName]), else where an unsaved palette comes from
- * and how many colours it changes, else the preset's name ("Alpha 22 · the default" for the default look).
+ * What the map draws, in a few words: the saved palette's name; the preset's ("Classic · the default" for the default
+ * look); else what it came from and that it is changed ("Canal evening · changed", "from Sunlit · 6 colours changed").
  */
 @Composable
-internal fun paletteLine(current: Palette, savedName: String?, names: Map<Preset, String>): String = when {
-    savedName != null -> savedName
-    current.changed > 0 -> changedLine(current, names)
-    current == DEFAULT_PALETTE -> stringResource(R.string.mine_look_default, names.getValue(DEFAULT_PALETTE.base))
-    else -> names.getValue(current.base)
+internal fun lookLine(line: MapLookModel.Line, names: Map<Preset, String>): String = when (line) {
+    is MapLookModel.Line.Saved -> line.name
+    is MapLookModel.Line.Exact -> if (line.isDefault) stringResource(R.string.mine_look_default, names.getValue(line.preset)) else names.getValue(line.preset)
+    is MapLookModel.Line.Changed -> when {
+        line.from != null -> stringResource(R.string.mine_look_changed_from, line.from)
+        line.colours > 0 -> pluralStringResource(R.plurals.mine_look_changed, line.colours, line.colours, names.getValue(line.base))
+        else -> stringResource(R.string.mine_look_changed_from, names.getValue(line.base))
+    }
 }
 
-/** "from Today · 6 colours changed", or "from Today" for a palette that changes no colour. */
+/**
+ * The value of the rows that open the Map look (Settings', the Layers sheet's), from the settings as they are: the look's
+ * name ("Canal evening", "Classic", "Mine · changed"), then the theme where it isn't Auto ("Canal evening · Night").
+ */
+@Composable
+internal fun lookRowValue(settings: SettingsStore): String {
+    val code by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
+    val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
+    val from by settings.flow(SettingsKeys.MAP_LOOK_FROM).collectAsStateWithLifecycle(null)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON).collectAsStateWithLifecycle(null)
+    val toneKept by settings.flow(SettingsKeys.MAP_TONE).collectAsStateWithLifecycle(null)
+    val theme by settings.flow(SettingsKeys.MAP_THEME).collectAsStateWithLifecycle(null)
+    val look = MapLookModel.look(MapLookModel.current(code), MapLookModel.tone(toneOn, toneKept).drawn)
+    val names = presetNames()
+    val name = when (val line = MapLookModel.line(look, MapLookModel.savedOf(savedText), from)) {
+        is MapLookModel.Line.Saved -> line.name
+        is MapLookModel.Line.Exact -> names.getValue(line.preset)
+        is MapLookModel.Line.Changed -> stringResource(R.string.mine_look_changed_from, line.from ?: names.getValue(line.base))
+    }
+    val shown = when (theme) {
+        Theme.DAY.name -> stringResource(R.string.mine_theme_day)
+        Theme.NIGHT.name -> stringResource(R.string.mine_theme_night)
+        else -> null
+    }
+    return if (shown == null) name else "$name · $shown"
+}
+
+/** "from Sunlit · 6 colours changed", or "from Sunlit" for a palette that changes no colour. */
 @Composable
 internal fun changedLine(p: Palette, names: Map<Preset, String>): String {
     val base = names.getValue(p.base)
@@ -318,23 +438,43 @@ internal fun Glyph(colours: List<Int>, ring: Boolean, modifier: Modifier = Modif
 internal fun opaque(c: Int) = Color(0xFF000000.toInt() or c)
 
 /**
- * The board's Tone card (12 px above, 14 under and at the sides): the orange tile with the sun, Tone and its line, the
- * switch; under them the strength from off to 2× (the board's track: 4 px, today's 100 % ticked, a 26 px thumb), faint
- * while Tone is off, and its value in Geist Mono between "off" and "2×". Dragging shows the strength as it moves and
- * keeps it when the finger lifts; setting one turns Tone on.
+ * How Map look's Tone card draws [toneValue]: a strength in the mono face, as the board's; the word Off in the page's,
+ * where the mono O would read as a zero ("0ff").
+ */
+internal fun toneValueStyle(shown: Float): TextStyle =
+    if ((shown * 100).roundToInt() == 0) bt(11f, 700, 14f) else bt(11f, 600, 14f, MONO)
+
+/**
+ * The Tone's value as both its controls show it (the Map look's card, the Layers sheet's row): "Off" at nothing,
+ * else the strength in per cent; [shown] is what the map draws, or the strength under the finger while it drags.
  */
 @Composable
-private fun ToneCard(on: Boolean, strength: Float, onChange: (Boolean, Float) -> Unit) {
+internal fun toneValue(shown: Float): String {
+    val percent = (shown * 100).roundToInt()
+    return if (percent == 0) stringResource(R.string.mine_layers_tone_off) else stringResource(R.string.mine_layers_tone_value, percent)
+}
+
+/** The Tone's strength at [x] of a track [width] wide: 0 to 2 in steps of 5 %, so today's 1 is a step. */
+internal fun toneAt(x: Float, width: Float): Float = (x / width * 40f).roundToInt().coerceIn(0, 40) / 20f
+
+/**
+ * The board's Tone card (12 px above, 14 under and at the sides): the orange tile with the sun, Tone and its line, the
+ * switch; under them the strength from off to 2× (the board's track: 4 px, 100 % ticked, a 26 px thumb), faint while
+ * Tone is off, and its value in Geist Mono between "off" and "2×". The thumb is at what the map draws (0 while off).
+ * Dragging shows on the map as it moves and is kept when the finger lifts; a strength above 0 turns Tone on, 0 is off,
+ * and the switch brings the last strength back.
+ */
+@Composable
+private fun ToneCard(tone: Tone, onSwitch: (Boolean) -> Unit, onStrength: (Float) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
-    val shown = dragging ?: if (on) strength else 0f
-    val lit = on || dragging != null
+    // the drag's handlers outlive a recomposition: what a cancelled drag returns the map to is the latest drawn
+    val drawn by rememberUpdatedState(tone.drawn)
+    val keep by rememberUpdatedState(onStrength)
+    val shown = dragging ?: tone.drawn
+    val lit = tone.on || dragging != null
     val percent = (shown * 100).roundToInt()
     val name = stringResource(R.string.mine_layers_tone)
-    val value = when {
-        !lit -> stringResource(R.string.mine_look_tone_off)
-        percent == 100 -> stringResource(R.string.mine_layers_tone_today, percent)
-        else -> stringResource(R.string.mine_layers_tone_value, percent)
-    }
+    val value = toneValue(shown)
     val description = stringResource(R.string.mine_layers_tone_cd, percent)
     BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -343,23 +483,27 @@ private fun ToneCard(on: Boolean, strength: Float, onChange: (Boolean, Float) ->
                 BText(name, bt(16f, 800, 20f), INK)
                 BText(stringResource(R.string.mine_look_tone_sub), bt(12f, 500, 15f), SOFT, lines = 3)
             }
-            LookSwitch(on, { onChange(it, strength) }, name)
+            LookSwitch(tone.on, onSwitch, name)
         }
-        // 0 to 2 in steps of 5 %, so today's 1 is a step
-        fun at(x: Float, width: Float) = (x / width * 40f).roundToInt().coerceIn(0, 40) / 20f
         BoxWithConstraints(
             Modifier.padding(start = 2.dp, end = 2.dp, top = 14.dp).fillMaxWidth().height(28.dp).alpha(if (lit) 1f else 0.4f)
                 .semantics {
                     contentDescription = description
                     progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(shown, 0f..2f, 39)
-                    setProgress { v -> onChange(true, ((v * 20f).roundToInt() / 20f).coerceIn(0f, 2f)); true }
+                    setProgress { v -> onStrength(((v * 20f).roundToInt() / 20f).coerceIn(0f, 2f)); true }
                 }
-                .pointerInput(Unit) { detectTapGestures { p -> onChange(true, at(p.x, size.width.toFloat())) } }
+                .pointerInput(Unit) { detectTapGestures { p -> keep(toneAt(p.x, size.width.toFloat())) } }
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures(
-                        onDragEnd = { dragging?.let { onChange(true, it) }; dragging = null },
-                        onDragCancel = { dragging = null },
-                    ) { change, _ -> dragging = at(change.position.x, size.width.toFloat()) }
+                        onDragEnd = { dragging?.let { keep(it) }; dragging = null },
+                        onDragCancel = { dragging = null; MapEngine.tone(drawn) },
+                    ) { change, _ ->
+                        val s = toneAt(change.position.x, size.width.toFloat())
+                        if (s != dragging) {
+                            dragging = s
+                            MapEngine.tone(s)
+                        }
+                    }
                 },
         ) {
             val width = maxWidth
@@ -368,7 +512,7 @@ private fun ToneCard(on: Boolean, strength: Float, onChange: (Boolean, Float) ->
                 val top = 12.dp.toPx()
                 drawRoundRect(Color(0xFFE6E8EE), Offset(0f, top), Size(size.width, bar), CornerRadius(bar / 2))
                 drawRoundRect(Color(INK), Offset(0f, top), Size(size.width * shown / 2f, bar), CornerRadius(bar / 2))
-                // today's 100 %
+                // 100 %, the renders' own strength
                 drawRect(Color(FAINT), Offset(size.width / 2f, 8.dp.toPx()), Size(2.dp.toPx(), 12.dp.toPx()))
             }
             Box(
@@ -378,7 +522,7 @@ private fun ToneCard(on: Boolean, strength: Float, onChange: (Boolean, Float) ->
         }
         Row(Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             BText(stringResource(R.string.mine_look_tone_off), bt(11f, 600, 14f), LABEL)
-            BText(value, bt(11f, 600, 14f, MONO), INK)
+            BText(value, toneValueStyle(shown), INK)
             BText(stringResource(R.string.mine_look_tone_max), bt(11f, 600, 14f), LABEL)
         }
     }
@@ -432,7 +576,8 @@ private fun SwitchesCard(
 
 /**
  * The board's Your palettes card (10 px above, 4 under): each saved palette a 54 px row (its tile of four of its colours,
- * its name and where it comes from, the share button), the one the map draws with its tile ringed; then Add from a code.
+ * its name and where it comes from, the share button), the one the map draws with its tile ringed; one this Atlas can't
+ * read says so, with its delete button (asking once more, red with the word); then Add from a code.
  */
 @Composable
 private fun PalettesCard(
@@ -441,28 +586,43 @@ private fun PalettesCard(
     names: Map<Preset, String>,
     onTake: (Int) -> Unit,
     onShare: (Int) -> Unit,
+    onDelete: (Int) -> Unit,
     onAdd: () -> Unit,
 ) {
     BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 4.dp)) {
         CardLabel(stringResource(R.string.mine_look_yours))
         saved.forEachIndexed { i, s ->
-            val p = s.palette ?: return@forEachIndexed
+            val p = s.palette
             Row(
                 Modifier.fillMaxWidth().height(54.dp).then(if (i > 0) Modifier.bbox(border = hairTop()) else Modifier)
-                    .selectable(selected = i == current, role = Role.RadioButton) { onTake(i) },
+                    .then(if (p != null) Modifier.selectable(selected = i == current, role = Role.RadioButton) { onTake(i) } else Modifier),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                PaletteTile(p, ring = i == current)
+                if (p != null) PaletteTile(p, ring = i == current)
+                else Box(Modifier.size(34.dp).bbox(HAIR, cr(10f)), contentAlignment = Alignment.Center) { BText("?", bt(15f, 800, 19f), FAINT) }
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     BText(s.name, bt(15f, 800, 19f), INK)
-                    BText(changedLine(p, names), bt(12f, 500, 15f), SOFT)
+                    BText(if (p != null) changedLine(p, names) else stringResource(R.string.mine_look_unreadable), bt(12f, 500, 15f), SOFT, lines = 2)
                 }
-                val share = stringResource(R.string.mine_look_share_cd, s.name)
-                Box(
-                    Modifier.size(40.dp).bbox(HAIR, cr(20f)).clickable(role = Role.Button) { onShare(i) }.semantics { contentDescription = share },
-                    contentAlignment = Alignment.Center,
-                ) { PathIcon(LookIcons.SHARE, 18f, INK) }
+                if (p != null) {
+                    val share = stringResource(R.string.mine_look_share_cd, s.name)
+                    Box(
+                        Modifier.size(40.dp).bbox(HAIR, cr(20f)).clickable(role = Role.Button) { onShare(i) }.semantics { contentDescription = share },
+                        contentAlignment = Alignment.Center,
+                    ) { PathIcon(LookIcons.SHARE, 18f, INK) }
+                } else {
+                    var asking by remember(s.code) { mutableStateOf(false) }
+                    if (asking) {
+                        TextPill(stringResource(R.string.mine_look_delete), bt(14f, 800, 18f), 0xFFC8322A, WHITE, h = 40f, padH = 14f) { onDelete(i) }
+                    } else {
+                        val deleteCd = stringResource(R.string.mine_look_delete_cd, s.name)
+                        Box(
+                            Modifier.size(40.dp).bbox(HAIR, cr(20f)).clickable(role = Role.Button) { asking = true }.semantics { contentDescription = deleteCd },
+                            contentAlignment = Alignment.Center,
+                        ) { PathIcon(LookIcons.TRASH, 18f, INK) }
+                    }
+                }
             }
         }
         Row(
@@ -498,12 +658,14 @@ private fun PaletteTile(p: Palette, ring: Boolean) {
 /** The board's larger switch (52 × 32, radius 16): green when on, grey when off, the white 26 px knob 3 px in. */
 @Composable
 internal fun LookSwitch(checked: Boolean, onChange: (Boolean) -> Unit, label: String, modifier: Modifier = Modifier) {
+    val onWord = stringResource(R.string.mine_look_switch_on)
+    val offWord = stringResource(R.string.mine_look_switch_off)
     Box(
         modifier.size(52.dp, 32.dp).bbox(if (checked) 0xFF1E9E5A else 0xFFC9CDD6, cr(16f), clip = false)
             .toggleable(checked, role = Role.Switch, onValueChange = onChange)
             .semantics {
                 contentDescription = label
-                stateDescription = if (checked) "on" else "off"
+                stateDescription = if (checked) onWord else offWord
             },
     ) {
         Box(Modifier.padding(start = if (checked) 23.dp else 3.dp, top = 3.dp).size(26.dp).bbox(WHITE, cr(13f), listOf(CssShadow(0f, 1f, 3f, 0f, 0x40000000))))

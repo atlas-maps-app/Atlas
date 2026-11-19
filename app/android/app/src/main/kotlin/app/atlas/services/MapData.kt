@@ -11,6 +11,7 @@ import app.atlas.mapview.CountryTiles
 import app.atlas.mapview.MapEngine
 import app.atlas.mapview.MapParts
 import app.atlas.mapview.MapWeather
+import app.atlas.mapview.vk.TerrainReads
 import app.atlas.mapview.vk.WorldKeeper
 import app.atlas.mapview.vk.WorldReads
 import app.atlas.providers.Forecast
@@ -24,6 +25,7 @@ import app.atlas.render.live.HttpGet
 import app.atlas.render.live.PackLibrary
 import app.atlas.render.live.WxHour
 import app.atlas.tiles.PackCatalog
+import app.atlas.tiles.TerrainFetch
 import app.atlas.tiles.WindowPacks
 import app.atlas.tiles.WindowTiles
 import app.atlas.tiles.WorldFetch
@@ -299,6 +301,8 @@ class MapData(private val services: Services) {
                     // which tiles this phone takes: none of its core's version means every window is built here, and
                     // no frame cell's levels are drawn (they come from those tiles alone)
                     val version = MapEngine.windowVersion()
+                    // each country's code first, so a frame that reads the country of the tiles there finds it
+                    services.packCountries.learn(list)
                     MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { p ->
                         CountryTiles(p.id, p.name, p.bbox, levels = version != null && p.tilesOf(version) != null)
                     }
@@ -318,11 +322,19 @@ class MapData(private val services: Services) {
         // which places within a country's box its tiles hold, as their index lists them: beyond its border (Antwerp and
         // Aachen in the Netherlands' box) no country's levels are, and the world draws under the cover
         MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
+        // and the country question's (HereContext), from the indexes in memory alone: it never has one read or fetched,
+        // which the camera above does (the app maintainer, 18 November 2026, batch 5 A3)
+        services.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            MapEngine.windowVersion()?.let { windowTiles.level(id, it, lat, lon) }
+        }
         MapEngine.windowsAllowed = { !services.ciRun }
         // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
         // index and the globe of its release at the first start and each new version (a new one drops the old one and
         // the world's cache), then each pack's head and its tiles' chunks by ranges as the maps' views want them
         MapEngine.worldDir()?.let { wireWorld(it) }
+        // the terrain's relief (ENGINE.md part 6, step 2): terrain.json from terrain-latest at most once a day, a region's
+        // index once the view reaches its box, then each pack's head and its tiles' chunks by ranges, into the world's cache
+        MapEngine.terrainDir()?.let { wireTerrain(it) }
         // the user's own edits drawn as mapped until the map's data carries them (ENGINE.md step 6): those OpenStreetMap
         // took; one still waiting shows as waiting (EditMarkers)
         MapEngine.windowEdits = {
@@ -409,6 +421,25 @@ class MapData(private val services: Services) {
                 MapEngine.invalidate()
                 landed.tryEmit(Unit)
             })
+        }
+    }
+
+    /**
+     * The terrain's fetch (ENGINE.md part 6, step 2), once a launch of the map allows it, as the world's
+     * ([wireWorld]: Services.worldFetch): terrain.json as soon as the phone is online and again each day
+     * (TerrainFetch.follow), and the regions' indexes and the packs' heads and chunks as the maps' views want them
+     * (MapEngine.terrainReads, a step a map asks for beside the world's). The heads and chunks share the world's cache and
+     * its budget; a new release's are new identities, so the old ones' age out of it without emptying the world's. `vk
+     * terrain` lines say what came.
+     */
+    private fun wireTerrain(dir: File) {
+        val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk terrain: $line") }
+        val terrain = TerrainFetch(dir, client = services.http.client)
+        services.scope.launch(Dispatchers.IO) {
+            services.worldFetch.await()
+            val cache = MapEngine.worldCacheDir() ?: return@launch
+            MapEngine.terrainReads = TerrainReads(terrain, cache, budget = { MapEngine.worldCacheBytes }, online = { services.connectivity.online.value }, said = said)
+            terrain.follow(services.connectivity.online, said = said, landed = MapEngine::invalidate)
         }
     }
 

@@ -35,6 +35,12 @@ object VkBench {
         QUICK("quick (about 4 minutes, a 1-minute soak)", 2.0, 6.0, 5.0, 60.0),
         CI("CI (about 1 minute, no soak)", 0.8, 1.5, 1.0, 0.0),
         PILLS("pills (20 s of the pills moving, to film with the screen recorder)", 0.0, 0.0, 20.0, 0.0),
+
+        /**
+         * The real map alone ([MapBench]): its lap over the world and the Netherlands' tiles in three setups, at rest and
+         * by pass, then the table the phone sends back. CI's bench runs it too, shorter ([MapBench.timing]).
+         */
+        MAP("map (the real map's lap in three setups, then the table to send)", 0.0, 0.0, 0.0, 0.0),
     }
 
     /** The two views of A0: the Main board's (2.3 km at map pitch 46°) and the map's steepest pitch (70°). */
@@ -385,6 +391,18 @@ object VkBench {
     /** The line where the records cannot be compared at [view]: why ([app.atlas.mapcore.MapCore.shapeRecords]' answer). */
     fun recordsSkipped(view: MapView, path: Path, why: String): String =
         "vkbench map ${view.label} ${path.label} records" + (view.over?.let { " over $it" } ?: "") + ": not compared ($why)"
+
+    /**
+     * A terrain comparison's label (ENGINE.md part 6, step 2: the compared path drawn with the relief on and off in turn
+     * as the records are, [recordsOn]'s slices, by [app.atlas.mapcore.MapCore.terrain]): `map <view> <path> terrain
+     * on|off`, and the pack drawn over where it is the phone's own ([MapView.over]).
+     */
+    fun terrainLabel(view: MapView, path: Path, on: Boolean): String =
+        "map ${view.label} ${path.label} terrain ${if (on) "on" else "off"}" + (view.over?.let { " over $it" } ?: "")
+
+    /** The line where the terrain cannot be compared at [view]: why. */
+    fun terrainSkipped(view: MapView, path: Path, why: String): String =
+        "vkbench map ${view.label} ${path.label} terrain" + (view.over?.let { " over $it" } ?: "") + ": not compared ($why)"
 
     /**
      * The triangle governor's words in the core's stats ([app.atlas.mapcore.MapCore.stats]: `World::tiles_line`'s

@@ -33,7 +33,8 @@ struct RideProfiles {
 [[nodiscard]] std::expected<RideProfiles, std::string> read_ride_profiles(const std::string& folder);
 
 /// coasters.load(raw, XZ, S['buildings'] + S['parts'], hts, kinds): the document's coaster tracks in `frame`, in its
-/// order; or the element whose position is off the Earth, or whose layer int(float(v)) cannot take.
+/// order; or the element whose position is off the Earth. A layer int(float(v)) cannot take is the number it starts
+/// with, or 0.
 [[nodiscard]] std::expected<std::vector<CoasterTrack>, LoadError>
 load_coasters(const osm::Document& doc, const tiles::Frame& frame, const Scene& scene, const RideProfiles& rides);
 

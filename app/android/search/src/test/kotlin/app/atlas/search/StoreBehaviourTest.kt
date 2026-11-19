@@ -206,7 +206,9 @@ class StoreBehaviourTest {
             assertEquals(0, s.byTag("name", "Café").size)
             assertEquals(1, s.count("name", "Café Molen"))
             assertTrue(s.estimate("name", "Café Molen") >= 1)
-            assertEquals(1, s.byPreset(listOf("amenity/cafe")).size)
+            // "coffee_shop;cake" is a coffee shop, by the first value it lists (the reviewer, 17 November, finding 11)
+            assertEquals(1, s.byPreset(listOf("amenity/cafe/coffee_shop")).size)
+            assertEquals(0, s.byPreset(listOf("amenity/cafe")).size)
             assertEquals(1, s.byTag("cuisine", "cake").size)
             assertEquals(0, s.byTag("never", "seen").size)
             assertEquals(0, s.count("never", null))
@@ -242,9 +244,10 @@ class StoreBehaviourTest {
     }
 
     @Test
-    fun aStoreOfASchemaThisAtlasDoesNotReadIsRefused() {
-        // 2, before 3 (which this Atlas opens as its own: StoreSchemaThreeTest), and 5, of an Atlas after it
-        for (schema in listOf(2, 5)) {
+    fun aStoreOfAnotherSchemaIsRefused() {
+        // 4, of the packs published from 17 November 2026 and of the Atlas before batch 4's brands, and 6, of an Atlas
+        // after this
+        for (schema in listOf(4, 6)) {
             assertFalse(PlaceStore.reads(schema))
             val pack = File(tmp.root, "old-$schema.places.db")
             val region = File(tmp.root, "old-region-$schema.db")
@@ -270,7 +273,6 @@ class StoreBehaviourTest {
                 assertTrue(runCatching { PlaceStore.open(f).close() }.exceptionOrNull() is StoreVersionException)
             }
         }
-        assertTrue(PlaceStore.reads(3))
         assertTrue(PlaceStore.reads(PlaceStore.SCHEMA))
     }
 
@@ -326,7 +328,7 @@ class StoreBehaviourTest {
             assertEquals(2, s.byTag("addr:housenumber", "12").size)
             assertEquals(s.count("addr:housenumber", "14"), s.byTag("addr:housenumber", "14").size)
             // as the search box shows them: one line each
-            val hits = OfflineEvaluator(s).run(QueryParser.parse("addr:street=\"Résidence Le Manoir\"").query, EvalContext(limit = 100)).hits
+            val hits = OfflineEvaluator(s).run(QueryParser.parse("addr:street=\"Résidence Le Manoir\"").query, EvalContext(limit = 100, hours = Nowhere)).hits
             assertEquals(9, hits.map { it.place.key }.toSet().size)
         }
     }
@@ -354,11 +356,11 @@ class StoreBehaviourTest {
             assertTrue(s.indexes("addr:street", "Kerkstraat"))
             assertFalse(s.indexes("addr:housenumber", "12"))
             val ev = OfflineEvaluator(s)
-            val paying = ev.run(QueryParser.parse("amenity=restaurant and payment:credit_cards=yes").query, EvalContext(limit = 100))
+            val paying = ev.run(QueryParser.parse("amenity=restaurant and payment:credit_cards=yes").query, EvalContext(limit = 100, hours = Nowhere))
             assertEquals(3, paying.total)
             // the 40 restaurants were looked at, from the lookup table; not a scan for the rare payment tag
             assertEquals(40, paying.examined)
-            val one = ev.run(QueryParser.parse("addr:housenumber=12 and addr:street=Kerkstraat").query, EvalContext(limit = 100))
+            val one = ev.run(QueryParser.parse("addr:housenumber=12 and addr:street=Kerkstraat").query, EvalContext(limit = 100, hours = Nowhere))
             assertEquals(listOf("12"), one.hits.map { it.tags["addr:housenumber"] })
             // the street's 30 points, not every 12 of the region and its places
             assertEquals(30, one.examined)

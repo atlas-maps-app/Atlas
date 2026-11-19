@@ -205,10 +205,10 @@ def paris_roof(b, kind, wall, g):
 
 
 # ------------------------------------------------------------------ building traditions
-# A tradition is a short data file (render/traditions/<id>.json): the walls, roofs, windows and details a building culture typically has, by kind
+# A tradition is a short data file (app/android/mapcore/traditions/<id>.json): the walls, roofs, windows and details a building culture typically has, by kind
 # and era. Every value it gives is a real OSM value, guessed and marked; what is mapped always wins. Details with no tag (shutters, chimneys,
 # eaves, timber boards) are generic details of the tradition, drawn as windows are.
-TRAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'traditions')
+TRAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'app', 'android', 'mapcore', 'traditions')  # moved there on 17 Nov 2026
 INDUSTRIAL_LIKE = {'industrial', 'hangar', 'tank', 'canopy', 'parking', 'greenhouse', 'bunker', 'caravan', 'kiosk', 'terminal', 'utility', 'sports'}
 SAYS_KIND = {'home', 'office', 'hotel', 'retail', 'school'}
 

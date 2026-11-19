@@ -87,9 +87,11 @@ object MapEngine {
     var host: VkHost = VkHost.SURFACE
 
     /**
-     * The screen's haze, vignette and grain (the app's Look settings; off by default, as each costs frame time: the user,
-     * 27 October; on, the renders' look): off, the core draws the map without them, its own colours there and less work
-     * a pixel. Each map binding hands them to the core; [screenEffects] hands them to the running core at once.
+     * The screen's haze, vignette and grain (the app's Look settings, each on when unset: alpha 22's look, the user, 4
+     * November; MapData hands them over as the app starts, before any screen, VK bench's too): off, the core draws the
+     * map without them, its own colours there and less work a pixel (the user, 27 October: each costs frame time). Each
+     * map binding hands them to the core; [screenEffects] hands them to the running core at once. False here only until
+     * the app has handed them.
      */
     @Volatile
     var haze: Boolean = false
@@ -314,6 +316,7 @@ object MapEngine {
             windows = { windowsDir() }, windowVersion = { runCatching { MapCore.Window.version() }.getOrNull() }, bench = { benchPacks() },
             world = { worldDir() },
             worldHeld = { ids -> worldCacheDir()?.let { MapCore.worldHeld(it.path, worldCacheBytes, ids) } ?: BooleanArray(ids.size) },
+            terrain = { terrainDir() },
         )
             .also { packList = it }
     }
@@ -449,6 +452,12 @@ object MapEngine {
     /** Where the world is kept (ENGINE.md step 6: world.json, world.idx and the globe): [keptDir]'s `world/`. */
     fun worldDir(): File? = keptDir?.let { File(it, "world") }
 
+    /**
+     * Where the terrain is kept (ENGINE.md part 6, step 2: terrain.json and its regions' indexes, TerrainFetch's):
+     * [keptDir]'s `terrain/`. Its packs' heads and chunks live in the world's cache ([worldCacheDir]).
+     */
+    fun terrainDir(): File? = keptDir?.let { File(it, "terrain") }
+
     /** The world's own cache of its packs' heads and chunks (ENGINE.md step 6, the core's LRU): [worldDir]'s `cache/`. */
     fun worldCacheDir(): File? = worldDir()?.let { File(it, "cache") }
 
@@ -466,6 +475,14 @@ object MapEngine {
      */
     @Volatile
     var worldReads: app.atlas.mapview.vk.WorldReads? = null
+
+    /**
+     * The terrain's packs by ranges as the maps' views want them (ENGINE.md part 6, step 2), once the app has the
+     * terrain's list ([TerrainReads][app.atlas.mapview.vk.TerrainReads]: each map asks it for a step beside the world's);
+     * null before, and where the app does not fetch terrain.
+     */
+    @Volatile
+    var terrainReads: app.atlas.mapview.vk.TerrainReads? = null
 
     /**
      * The world the kept countries keep (ENGINE.md step 11: [app.atlas.mapview.vk.WorldKeeper]), once the app has its

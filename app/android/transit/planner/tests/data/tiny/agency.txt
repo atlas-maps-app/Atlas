@@ -1,0 +1,3 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_phone
+AA,Aan Zee Vervoer,https://example.org/aa,Europe/Amsterdam,
+RR,Regiorail,https://example.org/rr,Europe/Amsterdam,

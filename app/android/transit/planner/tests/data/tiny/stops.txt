@@ -1,0 +1,12 @@
+stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station,stop_timezone,wheelchair_boarding,platform_code,zone_id
+A,1001,Aan Zee,52.0000,4.0000,0,,,1,,
+B,1002,Bos,52.0000,4.0500,0,,,2,,
+ST,,Centrum,52.0000,4.1000,1,,,,,
+C1,1003,Centrum,52.0000,4.0999,0,ST,,,1,
+C2,1004,Centrum,52.0001,4.1001,0,ST,,,2,
+X,1005,Centrum,0,0,0,ST,,,3,
+D,1006,Dorp,52.0000,4.1500,0,,,,,
+E,1007,Eind,52.0000,4.2000,0,,,,,
+F,1008,Fort,52.0500,4.1000,0,,,,,
+G,1009,Gracht,52.0502,4.1000,0,,,,,
+Z,1010,Zonder Dienst,52.3000,4.3000,0,,,,,

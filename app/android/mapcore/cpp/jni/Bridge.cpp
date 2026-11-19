@@ -359,6 +359,49 @@ public:
         return kept;
     }
 
+    /// The terrain's rasters the map wants whose chunks are not on the phone, nearest first
+    /// (scene::ReliefTiles::wants).
+    [[nodiscard]] std::vector<scene::WorldWant> terrain_wants() {
+        return on_session([this] { return map_->terrain_wants(); });
+    }
+
+    /// The L9 tiles the map's relief tiles lie in, nearest first (scene::ReliefTiles::blocks).
+    [[nodiscard]] std::vector<tiles::TileKey> terrain_blocks() {
+        return on_session([this] { return map_->terrain_blocks(); });
+    }
+
+    /// A range of the bytes of the terrain pack of `identity` the app fetched, its whole chunks checked and kept in the
+    /// world's cache (tiles::Store::keep) on the caller's thread; the next frame bakes the rasters kept. Nothing where
+    /// the map holds no such terrain pack or has no cache.
+    [[nodiscard]] std::optional<tiles::KeptChunks> terrain_keep(const tiles::Sha256Digest& identity,
+                                                                const tiles::PackBytes& range) {
+        std::shared_ptr<tiles::ExpandedCache> cache;
+        {
+            const std::scoped_lock lock(world_cache_mutex_);
+            cache = world_cache_;
+        }
+        const std::shared_ptr<const tiles::StorePack> pack =
+            on_session([this, &identity] { return map_->terrain_pack(identity); });
+        if (cache == nullptr || pack == nullptr || !pack->remote) return std::nullopt;
+        thread_local tiles::Zstd zstd;
+        tiles::KeptChunks kept = tiles::Store::keep(*cache, *pack, range, zstd);
+        if (!kept.kept.empty()) on_session([this] { ask_frame(); });
+        return kept;
+    }
+
+    /// The map's relief from the terrain's heights, on or off from now on.
+    void terrain(bool on) {
+        on_session([this, on] {
+            map_->set_terrain(on);
+            ask_frame();
+        });
+    }
+
+    /// The registry ids of the sources of the relief the map's last frame drew, comma-separated.
+    [[nodiscard]] std::string terrain_sources() {
+        return on_session([this] { return map_->terrain_sources(); });
+    }
+
     /// The windows the map's world wants built, nearest first (scene::World::wanted_windows).
     [[nodiscard]] std::vector<tiles::TileKey> wanted_windows() {
         return on_session([this] { return map_->wanted_windows(); });
@@ -424,6 +467,21 @@ public:
     /// comparison of the two): "" where its buildings draw from them, else why they cannot or not yet.
     [[nodiscard]] std::string shape_records(bool on) {
         return on_session([this, on] { return map_->set_shape_records(on); });
+    }
+
+    /// The passes the map's frames record from now on, by name (VK bench's configurations and its split of the GPU's
+    /// time by pass): those named in `keep`, comma-separated, every one for "". "" or why not.
+    [[nodiscard]] std::string passes(const std::string& keep) {
+        return on_session([this, &keep] {
+            std::string why = map_->set_passes_named(keep);
+            if (why.empty()) ask_frame();
+            return why;
+        });
+    }
+
+    /// The map's last frame's counts by pass (frame/MapFrame.hpp's passes_line), "" before its frame builder.
+    [[nodiscard]] std::string pass_counts() {
+        return on_session([this] { return map_->passes_line(); });
     }
 
     /// The app's labels for the map from now on (null: none).
@@ -536,6 +594,10 @@ public:
 
     /// Copies the frame records not read yet into `out` (at most `capacity`); returns how many. Any thread.
     std::size_t records(FrameRecord* out, std::size_t capacity) { return session_->records(out, capacity); }
+    void publish_records() { session_->publish_records(); }
+    /// The map's stage F by part of the frames drawn since the last call, kept from now on where `keep` (MapFrame's
+    /// take_stage_f: any thread).
+    [[nodiscard]] std::vector<double> stage_f(bool keep) { return map_->take_stage_f(keep); }
 
     /// The frame loop's health (Session::health): any thread, never waiting for the render thread, so the panel still
     /// answers while a frame is stuck.
@@ -1028,6 +1090,22 @@ jint native_records(JNIEnv* env, jclass /*cls*/, jlong handle, jobject out) {
         core->records(static_cast<FrameRecord*>(address), static_cast<std::size_t>(capacity) / sizeof(FrameRecord)));
 }
 
+/// Every frame record written handed on now (Session::publish_records: VK bench, as a measurement ends).
+void native_publish_records(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
+    if (Core* core = core_of(handle); core != nullptr) core->publish_records();
+}
+
+/// The map's stage F by part of the frames drawn since the last call (frame/MapFrame.hpp's take_stage_f): the parts a
+/// frame, then each frame's; kept from now on where `keep`. Empty without a core.
+jdoubleArray native_stage_f(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean keep) {
+    Core* core = core_of(handle);
+    const std::vector<double> parts = core == nullptr ? std::vector<double>{} : core->stage_f(keep == JNI_TRUE);
+    jdoubleArray out = env->NewDoubleArray(static_cast<jsize>(parts.size()));
+    if (out != nullptr && !parts.empty())
+        env->SetDoubleArrayRegion(out, 0, static_cast<jsize>(parts.size()), parts.data());
+    return out;
+}
+
 void native_trim(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jint level) {
     if (Core* core = core_of(handle); core != nullptr) core->trim(level);
 }
@@ -1139,7 +1217,7 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
         p.number = static_cast<std::uint64_t>(number[at]);
         p.ref.id = string_at(env, ids, i);
         p.ref.path = string_at(env, paths, i);
-        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::world_base) || p.ref.id.empty() ||
+        if (kind[at] < 0 || kind[at] > static_cast<jint>(tiles::PackKind::terrain_country) || p.ref.id.empty() ||
             number[at] <= 0 || offset[at] < 0 || length[at] < 0) {
             refused += std::format("{}: not a pack the map can list\n", p.ref.id);
             continue;
@@ -1149,7 +1227,9 @@ jstring native_packs(JNIEnv* env, jclass /*cls*/, jlong handle, jobjectArray ids
         p.ref.length = static_cast<std::uint64_t>(length[at]);
         if (auto* identity = reinterpret_cast<jbyteArray>(env->GetObjectArrayElement(identities, i));
             identity != nullptr) {
-            const bool world = p.ref.kind == tiles::PackKind::world_mid || p.ref.kind == tiles::PackKind::world_base;
+            // a pack fetched by range: the world's, or a country's terrain (its head in the world's cache as theirs)
+            const bool world = p.ref.kind == tiles::PackKind::world_mid || p.ref.kind == tiles::PackKind::world_base ||
+                               tiles::is_terrain(p.ref.kind);
             const bool sized = env->GetArrayLength(identity) == static_cast<jsize>(p.ref.identity.size());
             if (sized) {
                 env->GetByteArrayRegion(identity, 0, static_cast<jsize>(p.ref.identity.size()),
@@ -1274,8 +1354,9 @@ jstring native_world_head(JNIEnv* env, jclass /*cls*/, jstring dir, jlong budget
         return java(env, "a world pack's head: an argument is missing");
     }
     if (kind != static_cast<jint>(tiles::PackKind::world_mid) &&
-        kind != static_cast<jint>(tiles::PackKind::world_base)) {
-        return java(env, std::format("a world pack's head: not a world pack's kind ({})", kind));
+        kind != static_cast<jint>(tiles::PackKind::world_base) &&
+        kind != static_cast<jint>(tiles::PackKind::terrain_country)) {
+        return java(env, std::format("a world pack's head: not a world pack's kind, nor a terrain pack's ({})", kind));
     }
     tiles::PackRef ref{.kind = static_cast<tiles::PackKind>(kind), .length = static_cast<std::uint64_t>(length)};
     if (env->GetArrayLength(identity) != static_cast<jsize>(ref.identity.size())) {
@@ -1484,6 +1565,78 @@ jlongArray native_world_keep(JNIEnv* env, jclass /*cls*/, jlong handle, jlong bl
     return array;
 }
 
+/// The terrain's rasters the map wants whose chunks are not on the phone, nearest first, as the world's wants: eight
+/// longs each, its pack's L9 block and its tile (packed), the chunk's offset in the pack and its length, then the
+/// pack's SHA-256 as four big-endian longs.
+jlongArray native_terrain_wants(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    const std::vector<scene::WorldWant> wants =
+        core != nullptr ? core->terrain_wants() : std::vector<scene::WorldWant>{};
+    std::vector<jlong> out;
+    out.reserve(wants.size() * 8);
+    for (const scene::WorldWant& w : wants) {
+        if (w.tile.z < scene::relief_block) continue;
+        const auto gap = static_cast<std::uint32_t>(w.tile.z - scene::relief_block);
+        out.push_back(
+            static_cast<jlong>(tiles::TileKey(scene::relief_block, w.tile.x >> gap, w.tile.y >> gap).packed()));
+        out.push_back(static_cast<jlong>(w.tile.packed()));
+        out.push_back(static_cast<jlong>(w.offset));
+        out.push_back(static_cast<jlong>(w.length));
+        for (std::size_t i = 0; i < w.identity.size(); i += 8) {
+            std::uint64_t v = 0;
+            for (std::size_t j = 0; j < 8; ++j) v = (v << 8U) | std::to_integer<std::uint64_t>(w.identity.at(i + j));
+            out.push_back(static_cast<jlong>(v));
+        }
+    }
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr && !out.empty()) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The L9 tiles the map's relief tiles lie in, nearest first, their keys packed.
+jlongArray native_terrain_blocks(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return packed_keys(env, core != nullptr ? core->terrain_blocks() : std::vector<tiles::TileKey>{});
+}
+
+/// A range of the bytes of the terrain pack of `identity` (its SHA-256) from `offset` the app fetched: its whole chunks
+/// checked and kept in the map's world cache. The number of chunks kept, then the refused ones' tiles (packed); null
+/// where the map holds no such pack or no cache.
+jlongArray native_terrain_keep(JNIEnv* env, jclass /*cls*/, jlong handle, jbyteArray identity, jlong offset,
+                               jbyteArray bytes) {
+    Core* core = core_of(handle);
+    tiles::Sha256Digest sha{};
+    if (core == nullptr || bytes == nullptr || identity == nullptr || offset < 0 ||
+        env->GetArrayLength(identity) != static_cast<jsize>(sha.size())) {
+        return nullptr;
+    }
+    env->GetByteArrayRegion(
+        identity, 0, static_cast<jsize>(sha.size()),
+        reinterpret_cast<jbyte*>(sha.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    std::vector<std::byte> b(static_cast<std::size_t>(env->GetArrayLength(bytes)));
+    env->GetByteArrayRegion(bytes, 0, static_cast<jsize>(b.size()),
+                            reinterpret_cast<jbyte*>(b.data())); // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    const auto kept = core->terrain_keep(sha, {.offset = static_cast<std::uint64_t>(offset), .bytes = b});
+    if (!kept) return nullptr;
+    std::vector<jlong> out{static_cast<jlong>(kept->kept.size())};
+    for (const tiles::TileKey& t : kept->refused) out.push_back(static_cast<jlong>(t.packed()));
+    jlongArray array = env->NewLongArray(static_cast<jsize>(out.size()));
+    if (array != nullptr) env->SetLongArrayRegion(array, 0, static_cast<jsize>(out.size()), out.data());
+    return array;
+}
+
+/// The map's relief from the terrain's heights, `on` (the default) or off from now on.
+void native_terrain(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean on) {
+    Core* core = core_of(handle);
+    if (core != nullptr) core->terrain(on == JNI_TRUE);
+}
+
+/// The registry ids of the sources of the relief the map's last frame drew, comma-separated; "" for none.
+jstring native_terrain_sources(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return java(env, core != nullptr ? core->terrain_sources() : std::string());
+}
+
 /// The box whose data window (z, x, y) needs, [south, west, north, east] degrees (load::window_box).
 jdoubleArray native_window_box(JNIEnv* env, jclass /*cls*/, jint z, jint x, jint y) {
     const std::array<double, 4> box = load::window_box(
@@ -1668,6 +1821,20 @@ jstring native_shape_records(JNIEnv* env, jclass /*cls*/, jlong handle, jboolean
     Core* core = core_of(handle);
     if (core == nullptr) return java(env, "no core");
     return java(env, core->shape_records(on == JNI_TRUE));
+}
+
+/// The passes the map's frames record from now on, by their names in the registry (frame/MapFrame.hpp's
+/// set_passes_named, for VK bench): those named in `keep`, comma-separated, every one for "". "" or why not.
+jstring native_passes(JNIEnv* env, jclass /*cls*/, jlong handle, jstring keep) {
+    Core* core = core_of(handle);
+    if (core == nullptr) return java(env, "no core");
+    return java(env, core->passes(string_of(env, keep)));
+}
+
+/// The map's last frame's counts by pass: `<name> <draws> <dispatches> <triangles>` a line, in the registry's order.
+jstring native_pass_counts(JNIEnv* env, jclass /*cls*/, jlong handle) {
+    Core* core = core_of(handle);
+    return java(env, core == nullptr ? std::string() : core->pass_counts());
 }
 
 /// The app's labels for the map (MK/state/LabelBlock.kt's block in a direct buffer, labels/Sprites.hpp's
@@ -2013,8 +2180,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 68>& methods() {
-    static const std::array<JNINativeMethod, 68> table{{
+const std::array<JNINativeMethod, 77>& methods() {
+    static const std::array<JNINativeMethod, 77> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2032,6 +2199,8 @@ const std::array<JNINativeMethod, 68>& methods() {
         method("requestFrame", "(J)V", fn(&native_request_frame)),
         method("bench", "(JIIIIII)Ljava/lang/String;", fn(&native_bench)),
         method("records", "(JLjava/nio/ByteBuffer;)I", fn(&native_records)),
+        method("publishRecords", "(J)V", fn(&native_publish_records)),
+        method("stageF", "(JZ)[D", fn(&native_stage_f)),
         method("stats", "(J)Ljava/lang/String;", fn(&native_stats)),
         method("health", "(J)Ljava/lang/String;", fn(&native_health)),
         method("setPacing", "(JZ)V", fn(&native_set_pacing)),
@@ -2078,6 +2247,8 @@ const std::array<JNINativeMethod, 68>& methods() {
         method("ask", "(JZJIZI)V", fn(&native_ask)),
         method("screen", "(JZZZ)V", fn(&native_screen)),
         method("shapeRecords", "(JZ)Ljava/lang/String;", fn(&native_shape_records)),
+        method("passes", "(JLjava/lang/String;)Ljava/lang/String;", fn(&native_passes)),
+        method("passCounts", "(J)Ljava/lang/String;", fn(&native_pass_counts)),
         method("landing", "(JZDDDDD)V", fn(&native_landing)),
         method("wantedWindows", "(J)[J", fn(&native_wanted_windows)),
         method("windowBox", "(III)[D", fn(&native_window_box)),
@@ -2095,6 +2266,11 @@ const std::array<JNINativeMethod, 68>& methods() {
         method("worldWants", "(J)[J", fn(&native_world_wants)),
         method("worldBlocks", "(J)[J", fn(&native_world_blocks)),
         method("worldKeep", "(JJ[BJ[B)[J", fn(&native_world_keep)),
+        method("terrainWants", "(J)[J", fn(&native_terrain_wants)),
+        method("terrainBlocks", "(J)[J", fn(&native_terrain_blocks)),
+        method("terrainKeep", "(J[BJ[B)[J", fn(&native_terrain_keep)),
+        method("terrain", "(JZ)V", fn(&native_terrain)),
+        method("terrainSources", "(J)Ljava/lang/String;", fn(&native_terrain_sources)),
         method("mergeWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",
                fn(&native_merge_window)),
         method("editWindow", "(IIILjava/lang/String;Ljava/nio/ByteBuffer;Ljava/lang/String;)Z",

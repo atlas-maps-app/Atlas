@@ -38,4 +38,19 @@ class OverpassSelectorsTest {
             assertTrue("$id: $s", s!!.all { it.startsWith("[") })
         }
     }
+
+    /**
+     * A shop that takes the post or dispenses medicine is found where Post or Health is asked for, near and online (the
+     * app maintainer, 18 November 2026, batch 4 A6), though its kind stays the shop's.
+     */
+    @Test
+    fun aShopThatTakesThePostIsAskedForWithThePost() {
+        val partner = mapOf("shop" to "convenience", "post_office" to "post_partner", "name" to "Spar")
+        val chemist = mapOf("shop" to "chemist", "healthcare" to "pharmacy", "name" to "Boots")
+        assertTrue(LayeredPlaceFinder.filterOf(Categories.byId("post")!!).matches(partner))
+        assertTrue(LayeredPlaceFinder.filterOf(Categories.byId("health")!!).matches(chemist))
+        assertEquals("food_shops", Categories.of(partner)?.id)
+        val s = OverpassSelectors.of(LayeredPlaceFinder.filterOf(Categories.byId("post")!!))!!
+        assertTrue("$s", s.any { "\"shop\"" in it && "\"post_office\"" in it })
+    }
 }

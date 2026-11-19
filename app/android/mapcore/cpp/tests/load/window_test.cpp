@@ -1,11 +1,12 @@
 // A window of the map the phone builds (load/Window.hpp): where a place is (load/Countries.hpp, the port's Countries),
 // a window's box, frame and place, and windows built from a region's data:
-//   - every L14 tile of the canal ring built as a window, from the elements of the region's raw.json that the renders'
-//     Overpass query returns for the window's box (each built in the region's frame, by its rules), is the packer's
-//     tile of the whole region feature for feature: their canonical dumps are the same once the places in the scene's
-//     lists are taken out (a window's lists hold its own data, so its indexes and the ground's ranks are its own), and
-//     the variants of the region's home view, which a window has no views for, are left out; and the app's canal ring,
-//     cut in the renders' New looks, is the New looks' windows so (one Netherlands: the same cut and looks);
+//   - the app's canal ring, cut by the core in the renders' New looks (ATLAS_APP_TILES_DIR), is the New looks'
+//     windows (one Netherlands: the same cut and looks): every L14 tile of it built again as a window, from the
+//     elements of the region's raw.json that the renders' Overpass query returns for the window's box (each built in
+//     the region's frame, by its rules), is the tile of the whole region feature for feature: their canonical dumps are
+//     the same once the places in the scene's lists are taken out (a window's lists hold its own data, so its indexes
+//     and the ground's ranks are its own), and the variants of the region's home view, which a window has no views
+//     for, are left out (the packer's own pack of the canal ring, the port's cut, no longer is since core-p14);
 //   - a window in Paris, anywhere's place (its country's tradition, its frame cell's frame) builds, with fr_paris's
 //     looks, and its pack opens and says what it is;
 //   - a window carries a sign gantry and a goods conveyor, each a line of its own (sources 7 and 8, with their ids and
@@ -16,6 +17,8 @@
 //   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "load/Amsterdam.hpp"
+#include "load/Clean.hpp"
 #include "load/Countries.hpp"
 #include "load/Cut.hpp"
 #include "load/PackStyle.hpp"
@@ -41,6 +44,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -53,6 +57,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -656,16 +662,6 @@ void canal_ring_window_by_window(const std::string& regions, const std::string& 
 
 } // namespace
 
-TEST_CASE("load: the canal ring built window by window is the packer's, tile for tile (ATLAS_REGIONS_DIR)") {
-    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
-    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
-    if (regions.empty() || dir.empty()) {
-        MESSAGE("ATLAS_REGIONS_DIR or ATLAS_TILES_DIR is not set: no window is built from the canal ring here");
-        return;
-    }
-    canal_ring_window_by_window(regions, dir, false);
-}
-
 // The app's canal ring (cut in the New looks by its bundled set, :app:generateBundledTiles with the core's tool) and
 // the windows the phone builds around it are one cut in one look (ENGINE.md step 3, one Netherlands): each of its L14
 // tiles is the New looks' window of its place, but for the frame (a window's is its frame cell's, so the test builds
@@ -679,6 +675,159 @@ TEST_CASE(
         return;
     }
     canal_ring_window_by_window(regions, dir, true);
+}
+
+// Every rule of the buildings' cleaning fits the window (load/Clean.hpp): a window holds its tile's box and 200 m,
+// each way whole, and a building is cleaned in the window of the tile its mapped centroid lies in, with what that
+// window holds. The canal ring's 16 windows, each loaded as the phone loads it, its buildings kept where they are
+// filed, and all of them together cleaned once more: what that finds still to do is what the windows left (a pair one
+// of which reaches more than 200 m past the other's tile is in neither's window whole).
+TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that cannot be there (ATLAS_REGIONS_DIR)") {
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: no window is built from the canal ring here");
+        return;
+    }
+    const std::string text = read_text(std::filesystem::path(regions) / "grachten" / "raw.json");
+    ATLAS_REQUIRE(!text.empty());
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    // the region's frame, for all of them together
+    const tl::Frame whole{.lat0 = 52.372, .lon0 = 4.891, .kx = 0x1.097c73fb3b404p+16, .kz = 110540};
+    const load::RegionConfig region{.name = "grachten",
+                                    .frame = whole,
+                                    .bbox = {52.36, 4.872, 52.393, 4.922},
+                                    .tradition = nullptr,
+                                    .palette = load::amsterdam_palette()};
+    const auto loaded = load::load_region(*doc, region);
+    ATLAS_REQUIRE(loaded.has_value());
+    // each drawn footprint of the region loaded whole, by its element and its mapped place, for the comparison
+    const auto key_of = [](const load::Building& b, bool part, const tl::GridPoint& first) {
+        return std::format("{}{}{}@{},{}", part ? "p" : "b", b.relation ? "r" : "w", b.id, first.lat, first.lon);
+    };
+    const auto grid_of = [](const tl::Frame& f, const std::vector<load::V2>& poly) {
+        std::vector<tl::GridPoint> out;
+        out.reserve(poly.size());
+        for (const load::V2& p : poly) {
+            out.emplace_back(tl::grid_lat(f, p.z).value_or(0), tl::grid_lon(f, p.x).value_or(0));
+        }
+        return out;
+    };
+    struct Kept {
+        std::vector<tl::GridPoint> ring;
+        double min = 0;
+        double h = 0;
+        bool part = false;
+    };
+    std::unordered_map<std::string, std::vector<tl::GridPoint>> as_whole;
+    // what the region loaded whole has of an element a window draws and it does not: hidden there, or filed elsewhere
+    const auto element_of = [](const load::Building& b, bool part) {
+        return std::format("{}{}{}", part ? "p" : "b", b.relation ? "r" : "w", b.id);
+    };
+    std::unordered_set<std::string> hidden_whole;
+    std::unordered_set<std::string> elements_whole;
+    for (const auto* list : {&loaded->buildings, &loaded->parts}) {
+        for (const load::Building& b : *list) {
+            const load::V2 at = b.at ? *b.at : atlas::geometry::centroid(b.poly);
+            const tl::GridPoint ref = tl::nearest_grid(whole, at.x, at.z);
+            elements_whole.insert(element_of(b, list == &loaded->parts));
+            if (b.hidden) {
+                hidden_whole.insert(key_of(b, list == &loaded->parts, ref));
+                continue;
+            }
+            as_whole[key_of(b, list == &loaded->parts, ref)] = grid_of(whole, b.poly);
+        }
+    }
+    const tl::TileKey sw = tl::tile_of(load::window_level, 523'600'000, 48'720'000);
+    const tl::TileKey ne = tl::tile_of(load::window_level, 523'930'000, 49'220'000);
+    std::vector<Kept> kept;
+    std::size_t windows = 0;
+    std::size_t differ = 0;
+    std::size_t absent = 0;
+    std::size_t absent_hidden = 0; // of them: hidden in the region loaded whole
+    std::size_t absent_moved = 0;  // of them: the element is there, filed at another point
+    std::string absent_first;
+    load::BuildingCounts sum;
+    for (std::uint32_t y = ne.y; y <= sw.y; ++y) {
+        for (std::uint32_t x = sw.x; x <= ne.x; ++x) {
+            const tl::TileKey tile{load::window_level, x, y};
+            const load::WindowPlace place = load::place_of(tile);
+            const osm::Document mine = query(*doc, load::window_box(tile));
+            const load::RegionConfig config{.name = place.region,
+                                            .frame = place.frame,
+                                            .bbox = load::window_box(tile),
+                                            .tradition = nullptr,
+                                            .keep_homes = place.new_looks,
+                                            .close_up = place.close_up,
+                                            .palette = load::region_palette(place.region)};
+            const auto scene = load::load_region(mine, config);
+            ATLAS_REQUIRE(scene.has_value());
+            ++windows;
+            sum.unsettled += scene->counts.unsettled;
+            sum.overlapping_pairs += scene->counts.overlapping_pairs;
+            for (const auto* list : {&scene->buildings, &scene->parts}) {
+                for (const load::Building& b : *list) {
+                    const load::V2 at = b.at ? *b.at : atlas::geometry::centroid(b.poly);
+                    const tl::GridPoint ref = tl::nearest_grid(place.frame, at.x, at.z);
+                    if (tl::tile_of(load::window_level, ref.lat, ref.lon) != tile || b.hidden) continue;
+                    Kept k{.ring = grid_of(place.frame, b.poly), .min = b.min, .h = b.h, .part = list == &scene->parts};
+                    // as the region loaded whole has it? (the same element filed at the same place, the same ring)
+                    const tl::GridPoint in_whole =
+                        tl::nearest_grid(whole, whole.x(ref.lon), whole.z(ref.lat)); // the same grid point, both frames
+                    // (a centroid is its corners' mean, which for one footprint in a hundred lies half a grid step
+                    // between two points: it then rounds either way, by the frame it is measured in)
+                    std::string key = key_of(b, k.part, in_whole);
+                    auto it = as_whole.find(key);
+                    for (std::int32_t d = 0; d < 9 && it == as_whole.end(); ++d) { // the nine points around it
+                        const tl::GridPoint beside{in_whole.lat + (d / 3) - 1, in_whole.lon + (d % 3) - 1};
+                        const std::string other = key_of(b, k.part, beside);
+                        if (as_whole.contains(other) || hidden_whole.contains(other)) {
+                            key = other;
+                            it = as_whole.find(key);
+                            break;
+                        }
+                    }
+                    if (it == as_whole.end()) {
+                        const bool hidden = hidden_whole.contains(key);
+                        const bool moved = !hidden && elements_whole.contains(element_of(b, k.part));
+                        absent_hidden += hidden ? 1U : 0U;
+                        absent_moved += moved ? 1U : 0U;
+                        if (absent++ < 6) {
+                            absent_first += std::format(" {}{}", key, hidden ? " (hidden)" : (moved ? " (moved)" : ""));
+                        }
+                    } else if (it->second != k.ring) {
+                        ++differ;
+                    }
+                    kept.push_back(std::move(k));
+                }
+            }
+        }
+    }
+    // all of them together, cleaned once more: whatever it finds, the windows left
+    load::Scene together;
+    for (const Kept& k : kept) {
+        load::Building b;
+        for (const tl::GridPoint& p : k.ring) b.poly.emplace_back(whole.x(p.lon), whole.z(p.lat));
+        b.min = k.min;
+        b.h = k.h;
+        b.bb = load::box_of(b.poly);
+        (k.part ? together.parts : together.buildings).push_back(std::move(b));
+    }
+    load::clean_buildings(together, whole);
+    const load::BuildingCounts& c = together.counts;
+    const std::string line = std::format(
+        "the canal ring's {} windows: {} drawn footprints kept; together they leave {} pairs overlapping in plan and "
+        "height, {} outlines to cut by parts, {} to hide, {} bases to raise; {} are not the region's loaded whole, {} "
+        "it does not draw ({} hidden there, {} filed at another point; the first:{}); {} cleanings unsettled",
+        windows, kept.size(), c.pairs_before, c.covered, c.hidden, c.raised, differ, absent, absent_hidden,
+        absent_moved, absent_first, sum.unsettled);
+    MESSAGE(line);
+    (void)std::printf("%s\n", line.c_str()); // NOLINT: the line a run's log keeps
+    CHECK(windows == 16);
+    CHECK(sum.overlapping_pairs == 0);
+    CHECK(sum.unsettled == 0);
+    CHECK(c.pairs_before == 0);
+    CHECK(c.covered + c.hidden == 0);
 }
 
 TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_REGIONS_DIR)") {

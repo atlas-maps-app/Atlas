@@ -1,0 +1,4 @@
+route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_color,route_text_color,route_url
+R1,AA,1,Aan Zee - Eind,,3,e00713,ffffff,
+R2,AA,2,Centrum - Fort,,0,,,
+R3,RR,S3,Gracht - Eind,,2,003082,ffffff,

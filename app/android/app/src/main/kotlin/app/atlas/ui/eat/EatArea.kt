@@ -6,6 +6,8 @@ import app.atlas.search.HoursBook
 import app.atlas.search.MemoryPlaces
 import app.atlas.search.PlaceRecord
 import app.atlas.services.PlaceOrigin
+import app.atlas.ui.search.HereContext
+import app.atlas.ui.search.PlaceLocale
 import app.atlas.ui.kit.openTotal
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -21,20 +23,22 @@ class EatArea(
     val places: List<EatPlace>,
     val origin: PlaceOrigin?,
     val loading: Boolean,
+    /** The area's country and clock, read the one way ([HereContext.localeAt]): never the phone's language. */
+    val local: PlaceLocale,
     val error: String? = null,
-    /** The country most places here give in `addr:country`: its holidays apply to opening hours. */
-    val country: String? = null,
-    zone: ZoneId = ZoneId.systemDefault(),
 ) {
+    /** The country here: its holidays apply to opening hours, its cuisines are the ones at home. */
+    val country: String? get() = local.country
+
     /** Holidays of [country] and the real sun here, for every opening-hours question about this area. */
-    val hours: OpeningHoursContext = OpeningHoursContext.forPlace(country, zone, centre.lat, centre.lon)
+    val hours: OpeningHoursContext = local.hours(centre)
 
     init {
-        guessHours(places)
+        guessHours(places, local.country)
     }
 
     /** The places as a search source, so `:search` queries run over exactly what the screens show. */
-    val source: MemoryPlaces by lazy { MemoryPlaces(places.map { it.place }) }
+    val source: MemoryPlaces by lazy { MemoryPlaces(places.map { it.place }, country) }
 
     private val byKey: Map<String, EatPlace> by lazy { places.associateBy { it.key } }
 
@@ -71,15 +75,20 @@ class EatArea(
         /** How far the eat screens look: about a quarter of an hour on foot. */
         const val RADIUS_M = 1_200.0
 
-        fun empty(centre: LatLon, loading: Boolean = true) = EatArea(centre, RADIUS_M, emptyList(), null, loading)
+        /**
+         * An area with no places yet, as a screen shows it while asking: it reads no hours, so it knows no country (no
+         * holidays) and keeps the phone's [zone].
+         */
+        fun empty(centre: LatLon, loading: Boolean = true, zone: ZoneId = ZoneId.systemDefault()) =
+            EatArea(centre, RADIUS_M, emptyList(), null, loading, PlaceLocale(null, zone))
 
         /**
          * Gives each of [places] that maps no hours those its brand's other branches among them keep, else those the
          * places of its kind around it keep ([HoursBook], as the one search guesses them); once for a set of places.
          */
-        internal fun guessHours(places: List<EatPlace>) {
+        internal fun guessHours(places: List<EatPlace>, country: String?) {
             if (places.all { it.hours != null || it.weighed }) return
-            val records = places.map { PlaceRecord.of(it.place) }
+            val records = places.map { PlaceRecord.of(it.place, country) }
             val book = HoursBook(records)
             places.forEachIndexed { i, p ->
                 if (p.hours == null) p.guess = book.of(records[i])
@@ -87,9 +96,5 @@ class EatArea(
             }
         }
 
-        /** The country most of [places] give in `addr:country`, or null when none does. */
-        fun countryOf(places: List<EatPlace>): String? =
-            places.mapNotNull { it.tags["addr:country"]?.trim()?.uppercase()?.takeIf { c -> c.length == 2 } }
-                .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
     }
 }

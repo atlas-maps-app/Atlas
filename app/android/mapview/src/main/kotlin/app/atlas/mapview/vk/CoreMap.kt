@@ -112,7 +112,12 @@ internal class CoreMap(
     private var lastPlaceLat = Double.NaN
     private var lastPlaceLon = Double.NaN
     private var lastTone = 1f
-    private var lastPalette = Palette()
+
+    /**
+     * The palette the core last took from this map, null until it took one: the core is shared and keeps the block of
+     * the map before (another screen's), so a new map sends its own first, today's look too.
+     */
+    private var lastPalette: Palette? = null
     private var packsRevision = -1
     private val records = FrameRecords.allocate(RECORDS)
     private val intervals = DoubleArray(WINDOW)
@@ -149,14 +154,14 @@ internal class CoreMap(
 
     /**
      * Hands the core the packs as listed now, if they changed since the last time (off the main thread). The world's
-     * remote packs open from their heads in the world's cache, so the core is told of it first: a pack it cannot open
-     * is not handed again until the list changes.
+     * and the terrain's remote packs open from their heads in the world's cache, so the core is told of it first: a pack
+     * it cannot open is not handed again until the list changes.
      */
     fun handPacks(): String {
         packs.load()
         if (packs.revision == packsRevision) return ""
         packsRevision = packs.revision
-        if (packs.worldRefs.any { it.identity != null }) {
+        if (packs.worldRefs.any { it.identity != null } || packs.terrainRefs.isNotEmpty()) {
             MapEngine.worldCacheDir()?.let { dir ->
                 val why = core.worldCache(dir.path, MapEngine.worldCacheBytes)
                 if (why.isNotEmpty()) Log.w(MapEngine.TAG, "vk world: the world's cache not opened: $why")
@@ -167,11 +172,14 @@ internal class CoreMap(
 
     /**
      * The moment the core lights the map by (CoreMoment's block for [moment] at the place [placeLat], [placeLon], its
-     * clock in [zone]), handed over when it changed (off the main thread). "" or why it was not.
+     * clock in [zone]), with the user's [tone] and [palette], handed over when it changed (off the main thread; one send
+     * at a time, as they share the blocks). "" or why it was not.
      */
-    fun moment(moment: Moment, zone: ZoneId, daylight: Boolean, placeLat: Double = ThemeBlock.PLACE_LAT, placeLon: Double = ThemeBlock.PLACE_LON): String {
-        val tone = MapEngine.tone
-        val palette = MapEngine.palette
+    @Synchronized
+    fun moment(
+        moment: Moment, zone: ZoneId, daylight: Boolean, placeLat: Double = ThemeBlock.PLACE_LAT, placeLon: Double = ThemeBlock.PLACE_LON,
+        tone: Float = MapEngine.tone, palette: Palette = MapEngine.palette,
+    ): String {
         if (moment == lastMoment && zone == lastZone && tone == lastTone && palette == lastPalette && placeLat == lastPlaceLat && placeLon == lastPlaceLon) return ""
         val why = runCatching {
             if (palette != lastPalette) {

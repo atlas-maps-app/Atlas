@@ -7,8 +7,8 @@ class OpeningHoursException(message: String, val index: Int) : IllegalArgumentEx
  * Reads the OSM opening_hours syntax (https://wiki.openstreetmap.org/wiki/Key:opening_hours/specification) into
  * rules. It accepts the common slips of real data too: any letter case, English, German and Dutch day and month
  * names, spaces around dashes, `08.30`, `8h30` and `9am-5pm`, a colon after the days, missing `;` between rules, a
- * stray trailing `;`, `Su PH` for `Su,PH`, `24/7` after other selectors (`Jun-Aug 24/7`), and typographic dashes and
- * quotes.
+ * stray trailing `;`, `Su PH` for `Su,PH`, `24/7` after other selectors (`Jun-Aug 24/7`), `24h` for all day, times
+ * without their colons after the days (`Mo-Fr 1900-2200`), and typographic dashes and quotes.
  */
 internal class OpeningHoursParser(private val text: String) {
     private enum class T { NUM, WORD, COMMENT, SYM, END }
@@ -68,11 +68,20 @@ internal class OpeningHoursParser(private val text: String) {
             }
             if ((years != null || dates != null || weeks != null) && isSym(":")) p++
             days = daySelector()
-            if (days != null && isSym(":") && (isTimeStart(1) || isAlwaysAhead(1))) p++
+            if (days != null && isSym(":") && (isTimeStart(1) || isAlwaysAhead(1) || isCompactSpanAt(1))) p++
             if ((years != null || dates != null || weeks != null || days != null) && isAlwaysAhead(0)) {
                 // "Jun-Aug 24/7", "Mo-Fr 24/7": all day on the selected days
                 p += 3
                 always = true
+            } else if (isAllDayAhead()) {
+                // "24h", "Mo-Fr 24h": all day, as `24/7` (the reviewer, 17 November, finding 11: it read as the moment
+                // 24:00, "closed, opens 0:00")
+                p += 2
+                always = true
+            } else if (days != null && isCompactSpanAt(0)) {
+                // "Mo-Fr 1900-2200": no year follows the days, so these are times (it read as the years 1900 to 2200,
+                // open around the clock)
+                times = compactTimes()
             } else {
                 times = timeSelector()
             }
@@ -89,6 +98,47 @@ internal class OpeningHoursParser(private val text: String) {
         // a comment instead of times ("by appointment", Tu-Fr "on request") says nothing certain
         if (!stated && comment != null && times == null && !always) state = OpenState.UNKNOWN
         return Rule(kind, years, dates, weeks, days, times, state, comment, always)
+    }
+
+    /** `24h` standing for the times: no minutes, no span and no other time after it ("24h", "Mo-Fr 24h off"). */
+    private fun isAllDayAhead(): Boolean {
+        if (peek().type != T.NUM || peek().text != "24" || !isWord("h", 1)) return false
+        val next = peek(2)
+        return next.type != T.NUM && !(next.type == T.SYM && next.text in setOf("-", ":", ".", "+", "/"))
+    }
+
+    /** A time span written without colons ("1900-2200", "0830-1700") at [k] tokens ahead. */
+    private fun isCompactSpanAt(k: Int): Boolean = compactClock(peek(k), 24) != null && isSym("-", k + 1) && compactClock(peek(k + 2), 48) != null
+
+    /** "1900" as minutes since midnight, at most [maxHours] hours; null when it is no such time. */
+    private fun compactClock(t: Token, maxHours: Int): Int? {
+        if (t.type != T.NUM || t.text.length != 4) return null
+        val h = t.text.substring(0, 2).toInt()
+        val m = t.text.substring(2).toInt()
+        return if (m > 59 || h * 60 + m > maxHours * 60) null else h * 60 + m
+    }
+
+    /**
+     * "1900-2200", "0900-1200,1300-1700": the spans written without colons, and any written with them among them in the
+     * same rule ("0900-1200, 13:00-17:00"; the app maintainer, 18 November 2026, batch 4 A8: the colon times read as a
+     * rule of no days of their own, open at the weekend too).
+     */
+    private fun compactTimes(): List<TimeSpan> {
+        val out = ArrayList<TimeSpan>()
+        while (true) {
+            if (isCompactSpanAt(0)) {
+                val from = compactClock(peek(), 24) ?: fail("time expected")
+                p += 2
+                val to = compactClock(peek(), 48) ?: fail("time expected")
+                p++
+                out += TimeSpan(TimePoint(from), TimePoint(to), openEnd = false)
+            } else {
+                out += timeSpan()
+            }
+            if (isSym(",") && (isCompactSpanAt(1) || isTimeStartAt(p + 1))) { p++; continue }
+            if (isCompactSpanAt(0) || isTimeStartAt(p)) continue // "0900-1200 1300-1700", "0900-1200 13:00-17:00"
+            return out
+        }
     }
 
     /** `24/7` at [k] tokens ahead. */

@@ -7,12 +7,17 @@ import app.atlas.geo.LatLon
 import app.atlas.guide.GuideSettings
 import app.atlas.model.Fix
 import app.atlas.model.Mode
+import app.atlas.model.OsmId
+import app.atlas.model.OsmType
+import app.atlas.model.Place
 import app.atlas.model.RoutePrefs
 import app.atlas.model.RouteRequest
 import app.atlas.services.NoVoice
 import app.atlas.services.RegionLayer
+import app.atlas.testing.Nowhere
 import app.atlas.testing.testServices
 import app.atlas.ui.mine.offline.RegionScheduler
+import app.atlas.ui.search.HereContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -32,6 +37,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
 import java.util.concurrent.CopyOnWriteArrayList
 
 /** The go package's state holders on a test phone: what the Go tab keeps, the planner on the real segment, Ears only. */
@@ -202,7 +209,7 @@ class GoModelsTest {
     fun earsOnlyCallsOutTheWesterkerksSurroundings() = runBlocking {
         val s = testServices(places = true)
         val voice = NoVoice()
-        val ears = EarsSession(voice, GuideSettings(mode = Mode.WALK), CoroutineScope(Dispatchers.Unconfined), s.go::placesNow, s.clock.zone)
+        val ears = EarsSession(voice, GuideSettings(mode = Mode.WALK), CoroutineScope(Dispatchers.Unconfined), s.go::placesNow, s.clock.zone) { at -> HereContext.hours(s, at, s.clock.zone) }
         val at = Fix(Services.WESTERKERK, s.clock.instant(), 5.0, 0.0, null)
         ears.onFix(at)
         val v = ears.view.value
@@ -227,5 +234,18 @@ class GoModelsTest {
         assertNull(ears.view.value.beacon)
         ears.stop()
         s.close()
+    }
+
+    @Test
+    fun theEarsSayNoClosingTimeAnOpenEndDoesNotState() {
+        val amsterdam = ZoneId.of("Europe/Amsterdam")
+        fun bar(hours: String) = Place(OsmId(OsmType.NODE, 1), LatLon(52.37, 4.89), mapOf("amenity" to "bar", "opening_hours" to hours))
+        // a Tuesday evening, 20:00
+        val evening = Instant.parse("2026-11-17T19:00:00Z")
+        assertEquals(LocalTime.of(23, 0), EarsSession.closesAt(bar("Mo-Su 17:00-23:00"), evening, amsterdam, context = Nowhere))
+        // open to two and past it, then in the night after: open, and no time said
+        assertNull(EarsSession.closesAt(bar("Tu-Su 16:00-02:00+"), evening, amsterdam, context = Nowhere))
+        assertNull(EarsSession.closesAt(bar("Tu-Su 16:00-02:00+"), Instant.parse("2026-11-18T02:00:00Z"), amsterdam, context = Nowhere))
+        assertNull(EarsSession.closesAt(bar("Mo-Su 17:00+"), evening, amsterdam, context = Nowhere))
     }
 }

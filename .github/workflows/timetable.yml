@@ -1,0 +1,308 @@
+# Packs the Netherlands' public transport timetable and publishes it as a GitHub release asset, once a week.
+# The file is the one app/android/transit/FORMAT.md describes: made by app/android/transit/pack/ttpack.py from OVapi's
+# GTFS feed (https://gtfs.ovapi.nl, CC0 but for its shapes and ticketing tables, which the packer does not take), read
+# in place by the planner in app/android/transit/planner. Nothing in the app reads it yet.
+#
+# Three jobs, each needing the one before:
+#   checks   transit.yml's, called from here: the packer's check and the planner's tests on x86_64 and arm64 Linux
+#            (among them the answers that must be the same on every platform), the library without std, and files a
+#            little wrong.
+#   pack     fetches the feed (the log says what OVapi's server answered), packs it strictly (a table or column the
+#            packer does not read is a refusal, with the packer's words in the summary; the packer says its time and
+#            its most memory), checks the file, says how full its days are, runs the 46 fixed journeys against it (on
+#            a new feed: each on its weekday inside the file's days, the planner held to the connection scan), gzips
+#            it and writes the list.
+#   publish  the only job that may write: uploads the file and the list timetable.json to a dated release
+#            timetable-YYYYMMDD, then puts the list on the fixed release timetable-latest, as packs.yml does with
+#            packs.json. It runs no code of the repository.
+# A red job publishes nothing. So does a feed that has not changed: the run ends green and says so.
+#
+# What OVapi asks of who fetches (gtfs.ovapi.nl/README), and how this keeps to it:
+#   - a User-Agent that says who is asking: Atlas and the repository's address, nothing else;
+#   - If-Modified-Since: sent with the moment the published file's feed was last changed, so an unchanged feed costs
+#     OVapi a line. (Not sent when this tree's packer or format is not the published file's: then the feed is wanted
+#     whole. Nor with `whole` by hand.)
+#   - the feed changes at most daily: a fetched zip is kept for the day (the cache below), so a second run that day,
+#     after a red one or by hand, asks OVapi for nothing.
+#
+# gzip, not xz: Android reads gzip with no library added. Measured on the feed of 16 November 2026: 57.5 MB at rest,
+# 12.5 MB as gzip -9, 6.2 MB as xz. A filter before the compressor that keeps the format (each u32 column as
+# differences, its four bytes apart) would bring gzip to 7.9 MB at the price of a second coding to undo on the phone;
+# it is not built (FORMAT.md, "Sizes").
+name: Timetable
+
+run-name: Timetable${{ inputs.whole && ', the feed whole' || '' }}${{ inputs.publish == 'no' && ', not published' || '' }}
+
+on:
+  schedule:
+    # Mondays 04:43 UTC: after the night's CI (02:23) and the alpha (03:47), so it waits for no runner of theirs.
+    # OVapi's feed of Sunday evening is out by then.
+    - cron: '43 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the packed file: yes, or no (pack and check only; the file stays the run's artifact)"
+        type: choice
+        options: ['yes', 'no']
+        default: 'yes'
+      whole:
+        description: Take the feed whole and publish even when it has not changed since the published file
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: timetable
+  cancel-in-progress: false
+
+env:
+  GH_REPO: ${{ github.repository }}
+  USER_AGENT: Atlas-timetable/1 (+https://github.com/atlas-maps-app/Atlas)
+  FEED_URL: https://gtfs.ovapi.nl/nl/gtfs-nl.zip
+  DIR: app/android/transit
+  RELEASE_NOTES: |
+    Public transport timetables for Atlas, packed by .github/workflows/timetable.yml into the file
+    app/android/transit/FORMAT.md describes. timetable.json lists each file with its feed's version, the days it
+    covers, its format's version, and its size and SHA-256; timetable-latest always holds the newest list. The files
+    are gzipped.
+
+    nl.tt.gz, the Netherlands: from OVapi's GTFS feed (https://gtfs.ovapi.nl), which its publisher gives under
+    CC0 1.0. The feed's shapes (ODbL) and ticketing tables are not in the file. The timetables are the operators' own;
+    Atlas speaks for none of them.
+
+jobs:
+  # transit.yml's checks, as a push to app/android/transit runs them: the weekly file is packed only by a tree that
+  # passes them, on x86_64 and arm64 Linux.
+  checks:
+    name: checks
+    uses: ./.github/workflows/transit.yml
+
+  pack:
+    name: fetch, pack and check
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      new: ${{ steps.fetch.outputs.new }}
+      tag: ${{ steps.day.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Rust, as rust-toolchain.toml pins it
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$DIR/rust-toolchain.toml")" --profile minimal --no-self-update
+      - name: The day, and what is published
+        id: day
+        env:
+          GH_TOKEN: ${{ github.token }} # read only in this job: for the published list
+        run: |
+          set -euo pipefail
+          echo "day=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "tag=timetable-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/previous" "$RUNNER_TEMP/feed" "$RUNNER_TEMP/out"
+          if gh release download timetable-latest --pattern timetable.json --dir "$RUNNER_TEMP/previous" 2> /dev/null; then
+            jq -r '.timetables[]? | "published: \(.id), feed version \(.feed.version // "?"), \(.first_day // "?") to \(.last_day // "?"), in \(.release // "?")"' \
+              "$RUNNER_TEMP/previous/timetable.json" || true
+          else
+            echo "no list is published yet"
+          fi
+      # The feed's zip, kept for the day with what the server said of it: a second run that day asks OVapi for nothing.
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/feed
+          key: timetable-feed-nl-${{ steps.day.outputs.day }}
+      - name: Fetch OVapi's timetable
+        id: fetch
+        env:
+          WHOLE: ${{ inputs.whole }}
+        run: |
+          set -euo pipefail
+          F="$RUNNER_TEMP/feed"
+          # the moment the published file's feed was last changed; empty when the feed is wanted whole
+          SINCE=$(python3 -I "$DIR/pack/ttlist.py" since "$RUNNER_TEMP/previous/timetable.json" nl)
+          if [ "$WHOLE" = true ]; then SINCE=''; fi
+          if [ -s "$F/gtfs-nl.zip" ] && [ -s "$F/last-modified.txt" ] && [ -s "$F/fetched.txt" ]; then
+            echo "fetched=false" >> "$GITHUB_OUTPUT"
+            echo "kept from earlier today: the feed fetched at $(cat "$F/fetched.txt"), last changed $(cat "$F/last-modified.txt")"
+            if [ -n "$SINCE" ] && [ "$SINCE" = "$(cat "$F/last-modified.txt")" ]; then
+              echo "new=false" >> "$GITHUB_OUTPUT"
+              echo "OVapi's feed of today (last changed $SINCE) is the published file's: nothing to publish." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          else
+            rm -f "$F"/*
+            ARGS=(-sS --retry 5 --retry-delay 30 -A "$USER_AGENT" --compressed -D "$F/headers.txt" -o "$F/gtfs-nl.zip.part" -w '%{http_code}')
+            if [ -n "$SINCE" ]; then ARGS+=(-H "If-Modified-Since: $SINCE"); fi
+            echo "asking $FEED_URL with If-Modified-Since: ${SINCE:-(not sent: the feed is wanted whole)}"
+            CODE=$(curl "${ARGS[@]}" "$FEED_URL")
+            # what the server said of the file, in the log: the summary and the list hold it too, but a log is what is read first
+            echo "OVapi answered $CODE, with:"
+            { grep -i -E '^(last-modified|etag|content-length|content-type|content-encoding|date|age|expires|cache-control):' "$F/headers.txt" || true; } | tr -d '\r' | sed 's/^/  /'
+            if [ "$CODE" = 200 ] && ! grep -q -i '^last-modified:' "$F/headers.txt"; then echo "  (no Last-Modified: without one the feed is fetched whole each time)"; fi
+            if [ "$CODE" = 304 ]; then
+              rm -f "$F"/*
+              echo "fetched=false" >> "$GITHUB_OUTPUT"
+              echo "new=false" >> "$GITHUB_OUTPUT"
+              echo "OVapi's feed has not changed since $SINCE: the published file stands, and nothing is published." | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [ "$CODE" != 200 ]; then
+              echo "::error::OVapi answered $CODE for $FEED_URL"
+              sed 's/^/  /' "$F/headers.txt" || true
+              exit 1
+            fi
+            mv "$F/gtfs-nl.zip.part" "$F/gtfs-nl.zip"
+            # what the server said of it, to say back next time; a feed without it is asked for whole each time
+            { grep -i '^last-modified:' "$F/headers.txt" || true; } | tail -1 | cut -d' ' -f2- | tr -d '\r' > "$F/last-modified.txt"
+            if [ ! -s "$F/last-modified.txt" ]; then echo "(the server gave no Last-Modified)" > "$F/last-modified.txt"; fi
+            date -u +%Y-%m-%dT%H:%M:%SZ > "$F/fetched.txt"
+            echo "fetched at $(cat "$F/fetched.txt"); the feed was last changed: $(cat "$F/last-modified.txt")"
+            rm -f "$F/headers.txt"
+            echo "fetched=true" >> "$GITHUB_OUTPUT"
+          fi
+          unzip -l "$F/gtfs-nl.zip" | tail -1
+          echo "new=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/save@v6
+        if: ${{ steps.fetch.outputs.fetched == 'true' }}
+        with:
+          path: ${{ runner.temp }}/feed
+          key: timetable-feed-nl-${{ steps.day.outputs.day }}
+      - name: Pack
+        if: ${{ steps.fetch.outputs.new == 'true' }}
+        run: |
+          set -euo pipefail
+          # strictly: a table or a column with values that the packer does not read ends the run, with nothing written
+          if ! python3 -I "$DIR/pack/ttpack.py" "$RUNNER_TEMP/feed/gtfs-nl.zip" "$RUNNER_TEMP/out/nl.tt" --strict \
+              > "$RUNNER_TEMP/pack.txt" 2> "$RUNNER_TEMP/pack.err"; then
+            cat "$RUNNER_TEMP/pack.txt" "$RUNNER_TEMP/pack.err"
+            {
+              echo "### The packer refused OVapi's feed"
+              echo
+              echo '```'
+              cat "$RUNNER_TEMP/pack.txt"
+              grep -v '^\[' "$RUNNER_TEMP/pack.err" | tail -8
+              echo '```'
+              echo "Nothing is published. The feed is fetched at $(cat "$RUNNER_TEMP/feed/fetched.txt") and kept for the day."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::The packer refused the feed: $(grep -v '^\[' "$RUNNER_TEMP/pack.err" | tail -1)"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/pack.txt"
+          {
+            echo "### Packed OVapi's feed, fetched at $(cat "$RUNNER_TEMP/feed/fetched.txt") (last changed $(cat "$RUNNER_TEMP/feed/last-modified.txt"))"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/pack.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: The file is sound, and the fixed journeys agree with the scan on it
+        if: ${{ steps.fetch.outputs.new == 'true' }}
+        working-directory: app/android/transit/planner
+        run: |
+          set -euo pipefail
+          cargo build --locked --release
+          T=target/release/atlas-transit
+          "$T" info "$RUNNER_TEMP/out/nl.tt" > "$RUNNER_TEMP/info.txt"
+          head -4 "$RUNNER_TEMP/info.txt"
+          "$T" check "$RUNNER_TEMP/out/nl.tt"
+          # how full the days are, week by week: the operators hand in their timetables to different days
+          "$T" days "$RUNNER_TEMP/out/nl.tt" | tee "$RUNNER_TEMP/days.txt"
+          if ! "$T" fixed "$RUNNER_TEMP/out/nl.tt" tests/data/journeys-nl-9696.tsv > "$RUNNER_TEMP/fixed.txt"; then
+            cat "$RUNNER_TEMP/fixed.txt"
+            {
+              echo "### The fixed journeys do not hold on this file"
+              echo
+              echo '```'
+              tail -60 "$RUNNER_TEMP/fixed.txt"
+              echo '```'
+              echo "Nothing is published."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::The fixed journeys do not hold on the packed file"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/fixed.txt"
+          {
+            echo
+            echo "<details><summary>How the file's days are filled</summary>"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/days.txt"
+            echo '```'
+            echo "</details>"
+            echo
+            echo "- $(tail -1 "$RUNNER_TEMP/fixed.txt")"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compress, and the list
+        if: ${{ steps.fetch.outputs.new == 'true' }}
+        env:
+          TAG: ${{ steps.day.outputs.tag }}
+        run: |
+          set -euo pipefail
+          O="$RUNNER_TEMP/out"
+          gzip -9 -n -c "$O/nl.tt" > "$O/nl.tt.gz"
+          gzip -t "$O/nl.tt.gz"
+          python3 -I "$DIR/pack/ttlist.py" entry --id nl --name Netherlands --file "$O/nl.tt" --gz "$O/nl.tt.gz" \
+            --url "https://github.com/$GH_REPO/releases/download/$TAG/nl.tt.gz" --release "$TAG" --feed-url "$FEED_URL" \
+            --feed "$RUNNER_TEMP/feed/gtfs-nl.zip" --last-modified "$(cat "$RUNNER_TEMP/feed/last-modified.txt")" \
+            --fetched "$(cat "$RUNNER_TEMP/feed/fetched.txt")" --commit "$GITHUB_SHA" \
+            --previous "$RUNNER_TEMP/previous/timetable.json" --out "$O/timetable.json" > "$RUNNER_TEMP/list.txt"
+          cat "$RUNNER_TEMP/list.txt"
+          echo "- $(cat "$RUNNER_TEMP/list.txt")" >> "$GITHUB_STEP_SUMMARY"
+          rm "$O/nl.tt"
+          ls -l "$O"
+      - uses: actions/upload-artifact@v7
+        if: ${{ steps.fetch.outputs.new == 'true' }}
+        with:
+          name: timetable-nl
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: publish
+    needs: pack
+    if: ${{ needs.pack.outputs.new == 'true' && inputs.publish != 'no' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # the two releases; no step here runs the repository's code
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.pack.outputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: timetable-nl
+          path: ${{ runner.temp }}/out
+      - name: Publish
+        run: |
+          set -euo pipefail
+          O="$RUNNER_TEMP/out"
+          # what is published is what was checked: the list's size and sum are the file's
+          SUM=$(sha256sum "$O/nl.tt.gz" | cut -d' ' -f1)
+          BYTES=$(stat -c %s "$O/nl.tt.gz")
+          LISTED=$(jq -r '.timetables[] | select(.id == "nl") | "\(.file.sha256) \(.file.bytes) \(.release)"' "$O/timetable.json")
+          if [ "$LISTED" != "$SUM $BYTES $TAG" ]; then echo "::error::The list says '$LISTED', the file is '$SUM $BYTES $TAG'"; exit 1; fi
+          printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/notes.md"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --title "Timetables ${TAG#timetable-}" --notes-file "$RUNNER_TEMP/notes.md" --latest=false --target "$GITHUB_SHA"
+          fi
+          gh release upload "$TAG" "$O/nl.tt.gz" "$O/timetable.json" --clobber
+          # the list on timetable-latest last: until it is there, the list before stands, and it names a whole release
+          if ! gh release view timetable-latest > /dev/null 2>&1; then
+            gh release create timetable-latest --title "Timetables: the latest list" --notes-file "$RUNNER_TEMP/notes.md" --latest=false --target "$GITHUB_SHA"
+          fi
+          gh release delete-asset timetable-latest timetable.json --yes 2> /dev/null || true
+          gh release upload timetable-latest "$O/timetable.json"
+          gh release edit timetable-latest --notes-file "$RUNNER_TEMP/notes.md"
+          {
+            echo "### Published"
+            echo
+            jq -r '.timetables[] | select(.id == "nl") | "- \(.url)\n- feed version \(.feed.version), \(.first_day) to \(.last_day) (\(.days) days), format \(.format), \(.file.bytes) bytes, sha256 \(.file.sha256)"' "$O/timetable.json"
+            echo "- the list: https://github.com/$GH_REPO/releases/download/timetable-latest/timetable.json"
+          } >> "$GITHUB_STEP_SUMMARY"

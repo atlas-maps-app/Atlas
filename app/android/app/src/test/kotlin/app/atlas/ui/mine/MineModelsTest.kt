@@ -278,7 +278,7 @@ class PowerModelTest {
             node(5, 0.0500, 0.0000, "amenity" to "library", "name" to "Far library", "power_supply" to "yes"),
             node(6, 0.0800, 0.1000, "tourism" to "camp_site", "name" to "Stonewood", "power_supply" to "yes"),
             node(7, 0.0100, 0.0100, "tourism" to "camp_site", "name" to "No hookup"),
-        ),
+        ), country = null,
     )
 
     @Test
@@ -438,7 +438,7 @@ class WaterModelTest {
             node(6, 0.0020, 0.0020, "man_made" to "water_well", "name" to "Plain well"),
             node(7, 0.0030, 0.0030, "amenity" to "fountain", "name" to "Decorative"),
             node(8, 0.0030, 0.0040, "amenity" to "fountain", "name" to "Drinking fountain", "drinking_water" to "yes"),
-        ),
+        ), country = null,
     )
 
     @Test

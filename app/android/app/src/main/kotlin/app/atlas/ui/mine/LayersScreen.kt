@@ -72,7 +72,6 @@ import app.atlas.mapview.UserLocation
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
-import app.atlas.services.DEFAULT_TONE_ON
 import app.atlas.services.SettingsKeys
 import app.atlas.services.screenEffectsOn
 import app.atlas.ui.kit.Atlas
@@ -108,10 +107,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
     val effects by settings.screenEffects.collectAsStateWithLifecycle(screenEffectsOn(emptyPreferences()))
     val (haze, vignette, grain) = effects
     val glass by settings.flow(SettingsKeys.FROSTED_GLASS, false).collectAsStateWithLifecycle(false)
-    val paletteCode by settings.flow(SettingsKeys.MAP_PALETTE).collectAsStateWithLifecycle(null)
-    val savedText by settings.flow(SettingsKeys.MAP_PALETTES).collectAsStateWithLifecycle(null)
-    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON, DEFAULT_TONE_ON).collectAsStateWithLifecycle(DEFAULT_TONE_ON)
-    val tone by settings.flow(SettingsKeys.MAP_TONE, 1f).collectAsStateWithLifecycle(1f)
+    val toneOn by settings.flow(SettingsKeys.MAP_TONE_ON).collectAsStateWithLifecycle(null)
+    val toneKept by settings.flow(SettingsKeys.MAP_TONE).collectAsStateWithLifecycle(null)
     val partsOff by settings.partsOff.collectAsStateWithLifecycle(MapParts.byDefault)
     val pacing by settings.flow(SettingsKeys.MAP_PACING, false).collectAsStateWithLifecycle(false)
     val compression by settings.flow(SettingsKeys.MAP_COMPRESSION, true).collectAsStateWithLifecycle(true)
@@ -171,13 +168,11 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
         ) {
             Box(Modifier.align(Alignment.CenterHorizontally).size(40.dp, 5.dp).bbox(0xFFD5D8DE, cr(3f)))
             Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                // the Map look's own screen (the Settings board's row): its presets, colours and switches, what the map
-                // draws now as its value
-                val palette = remember(paletteCode) { MapLookModel.current(paletteCode) }
-                val saved = remember(savedText) { MapLookModel.savedOf(savedText) }
+                // the Map look's own screen (the Settings board's row): its presets, colours and switches; its value the
+                // look's name, then the theme where it isn't Auto, as Settings' row says it
                 SettingRow(
                     stringResource(R.string.mine_settings_look), symbol = "ui.layers.2", tile = Color(INK),
-                    value = paletteLine(palette, saved.getOrNull(MapLookModel.savedIndex(saved, palette))?.name, presetNames()),
+                    value = lookRowValue(settings),
                     onClick = { nav.go(Dest.MapLook()) },
                 )
                 LayerChips(layers) { layer, on ->
@@ -194,14 +189,9 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
                     onGlass = { on -> scope.launch { settings.set(SettingsKeys.FROSTED_GLASS, on) } },
                 )
                 ToneRow(
-                    toneOn, tone,
-                    onOn = { on -> scope.launch { settings.set(SettingsKeys.MAP_TONE_ON, on) } },
-                    onStrength = { s ->
-                        scope.launch {
-                            settings.set(SettingsKeys.MAP_TONE, s)
-                            settings.set(SettingsKeys.MAP_TONE_ON, true)
-                        }
-                    },
+                    MapLookModel.tone(toneOn, toneKept),
+                    onOn = { on -> scope.launch { settings.edit { MapLookWrites.toneSwitch(it, on) } } },
+                    onStrength = { s -> scope.launch { settings.edit { MapLookWrites.toneTo(it, s) } } },
                 )
                 if (app.atlas.BuildConfig.TIMINGS) {
                     PartChips(
@@ -504,47 +494,43 @@ private fun LightScrubber(minutes: Int, sun: Triple<Int?, Int, Int?>, twelve: Bo
 }
 
 /**
- * The Map look's Tone (the Map look board's Tone card): the switch, and the strength from off to 2× in steps of 5 % on a
- * track with today's 100 % marked, its value at the right. A drag shows on the map behind as it moves and is kept when
- * the finger lifts; setting a strength turns Tone on, and off keeps the strength for when it is on again.
+ * The Map look's Tone (the Map look board's Tone card), on the sheet: the switch, and the strength from off to 2× in
+ * steps of 5 % on a track with 100 % marked, its value at the right, both as the Map look shows them (toneValue; the
+ * knob at what the map draws, 0 while off). A drag shows on the map behind as it moves and is kept when the finger lifts;
+ * a strength above 0 turns Tone on, 0 is off, and the switch brings the last strength back (MapLookWrites).
  */
 @Composable
-private fun ToneRow(on: Boolean, strength: Float, onOn: (Boolean) -> Unit, onStrength: (Float) -> Unit) {
+private fun ToneRow(tone: Tone, onOn: (Boolean) -> Unit, onStrength: (Float) -> Unit) {
     var dragging by remember { mutableStateOf<Float?>(null) }
-    // the drag's handlers outlive a recomposition: what a cancelled drag returns the map to is the latest kept
-    val kept by rememberUpdatedState(if (on) strength else 0f)
-    val shown = dragging ?: strength
+    // the drag's handlers outlive a recomposition: what a cancelled drag returns the map to is the latest drawn
+    val kept by rememberUpdatedState(tone.drawn)
+    val keep by rememberUpdatedState(onStrength)
+    val shown = dragging ?: tone.drawn
     val percent = (shown * 100).roundToInt()
-    val lit = on || dragging != null
-    val value = when {
-        !lit || percent == 0 -> stringResource(R.string.mine_layers_tone_off)
-        percent == 100 -> stringResource(R.string.mine_layers_tone_today, percent)
-        else -> stringResource(R.string.mine_layers_tone_value, percent)
-    }
+    val lit = tone.on || dragging != null
+    val value = toneValue(shown)
     val name = stringResource(R.string.mine_layers_tone)
     val description = stringResource(R.string.mine_layers_tone_cd, percent)
-    // 0 to 2 in steps of 5 %, so today's 1 is a step
-    fun at(x: Float, width: Float) = (x / width * 40f).roundToInt().coerceIn(0, 40) / 20f
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             CardLabel(name, Modifier.weight(1f))
             BText(value, bt(14f, 800, 18f, tnum = true), INK)
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            MineSwitch(on, onOn, name, onColour = INK)
+            MineSwitch(tone.on, onOn, name, onColour = INK)
             Canvas(
                 Modifier.weight(1f).height(34.dp).semantics {
                     contentDescription = description
                     progressBarRangeInfo = androidx.compose.ui.semantics.ProgressBarRangeInfo(shown, 0f..2f, 39)
                     setProgress { v -> onStrength(((v * 20f).roundToInt() / 20f).coerceIn(0f, 2f)); true }
                 }
-                    .pointerInput(Unit) { detectTapGestures { p -> onStrength(at(p.x, size.width.toFloat())) } }
+                    .pointerInput(Unit) { detectTapGestures { p -> keep(toneAt(p.x, size.width.toFloat())) } }
                     .pointerInput(Unit) {
                         detectHorizontalDragGestures(
-                            onDragEnd = { dragging?.let(onStrength); dragging = null },
+                            onDragEnd = { dragging?.let { keep(it) }; dragging = null },
                             onDragCancel = { dragging = null; MapEngine.tone(kept) },
                         ) { change, _ ->
-                            val s = at(change.position.x, size.width.toFloat())
+                            val s = toneAt(change.position.x, size.width.toFloat())
                             if (s != dragging) {
                                 dragging = s
                                 MapEngine.tone(s)
@@ -560,7 +546,7 @@ private fun ToneRow(on: Boolean, strength: Float, onOn: (Boolean) -> Unit, onStr
                 fun x(s: Float) = left + s / 2f * width
                 drawRoundRect(Color(0xFFE6E8EC), Offset(left, y - track / 2), Size(width, track), CornerRadius(track / 2))
                 if (lit) drawRoundRect(Color(INK), Offset(left, y - track / 2), Size(x(shown) - left, track), CornerRadius(track / 2))
-                // today's 100 %
+                // 100 %, the renders' own strength
                 drawLine(Color(0xFF8A8F99), Offset(x(1f), y - 9.dp.toPx()), Offset(x(1f), y + 9.dp.toPx()), 2.dp.toPx())
                 drawCircle(Color.White, r, Offset(x(shown), y))
                 drawCircle(Color(if (lit) INK else 0xFFB8BCC4), r, Offset(x(shown), y), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
