@@ -21,12 +21,13 @@
 #include <atomic>
 #include <bit>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <thread>
@@ -61,6 +62,47 @@ struct Bucket {
 /// and elevation rounded to 0.5° (at least 0.5° up while the sun is up); straight down while the sun is set.
 [[nodiscard]] Bucket bucket_of(const style::ThemeBlock& block) noexcept;
 
+/// A scene's tiles in order, each one's part (shared between scenes) read as `const SunTile&`.
+class SceneTiles {
+public:
+    class iterator {
+    public:
+        using iterator_concept = std::forward_iterator_tag;
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = SunTile;
+        using difference_type = std::ptrdiff_t;
+        using reference = const SunTile&;
+        using pointer = const SunTile*;
+        iterator() = default;
+        explicit iterator(std::span<const std::shared_ptr<const SunTile>>::iterator at) noexcept : at_(at) {}
+        [[nodiscard]] reference operator*() const noexcept { return **at_; }
+        [[nodiscard]] pointer operator->() const noexcept { return at_->get(); }
+        iterator& operator++() noexcept {
+            ++at_;
+            return *this;
+        }
+        iterator operator++(int) noexcept {
+            const iterator was = *this;
+            ++at_;
+            return was;
+        }
+        [[nodiscard]] bool operator==(const iterator&) const = default;
+
+    private:
+        std::span<const std::shared_ptr<const SunTile>>::iterator at_{};
+    };
+
+    explicit SceneTiles(std::span<const std::shared_ptr<const SunTile>> parts) noexcept : parts_(parts) {}
+    [[nodiscard]] std::size_t size() const noexcept { return parts_.size(); }
+    [[nodiscard]] bool empty() const noexcept { return parts_.empty(); }
+    [[nodiscard]] const SunTile& operator[](std::size_t t) const noexcept { return *parts_[t]; }
+    [[nodiscard]] iterator begin() const noexcept { return iterator(parts_.begin()); }
+    [[nodiscard]] iterator end() const noexcept { return iterator(parts_.end()); }
+
+private:
+    std::span<const std::shared_ptr<const SunTile>> parts_;
+};
+
 /// The sun's scene: the tiles the worker holds and the grid over all their solids.
 class Scene {
 public:
@@ -76,11 +118,8 @@ public:
     Scene(const Scene& from, std::vector<std::shared_ptr<const SunTile>> tiles);
 
     [[nodiscard]] const Grid& grid() const noexcept { return *grid_; }
-    /// Its tiles, in order: a random-access view of each one's part.
-    [[nodiscard]] auto tiles() const noexcept {
-        return std::views::transform(tiles_,
-                                     [](const std::shared_ptr<const SunTile>& t) -> const SunTile& { return *t; });
-    }
+    /// Its tiles, in order, each one's part as `const SunTile&`.
+    [[nodiscard]] SceneTiles tiles() const noexcept { return SceneTiles(tiles_); }
     /// Tile `t`'s part, which other scenes may share.
     [[nodiscard]] const std::shared_ptr<const SunTile>& part(std::size_t t) const noexcept { return tiles_[t]; }
     /// Where tile `t`'s solids begin in the grid.
