@@ -39,7 +39,7 @@ class WikiReaderTest {
         val row = app.getString(R.string.mine_settings_data)
         // the row the user taps in Settings is that label's (SettingsScreen's "Data sources & keys" row)
         val settings = File(android, "app/src/main/kotlin/app/atlas/ui/mine/SettingsScreen.kt").readText()
-        assertTrue(Regex("""SettingRow\(stringResource\(R\.string\.mine_settings_data\)[^\n]*Dest\.DataSources\(\)""").containsMatchIn(settings))
+        assertTrue(settings.lines().any { l -> !l.trim().startsWith("//") && Regex("""SettingRow\(stringResource\(R\.string\.mine_settings_data\)[^\n]*Dest\.DataSources\(\)""").containsMatchIn(l) })
         read { throw SwitchedOffException("wikipedia", "en.wikipedia.org") }
         val said = app.getString(R.string.place_wiki_off, row)
         assertTrue("\"$said\" names the row \"$row\"", row in said)
@@ -55,10 +55,14 @@ class WikiReaderTest {
     fun inGermanTheSentenceNamesTheSettingsRow() = switchedOffNamesTheRow()
 
     @Test
+    @Config(qualifiers = "nl")
+    fun inDutchTheSentenceNamesTheSettingsRow() = switchedOffNamesTheRow()
+
+    @Test
     fun inEnglishTheSentenceNamesTheSettingsRow() = switchedOffNamesTheRow()
 
-    /** The sentence's own words that do not change with the row's label: "switched off", in English. */
-    private val off: String get() = RuntimeEnvironment.getApplication().getString(R.string.place_wiki_off, "").trim()
+    /** The sentence as the reader builds it, the Settings row's label and all, wherever the label stands in it. */
+    private val off: String get() = RuntimeEnvironment.getApplication().let { it.getString(R.string.place_wiki_off, it.getString(R.string.mine_settings_data)) }
 
     @Test
     fun withNoArticleAndNoFailureTheReaderDoesNotBlameTheSwitch() {
@@ -74,5 +78,12 @@ class WikiReaderTest {
         assertTrue(compose.onAllNodes(hasText(off, substring = true)).fetchSemanticsNodes().isEmpty())
         compose.onNodeWithText("nowhere.example").assertExists()
         compose.onNodeWithText(RuntimeEnvironment.getApplication().getString(R.string.place_wiki_read)).assertExists()
+    }
+
+    @Test
+    fun anotherFailureThatIsNotTheSwitchShowsItsOwnWordsToo() {
+        read { throw java.io.IOException("the server could not answer") }
+        assertTrue(compose.onAllNodes(hasText(off, substring = true)).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithText("the server could not answer").assertExists()
     }
 }
