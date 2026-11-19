@@ -619,7 +619,8 @@ TEST_CASE("a pack switch waiting for the named pack draws no frame while nothing
             }
             const bool woke = wakes.exchange(0) > 0;
             const std::optional<double> at = w.due_at();
-            if (!(due || woke || (at && t >= *at))) continue;
+            const bool draws = due || woke || (at && t >= *at);
+            if (!draws) continue;
             draw();
             ++drawn;
             due = w.animating();
