@@ -628,7 +628,7 @@ TEST_CASE("ground: the soft shadows' mask is made once a view and stands while n
     }
     // soft from the settled frames on, but in the two frames that leave them out
     const auto out_frame = [&](std::size_t f) {
-        return f == std::size_t{settled} + (4 * 6) || f == std::size_t{settled} + (4 * 7);
+        return f == std::size_t{settled + (4 * 6)} || f == std::size_t{settled + (4 * 7)};
     };
     for (std::size_t f = settled; f < kept.soft.size(); ++f) CHECK_MESSAGE(kept.soft[f] != out_frame(f), "frame " << f);
 }
