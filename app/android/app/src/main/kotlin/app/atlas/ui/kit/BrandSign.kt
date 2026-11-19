@@ -16,14 +16,16 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import app.atlas.places.Brand
 import app.atlas.places.Palette
+import app.atlas.places.Symbols
 
 /**
  * How Atlas shows a brand, one rule for every screen (the owner, 5 November: "think about how should brands be featured
  * everywhere"): on its own sign, in the colours it has in the street, wherever it is shown (the Brands tiles, a brand's
  * page, a place's header and brand line, a card's fascia, the shop screens) and, since the owner asked of a green Albert
  * Heijn among the groceries "Why doesnt albert heijn get its color on this image?" (6 November), on the search's pins
- * and rows too ([signOf]). There a brand whose colour is not known wears its logo on its family's colour ([markOf]);
- * shown itself, it is on the neutral sign ([Palette.NEUTRAL_SIGN]), never on a colour made up for it.
+ * and rows too ([signOf]), a brand with a colour and no logo there too, on its letter (the owner, 17 November). There a
+ * brand whose colour is not known wears its logo, or its kind's symbol, on its family's colour ([markOf]); shown
+ * itself, it is on the neutral sign ([Palette.NEUTRAL_SIGN]), never on a colour made up for it.
  */
 object BrandSigns {
     /** The colour of [brand]'s sign, opaque ARGB: its own, else the neutral sign. */
@@ -57,7 +59,8 @@ fun BrandSign(
 ) {
     val ink = BrandSigns.ink(brand)
     Box(modifier.size(size).clip(shape).background(BrandSigns.colour(brand)), contentAlignment = Alignment.Center) {
-        val slug = brand?.logoSlug
+        // its logo where the app holds it; a brand whose logo is named but not bundled has its letter, as on the map
+        val slug = brand?.logoSlug?.takeIf { Symbols.has("logo-$it") }
         if (slug != null) Symbol("logo-$slug", tint = ink, size = logo)
         else Text(name.trim().take(1).uppercase(), style = lettering, color = ink, maxLines = 1)
     }
