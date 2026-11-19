@@ -3,6 +3,10 @@ package app.atlas.ui.search
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.testTag
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasTestTag
@@ -210,6 +214,39 @@ class ColourOnlyBrandsTest {
         compose.waitUntil(15_000) { compose.onAllNodes(hasTestTag(CARDS_TAG)).fetchSemanticsNodes().isNotEmpty() }
         compose.waitUntil(15_000) { compose.onAllNodes(hasText("Jumbo")).fetchSemanticsNodes().isNotEmpty() }
         capture("colour_only_cards")
+    }
+
+    /**
+     * A name that begins with a mark wears its first letter or digit, on a row as on its pin, where the row wore the mark
+     * ("'t Zusje": an apostrophe on the row, a T on the pin); a name with neither, "?" on both, as the map's painter draws.
+     * Each is drawn as a name beginning with that letter is, pixel for pixel.
+     */
+    @Test
+    fun aSignsLetterIsTheNamesFirstLetterOrDigitOnARowAsOnItsPin() {
+        var name by androidx.compose.runtime.mutableStateOf("'t Zusje")
+        compose.setContent {
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.testTag("sign")) {
+                app.atlas.ui.kit.BrandSign(null, name, ROW_TILE)
+            }
+        }
+        fun row(n: String): androidx.compose.ui.graphics.PixelMap {
+            compose.runOnIdle { name = n }
+            compose.waitForIdle()
+            return compose.onNode(hasTestTag("sign")).captureToImage().toPixelMap()
+        }
+        fun pin(n: String): android.graphics.Bitmap {
+            val painter = app.atlas.mapview.MarkerPainter(2f)
+            val side = 120
+            val b = android.graphics.Bitmap.createBitmap(side, side, android.graphics.Bitmap.Config.ARGB_8888)
+            painter.draw(android.graphics.Canvas(b), app.atlas.mapview.Marker("p", here, "shop", 0xFF5A5F6C, MarkerStyle.BRAND, label = n, logo = "nobrand"), side / 2f, side / 2f, 0)
+            return b
+        }
+        fun same(a: androidx.compose.ui.graphics.PixelMap, b: androidx.compose.ui.graphics.PixelMap): Boolean =
+            a.width == b.width && a.height == b.height && (0 until a.height).all { y -> (0 until a.width).all { x -> a[x, y] == b[x, y] } }
+        for ((odd, plain) in listOf("'t Zusje" to "T Zusje", "(A)ngelo" to "Angelo", "#1 Kapsalon" to "1 Kapsalon", "★★" to "?")) {
+            assertTrue("$odd on a pin as $plain", pin(odd).sameAs(pin(plain)))
+            assertTrue("$odd on a row as $plain", same(row(odd), row(plain)))
+        }
     }
 
     /** The pins over the map, the typed search's and a kind's alike ([pinOf]): the brand's sign, its colour and its id. */

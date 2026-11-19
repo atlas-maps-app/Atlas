@@ -37,6 +37,12 @@ object BrandSigns {
     /** The lettering on [brand]'s sign: its own text colour, else the ink or white, whichever reads on the sign. */
     fun ink(brand: Brand?): Color = brand?.textColour?.let { Color(it) } ?: inkOn(colour(brand))
 
+    /**
+     * The letter on a sign with no logo: [name]'s first letter or digit, upper case, else "?", as the map's painter draws
+     * it on a pin (`MarkerPainter.brand`), so a row and its pin wear the same ("'t Zusje": a T on both).
+     */
+    fun letter(name: String): String = name.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "?"
+
     /** The boards' ink on a light sign, white on a dark or a deep one. */
     fun inkOn(sign: Color): Color = if (sign.luminance() > 0.45f) Color(INK) else Color.White
 
@@ -44,8 +50,8 @@ object BrandSigns {
 }
 
 /**
- * [brand]'s sign: its logo, [logo] high, on its colour in [shape]; where it has no logo, the first letter of [name] in
- * [lettering], the screen's own face for it. [brand] may be null for a chain the index does not know.
+ * [brand]'s sign: its logo, [logo] high, on its colour in [shape]; where it has no logo, the first letter or digit of
+ * [name] ([BrandSigns.letter]) in [lettering], the screen's own face for it. [brand] may be null for a chain the index does not know.
  */
 @Composable
 fun BrandSign(
@@ -62,6 +68,6 @@ fun BrandSign(
         // its logo where the app holds it; a brand whose logo is named but not bundled has its letter, as on the map
         val slug = brand?.logoSlug?.takeIf { Symbols.has("logo-$it") }
         if (slug != null) Symbol("logo-$slug", tint = ink, size = logo)
-        else Text(name.trim().take(1).uppercase(), style = lettering, color = ink, maxLines = 1)
+        else Text(BrandSigns.letter(name), style = lettering, color = ink, maxLines = 1)
     }
 }
