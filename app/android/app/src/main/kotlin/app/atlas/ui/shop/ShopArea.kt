@@ -40,8 +40,8 @@ internal data class AreaPlaces(
 /**
  * Finds the places a shop screen shows, in layers like the rest of Atlas: the downloaded region's place store first
  * (offline, every tag); where the phone has no region for the area, the map's packs and windows on the phone (offline,
- * every tag), online the windows it keeps no data for from Atlas's packs, and then Overpass, where they do not hold the
- * whole circle. One query per screen, with the union of
+ * every tag), online the windows it keeps no data for from Atlas's packs, and Overpass where they do not hold the whole
+ * circle, asked beside them where they cannot make it whole ([LocalData.beside]). One query per screen, with the union of
  * everything it shows; the screen sorts the answer into its shelves itself. Answers are kept for a few minutes per
  * area, so going from the pantry into a shelf and back does not ask again.
  */
@@ -81,42 +81,44 @@ internal class ShopFinder(
         var sketch = packed?.value.orEmpty()
         val op = overpass()
         // packs and windows around the whole circle answer fully, with every tag
-        var canAsk = op != null && online() && packed?.partial != false
+        val canAsk = op != null && online() && packed?.partial != false
         emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = canAsk))
-        if (canAsk) {
-            // the map's windows the phone keeps no data for, from Atlas's packs, before Overpass
-            val windows = try {
-                local()?.inWindowPacks(centre, radiusM, filter, limit)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
-            }
-            if (windows != null) {
-                sketch = windows.value
-                canAsk = windows.partial
-                emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = canAsk))
-                if (!canAsk) remember(cacheKey, AreaPlaces(sketch, PlaceOrigin.PACK))
-            }
-        }
         if (!canAsk) {
             if (packed?.partial == false) remember(cacheKey, AreaPlaces(sketch, PlaceOrigin.PACK))
             return@flow
         }
-        val selectors = OverpassSelectors.of(filter) ?: return@flow emit(AreaPlaces(sketch, PlaceOrigin.PACK))
-        val answer = try {
-            val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
-            val found = op!!.places(ql).filter { filter.matches(it.tags) }
-            AreaPlaces(nearest(found, centre, radiusM, limit), PlaceOrigin.ONLINE)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: IOException) {
-            failed(sketch, filter, centre, radiusM, limit, e.message ?: "offline")
-        } catch (e: Exception) {
-            failed(sketch, filter, centre, radiusM, limit, e.message ?: e.toString())
+        val selectors = OverpassSelectors.of(filter)
+        val ask = if (selectors == null) null else suspend {
+            try {
+                val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
+                Result.success(op!!.places(ql).filter { filter.matches(it.tags) })
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
         }
-        if (answer.error == null) remember(cacheKey, answer)
-        emit(answer)
+        // the map's windows the phone keeps no data for, from Atlas's packs: waited for where they can make the circle
+        // whole, else beside Overpass, asked at once (the app maintainer, 18 November 2026, batch 5 A1)
+        var whole = false
+        var loading = true
+        val answer = beside(filter, centre, radiusM, limit, show = { w ->
+            sketch = w.value
+            whole = !w.partial
+            loading = w.partial && ask != null
+            emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = loading))
+        }, ask = ask)
+        if (answer == null) {
+            // not asked: the windows made the circle whole, or the filter cannot be asked of Overpass
+            if (whole) remember(cacheKey, AreaPlaces(sketch, PlaceOrigin.PACK)) else if (loading) emit(AreaPlaces(sketch, PlaceOrigin.PACK))
+            return@flow
+        }
+        val result = answer.fold(
+            { found -> AreaPlaces(nearest(found, centre, radiusM, limit), PlaceOrigin.ONLINE) },
+            { e -> failed(sketch, filter, centre, radiusM, limit, e.message ?: if (e is IOException) "offline" else e.toString()) },
+        )
+        if (result.error == null) remember(cacheKey, result)
+        emit(result)
     }.flowOn(Dispatchers.IO)
 
     /** What the map's packs and windows on the phone hold of [filter] around [centre] ([LocalData.inPacks]); null where none holds any. */
@@ -126,6 +128,29 @@ internal class ShopFinder(
         throw e
     } catch (e: Exception) {
         null
+    }
+
+    /**
+     * [ask]'s answer with the windows the phone keeps no data for from Atlas's packs beside it ([LocalData.beside]:
+     * [show] gets [inPacks]' answer once they came); null where it was not asked (the windows made the circle whole, or
+     * there is no [ask]). With nothing on the phone: [ask] alone.
+     */
+    private suspend fun beside(
+        filter: TagFilter,
+        centre: LatLon,
+        radiusM: Double,
+        limit: Int,
+        show: suspend (app.atlas.services.LocalAnswer<List<Place>>) -> Unit,
+        ask: (suspend () -> Result<List<Place>>)?,
+    ): Result<List<Place>>? {
+        val l = try {
+            local()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        return if (l == null) ask?.invoke() else l.beside(centre, radiusM, filter, limit, show, { it.isFailure }, ask)
     }
 
     /**

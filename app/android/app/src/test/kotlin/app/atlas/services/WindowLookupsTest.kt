@@ -15,7 +15,11 @@ import app.atlas.render.data.OsmElement
 import app.atlas.render.data.PackFeatures
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
@@ -387,56 +391,113 @@ class WindowLookupsTest {
     }
 
     /**
-     * Where Overpass fails for a circle the packs could not make whole, the answer holds what the packs sent by then
-     * for its nearest windows: the places' lookups, the category row and the Where wheel, the shop screens (the app
-     * maintainer, 18 November 2026: it was empty where it had held the nine nearest windows).
+     * Where Overpass fails at once for a circle the packs cannot make whole (a 504 here; Overpass switched off in
+     * Sources, a 429, every server resting, a captive portal), the answer holds the windows the packs were asked for:
+     * they are waited for, at most for what is left of the wait (the app maintainer, 18 November 2026, batch 5 A1: it
+     * answered before they came, with none of them, where 38ddafa1 waited for the nine nearest first). The places'
+     * lookups, the category row and the Where wheel, the shop screens; the eat screens in `EatWindowsTest`.
      */
     @Test
-    fun whereOverpassFailsTheAnswerHoldsWhatThePacksSent() = runBlocking {
-        val box = BBox.around(off, 2_000.0)
-        // Overpass fails once the nine windows the packs were asked for have come, at most 5 s on
-        val held = java.util.concurrent.atomic.AtomicReference<() -> Int> { 0 }
+    fun whereOverpassFailsAtOnceTheAnswerHoldsTheWindowsThePacksSend() = runBlocking {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 asked.incrementAndGet()
-                val until = System.nanoTime() + 5_000_000_000L
-                while (held.get()() < 9 && System.nanoTime() < until) Thread.sleep(20)
                 return MockResponse.Builder().code(504).body("busy").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        // each window comes 300 ms after it is asked, three at a time: after Overpass's 504
+        fun fresh(): LocalData {
+            val dir = tmp.newFolder()
+            val windows = WindowPlaces({ dir }, packed = { x, y -> Thread.sleep(300); cafeAt(x, y) })
+            return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 5_000L)
+        }
+
+        val places = fresh().placesAsFound(off, 2_000.0, cafe).toList().last()
+        assertNotNull(places.error)
+        assertEquals(PlaceOrigin.PACK, places.origin)
+        assertTrue(places.partial)
+        assertEquals(nearOff, places.value.map { it.name() }.toSet())
+
+        var local = fresh()
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val alone = finder.nearby("eat", off, 2_000.0, 20).toList().last()
+        assertNotNull(alone.error)
+        assertEquals(nearOff, alone.places.map { it.name() }.toSet())
+        local = fresh()
+        val wheel = finder.nearbyMany(listOf("eat"), off, 2_000.0, 20).getValue("eat")
+        assertNotNull(wheel.error)
+        assertEquals(nearOff, wheel.places.map { it.name() }.toSet())
+
+        local = fresh()
+        val shop = app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+            .around("cafes", cafe, off, 2_000.0).toList().last()
+        assertNotNull(shop.error)
+        assertEquals(nearOff, shop.places.map { it.name() }.toSet())
+        assertEquals(4, asked.get())
+    }
+
+    /**
+     * Where Overpass is slow (up to about 40 s a server), the packs' part of a circle they cannot make whole shows as
+     * soon as the windows they were asked for have come, within the wait, not when Overpass answers (the app
+     * maintainer, 18 November 2026, batch 5 A1: 38ddafa1 showed it after one to three seconds, and asked Overpass
+     * after). The places' lookups, the category row, the shop screens; the eat screens in `EatWindowsTest`.
+     */
+    @Test
+    fun whereOverpassIsSlowThePacksPartComesWithinTheWait() = runBlocking {
+        val gate = java.util.concurrent.atomic.AtomicReference(CountDownLatch(1))
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                gate.get().await(20, TimeUnit.SECONDS)
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
             }
         }
         server.start()
         val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
         fun fresh(): LocalData {
             val dir = tmp.newFolder()
-            val windows = WindowPlaces({ dir }, packed = { x, y -> cafeAt(x, y) })
-            held.set { windows.held(box, off)?.places?.size ?: 0 }
-            return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+            val windows = WindowPlaces({ dir }, packed = { x, y -> Thread.sleep(100); cafeAt(x, y) })
+            return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 3_000L)
         }
-        val within = nearOff
 
-        val places = fresh().placesAsFound(off, 2_000.0, cafe).toList().last()
-        assertNotNull(places.error)
-        assertEquals(PlaceOrigin.PACK, places.origin)
-        assertTrue(places.partial)
-        assertEquals(within, places.value.map { it.name() }.toSet())
+        val places = untilTheWindowsShow(gate, fresh().placesAsFound(off, 2_000.0, cafe)) { a -> a.value.mapNotNull { it.name() }.toSet() }
+        assertNotNull("the places' lookup did not show the windows before Overpass answered", places)
+        assertTrue("the places' lookup showed the windows after $places ms", places!! < 3_500)
 
         var local = fresh()
         val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
-        val alone = finder.nearby("eat", off, 2_000.0, 20).toList().last()
-        assertNotNull(alone.error)
-        assertEquals(within, alone.places.map { it.name() }.toSet())
-        local = fresh()
-        val wheel = finder.nearbyMany(listOf("eat"), off, 2_000.0, 20).getValue("eat")
-        assertNotNull(wheel.error)
-        assertEquals(within, wheel.places.map { it.name() }.toSet())
+        val row = untilTheWindowsShow(gate, finder.nearby("eat", off, 2_000.0, 20)) { a -> a.places.mapNotNull { it.name() }.toSet() }
+        assertNotNull("the category row did not show the windows before Overpass answered", row)
+        assertTrue("the category row showed the windows after $row ms", row!! < 3_500)
 
         local = fresh()
-        val shop = app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
-            .around("cafes", cafe, off, 2_000.0).toList().last()
-        assertNotNull(shop.error)
-        assertEquals(within, shop.places.map { it.name() }.toSet())
-        assertEquals(4, asked.get())
+        val shops = app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+        val shop = untilTheWindowsShow(gate, shops.around("cafes", cafe, off, 2_000.0)) { a -> a.places.mapNotNull { it.name() }.toSet() }
+        assertNotNull("the shop screen did not show the windows before Overpass answered", shop)
+        assertTrue("the shop screen showed the windows after $shop ms", shop!! < 3_500)
+        assertEquals(3, asked.get())
     }
+
+    /**
+     * How long until an answer of [flow] holds the cafés of the nine nearest windows within 2 km of [off] ([names] reads
+     * an answer's), at most 8 s; then Overpass, held at [gate], answers, and the flow is followed to its end. Null where
+     * none held them before.
+     */
+    private suspend fun <T> untilTheWindowsShow(gate: java.util.concurrent.atomic.AtomicReference<CountDownLatch>, flow: Flow<T>, names: (T) -> Set<String>): Long? =
+        coroutineScope {
+            gate.set(CountDownLatch(1))
+            val started = System.nanoTime()
+            val seen = java.util.concurrent.atomic.AtomicLong(-1)
+            val following = launch(Dispatchers.IO) {
+                flow.collect { if (seen.get() < 0 && names(it) == nearOff) seen.set((System.nanoTime() - started) / 1_000_000) }
+            }
+            while (seen.get() < 0 && System.nanoTime() - started < 8_000_000_000L) delay(20)
+            gate.get().countDown()
+            following.join()
+            seen.get().takeIf { it >= 0 }
+        }
 
     /**
      * The search's pool asks nothing after the packs ([LocalData.inWindowPacks] with `waitForPart`): it waits for the

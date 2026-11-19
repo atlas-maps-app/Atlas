@@ -61,8 +61,8 @@ const val NEARBY_ONLINE_MS = 15_000L
 /**
  * Places by category in layers: the downloaded regions' place stores first (offline, every tag); where they have
  * nothing, the map's packs and windows on the phone ([LocalData.inPacks]: offline, every tag), online the windows the
- * phone keeps no data for from Atlas's packs ([LocalData.inWindowPacks]), and Overpass when [online] where they do not
- * hold the whole circle (every tag, so opening hours and facts).
+ * phone keeps no data for from Atlas's packs, and Overpass when [online] where they do not hold the whole circle (every
+ * tag, so opening hours and facts), asked beside them where they cannot make it whole ([LocalData.beside]).
  */
 class LayeredPlaceFinder(
     private val local: () -> LocalData?,
@@ -85,31 +85,29 @@ class LayeredPlaceFinder(
             // Packs around the whole circle answer fully, with every tag: nothing more to ask.
             if (!packed.partial) return@flow
         }
-        // online, the map's windows the phone keeps no data for from Atlas's packs, before Overpass
-        val windows = inWindowPacks(centre, radiusM, filter, limit)
-        if (windows != null) {
-            if (packed == null || windows.partial != packed.partial || windows.value.map { it.key } != packed.value.map { it.key }) emit(NearbyPlaces(windows.value, PlaceOrigin.PACK))
-            if (!windows.partial) return@flow
-        }
+        // online, the map's windows the phone keeps no data for from Atlas's packs: waited for where they can make the
+        // circle whole, else beside Overpass, asked at once (batch 5 A1); a part they add to what was shown, as it comes
         val op = overpass()
-        if (op != null && online()) {
-            val selectors = OverpassSelectors.of(filter)
-            if (selectors != null) {
-                val result = try {
-                    val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
-                    val found = op.places(ql).filter { filter.matches(it.tags) && Categories.isPlace(it.tags) }
-                    NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.ONLINE)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: IOException) {
-                    failed(centre, radiusM, filter, limit, e.message ?: "offline")
-                } catch (e: Exception) {
-                    // An answer that does not parse (a captive portal's page, a broken proxy) is a failure to report too.
-                    failed(centre, radiusM, filter, limit, e.message ?: e.toString())
-                }
-                emit(result)
+        val selectors = OverpassSelectors.of(filter)
+        val ask = if (op == null || !online() || selectors == null) null else suspend {
+            asked {
+                val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
+                op.places(ql).filter { filter.matches(it.tags) && Categories.isPlace(it.tags) }
             }
         }
+        var shown = packed
+        val answer = beside(centre, radiusM, filter, limit, show = { w ->
+            val before = shown
+            if (before == null || w.partial != before.partial || w.value.map { it.key } != before.value.map { it.key }) emit(NearbyPlaces(w.value, PlaceOrigin.PACK))
+            shown = w
+        }, ask = ask) ?: return@flow
+        emit(
+            answer.fold(
+                { found -> NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.ONLINE) },
+                // An answer that does not parse (a captive portal's page, a broken proxy) is a failure to report too.
+                { e -> failed(centre, radiusM, filter, limit, why(e)) },
+            ),
+        )
     }.flowOn(Dispatchers.Default)
 
     /**
@@ -121,11 +119,8 @@ class LayeredPlaceFinder(
     override suspend fun nearbyMany(categoryIds: List<String>, centre: LatLon, radiusM: Double, limit: Int, onlineMs: Long): Map<String, NearbyPlaces> =
         withContext(Dispatchers.Default) {
             val out = LinkedHashMap<String, NearbyPlaces>()
-            val ask = LinkedHashMap<String, Pair<TagFilter, List<String>>>()
-            // the windows of the circle the phone keeps no data for are asked of Atlas's packs and waited for once, by
-            // the first kind that lacks them; the rest read what came by then (the app maintainer, 18 November 2026, batch
-            // 4 B14: each of the wheel's eleven waited again, up to 10 s, for the windows still coming)
-            var windowsAsked = false
+            // the kinds whose circle the phone does not hold whole
+            val lacking = LinkedHashMap<String, TagFilter>()
             for (id in categoryIds.distinct()) {
                 val category = Categories.byId(id) ?: continue
                 val filter = filterOf(category)
@@ -134,41 +129,41 @@ class LayeredPlaceFinder(
                     out[id] = NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.STORE)
                     continue
                 }
-                // as [nearby]: what the phone holds, then the windows Atlas's packs add to it; a whole circle is the
-                // answer, a part of one only the first answer, and Overpass is asked for the rest
-                var packed = inPacks(centre, radiusM, filter, limit)
-                if ((packed == null || packed.partial) && !windowsAsked) {
-                    windowsAsked = true
-                    inWindowPacks(centre, radiusM, filter, limit)?.let { packed = it }
+                // as [nearby]: what the phone holds; a whole circle is the answer, a part of one only the first answer
+                val packed = inPacks(centre, radiusM, filter, limit)
+                if (packed != null) {
+                    out[id] = NearbyPlaces(packed.value, PlaceOrigin.PACK)
+                    if (!packed.partial) continue
                 }
-                val first = packed
-                if (first != null) {
-                    out[id] = NearbyPlaces(first.value, PlaceOrigin.PACK)
-                    if (!first.partial) continue
-                }
-                val selectors = OverpassSelectors.of(filter) ?: continue
-                ask[id] = filter to selectors
+                lacking[id] = filter
             }
+            if (lacking.isEmpty()) return@withContext out
+            val ask = lacking.filterValues { OverpassSelectors.of(it) != null }
             val op = overpass()
-            if (ask.isEmpty() || op == null || !online()) return@withContext out
-            val answer = try {
-                val ql = OverpassQl.places(ask.values.flatMap { it.second }.distinct(), OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
-                withTimeoutOrNull(onlineMs) { Result.success(op.places(ql).filter { Categories.isPlace(it.tags) }) }
-                    ?: Result.failure(IOException("Overpass did not answer in ${onlineMs / 1000} s"))
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                // a failure of the network, or an answer that does not parse (a captive portal's page): said, not thrown
-                Result.failure(e)
+            val query = if (ask.isEmpty() || op == null || !online()) null else suspend {
+                asked {
+                    val ql = OverpassQl.places(ask.values.flatMap { OverpassSelectors.of(it)!! }.distinct(), OverpassArea.Around(centre, radiusM), timeoutSeconds = 25)
+                    withTimeoutOrNull(onlineMs) { op.places(ql).filter { Categories.isPlace(it.tags) } }
+                        ?: throw IOException("Overpass did not answer in ${onlineMs / 1000} s")
+                }
             }
-            for ((id, f) in ask) {
-                out[id] = answer.fold(
-                    { all -> NearbyPlaces(nearest(all.filter { f.first.matches(it.tags) }, centre, limit), PlaceOrigin.ONLINE) },
-                    { e ->
+            // the windows of the circle the phone keeps no data for, asked of Atlas's packs once for every kind (the app
+            // maintainer, 18 November 2026, batch 4 B14: each of the wheel's eleven waited again, up to 10 s): waited for
+            // where they can make the circle whole, else beside Overpass's one query, and where it fails for what is left
+            // of the wait (batch 5 A1)
+            val answer = beside(centre, radiusM, TagFilter.Or(lacking.values.toList()), limit, ask = query)
+            for ((id, filter) in lacking) {
+                val got = if (answer != null && id in ask) {
+                    answer.fold(
+                        { all -> NearbyPlaces(nearest(all.filter { filter.matches(it.tags) }, centre, limit), PlaceOrigin.ONLINE) },
                         // where Overpass fails, the part the phone has by now stays, with what went wrong
-                        failed(centre, radiusM, f.first, limit, e.message ?: if (e is IOException) "offline" else e.toString(), out[id])
-                    },
-                )
+                        { e -> failed(centre, radiusM, filter, limit, why(e), out[id]) },
+                    )
+                } else {
+                    // not asked: what the phone holds once the windows came
+                    inPacks(centre, radiusM, filter, limit)?.let { NearbyPlaces(it.value, PlaceOrigin.PACK) }
+                }
+                if (got != null) out[id] = got
             }
             out
         }
@@ -202,14 +197,40 @@ class LayeredPlaceFinder(
         null
     }
 
-    /** [inPacks] once, online, the windows the phone keeps no data for came from Atlas's packs ([LocalData.inWindowPacks]); null offline. */
-    private suspend fun inWindowPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int): LocalAnswer<List<Place>>? = try {
-        if (online()) local()?.inWindowPacks(centre, radiusM, filter, limit) else null
+    /**
+     * [ask]'s answer, online, with the windows the phone keeps no data for from Atlas's packs beside it ([LocalData.beside]:
+     * [show] gets [inPacks]' answer once they came); null where it was not asked (the windows made the circle whole, or
+     * there is no [ask]). Offline or with nothing on the phone: [ask] alone.
+     */
+    private suspend fun beside(
+        centre: LatLon,
+        radiusM: Double,
+        filter: TagFilter,
+        limit: Int,
+        show: suspend (LocalAnswer<List<Place>>) -> Unit = {},
+        ask: (suspend () -> Result<List<Place>>)?,
+    ): Result<List<Place>>? {
+        val l = try {
+            if (online()) local() else null
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        return if (l == null) ask?.invoke() else l.beside(centre, radiusM, filter, limit, show, { it.isFailure }, ask)
+    }
+
+    /** [ask]'s places, or why it failed: the network, or an answer that does not parse (a captive portal's page). */
+    private suspend fun asked(ask: suspend () -> List<Place>): Result<List<Place>> = try {
+        Result.success(ask())
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        null
+        Result.failure(e)
     }
+
+    /** What went wrong, as the screens say it. */
+    private fun why(e: Throwable): String = e.message ?: if (e is IOException) "offline" else e.toString()
 
     companion object {
         /**

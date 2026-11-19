@@ -5,8 +5,10 @@ import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.places.Categories
+import app.atlas.providers.Overpass
 import app.atlas.providers.OverpassArea
 import app.atlas.providers.OverpassQl
+import app.atlas.services.LocalData
 import app.atlas.services.PlaceOrigin
 import app.atlas.ui.search.HereContext
 import app.atlas.ui.search.PlaceLocale
@@ -28,7 +30,13 @@ import kotlin.math.roundToLong
  * offline place store when a downloaded region covers the point; otherwise the map tiles at once (names and kinds),
  * then Overpass when online (every tag).
  */
-class EatRepository internal constructor(private val services: Services) {
+class EatRepository internal constructor(
+    private val services: Services,
+    /** The packs and windows on the phone; a test's own. */
+    private val localData: () -> LocalData = { services.localData },
+    private val overpass: () -> Overpass = { services.overpass },
+    private val isOnline: () -> Boolean = { !services.config.offline && services.connectivity.online.value },
+) {
     private val lang: String = Locale.getDefault().language
 
     /** When and for how many: the table's time and party, shared by every eat screen. */
@@ -76,30 +84,36 @@ class EatRepository internal constructor(private val services: Services) {
 
     private suspend fun load(centre: LatLon, out: MutableStateFlow<EatArea>) {
         val r = EatArea.RADIUS_M
-        val online = !services.config.offline && services.connectivity.online.value
+        val online = isOnline()
         // the country and clock here, the one way for every screen (the regions on the phone are asked: on this thread)
         val local = HereContext.localeAt(services, centre, HereContext.phoneAt(services), services.clock.zone)
         try {
             fromStore(centre, r, local)?.let { out.value = it; return }
-            var (sketch, whole) = fromPacks(centre, r, online, local)
+            val (first, whole) = fromPacks(centre, r, online, local)
+            var sketch = first
             if (sketch != null) out.value = sketch
             // packs and windows around the whole circle answer fully, with every tag
             if (!online || whole) {
                 if (sketch == null) out.value = EatArea(centre, r, emptyList(), null, loading = false, local = local)
                 return
             }
-            // online, the map's windows the phone keeps no data for from Atlas's packs, before Overpass
-            val (windows, held) = fromWindowPacks(centre, r, local)
-            if (windows != null) {
-                sketch = windows
-                out.value = windows
-            }
-            if (held) return
-            out.value = try {
-                fromOverpass(centre, r, local)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
+            // online, the map's windows the phone keeps no data for from Atlas's packs: waited for where they can make the
+            // circle whole, else beside Overpass, asked at once (the app maintainer, 18 November 2026, batch 5 A1)
+            val answer = localData().beside(centre, r, EatKind.FILTER, limit = 5_000, show = { got ->
+                packArea(centre, r, got, more = true, local).first?.let {
+                    sketch = it
+                    out.value = it
+                }
+            }, failed = { it.isFailure }) {
+                try {
+                    Result.success(fromOverpass(centre, r, local))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            } ?: return
+            out.value = answer.getOrElse { e ->
                 // A network failure, or an answer that does not parse (a captive portal's page): what the packs and windows
                 // hold by now, with the windows the packs were asked for that came meanwhile, else what was shown
                 val why = (e as? IOException)?.message ?: e.message ?: e.javaClass.simpleName
@@ -134,25 +148,13 @@ class EatRepository internal constructor(private val services: Services) {
      */
     private fun fromPacks(centre: LatLon, r: Double, more: Boolean, local: PlaceLocale): Pair<EatArea?, Boolean> {
         val got = try {
-            services.localData.inPacks(centre, r, EatKind.FILTER, limit = 5_000)
+            localData().inPacks(centre, r, EatKind.FILTER, limit = 5_000)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             null
         } ?: return null to false
         return packArea(centre, r, got, more, local)
-    }
-
-    /** [fromPacks] once the map's windows the phone keeps no data for came from Atlas's packs ([LocalData.inWindowPacks]). */
-    private suspend fun fromWindowPacks(centre: LatLon, r: Double, local: PlaceLocale): Pair<EatArea?, Boolean> {
-        val got = try {
-            services.localData.inWindowPacks(centre, r, EatKind.FILTER, limit = 5_000)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            null
-        } ?: return null to false
-        return packArea(centre, r, got, more = true, local)
     }
 
     private fun packArea(centre: LatLon, r: Double, got: app.atlas.services.LocalAnswer<List<app.atlas.model.Place>>, more: Boolean, local: PlaceLocale): Pair<EatArea?, Boolean> {
@@ -165,7 +167,7 @@ class EatRepository internal constructor(private val services: Services) {
     private suspend fun fromOverpass(centre: LatLon, r: Double, local: PlaceLocale): EatArea {
         val selectors = listOf(OverpassQl.oneOf("amenity", EatKind.amenityValues), OverpassQl.oneOf("shop", EatKind.shopValues))
         val ql = OverpassQl.places(selectors, OverpassArea.Around(centre, r), timeoutSeconds = 30)
-        val places = services.overpass.places(ql)
+        val places = overpass().places(ql)
             .filter { EatKind.FILTER.matches(it.tags) && Categories.isPlace(it.tags) }
             .distinctBy { it.key }
             .mapNotNull { EatPlace.of(it, centre, lang) }

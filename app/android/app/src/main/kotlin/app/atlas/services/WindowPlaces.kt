@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayInputStream
+import java.io.Closeable
 import java.io.File
 import java.io.InputStream
 import java.lang.ref.SoftReference
@@ -40,8 +41,9 @@ import java.util.zip.GZIPInputStream
  * of them: those nearest the last lookup's middle, never one that lookup used or waits for. So a lookup beside the last
  * reads no file again, and a kept window is read again only once its file changes. A lookup reads at most [READ_MAX]
  * windows it does not hold yet, nearest its middle first, and none past the [HELD] nearest, which it could not hold
- * beside them; it asks the packs for at most [FETCH_MAX], as near, and waits for them only where they make its box
- * whole ([fetched]). A wide circle is held in part, and its answer says so. (The reviewer, 17 November 2026: held by
+ * beside them; it asks the packs for at most [FETCH_MAX], as near, and waits for them where they make its box whole
+ * ([fetched]); a lookup that asks Overpass beside them decides itself what it waits for ([start]). A wide circle is
+ * held in part, and its answer says so. (The reviewer, 17 November 2026: held by
  * when they were last read, the windows of a wide circle pushed out those nearest the user, and a wide circle kept on
  * the phone was read again at every lookup.)
  */
@@ -99,16 +101,27 @@ class WindowPlaces(
      * known to be in no pack, and at most [READ_MAX] kept unread. Waited for at most [withinMs] (a read that takes longer
      * goes on alone, and the next lookup holds it). Where they cannot make it whole the packs are asked all the same for
      * the nearest they can give, at most [FETCH_MAX], nearest [centre] first and none past the [HELD] nearest, but not
-     * waited for, unless [waitForPart] (a caller that asks nothing after them): this is [held] at once, for the caller to
-     * ask Overpass for the whole, and where that fails [held] holds what they brought by then. A widening search around
-     * one middle asks for the same nearest windows once. (The reviewer, 17 November 2026: nine windows were waited for, up
-     * to 10 s, for a circle of any size; the app maintainer, 18 November 2026: and then, where the packs could not make a
-     * box whole, none was read, so where Overpass failed the answer was empty where it had held the nine nearest.) A
-     * window [covered] holds whole (the pack the lookup reads beside them) is none of the box's to make whole: never
-     * missing, asked for or read (the app maintainer, 18 November 2026, batch 4 B12: at a pack's edge, twelve windows of
-     * a circle the pack held nine of were all missing, so the three it lacked were not waited for and Overpass was asked).
+     * waited for, unless [waitForPart] (a caller that asks nothing after them): this is [held] at once. A caller that asks
+     * Overpass for the whole beside them takes [start], and waits for them itself. A widening search around one middle
+     * asks for the same nearest windows once. (The reviewer, 17 November 2026: nine windows were waited for, up to 10 s,
+     * for a circle of any size; the app maintainer, 18 November 2026: and then, where the packs could not make a box
+     * whole, none was read, so where Overpass failed the answer was empty where it had held the nine nearest.) A window
+     * [covered] holds whole (the pack the lookup reads beside them) is none of the box's to make whole: never missing,
+     * asked for or read (the app maintainer, 18 November 2026, batch 4 B12: at a pack's edge, twelve windows of a circle
+     * the pack held nine of were all missing, so the three it lacked were not waited for and Overpass was asked).
      */
-    suspend fun fetched(box: BBox, centre: LatLon, withinMs: Long, waitForPart: Boolean = false, covered: (BBox) -> Boolean = { false }): Held? {
+    suspend fun fetched(box: BBox, centre: LatLon, withinMs: Long, waitForPart: Boolean = false, covered: (BBox) -> Boolean = { false }): Held? =
+        start(box, centre, withinMs, covered).use { f -> if (f.makesWhole || waitForPart) f.landed() else f.held() }
+
+    /**
+     * Asks Atlas's packs for the windows meeting [box] the phone keeps no data for, as [fetched] asks them, for a lookup
+     * that asks Overpass for the whole beside them and decides itself what it waits for (the app maintainer, 18 November
+     * 2026, batch 5 A1: where they could not make the box whole they were not waited for, so where Overpass failed at
+     * once the answer held none of them, and where it was slow they showed only once it answered). [Fetch.landed] waits
+     * for them at most [withinMs] from now. The lookup's windows are held as its own until the [Fetch] is closed.
+     */
+    fun start(box: BBox, centre: LatLon, withinMs: Long, covered: (BBox) -> Boolean = { false }): Fetch {
+        val until = System.nanoTime() + withinMs * 1_000_000
         val range = Range.of(box)
         val kept = keptIn(range)
         val now = clock()
@@ -119,7 +132,7 @@ class WindowPlaces(
         val missing = windows.filter { k -> k !in kept && cached(k, PACKED) == null }
         val inNoPack = synchronized(none) { missing.filter { k -> none[k]?.let { now - it < NONE_MS } == true }.toSet() }
         val asked = missing.filter { it !in inNoPack }.take(FETCH_MAX)
-        if (asked.isEmpty()) return held(box, centre, covered)
+        if (asked.isEmpty()) return Fetch(box, centre, emptyList(), emptyList(), makesWhole = false, covered, until)
         val whole = range.count(own, HELD + 1) <= HELD && inNoPack.isEmpty() && missing.size <= FETCH_MAX && unread <= READ_MAX
         // this lookup's windows, those still to come among them, are held when they come, whatever lookup comes between
         synchronized(cache) {
@@ -127,12 +140,43 @@ class WindowPlaces(
             mine = windows.toSet()
             for (k in windows) waited.merge(k, 1, Int::plus)
         }
-        try {
-            val reads = asked.map(::read)
-            if (whole || waitForPart) withTimeoutOrNull(withinMs) { reads.awaitAll() }
-            return look(box, centre, waiting = asked.toSet(), covered)
-        } finally {
+        return Fetch(box, centre, windows, asked, whole, covered, until)
+    }
+
+    /**
+     * A lookup's windows asked of Atlas's packs ([start]): whether what they send can make its box whole, what the phone
+     * holds of the box now, and what it holds once they came. Its windows are held as its own until it is closed.
+     */
+    inner class Fetch internal constructor(
+        private val box: BBox,
+        private val centre: LatLon,
+        private val windows: List<Long>,
+        private val asked: List<Long>,
+        /** Whether the windows asked for make the box whole beside those held: worth their wait before Overpass is asked. */
+        val makesWhole: Boolean,
+        private val covered: (BBox) -> Boolean,
+        private val until: Long,
+    ) : Closeable {
+        private val reads = asked.map(::read)
+        private var closed = false
+
+        /** Whether any window was asked of the packs. */
+        val asks: Boolean get() = asked.isNotEmpty()
+
+        /** [held] now, the windows asked for held as this lookup's own when they come. */
+        fun held(): Held? = look(box, centre, waiting = asked.toSet(), covered)
+
+        /** [held] once the windows asked for came, waited for until the wait [start] was given is over. */
+        suspend fun landed(): Held? {
+            val left = (until - System.nanoTime()) / 1_000_000
+            if (reads.isNotEmpty() && left > 0) withTimeoutOrNull(left) { reads.awaitAll() }
+            return held()
+        }
+
+        override fun close() {
             synchronized(cache) {
+                if (closed) return
+                closed = true
                 for (k in windows) waited.computeIfPresent(k) { _, n -> (n - 1).takeIf { it > 0 } }
                 trim()
             }
