@@ -9,6 +9,7 @@
 
 use atlas_transit::{Place, Planner, Query, Timetable};
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
@@ -16,12 +17,32 @@ const NONE: u32 = u32::MAX;
 
 struct Counting;
 
-static LIVE: AtomicUsize = AtomicUsize::new(0);
-static MOST: AtomicUsize = AtomicUsize::new(0);
+/// Where a count begins, so that bytes given back that were taken before it began pull nothing below zero.
+const START: usize = 1 << 48;
+static LIVE: AtomicUsize = AtomicUsize::new(START);
+static MOST: AtomicUsize = AtomicUsize::new(START);
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
+thread_local! {
+    /// Whether this thread's bytes are counted now: the measuring test's own, and no other thread's (the test
+    /// harness has its own to write with).
+    static COUNTED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn counted() -> bool {
+    COUNTED.try_with(|c| c.get()).unwrap_or(false)
+}
+
 fn more(bytes: usize) {
-    MOST.fetch_max(LIVE.fetch_add(bytes, Relaxed) + bytes, Relaxed);
+    if counted() {
+        MOST.fetch_max(LIVE.fetch_add(bytes, Relaxed) + bytes, Relaxed);
+    }
+}
+
+fn fewer(bytes: usize) {
+    if counted() {
+        LIVE.fetch_sub(bytes, Relaxed);
+    }
 }
 
 // (the system's allocator, with the bytes counted)
@@ -37,7 +58,7 @@ unsafe impl GlobalAlloc for Counting {
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
-        LIVE.fetch_sub(l.size(), Relaxed);
+        fewer(l.size());
         unsafe { System.dealloc(p, l) }
     }
 
@@ -45,7 +66,7 @@ unsafe impl GlobalAlloc for Counting {
         if new >= l.size() {
             more(new - l.size());
         } else {
-            LIVE.fetch_sub(l.size() - new, Relaxed);
+            fewer(l.size() - new);
         }
         unsafe { System.realloc(p, l, new) }
     }
@@ -56,10 +77,12 @@ static COUNTING: Counting = Counting;
 
 /// What `f` gives, the bytes it leaves taken, and the most it holds at once.
 fn taken<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
-    let before = LIVE.load(Relaxed);
-    MOST.store(before, Relaxed);
+    LIVE.store(START, Relaxed);
+    MOST.store(START, Relaxed);
+    COUNTED.with(|c| c.set(true));
     let out = f();
-    (out, LIVE.load(Relaxed).saturating_sub(before), MOST.load(Relaxed).saturating_sub(before))
+    COUNTED.with(|c| c.set(false));
+    (out, LIVE.load(Relaxed).saturating_sub(START), MOST.load(Relaxed).saturating_sub(START))
 }
 
 /// A file's bytes taken, each as (kept, the most at once): to open it, for the planner's index, by eight questions
