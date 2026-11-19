@@ -66,6 +66,30 @@ pub struct Reference {
     departures_kept: Vec<bool>,
     /// By stop: what the feed says of changing there (`own_change`), read once.
     own: Vec<Option<i32>>,
+    /// The file's walks turned round, by the stop they lead to, with where each stop's begin: made here from the
+    /// file's own list, which is by the stop they lead from. (The search has a list of its own.)
+    back: Vec<(u32, u32)>,
+    back_first: Vec<u32>,
+}
+
+/// The file's walks turned round: for each stop where its walks begin in the list, and the list, each walk as the
+/// stop it comes from and its seconds. A walk that leads to no stop of the file is none.
+fn walks_turned(tt: &Timetable) -> (Vec<u32>, Vec<(u32, u32)>) {
+    let stops = tt.stops() as usize;
+    let mut all: Vec<(u32, u32, u32)> = Vec::new();
+    for s in 0..tt.stops() {
+        let (lo, hi) = tt.walks_from(s);
+        all.extend((lo..hi).map(|w| tt.walk(w)).filter(|w| (w.0 as usize) < stops).map(|(to, secs)| (to, s, secs)));
+    }
+    all.sort_unstable();
+    let mut first = vec![0u32; stops + 1];
+    for w in all.iter() {
+        first[w.0 as usize + 1] += 1;
+    }
+    for s in 0..stops {
+        first[s + 1] += first[s];
+    }
+    (first, all.into_iter().map(|w| (w.1, w.2)).collect())
 }
 
 /// When the service day `off` days from day `day` begins, in seconds from the beginning of `day`: day by day, each
@@ -316,13 +340,14 @@ impl Reference {
             (list, first)
         };
         let ((into, into_first), (out, out_first)) = (by(&|r| r.to_stop), by(&|r| r.from_stop));
+        let (back_first, back) = walks_turned(tt);
         let (mut arrivals_kept, mut departures_kept) = (vec![false; stops], vec![false; stops]);
         for &i in all.iter() {
             let r = tt.rule(i);
             for s in [r.from_stop, r.to_stop] {
                 (arrivals_kept[s as usize], departures_kept[s as usize]) = (true, true);
             }
-            for &(y, _) in planner.walks_into(r.to_stop) {
+            for &(y, _) in &back[back_first[r.to_stop as usize] as usize..back_first[r.to_stop as usize + 1] as usize] {
                 arrivals_kept[y as usize] = true;
             }
             let (lo, hi) = tt.walks_from(r.from_stop);
@@ -333,7 +358,15 @@ impl Reference {
             }
         }
         let own = (0..tt.stops()).map(|s| own_change(tt, s)).collect();
-        Reference { day, connections, by_arrival, rides, ride_day, into, into_first, out, out_first, arrivals_kept, departures_kept, own }
+        Reference { day, connections, by_arrival, rides, ride_day, into, into_first, out, out_first, arrivals_kept, departures_kept, own, back, back_first }
+    }
+
+    /// The walks that lead to a stop, each as the stop it comes from and its seconds.
+    fn walks_into(&self, stop: u32) -> &[(u32, u32)] {
+        match (self.back_first.get(stop as usize), self.back_first.get(stop as usize + 1)) {
+            (Some(&lo), Some(&hi)) => &self.back[lo as usize..hi as usize],
+            _ => &[],
+        }
     }
 
     /// What a change at one stop costs for a query (`change_time`, from what was read once).
@@ -407,13 +440,13 @@ impl Reference {
             None
         };
         let mut found = from_there(stop, Some(self.change(tt, q, stop)));
-        for &(y, secs) in planner.walks_into(stop) {
+        for &(y, secs) in self.walks_into(stop) {
             found = found.or_else(|| from_there(y, Some(secs as i32)));
         }
         // and from where the feed says this vehicle waits, though no walk leads here from there
         for &i in self.rules_into(stop) {
             let r = tt.rule(i);
-            if found.is_none() && matches!(r.kind, 1 | 4) && r.from_stop != stop && !planner.walks_into(stop).iter().any(|w| w.0 == r.from_stop) {
+            if found.is_none() && matches!(r.kind, 1 | 4) && r.from_stop != stop && !self.walks_into(stop).iter().any(|w| w.0 == r.from_stop) {
                 found = from_there(r.from_stop, None);
             }
         }
@@ -565,12 +598,12 @@ impl Reference {
             }
         };
         from_there(stop, Some(self.change(tt, q, stop)));
-        for &(y, secs) in planner.walks_into(stop) {
+        for &(y, secs) in self.walks_into(stop) {
             from_there(y, Some(secs as i32));
         }
         for &i in self.rules_into(stop) {
             let r = tt.rule(i);
-            if matches!(r.kind, 1 | 4) && r.from_stop != stop && !planner.walks_into(stop).iter().any(|w| w.0 == r.from_stop) {
+            if matches!(r.kind, 1 | 4) && r.from_stop != stop && !self.walks_into(stop).iter().any(|w| w.0 == r.from_stop) {
                 from_there(r.from_stop, None);
             }
         }
@@ -783,7 +816,7 @@ impl Reference {
             if c.depart > left[c.from as usize] {
                 left[c.from as usize] = c.depart;
                 due[c.from as usize] = due[c.from as usize].max(c.depart.saturating_sub(self.change(tt, q, c.from)));
-                for &(y, secs) in planner.walks_into(c.from) {
+                for &(y, secs) in self.walks_into(c.from) {
                     if !bit(&prefs.closed, y) {
                         due[y as usize] = due[y as usize].max(c.depart - secs as i32);
                     }

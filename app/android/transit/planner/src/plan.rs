@@ -663,13 +663,6 @@ impl<'a> Planner<'a> {
         Prefs::of(&self.tt, &q.wishes, &self.ix.by_lat)
     }
 
-    pub(crate) fn walks_into(&self, stop: u32) -> &[(u32, u32)] {
-        match (self.ix.back_first.get(stop as usize), self.ix.back_first.get(stop as usize + 1)) {
-            (Some(&lo), Some(&hi)) => self.ix.back.get(lo as usize..hi as usize).unwrap_or(&[]),
-            _ => &[],
-        }
-    }
-
     /// The days before and after the query's whose trips can matter to a search over these real seconds, and
     /// whether that is all of them: of more than [`MAX_OFFSETS`] the latest are read (which no file and query
     /// can ask for as the format and the query's bounds stand: see there).
