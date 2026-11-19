@@ -107,7 +107,7 @@ fn a_rule_holds_however_many_stand_before_it() {
     let many = with_rules(&b, recommended(wb, wc).chain(recommended(ms, ms)));
     let tt = Timetable::open(&many).unwrap();
     tt.verify().unwrap();
-    assert_eq!(tt.rules(), 140_008);
+    assert_eq!(tt.rules(), 140_011);
     let mut p = Planner::new(tt);
     let waits = vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())];
     let least = vec![(hm(8, 0), hm(8, 28), "M1a M2b".to_string())];
@@ -138,7 +138,7 @@ fn many_rules_into_one_stop_cost_no_more_than_reading_them() {
     let many = with_rules(&many, (0..60_000u32).map(|k| [had + k, wc, NONE, NONE, w1a, w2a, 1, NONE]));
     let tt = Timetable::open(&many).unwrap();
     tt.verify().unwrap();
-    assert_eq!((tt.stops(), tt.rules()), (had + 60_000, 60_008));
+    assert_eq!((tt.stops(), tt.rules()), (had + 60_000, 60_011));
     let mut p = Planner::new(tt);
     let want = vec![(hm(8, 0), hm(8, 30), "W1a W2a".to_string())];
     // four queries, three times over: the fastest of the three is what they take when nothing else disturbs

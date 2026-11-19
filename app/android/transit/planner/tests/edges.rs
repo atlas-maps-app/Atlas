@@ -26,9 +26,17 @@
 //!   second to the 09:13: less than the walk, which still has to be made.
 //! - Zit: A to B is in at 08:10, and the same vehicle goes on from C at 08:10 as another trip: one stays seated (a
 //!   rule of type 4); B and C are 680 m apart and no walk joins them. A direct bus leaves 08:02, in at 08:40.
-//! - Lijn: A to B is in at 08:10. The buses of line N2 leave C at 08:11, 08:41 and 09:30 (14 minutes) and wait for
-//!   line N1 (a rule that names the two lines, no trip); a faster bus of another line leaves C at 08:11 too, which
-//!   no rule joins to anything. B and C are 680 m apart and no walk joins them.
+//! - Lijn: A to B is in at 08:00, 08:10 and 08:30. The buses of line N2 leave C at 08:11, 08:41 and 09:30 (14
+//!   minutes) and wait for line N1 (a rule that names the two lines, no trip); a faster bus of another line leaves C
+//!   at 08:11 too, which no rule joins to anything. B and C are 680 m apart and no walk joins them.
+//!
+//! A rule that says a line waits holds one vehicle for each arrival: the first of that line to leave at or after
+//! it. Every other is reached as without the rule, or not at all:
+//! - Gat: A to B is in at 10:00 and at 10:10. The buses of line G2 leave C at 10:01, 10:03 and 10:15 (14 minutes)
+//!   and wait for line G1. B and C are 302 m apart, a walk of 375 s: longer than the gap between the first two.
+//! - Dicht: A to B is in at 10:00; line D2 leaves C at 10:01 and 10:13 and waits for line D1. B and C are 201 m
+//!   apart, a walk of 270 s: the 10:13 is made on foot.
+//! - Halte: A to S is in at 10:00; line H2 leaves S, the same stop, at 10:01, 10:03 and 10:15 and waits for line H1.
 
 use atlas_transit::file::{StopText, TripText};
 use atlas_transit::reference::{Reference, impossible};
@@ -91,7 +99,7 @@ fn the_file_is_sound() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
     tt.verify().unwrap();
-    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270326, 4, 43, 45, 4, 8));
+    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270326, 4, 54, 59, 8, 11));
 }
 
 /// A window late in the evening has its last connection, though it takes far longer than the journey's least and
@@ -321,9 +329,10 @@ fn the_feeds_rules_between_two_stops() {
     every_way(&mut p, "NA", "NZ", hm(7, 55), &waits, (hm(8, 25), &waits));
     every_way(&mut p, "NA", "NZ", hm(7, 55), &waits, (hm(8, 24), &[]));
     assert_eq!(without(&mut p, "NA", "NZ", hm(7, 55)), []);
-    // Whoever came by line N1 is at C, and can take a later bus of N2 as well: where the 08:11 is never taken, or
-    // costs more than the half hour is worth.
-    let next = (hm(8, 0), hm(8, 55), "N1a N2b".to_string(), 0);
+    // The 08:11 is the one vehicle that waits for the 08:10, and no walk leads to C: where a wish closes it, or it
+    // costs more than the half hour is worth, the way is the next bus of N1 (in at 08:30) with the 08:41 that waits
+    // for that one. Never the 08:10 with the 08:41.
+    let next = (hm(8, 20), hm(8, 55), "N1b N2b".to_string(), 0);
     let costs = |p: &mut Planner, how: How, weigh: bool| {
         let mut q = query(&tt, "NA", "NZ", 0, hm(7, 55));
         q.wishes.push(Wish { what: What::Trip(trip("N2a")), how });
@@ -338,6 +347,105 @@ fn the_feeds_rules_between_two_stops() {
     let mut q = query(&tt, "NA", "NZ", 0, hm(7, 55));
     q.wishes.push(Wish { what: What::Line(tt.route(tt.route_of_trip(trip("N2a"))).line), how: How::Never });
     assert_eq!(ask(&mut p, &q), []);
+    // Read back, the 08:11 waits for every bus of N1 that came in before it, none of N2 having left since: arriving
+    // by 08:25 with the 08:00 bus avoided, the 07:50 before it is the option that costs nothing.
+    let mut q = query(&tt, "NA", "NZ", 0, hm(8, 25));
+    (q.arrive_by, q.weigh) = (true, false);
+    q.wishes.push(Wish { what: What::Trip(trip("N1a")), how: How::Avoid(600) });
+    let got: Vec<_> = ask(&mut p, &q).iter().map(|j| (j.depart as u32, j.arrive as u32, said(&tt, j).2, j.penalty)).collect();
+    assert_eq!(got, [(hm(7, 50), hm(8, 25), "N1z N2a".to_string(), 0), (hm(8, 0), hm(8, 25), "N1a N2a".to_string(), 600)]);
+    // and the 08:41 waits for the bus that is in at 08:30 alone, not for those in before the 08:11 left: arriving by
+    // 08:55 it is the way; without that bus the 08:11 is; without both, nothing
+    let mut q = query(&tt, "NA", "NZ", 0, hm(8, 55));
+    q.arrive_by = true;
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [(next.0, next.1, next.2.clone())]);
+    q.wishes.push(Wish { what: What::Trip(trip("N1b")), how: How::Never });
+    assert_eq!(all(&tt, &ask(&mut p, &q)), waits);
+    q.wishes.push(Wish { what: What::Trip(trip("N2a")), how: How::Never });
+    assert_eq!(ask(&mut p, &q), []);
+}
+
+/// A line that waits holds one vehicle for each arrival, the first to leave at or after it: that one is boarded
+/// whatever the walk or the change takes, and every other trip of the line is reached as without the rule.
+#[test]
+fn a_line_that_waits_holds_one_vehicle() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let stop = |id: &str| (0..tt.stops()).find(|s| tt.stop_text(*s, StopText::Id) == id).unwrap();
+    let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
+    let walk = |a: &str, z: &str| {
+        let (lo, hi) = tt.walks_from(stop(a));
+        (lo..hi).map(|i| tt.walk(i)).find(|w| w.0 == stop(z)).map(|w| w.1)
+    };
+    assert_eq!((walk("GB", "GC"), walk("DB", "DC"), tt.change_seconds()), (Some(375), Some(270), 60));
+    // a question as its answer's times, trips and costs: leaving at or arriving by a moment, with a time to change
+    // of one's own, a wish about one trip, the feed's rules held to or not
+    #[derive(Clone, Copy, Default)]
+    struct Asked<'a> {
+        by: bool,
+        change: Option<u32>,
+        wish: Option<(&'a str, How)>,
+        weigh: bool,
+        without: bool,
+    }
+    let plain = Asked::default();
+    let ways = |p: &mut Planner, from: &str, to: &str, at: u32, a: Asked| {
+        let mut q = query(&tt, from, to, 0, at);
+        (q.arrive_by, q.change_s, q.weigh, q.rules) = (a.by, a.change, a.weigh, !a.without);
+        if let Some((id, how)) = a.wish {
+            q.wishes.push(Wish { what: What::Trip(trip(id)), how });
+        }
+        ask(p, &q).iter().map(|j| (j.depart as u32, j.arrive as u32, said(&tt, j).2, j.penalty)).collect::<Vec<_>>()
+    };
+    let way = |from: (u32, u32), to: (u32, u32), trips: &str, cost: u32| (hm(from.0, from.1), hm(to.0, to.1), trips.to_string(), cost);
+
+    // Gat. In at B at 10:00; the walk to C takes until 10:06:15. The 10:01 waits; the 10:03 is no way at all; the
+    // 10:15 is made on foot. In at 10:10, the 10:15 is the one that waits, and the walk would miss it.
+    let (waits, on_foot, later) = (way((9, 50), (10, 15), "G1a G2a", 0), way((9, 50), (10, 29), "G1a G2c", 0), way((10, 0), (10, 29), "G1b G2c", 0));
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 45), plain), [waits.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 55), plain), [later.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 45), Asked { without: true, ..plain }), [on_foot.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 55), Asked { without: true, ..plain }), []);
+    // the 10:01 avoided: at its cost, or the 10:15 (by the bus that is in at 10:10, which leaves later than the one
+    // whose riders walk); never the 10:03, a change of three minutes over a walk of more than six
+    let dear = |cost: u32| way((9, 50), (10, 15), "G1a G2a", cost);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 45), Asked { wish: Some(("G2a", How::Avoid(1200))), ..plain }), [dear(1200), later.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 45), Asked { wish: Some(("G2a", How::Avoid(600))), weigh: true, ..plain }), [dear(600)]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 45), Asked { wish: Some(("G2a", How::Avoid(1200))), weigh: true, ..plain }), [dear(1200), later.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(9, 45), Asked { wish: Some(("G2a", How::Never)), ..plain }), [later.clone()]);
+    // with the 10:10 bus closed too, the walk to the 10:15 is what is left
+    let mut q = query(&tt, "GA", "GZ", 0, hm(9, 45));
+    q.wishes.extend([Wish { what: What::Trip(trip("G2a")), how: How::Never }, Wish { what: What::Trip(trip("G1b")), how: How::Never }]);
+    assert_eq!(all(&tt, &ask(&mut p, &q)), [(on_foot.0, on_foot.1, on_foot.2.clone())]);
+    // read back: by 10:17, when the 10:03 is in, the 10:01 is the way; without it there is none
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(10, 17), Asked { by: true, ..plain }), [waits.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(10, 17), Asked { by: true, wish: Some(("G2a", How::Never)), ..plain }), []);
+    // and by 10:29: the 10:15 waits for the bus that is in at 10:10. That bus avoided, the one before it costs
+    // nothing, and whoever takes it is there at 10:15 by the 10:01 that waits for it.
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(10, 29), Asked { by: true, ..plain }), [later.clone()]);
+    assert_eq!(ways(&mut p, "GA", "GZ", hm(10, 29), Asked { by: true, wish: Some(("G1b", How::Avoid(900))), ..plain }), [waits.clone(), way((10, 0), (10, 29), "G1b G2c", 900)]);
+
+    // Dicht. The walk takes until 10:04:30: the 10:01 waits, and the 10:13 is made on foot as it is without the rule.
+    let (waits, on_foot) = (way((9, 50), (10, 15), "D1a D2a", 0), way((9, 50), (10, 27), "D1a D2b", 0));
+    assert_eq!(ways(&mut p, "DA", "DZ", hm(9, 45), plain), [waits.clone()]);
+    assert_eq!(ways(&mut p, "DA", "DZ", hm(10, 15), Asked { by: true, ..plain }), [waits.clone()]);
+    assert_eq!(ways(&mut p, "DA", "DZ", hm(9, 45), Asked { without: true, ..plain }), [on_foot.clone()]);
+    assert_eq!(ways(&mut p, "DA", "DZ", hm(9, 45), Asked { wish: Some(("D2a", How::Avoid(1200))), ..plain }), [way((9, 50), (10, 15), "D1a D2a", 1200), on_foot.clone()]);
+    assert_eq!(ways(&mut p, "DA", "DZ", hm(9, 45), Asked { wish: Some(("D2a", How::Never)), ..plain }), [on_foot.clone()]);
+
+    // Halte. At one stop the file's 60 s make the 10:01 and the 10:03 by themselves. Asked for 600 s to change, the
+    // 10:01 still waits, the 10:15 is the first one made without it, and the 10:03 is no way.
+    let (waits, second, third) = (way((9, 50), (10, 15), "H1a H2a", 0), way((9, 50), (10, 17), "H1a H2b", 0), way((9, 50), (10, 29), "H1a H2c", 0));
+    let slow = Asked { change: Some(600), ..plain };
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(9, 45), plain), [waits.clone()]);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(9, 45), Asked { wish: Some(("H2a", How::Avoid(1200))), ..plain }), [way((9, 50), (10, 15), "H1a H2a", 1200), second.clone()]);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(9, 45), slow), [waits.clone()]);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(9, 45), Asked { without: true, ..slow }), [third.clone()]);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(9, 45), Asked { wish: Some(("H2a", How::Avoid(1200))), ..slow }), [way((9, 50), (10, 15), "H1a H2a", 1200), third.clone()]);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(9, 45), Asked { wish: Some(("H2a", How::Never)), ..slow }), [third.clone()]);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(10, 17), Asked { by: true, wish: Some(("H2a", How::Never)), ..slow }), []);
+    assert_eq!(ways(&mut p, "HA", "HZ", hm(10, 17), Asked { by: true, wish: Some(("H2a", How::Never)), ..plain }), [second.clone()]);
 }
 
 /// The night the clock goes forward, Sunday's service day begins 23 hours after Saturday's. The night bus of

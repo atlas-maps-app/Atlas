@@ -16,6 +16,10 @@
 //! feed's rules between trips where the query does, in its own way: where a rule speaks of the trip to be boarded, it
 //! goes through the arrivals one by one, each with the trip it came by, where the search by rounds holds such an
 //! arrival apart in its stop's bag.
+//!
+//! A rule that says a vehicle waits holds one vehicle for each arrival (`leaves_between`): the scan asks of each
+//! pair of an arrival and a departure whether anything else the rule speaks of leaves between the two, where the
+//! search looks the one vehicle up when it holds the arrival.
 
 use crate::NONE;
 use crate::file::{Rule, Timetable, TripText};
@@ -47,8 +51,9 @@ pub struct Reference {
     /// By departure; and their numbers by arrival, the latest first.
     connections: Vec<Connection>,
     by_arrival: Vec<u32>,
-    /// A ride's trip and line.
+    /// A ride's trip and line, and the service day it runs on.
     rides: Vec<(u32, u32)>,
+    ride_day: Vec<i32>,
     /// The feed's rules that name a trip or a line: their numbers by the stop the change leads to, and by the stop
     /// it comes from, with where each stop's begin.
     into: Vec<u32>,
@@ -207,6 +212,44 @@ fn fits(want: u32, is: u32) -> bool {
     want == NONE || want == is
 }
 
+/// Whether a vehicle that one side of a rule speaks of (its trip; a trip of its line; any trip where it names
+/// neither) leaves `stop` from `since` on and before `until`, in seconds of service day `day`: on a day it runs,
+/// taking people on there. `own`, a trip on its day, is not counted. The file alone is read, and no wish.
+///
+/// It is how a rule that says a vehicle waits is held to one vehicle: the one that leaves at `until` waits for
+/// whoever is in at `since` when nothing else the rule speaks of leaves between the two, the vehicle one came by
+/// aside.
+#[allow(clippy::too_many_arguments)]
+fn leaves_between(tt: &Timetable, day: i32, stop: u32, trip: u32, line: u32, since: i32, until: i32, own: (u32, i32)) -> bool {
+    if until <= since || stop >= tt.stops() || (trip != NONE && trip >= tt.trips()) {
+        return false;
+    }
+    let (lo, hi) = tt.routes_at(stop);
+    for (r, pos) in (lo..hi).map(|e| tt.route_at(e)) {
+        let route = tt.route(r);
+        if !fits(line, route.line) || pos + 1 >= route.stops || tt.pattern_stop(route.first_stop + pos).pickup == 1 {
+            continue;
+        }
+        let trips = match trip {
+            NONE => route.first_trip..route.first_trip + route.trips,
+            t if tt.route_of_trip(t) == r => t..t + 1,
+            _ => continue,
+        };
+        for t in trips {
+            let leaves = tt.time(tt.trip_times(t), pos).1 as i32;
+            // the service days on which it could leave in these seconds: two hours more at either end, for the
+            // days that are not 86,400 s long
+            for off in (since - leaves - 7200).div_euclid(86_400)..=(until - leaves + 7200).div_euclid(86_400) {
+                let at = day_start(tt, day, off) + leaves;
+                if at >= since && at < until && (t, day + off) != own && tt.runs(tt.trip(t).service, day + off) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 impl Reference {
     /// The connections that leave at `earliest` or later and arrive by `latest`, in seconds of service day `day`.
     pub fn new(planner: &Planner, day: i32, earliest: i32, latest: i32) -> Reference {
@@ -224,7 +267,7 @@ impl Reference {
         let lo = (earliest - 7200 - longest).div_euclid(86_400);
         let hi = (latest + 7200).div_euclid(86_400).min(lo + 31);
         let begins: Vec<i32> = (lo..=hi).map(|off| day_start(tt, day, off)).collect();
-        let (mut connections, mut rides) = (Vec::new(), Vec::new());
+        let (mut connections, mut rides, mut ride_day) = (Vec::new(), Vec::new(), Vec::new());
         for r in 0..tt.routes() {
             let route = tt.route(r);
             for trip in route.first_trip..route.first_trip + route.trips {
@@ -246,6 +289,7 @@ impl Reference {
                     }
                     if any {
                         rides.push((trip, route.line));
+                        ride_day.push(day + off);
                     }
                 }
             }
@@ -289,7 +333,7 @@ impl Reference {
             }
         }
         let own = (0..tt.stops()).map(|s| own_change(tt, s)).collect();
-        Reference { day, connections, by_arrival, rides, into, into_first, out, out_first, arrivals_kept, departures_kept, own }
+        Reference { day, connections, by_arrival, rides, ride_day, into, into_first, out, out_first, arrivals_kept, departures_kept, own }
     }
 
     /// What a change at one stop costs for a query (`change_time`, from what was read once).
@@ -311,17 +355,24 @@ impl Reference {
         &self.out[self.out_first[stop as usize] as usize..self.out_first[stop as usize + 1] as usize]
     }
 
-    /// What the feed's rules say of a change from one ride to another, each as (stop, trip, line): whether it is
-    /// barred, whether the second vehicle waits, and the least seconds it needs.
-    fn ruled(&self, tt: &Timetable, from: (u32, u32, u32), to: (u32, u32, u32)) -> (bool, bool, i32) {
+    /// What the feed's rules say of a change from one ride to another: the first as the stop and the moment it is
+    /// in, the second as the stop and the moment it leaves. Whether the change is barred, whether the second
+    /// vehicle waits, and the least seconds it needs.
+    ///
+    /// A rule that says a vehicle waits holds one for each arrival: of all it speaks of, the first to leave once
+    /// the arrival is in. So the second ride waits when it leaves no sooner than the first is in, is another
+    /// vehicle, and nothing else the rule speaks of leaves between the two.
+    fn ruled(&self, tt: &Timetable, from: (u32, u32, i32), to: (u32, u32, i32)) -> (bool, bool, i32) {
         let (mut barred, mut waits, mut least) = (false, false, 0i32);
+        let ((trip, line), (to_trip, to_line)) = (self.rides[from.1 as usize], self.rides[to.1 as usize]);
+        let came_by = (trip, self.ride_day[from.1 as usize]);
         for &i in self.rules_into(to.0) {
             let r = tt.rule(i);
-            if r.from_stop != from.0 || !(fits(r.from_trip, from.1) && fits(r.from_line, from.2) && fits(r.to_trip, to.1) && fits(r.to_line, to.2)) {
+            if r.from_stop != from.0 || !(fits(r.from_trip, trip) && fits(r.from_line, line) && fits(r.to_trip, to_trip) && fits(r.to_line, to_line)) {
                 continue;
             }
             match r.kind {
-                1 | 4 => waits = true,
+                1 | 4 => waits = waits || from.1 != to.1 && to.2 >= from.2 && !leaves_between(tt, self.day, to.0, r.to_trip, r.to_line, from.2, to.2, came_by),
                 2 if r.min_time != NONE => least = least.max(r.min_time.min(1 << 20) as i32),
                 3 => barred = true,
                 _ => {}
@@ -330,11 +381,11 @@ impl Reference {
         (barred, waits, least)
     }
 
-    /// Whether a ride (trip, line) leaving `stop` at `depart` can be boarded, where a rule speaks of boarding it
+    /// Whether the ride `to` leaving `stop` at `depart` can be boarded, where a rule speaks of boarding it
     /// there: from the origin on foot, or from one of the arrivals kept, by what the rules say of that change. The
     /// rides of the journey so far, or `None`.
     #[allow(clippy::too_many_arguments)]
-    fn boards(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32)>], took: &[u32], stop: u32, to: (u32, u32), depart: i32) -> Option<u32> {
+    fn boards(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32)>], took: &[u32], stop: u32, to: u32, depart: i32) -> Option<u32> {
         if origin[stop as usize] <= depart {
             return Some(0);
         }
@@ -343,8 +394,7 @@ impl Reference {
         // vehicle that waits)
         let from_there = |s: u32, base: Option<i32>| -> Option<u32> {
             for &(t, x) in arrivals[s as usize].iter().filter(|a| a.0 <= depart) {
-                let (trip, line) = self.rides[x as usize];
-                let (barred, waits, least) = self.ruled(tt, (s, trip, line), (stop, to.0, to.1));
+                let (barred, waits, least) = self.ruled(tt, (s, x, t), (stop, to, depart));
                 let needs = match (waits, base) {
                     (true, _) => 0,
                     (false, Some(base)) => base.max(least),
@@ -370,18 +420,17 @@ impl Reference {
         found
     }
 
-    /// The same turned round: whether a ride (trip, line) that arrives at `stop` at `arrive` leads on, where a rule
+    /// The same turned round: whether the ride `from` that arrives at `stop` at `arrive` leads on, where a rule
     /// speaks of changing from it there: to the destination on foot, or to one of the departures kept.
     #[allow(clippy::too_many_arguments)]
-    fn leads_on(&self, planner: &Planner, q: &Query, destination: &[i32], departures: &[Vec<(i32, u32)>], stop: u32, from: (u32, u32), arrive: i32) -> bool {
+    fn leads_on(&self, planner: &Planner, q: &Query, destination: &[i32], departures: &[Vec<(i32, u32)>], stop: u32, from: u32, arrive: i32) -> bool {
         if destination[stop as usize] >= arrive {
             return true;
         }
         let tt = planner.timetable();
         let to_there = |s: u32, base: Option<i32>| -> bool {
             departures[s as usize].iter().filter(|d| d.0 >= arrive).any(|&(d, y)| {
-                let (trip, line) = self.rides[y as usize];
-                let (barred, waits, least) = self.ruled(tt, (stop, from.0, from.1), (s, trip, line));
+                let (barred, waits, least) = self.ruled(tt, (stop, from, arrive), (s, y, d));
                 let needs = match (waits, base) {
                     (true, _) => 0,
                     (false, Some(base)) => base.max(least),
@@ -453,7 +502,7 @@ impl Reference {
                 // where a rule speaks of boarding this trip here, the arrivals one by one; else the stop's soonest
                 let spoken_of = ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line));
                 let so_far = if spoken_of {
-                    self.boards(planner, q, &origin, &arrivals, &took, c.from, (trip, line), c.depart)
+                    self.boards(planner, q, &origin, &arrivals, &took, c.from, c.ride, c.depart)
                 } else {
                     (ready[c.from as usize] <= c.depart).then_some(via[c.from as usize])
                 };
@@ -495,17 +544,16 @@ impl Reference {
         (best != i32::MAX).then_some((best, best_rides))
     }
 
-    /// The least cost so far with which a ride (trip, line) leaving `stop` at `depart` can be boarded, where a
+    /// The least cost so far with which the ride `to` leaving `stop` at `depart` can be boarded, where a
     /// rule speaks of boarding it there: `boards` with a cost, over every arrival the rules let change and not the
     /// first found.
     #[allow(clippy::too_many_arguments)]
-    fn boards_at_cost(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32, u32)>], stop: u32, to: (u32, u32), depart: i32) -> Option<u32> {
+    fn boards_at_cost(&self, planner: &Planner, q: &Query, origin: &[i32], arrivals: &[Vec<(i32, u32, u32)>], stop: u32, to: u32, depart: i32) -> Option<u32> {
         let tt = planner.timetable();
         let mut best = (origin[stop as usize] <= depart).then_some(0u32);
         let mut from_there = |s: u32, base: Option<i32>| {
             for &(t, x, cost) in arrivals[s as usize].iter().filter(|a| a.0 <= depart) {
-                let (trip, line) = self.rides[x as usize];
-                let (barred, waits, least) = self.ruled(tt, (s, trip, line), (stop, to.0, to.1));
+                let (barred, waits, least) = self.ruled(tt, (s, x, t), (stop, to, depart));
                 let needs = match (waits, base) {
                     (true, _) => 0,
                     (false, Some(base)) => base.max(least),
@@ -581,7 +629,7 @@ impl Reference {
             if c.board && !bit(&prefs.closed, c.from) && !bit(&prefs.line_closed, line) && !bit(&prefs.trip_closed, trip) {
                 let spoken_of = ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line));
                 let so_far = if spoken_of {
-                    self.boards_at_cost(planner, q, &origin, &arrivals, c.from, (trip, line), c.depart)
+                    self.boards_at_cost(planner, q, &origin, &arrivals, c.from, c.ride, c.depart)
                 } else {
                     ready[c.from as usize].iter().filter(|l| l.0 <= c.depart).map(|l| l.1).min()
                 };
@@ -713,7 +761,7 @@ impl Reference {
                     continue;
                 }
                 let spoken_of = ruled && self.rules_out_of(c.to).iter().any(|i| fits(tt.rule(*i).from_trip, trip) && fits(tt.rule(*i).from_line, line));
-                let leads_on = if spoken_of { self.leads_on(planner, q, &destination, &departures, c.to, (trip, line), c.arrive) } else { due[c.to as usize] >= c.arrive };
+                let leads_on = if spoken_of { self.leads_on(planner, q, &destination, &departures, c.to, c.ride, c.arrive) } else { due[c.to as usize] >= c.arrive };
                 if !leads_on {
                     continue;
                 }
@@ -855,8 +903,10 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
         let (lo, hi) = tt.walks_from(a);
         (lo..hi).map(|i| tt.walk(i)).find(|w| w.0 == b).map(|w| w.1 as i32)
     };
-    // what the feed's rules say of a change between two rides: (barred, the second waits, the least seconds)
-    let ruled = |from: (u32, u32, u32), to: (u32, u32, u32)| {
+    // What the feed's rules say of a change between two rides, each as (stop, trip, line, day, the moment it is
+    // in or leaves): (barred, the second waits, the least seconds). It waits where a rule says so and it is the
+    // one vehicle that rule holds for the first: nothing else the rule speaks of leaves between the two.
+    let ruled = |from: (u32, u32, u32, i32, i32), to: (u32, u32, u32, i32, i32)| {
         let (mut barred, mut waits, mut least) = (false, false, 0i32);
         if !q.rules {
             return (barred, waits, least);
@@ -877,7 +927,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                 continue;
             }
             match r.kind {
-                1 | 4 => waits = true,
+                1 | 4 => waits = waits || (from.1, from.3) != (to.1, to.3) && to.4 >= from.4 && !leaves_between(tt, q.day, to.0, r.to_trip, r.to_line, from.4, to.4, (from.1, from.3)),
                 2 if r.min_time != NONE => least = least.max(r.min_time.min(1 << 20) as i32),
                 3 => barred = true,
                 _ => {}
@@ -886,7 +936,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
         (barred, waits, least)
     };
     let ride_of = |l: &Leg, end: bool| match *l {
-        Leg::Ride { trip, route, from, to, .. } => Some((if end { to } else { from }, trip, tt.route(route).line)),
+        Leg::Ride { trip, route, day, from, to, depart, arrive, .. } => Some((if end { to } else { from }, trip, tt.route(route).line, day, if end { arrive } else { depart })),
         _ => None,
     };
     for (i, leg) in j.legs.iter().enumerate() {
@@ -915,7 +965,7 @@ pub fn impossible(planner: &Planner, q: &Query, j: &Journey) -> Option<String> {
                 // the change from the ride before
                 let before = j.legs[..i].iter().rev().find(|l| matches!(l, Leg::Ride { .. }));
                 if let Some((before, (stop, at))) = before.and_then(|l| Some((ride_of(l, true)?, (ride_of(l, true)?.0, l.arrive())))) {
-                    let (barred, waits, least) = ruled(before, (from, trip, r.line));
+                    let (barred, waits, least) = ruled(before, (from, trip, r.line, day, depart));
                     if barred {
                         return Some(format!("leg {i}: the feed says no change is possible from the ride before"));
                     }
