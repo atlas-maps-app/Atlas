@@ -35,14 +35,14 @@ import java.util.Collections
 @Config(sdk = [34])
 class SourcesGateTest {
     /** What a client asked of the names and the sockets: nothing leaves this machine, whatever the gate does. */
-    private class Watch : EventListener() {
+    private class Watch(private val here: (String) -> Boolean = { it.endsWith(".wikipedia.org") }) : EventListener() {
         val looked: MutableList<String> = Collections.synchronizedList(ArrayList())
         val connects: MutableList<String> = Collections.synchronizedList(ArrayList())
 
-        /** Every Wikipedia host is this machine, where the mock listens; any other name is not found. */
+        /** Every name [here] holds (Wikipedia's hosts, by default) is this machine, where the mock listens; any other is not found. */
         val dns = Dns { name ->
             looked += name
-            if (name.endsWith(".wikipedia.org")) listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) else throw UnknownHostException(name)
+            if (here(name)) listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) else throw UnknownHostException(name)
         }
 
         override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
@@ -50,9 +50,9 @@ class SourcesGateTest {
         }
     }
 
-    /** The app's [Services.http], its gate and all, with [watch]'s names and sockets. */
+    /** The app's view of its HTTP client for Wikipedia ([Services.http]), its gate and all, with [watch]'s names and sockets. */
     private fun watched(services: Services, watch: Watch): Http =
-        Http(base = services.http.client.newBuilder().dns(watch.dns).eventListener(watch).build())
+        Http(base = services.http(Wikipedia.ID).client.newBuilder().dns(watch.dns).eventListener(watch).build())
 
     private suspend fun Services.switch(off: Set<String>) {
         settings.set(SettingsKeys.PROVIDERS_OFF, off.takeIf { it.isNotEmpty() })
@@ -112,6 +112,58 @@ class SourcesGateTest {
             assertTrue(runCatching { wiki.article("en", "Noorderkerk") }.exceptionOrNull() is SwitchedOffException)
             assertEquals(1, server.requestCount)
         }
+        services.close()
+    }
+
+    @Test
+    fun aNamedViewIsHeldByItsSourcesSwitchWhereNoListNamesTheHostAndAListedHostByItsOwn() = runBlocking {
+        val services = testServices()
+        MockWebServer().use { server ->
+            repeat(8) { server.enqueue(MockResponse.Builder().code(200).body("ok").build()) }
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val watch = Watch { true }
+            fun OkHttpClient.watched() = newBuilder().dns(watch.dns).eventListener(watch).build()
+            fun at(host: String) = "http://$host:${server.port}/x"
+            suspend fun ask(client: OkHttpClient, host: String): Throwable? =
+                runCatching { client.newCall(okhttp3.Request.Builder().url(at(host)).build()).execute().close() }.exceptionOrNull()
+            services.switch(setOf("panoramax", "open-meteo", "atlas-packs", "overpass", "osm-chargers"))
+            // Panoramax's picture from its instance's own host, which no list names: held by Panoramax's switch
+            val refused = ask(services.http("panoramax").client.watched(), "nl.panoramax.xyz")
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "panoramax" && refused.host == "nl.panoramax.xyz")
+            // the map's long-read Overpass client, built on the overpass view as MapData builds it, at a server in no list
+            val long = services.http("overpass").client.newBuilder().cache(null).callTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(330, java.util.concurrent.TimeUnit.SECONDS).build().watched()
+            assertEquals("overpass", (ask(long, "overpass.example.net") as? SwitchedOffException)?.source)
+            // a pack's download from a host in no list (GitHub's storage under another name)
+            assertEquals("atlas-packs", (ask(services.http("atlas-packs").client.watched(), "objects.githubusercontent.com") as? SwitchedOffException)?.source)
+            // a listed host goes by its own source's switch, whatever the view is named: MET Norway through the forecast's
+            // view with Open-Meteo off, and Overpass's own host is held through any view
+            assertEquals(null, ask(services.http("open-meteo").client.watched(), "api.met.no"))
+            assertEquals("overpass", (ask(services.http("wikidata").client.watched(), "overpass-api.de") as? SwitchedOffException)?.source)
+            assertEquals("open-meteo", (ask(services.http("met-norway").client.watched(), "api.open-meteo.com") as? SwitchedOffException)?.source)
+            // a host in no list through a view of a source that is on goes, as the tests' mock servers do
+            assertEquals(null, ask(services.http("wikidata").client.watched(), "localhost"))
+            assertEquals(2, server.requestCount)
+            assertEquals("no name looked up for what was held", listOf("api.met.no", "localhost"), watch.looked.toList())
+            // switched on again, each goes
+            services.switch(emptySet())
+            for ((source, host) in listOf("panoramax" to "nl.panoramax.xyz", "atlas-packs" to "objects.githubusercontent.com")) {
+                assertEquals(null, ask(services.http(source).client.watched(), host))
+            }
+            assertEquals(null, ask(long, "overpass.example.net"))
+            assertEquals(5, server.requestCount)
+        }
+        services.close()
+    }
+
+    @Test
+    fun servicesHandsOutNamedViewsOnly() {
+        // no public member of Services gives the client without a source's name
+        val unnamed = Services::class.java.methods.filter { Http::class.java.isAssignableFrom(it.returnType) && it.parameterCount == 0 }
+        assertEquals("$unnamed", emptyList<java.lang.reflect.Method>(), unnamed)
+        val services = testServices()
+        assertEquals("overpass", services.http("overpass").source)
+        assertTrue("one view a source", services.http("overpass") === services.http("overpass"))
         services.close()
     }
 }

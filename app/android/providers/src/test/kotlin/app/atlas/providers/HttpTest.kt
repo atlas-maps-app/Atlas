@@ -241,7 +241,7 @@ class HttpTest {
             repeat(2) { m.enqueue("""{"ok":true}""") }
             var off = setOf("photon")
             // the app's gate: the server here is "localhost", photon's host for this test
-            val http = Http(policies = emptyMap(), gate = { host -> if (host == "localhost" && "photon" in off) "photon" else null })
+            val http = Http(policies = emptyMap(), gate = { host, _ -> if (host == "localhost" && "photon" in off) "photon" else null })
             val refused = runCatching { http.text(m.url("/api")) }.exceptionOrNull()
             assertTrue("$refused", refused is SwitchedOffException && refused.source == "photon" && refused.host == "localhost")
             // a client built on the shared one, as the map's are, holds it back too
@@ -253,6 +253,40 @@ class HttpTest {
             off = emptySet()
             assertEquals("""{"ok":true}""", http.text(m.url("/api")))
             assertEquals(1, m.count)
+        }
+    }
+
+    @Test
+    fun aNamedViewStampsItsSourceOnEveryRequestBeforeTheGateAndSharesTheRootsPoolCacheAndLimiter() = runBlocking {
+        Mock().use { m ->
+            repeat(6) { m.enqueue("ok") }
+            val asked = java.util.Collections.synchronizedList(ArrayList<Pair<String, String?>>())
+            val root = Http(cacheDir = tmp.newFolder("http"), policies = emptyMap(), gate = { host, source -> asked += host to source; null })
+            val view = root.of("panoramax")
+            assertEquals("panoramax", view.source)
+            // one pool, one cache, one limiter, one agent
+            assertTrue(view.client.connectionPool === root.client.connectionPool)
+            assertTrue(view.client.cache === root.client.cache && root.client.cache != null)
+            assertTrue(view.limiter === root.limiter)
+            assertEquals(root.userAgent, view.userAgent)
+            // through the view's own calls, and through a client built on it with interceptors of its own, after or before
+            view.text(m.url("/a"))
+            val seen = java.util.concurrent.atomic.AtomicReference<String?>()
+            val built = view.client.newBuilder().addInterceptor { c -> seen.set(c.request().tag(SourceTag::class.java)?.id); c.proceed(c.request()) }.build()
+            built.newCall(okhttp3.Request.Builder().url(m.url("/b")).build()).execute().close()
+            assertEquals("the stamp runs before what is added after it", "panoramax", seen.get())
+            val first = view.client.newBuilder().apply { interceptors().add(0, okhttp3.Interceptor { c -> c.proceed(c.request()) }) }.build()
+            first.newCall(okhttp3.Request.Builder().url(m.url("/c")).build()).execute().close()
+            // the root stamps nothing; a view of another source stamps its own; a request already stamped keeps its stamp
+            root.text(m.url("/d"))
+            root.of("open-meteo").text(m.url("/e"))
+            view.execute(view.request(m.url("/f")).tag(SourceTag::class.java, SourceTag("commons")).build())
+            assertEquals(
+                listOf("panoramax", "panoramax", "panoramax", null, "open-meteo", "commons"),
+                asked.map { it.second },
+            )
+            assertTrue(asked.all { it.first == "localhost" })
+            assertEquals(6, m.count)
         }
     }
 

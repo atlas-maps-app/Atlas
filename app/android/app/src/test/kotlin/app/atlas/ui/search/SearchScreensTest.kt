@@ -274,7 +274,7 @@ class SearchScreensTest {
         val services = testServices()
         runBlocking { services.settings.set(app.atlas.services.SettingsKeys.PROVIDERS_OFF, setOf("wikipedia")) }
         val looked = java.util.Collections.synchronizedList(ArrayList<String>())
-        val http = app.atlas.providers.Http(base = services.http.client.newBuilder().dns { looked += it; throw java.net.UnknownHostException(it) }.build())
+        val http = app.atlas.providers.Http(base = services.http(app.atlas.providers.Wikipedia.ID).client.newBuilder().dns { looked += it; throw java.net.UnknownHostException(it) }.build())
         val wiki = app.atlas.providers.Wikipedia(http)
         compose.setContent {
             app.atlas.ui.kit.AtlasTheme(dark = false) {

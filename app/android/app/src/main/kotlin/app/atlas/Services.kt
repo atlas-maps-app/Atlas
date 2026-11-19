@@ -168,7 +168,16 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      * The one HTTP client of the providers, and of the map's clients built on it: shared pool, disk cache, polite per-host
      * limits, and no request to a source the user switched off (Settings · Data).
      */
-    val http: Http by lazy { Http(cacheDir = dirs.http, gate = { host -> SourcesModel.blockedBy(host, sourcesOff()) }) }
+    private val rootHttp: Http by lazy { Http(cacheDir = dirs.http, gate = { host, source -> SourcesModel.blockedBy(host, sourcesOff(), named = source) }) }
+
+    private val views = java.util.concurrent.ConcurrentHashMap<String, Http>()
+
+    /**
+     * The one HTTP client's view for [source], a provider's id ([SourcesModel.ALL]): every request it sends names that
+     * source, so where no source lists the host (Panoramax's instances, a mirror) the source's own switch holds it back.
+     * The client without a name is not handed out.
+     */
+    fun http(source: String): Http = views.getOrPut(source) { rootHttp.of(source) }
 
     private val sourcesOffNow: StateFlow<Set<String>?> by lazy {
         settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).stateIn(scope, SharingStarted.Eagerly, null)
@@ -280,18 +289,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /**
      * What the public Overpass servers did lately, for the map's windows (MapData) and the app's queries alike: a server
      * either found down rests for both, the one either heard from last is asked first, and one with a query under way in
-     * [http]'s limiter (one at a time on each, for both) after the free ones.
+     * the HTTP client's limiter (one at a time on each, for both) after the free ones.
      */
-    val overpassServers: OverpassServers by lazy { OverpassServers(inUse = { url -> url.toHttpUrlOrNull()?.let { http.limiter.busy(it.host) } == true }) }
+    val overpassServers: OverpassServers by lazy { OverpassServers(inUse = { url -> url.toHttpUrlOrNull()?.let { rootHttp.limiter.busy(it.host) } == true }) }
 
-    val overpass: Overpass by lazy { Overpass(http, servers = overpassServers) }
-    val weather: Weather by lazy { Weather(http, dirs.providers, keys, clock = { clock.instant() }) }
+    val overpass: Overpass by lazy { Overpass(http(Overpass.INFO.id), servers = overpassServers) }
+    val weather: Weather by lazy { Weather(http(Weather.ID), dirs.providers, keys, clock = { clock.instant() }) }
     /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer (each unless switched off). */
-    val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http), Nominatim(http)) }
-    val mangrove: Mangrove by lazy { Mangrove(http) }
+    val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http(Photon.INFO.id)), Nominatim(http(Nominatim.INFO.id))) }
+    val mangrove: Mangrove by lazy { Mangrove(http(Mangrove.ID)) }
 
     /** The house numbers OpenStreetMap lacks, read with a region taken offline (unless switched off). */
-    val openAddresses: OpenAddresses by lazy { OpenAddresses(http) }
+    val openAddresses: OpenAddresses by lazy { OpenAddresses(http(OpenAddresses.ID)) }
 
     /** Open ratings for a search's places, from Mangrove's reviews of the area: one request for the whole list. */
     val areaRatings: app.atlas.services.AreaRatings by lazy {
@@ -300,7 +309,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Ratings from Mangrove (open, no key) and the keyed providers the user enabled with a key. */
     val ratings: RatingsAggregator by lazy {
-        RatingsAggregator(listOf(mangrove, FoursquareRatings(http, keys), YelpRatings(http, keys), TripAdvisorRatings(http, keys)))
+        RatingsAggregator(listOf(mangrove, FoursquareRatings(http(FoursquareRatings.ID), keys), YelpRatings(http(YelpRatings.ID), keys), TripAdvisorRatings(http(TripAdvisorRatings.ID), keys)))
     }
 
     /**
@@ -312,9 +321,9 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         val kept = dirs.providers
         val onWifi = { !config.offline && connectivity.online.value && !connectivity.metered.value }
         listOf(
-            OsmChargers(overpass), OpenChargeMap(http, keys),
-            NdwChargers(http, kept, maxAge = 7.days, autoDownload = true, mayDownload = onWifi, covers = NdwChargers.COUNTRY, background = scope),
-            BnetzaChargers(http, kept, maxAge = 7.days, autoDownload = true, mayDownload = onWifi, covers = BnetzaChargers.COUNTRY, background = scope),
+            OsmChargers(overpass), OpenChargeMap(http(OpenChargeMap.ID), keys),
+            NdwChargers(http(NdwChargers.ID), kept, maxAge = 7.days, autoDownload = true, mayDownload = onWifi, covers = NdwChargers.COUNTRY, background = scope),
+            BnetzaChargers(http(BnetzaChargers.ID), kept, maxAge = 7.days, autoDownload = true, mayDownload = onWifi, covers = BnetzaChargers.COUNTRY, background = scope),
         )
     }
 
@@ -326,26 +335,26 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     val saved: app.atlas.ui.search.SavedPlaces by savedLazy
 
     /** Wikidata: a place's architect, year, namesake and image, and brand facts. */
-    val wikidata: app.atlas.providers.Wikidata by lazy { app.atlas.providers.Wikidata(http) }
+    val wikidata: app.atlas.providers.Wikidata by lazy { app.atlas.providers.Wikidata(http(app.atlas.providers.Wikidata.ID)) }
 
     /** The EU's bathing waters and the Dutch swim register's advisories, for lakes and beaches in the search. */
-    val bathing: app.atlas.providers.BathingWaters by lazy { app.atlas.providers.BathingWaters(http) }
+    val bathing: app.atlas.providers.BathingWaters by lazy { app.atlas.providers.BathingWaters(http(app.atlas.providers.BathingWaters.ID)) }
 
     /** Wikipedia: a place's article, read in the app. */
-    val wikipedia: app.atlas.providers.Wikipedia by lazy { app.atlas.providers.Wikipedia(http) }
+    val wikipedia: app.atlas.providers.Wikipedia by lazy { app.atlas.providers.Wikipedia(http(app.atlas.providers.Wikipedia.ID)) }
 
     /** Wikimedia Commons: images with their licences. */
-    val commons: app.atlas.providers.Commons by lazy { app.atlas.providers.Commons(http) }
+    val commons: app.atlas.providers.Commons by lazy { app.atlas.providers.Commons(http(app.atlas.providers.Commons.INFO.id)) }
 
     /** Anonymous OpenStreetMap notes: "leave a note for mappers" and the place quests. */
-    val osmNotes: app.atlas.providers.OsmNotes by lazy { app.atlas.providers.OsmNotes(http) }
+    val osmNotes: app.atlas.providers.OsmNotes by lazy { app.atlas.providers.OsmNotes(http(app.atlas.providers.OsmNotes.ID)) }
 
     /** The user's edits to OpenStreetMap, kept on this phone until they are sent (FillIn, the painter). */
     val edits: app.atlas.services.EditQueue by lazy { app.atlas.services.EditQueue.open(dirs.edits) }
 
     /** Edits sent with the user's own OpenStreetMap account, after their review. */
     val osmEdits: app.atlas.providers.OsmEdits by lazy {
-        app.atlas.providers.OsmEdits(http, createdBy = "Atlas ${BuildConfig.VERSION_NAME}")
+        app.atlas.providers.OsmEdits(http(app.atlas.providers.OsmEdits.ID), createdBy = "Atlas ${BuildConfig.VERSION_NAME}")
     }
 
     /**
@@ -367,7 +376,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         if (!BuildConfig.TIMINGS || id.isBlank()) null
         else app.atlas.services.OsmDevCheck(
             osmAccountOn(dev, id, File(dirs.files, "settings/osm-dev.preferences_pb"), "atlas-osm-dev-token"),
-            app.atlas.providers.OsmEdits(http, dev.api, createdBy = "Atlas ${BuildConfig.VERSION_NAME}"),
+            app.atlas.providers.OsmEdits(http(app.atlas.providers.OsmEdits.ID), dev.api, createdBy = "Atlas ${BuildConfig.VERSION_NAME}"),
         )
     }
 
@@ -377,7 +386,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         return app.atlas.services.OsmAccount(
             PreferenceDataStoreFactory.create(scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO)) { file },
             app.atlas.services.KeystoreSealer(key),
-            if (id.isBlank()) null else app.atlas.services.OsmAccount.Osm(app.atlas.providers.OsmAuth(http, id, redirect, server.web, server.api), redirect),
+            if (id.isBlank()) null else app.atlas.services.OsmAccount.Osm(app.atlas.providers.OsmAuth(http(app.atlas.providers.OsmEdits.ID), id, redirect, server.web, server.api), redirect),
             scope,
         )
     }
@@ -385,7 +394,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     // ---- Routing -------------------------------------------------------------------------------------------------
 
     /** BRouter's segment files: what is on the phone and downloads of more. */
-    val segments: SegmentStore by lazy { dirs.segments.mkdirs(); SegmentStore(dirs.segments, client = http.client) }
+    val segments: SegmentStore by lazy { dirs.segments.mkdirs(); SegmentStore(dirs.segments, client = http(app.atlas.ui.mine.SourcesModel.BROUTER.id).client) }
 
     val brouter: BRouterRouter by lazy {
         dirs.segments.mkdirs()

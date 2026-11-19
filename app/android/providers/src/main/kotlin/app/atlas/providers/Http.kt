@@ -19,6 +19,7 @@ import okhttp3.FormBody
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -39,37 +40,48 @@ const val USER_AGENT = "Atlas/0.1 (+https://github.com/atlas-maps-app/Atlas)"
  * The one HTTP client all providers share: a single OkHttp connection pool and disk cache, polite per-host rate limits,
  * and `suspend` calls that cancel the network request when the coroutine is cancelled.
  *
- * Every request passes [gate] first, by its host: a host whose source the user switched off is never asked (a
- * [SwitchedOffException] instead). The map's clients build on [client], so the gate holds for every request the app sends.
+ * Every request passes [gate] first, by its host and the source it is asked for: a request a switched-off source would
+ * answer is never sent (a [SwitchedOffException] instead). The app hands out named views of it only ([of]): each stamps
+ * its source on every request ([SourceTag]), and shares the root's pool, cache and limiter. The map's clients build on a
+ * view's [client], so the stamp and the gate hold for every request the app sends.
  */
-class Http(
-    cacheDir: File? = null,
-    cacheBytes: Long = 64L * 1024 * 1024,
-    val userAgent: String = USER_AGENT,
-    connectTimeout: Duration = 10.seconds,
-    readTimeout: Duration = 30.seconds,
-    callTimeout: Duration = 60.seconds,
-    policies: Map<String, HostPolicy> = HostPolicy.DEFAULTS,
-    base: OkHttpClient? = null,
-    clock: () -> Long = { System.nanoTime() / 1_000_000 },
-    /** The id of the switched-off source a host belongs to, which holds its requests back; null lets them go. */
-    private val gate: (host: String) -> String? = { null },
+class Http private constructor(
+    /** The OkHttp client this view sends with; other modules may build on it with [OkHttpClient.newBuilder] to share its pool. */
+    val client: OkHttpClient,
+    /** The per-host limiter, one for the root and all its views; providers call [HostLimiter.penalise] when a server asks them to back off. */
+    val limiter: HostLimiter,
+    val userAgent: String,
+    /** The source this view's requests are asked for ([of]); null for the root, which stamps none. */
+    val source: String?,
+    /** The root's client, which every view builds on. */
+    private val root: OkHttpClient,
 ) {
-    /** The shared OkHttp client; other modules may build on it with [OkHttpClient.newBuilder] to share its pool. */
-    val client: OkHttpClient = (base?.newBuilder() ?: OkHttpClient.Builder())
-        .connectTimeout(connectTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-        .readTimeout(readTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-        .callTimeout(callTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
-        .apply { if (cacheDir != null) cache(Cache(cacheDir, cacheBytes)) }
-        .addInterceptor { chain ->
-            val req = chain.request()
-            gate(req.url.host)?.let { throw SwitchedOffException(it, req.url.host) }
-            chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
-        }
-        .build()
+    constructor(
+        cacheDir: File? = null,
+        cacheBytes: Long = 64L * 1024 * 1024,
+        userAgent: String = USER_AGENT,
+        connectTimeout: Duration = 10.seconds,
+        readTimeout: Duration = 30.seconds,
+        callTimeout: Duration = 60.seconds,
+        policies: Map<String, HostPolicy> = HostPolicy.DEFAULTS,
+        base: OkHttpClient? = null,
+        clock: () -> Long = { System.nanoTime() / 1_000_000 },
+        /**
+         * The id of the switched-off source that holds a request back, from its host and the source it is asked for (its
+         * [SourceTag], null where none); null lets it go.
+         */
+        gate: (host: String, source: String?) -> String? = { _, _ -> null },
+    ) : this(rootClient(cacheDir, cacheBytes, userAgent, connectTimeout, readTimeout, callTimeout, base, gate), HostLimiter(policies, clock), userAgent, null)
 
-    /** The per-host limiter; providers call [HostLimiter.penalise] when a server asks them to back off. */
-    val limiter = HostLimiter(policies, clock)
+    private constructor(client: OkHttpClient, limiter: HostLimiter, userAgent: String, source: String?) : this(client, limiter, userAgent, source, client)
+
+    /**
+     * The view of this client for [source], a provider's id: every request it sends, and every request of a client built on
+     * its [client], carries [source] as a [SourceTag] (one already stamped keeps its own). The stamp runs before every
+     * other interceptor, the gate's too, also after [OkHttpClient.newBuilder]. A view's view is the root's.
+     */
+    fun of(source: String): Http =
+        Http(root.newBuilder().apply { interceptors().add(0, Stamp(source)) }.build(), limiter, userAgent, source, root)
 
     /** A request builder for [url] with the Atlas User-Agent and JSON accepted. */
     fun request(url: String): Request.Builder = request(url.toHttpUrl())
@@ -141,6 +153,22 @@ class Http(
     private fun Request.Builder.headers(map: Map<String, String>): Request.Builder = apply { map.forEach { (k, v) -> header(k, v) } }
 
     companion object {
+        /** The root's client: the timeouts, the cache, and the gate with the User-Agent, as the first interceptor of its own. */
+        private fun rootClient(
+            cacheDir: File?, cacheBytes: Long, userAgent: String, connectTimeout: Duration, readTimeout: Duration, callTimeout: Duration,
+            base: OkHttpClient?, gate: (host: String, source: String?) -> String?,
+        ): OkHttpClient = (base?.newBuilder() ?: OkHttpClient.Builder())
+            .connectTimeout(connectTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+            .readTimeout(readTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+            .callTimeout(callTimeout.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+            .apply { if (cacheDir != null) cache(Cache(cacheDir, cacheBytes)) }
+            .addInterceptor { chain ->
+                val req = chain.request()
+                gate(req.url.host, req.tag(SourceTag::class.java)?.id)?.let { throw SwitchedOffException(it, req.url.host) }
+                chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
+            }
+            .build()
+
         /**
          * How much of a failed answer's body [HttpException.body] keeps: enough for the reason, which some servers put
          * past an HTML preamble (Overpass's comes after 500 characters), and never a whole big download.
@@ -162,6 +190,19 @@ class HttpResponse(val code: Int, val headers: Headers, val body: ByteArray, val
 
     /** Throws [HttpException] unless the status is 2xx; returns this for chaining. */
     fun requireOk(): HttpResponse = if (ok) this else throw HttpException(code, url, text.take(Http.MAX_ERROR_BODY))
+}
+
+/** The source a request is asked for, by its provider id: stamped on it as a tag by a named view of [Http] ([Http.of]). */
+class SourceTag(val id: String) {
+    override fun toString() = id
+}
+
+/** Stamps [source] on each request that carries no [SourceTag] yet. */
+private class Stamp(private val source: String) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        return chain.proceed(if (req.tag(SourceTag::class.java) != null) req else req.newBuilder().tag(SourceTag::class.java, SourceTag(source)).build())
+    }
 }
 
 /** A request to [host], whose source [source] the user switched off (Settings · Data): it was never sent. */

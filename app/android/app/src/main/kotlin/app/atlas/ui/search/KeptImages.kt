@@ -31,7 +31,7 @@ class KeptImages(private val dir: File) {
             val info = files[Commons.normaliseName(name)] ?: files.values.firstOrNull()
             if (info == null || !info.free) return null
             val url = info.thumbUrl ?: Commons.fileUrl(name, width)
-            val res = services.http.execute(services.http.request(url).header("Accept", "image/*").build()).requireOk()
+            val res = services.http(Commons.INFO.id).let { h -> h.execute(h.request(url).header("Accept", "image/*").build()) }.requireOk()
             val kept = KeptImage(res.body, info.credit, info.licence)
             keep(name, kept)
             kept

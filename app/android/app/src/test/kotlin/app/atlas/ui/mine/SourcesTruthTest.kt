@@ -39,15 +39,15 @@ class SourcesTruthTest {
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
-        "overpass" to "Overpass(http, servers = overpassServers)", "nominatim" to "Nominatim(http)", "photon" to "Photon(http)", "mangrove" to "Mangrove(http)",
-        "foursquare" to "FoursquareRatings(http", "yelp" to "YelpRatings(http", "tripadvisor" to "TripAdvisorRatings(http",
-        "ocm" to "OpenChargeMap(http", "osm-chargers" to "OsmChargers(overpass)", "ndw" to "NdwChargers(http",
-        "bnetza" to "BnetzaChargers(http", "open-meteo" to "Weather(http",
-        "met-norway" to "Weather(http", "wikidata" to "Wikidata(http)", "commons" to "Commons(http)", "osm-notes" to "OsmNotes(http)",
-        "osm-edits" to "OsmEdits(http", "atlas-packs" to "WindowPacks(", "brouter" to "SegmentStore(dirs.segments",
+        "overpass" to "Overpass(http(Overpass.INFO.id), servers = overpassServers)", "nominatim" to "Nominatim(http(Nominatim.INFO.id))", "photon" to "Photon(http(Photon.INFO.id))", "mangrove" to "Mangrove(http(Mangrove.ID))",
+        "foursquare" to "FoursquareRatings(http(FoursquareRatings.ID)", "yelp" to "YelpRatings(http(YelpRatings.ID)", "tripadvisor" to "TripAdvisorRatings(http(TripAdvisorRatings.ID)",
+        "ocm" to "OpenChargeMap(http(OpenChargeMap.ID)", "osm-chargers" to "OsmChargers(overpass)", "ndw" to "NdwChargers(http(NdwChargers.ID)",
+        "bnetza" to "BnetzaChargers(http(BnetzaChargers.ID)", "open-meteo" to "Weather(http(Weather.ID)",
+        "met-norway" to "Weather(http(Weather.ID)", "wikidata" to "Wikidata(http(app.atlas.providers.Wikidata.ID))", "commons" to "Commons(http(app.atlas.providers.Commons.INFO.id))", "osm-notes" to "OsmNotes(http(app.atlas.providers.OsmNotes.ID))",
+        "osm-edits" to "OsmEdits(http(app.atlas.providers.OsmEdits.ID)", "atlas-packs" to "WindowPacks(", "brouter" to "SegmentStore(dirs.segments",
         "panoramax" to "PanoramaxSource(", "open-prices" to "OpenPrices(", "iss-orbit" to "TleStore.SECOND_URL",
-        "tankerkoenig" to "Tankerkoenig(", "bathing-water" to "BathingWaters(http)", "wikipedia" to "Wikipedia(http)",
-        "openaddresses" to "OpenAddresses(http)",
+        "tankerkoenig" to "Tankerkoenig(", "bathing-water" to "BathingWaters(http(app.atlas.providers.BathingWaters.ID))", "wikipedia" to "Wikipedia(http(app.atlas.providers.Wikipedia.ID))",
+        "openaddresses" to "OpenAddresses(http(OpenAddresses.ID))",
     )
 
     /** The written but unwired sources' clients, which the app must not build while no screen lists them. */
@@ -169,6 +169,33 @@ class SourcesTruthTest {
         assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", setOf("overpass")))
         assertNull(SourcesModel.blockedBy("api.openstreetmap.org", setOf("osm-notes", "osm-edits")))
         assertNull(SourcesModel.blockedBy("example.org", all))
+    }
+
+    @Test
+    fun aRequestsSourceIsTheOneThatListsItsHostElseTheViewsName() {
+        val all = SourcesModel.ALL.map { it.id }.toSet()
+        // a listed host: its own source's switch, whatever the view is named
+        assertNull(SourcesModel.blockedBy("api.met.no", setOf("open-meteo"), named = "open-meteo"))
+        assertEquals("met-norway", SourcesModel.blockedBy("api.met.no", setOf("met-norway"), named = "open-meteo"))
+        assertEquals("overpass", SourcesModel.blockedBy("overpass-api.de", setOf("overpass"), named = "wikidata"))
+        // a host in no list: the view's source's switch
+        assertEquals("panoramax", SourcesModel.blockedBy("nl.panoramax.xyz", setOf("panoramax"), named = "panoramax"))
+        assertNull(SourcesModel.blockedBy("nl.panoramax.xyz", all - "panoramax", named = "panoramax"))
+        assertEquals("atlas-packs", SourcesModel.blockedBy("objects.githubusercontent.com", setOf("atlas-packs"), named = "atlas-packs"))
+        // neither a list nor a name: it goes, as the tests' mock servers do; a name no source has is none
+        assertNull(SourcesModel.blockedBy("localhost", all))
+        assertNull(SourcesModel.blockedBy("localhost", all, named = "no-such-source"))
+        // a source with no switch, or asked through another's, is never held by its name: held where it is asked
+        assertNull(SourcesModel.blockedBy("example.net", all, named = "osm-notes"))
+        assertNull(SourcesModel.blockedBy("example.net", setOf("osm-chargers"), named = "osm-chargers"))
+        assertNull(SourcesModel.blockedBy("overpass-api.de", setOf("osm-chargers"), named = "osm-chargers"))
+        // a host a switch holds is listed by no other source but one asked through it, so a view's name never lets it go
+        val owners = SourcesModel.ALL.filter { it.switchable && it.via == null }
+        for (o in owners) for (h in o.hosts) for (name in namesFor(h)) {
+            val others = SourcesModel.ALL.filter { it.id != o.id && it.via != o.id && it.holds(name) }.map { it.id }
+            assertEquals("$name is ${o.id}'s and listed by $others", emptyList<String>(), others)
+            for (n in SourcesModel.ALL) assertEquals("$name through ${n.id}'s view", o.id, SourcesModel.blockedBy(name, setOf(o.id), named = n.id))
+        }
     }
 
     @Test
