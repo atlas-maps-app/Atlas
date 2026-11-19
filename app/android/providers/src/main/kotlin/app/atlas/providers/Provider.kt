@@ -1,6 +1,7 @@
 package app.atlas.providers
 
 import java.io.IOException
+import java.util.Locale
 
 /** The keys the user pasted in Settings, by provider id. The app implements it over its own secure storage. */
 fun interface Keys {
@@ -49,13 +50,38 @@ data class ProviderInfo(
     val onByDefault: Boolean = keyNeed == KeyNeed.NONE,
     /** Anything the user should know: terms, limits, why it is off. */
     val note: String? = null,
-    /** The hosts the app sends this source's requests to (its servers, not its website), as the privacy board names them. */
+    /**
+     * The hosts the app sends this source's requests to (its servers, not its website), as the privacy board names them:
+     * each a host, or `*.name` for `name` and every host below it ([hostHolds]).
+     */
     val hosts: List<String> = emptyList(),
     /** False where the source is asked only when the user acts (a note they leave, edits they send): it has no switch. */
     val switchable: Boolean = true,
     /** The source whose servers this one is asked through (OpenStreetMap's chargers, through Overpass), if any. */
     val via: String? = null,
-)
+) {
+    /** Whether a request to [host] is one to this source's servers: one of its [hosts], or below one of its patterns. */
+    fun holds(host: String): Boolean = hosts.any { hostHolds(it, host) }
+}
+
+/**
+ * Whether [listed], a host as a source lists it, holds a request's [host]. `*.name` holds `name` itself and every host
+ * ending in `.name` (`*.wikipedia.org`: `en.wikipedia.org`, `en.m.wikipedia.org`, never `xwikipedia.org` or
+ * `wikipedia.org.example.com`); any other listing holds only itself (`github.com` never `api.github.com`), and a `*`
+ * anywhere but as the whole first label is no pattern. Both are compared in lower case and without one trailing dot.
+ */
+fun hostHolds(listed: String, host: String): Boolean {
+    val l = plainHost(listed)
+    val h = plainHost(host)
+    if (l.startsWith("*.")) {
+        val name = l.substring(2)
+        if (name.isNotEmpty() && '*' !in name) return h == name || h.endsWith(".$name")
+    }
+    return '*' !in l && h == l
+}
+
+/** [host] as hosts are compared: in lower case, without one trailing dot ("en.wikipedia.org." is "en.wikipedia.org"). */
+private fun plainHost(host: String): String = host.lowercase(Locale.ROOT).removeSuffix(".")
 
 /** A source of data with an identity and a state. */
 interface Provider {

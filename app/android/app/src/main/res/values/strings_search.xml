@@ -430,6 +430,7 @@
     <string name="search_route_via">via %1$s</string>
     <string name="place_wiki_open">Read the article</string>
     <string name="place_wiki_none">The article could not be read now</string>
+    <string name="place_wiki_off">Wikipedia is switched off in Data sources &amp; keys</string>
     <string name="place_wiki_minutes">A %1$d-minute read</string>
     <string name="place_wiki_licence">Text from Wikipedia, CC BY-SA</string>
 </resources>

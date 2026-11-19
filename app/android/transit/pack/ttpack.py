@@ -37,6 +37,7 @@ import zipfile
 MAGIC = b"ATLASTT\0"
 VERSION = 1
 NONE = 0xFFFFFFFF
+MAX_DAYS = 400                  # a file's most (the planner's file.rs, MAX_DAYS)
 
 # walks between stops (FORMAT.md, "Walks"): a change at the same stop, between stops of one station, to any stop near
 WALK_SAME_STOP_S = 60
@@ -78,6 +79,16 @@ T0 = time.time()
 
 def log(*a):
     print("[%5.0fs]" % (time.time() - T0), *a, file=sys.stderr, flush=True)
+
+
+def peak_memory():
+    """The most memory this run has held so far, in bytes; None where the system does not say."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, kilobytes elsewhere
+    return peak if sys.platform == "darwin" else peak * 1024
 
 
 def secs(h):
@@ -141,6 +152,27 @@ def metres_mm(lat1, lon1, lat2, lon2):
     dy = (lat2 - lat1) * 111195 // 10000
     dx = (lon2 - lon1) * 111195 // 10000 * c // 65536
     return isqrt_round(dx * dx + dy * dy)
+
+
+def odd_days(zone, first, ndays):
+    """The service days after which the next begins other than 86,400 s later: the clock changes between the one's
+    noon and the next's (FORMAT.md, "Time"). As (date, seconds to the next day's beginning); None where this Python
+    does not know the timezone."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(zone)
+    except Exception:
+        return None
+    utc, out = datetime.timezone.utc, []
+    for i in range(ndays):
+        d = first + datetime.timedelta(days=i)
+        n = d + datetime.timedelta(days=1)
+        a = datetime.datetime(d.year, d.month, d.day, 12, tzinfo=tz).astimezone(utc)
+        b = datetime.datetime(n.year, n.month, n.day, 12, tzinfo=tz).astimezone(utc)
+        secs = int((b - a).total_seconds())
+        if secs != 86400:
+            out.append((d, secs))
+    return out
 
 
 def walk_s(mm):
@@ -268,8 +300,13 @@ def main():
     first = day(a.first) if a.first else alldays[0]
     last = alldays[-1] if a.days is None else first + datetime.timedelta(days=a.days - 1)
     ndays = (last - first).days + 1
-    if ndays < 1 or ndays > 400:
-        sys.exit("days: %d, from %s; 1 to 400 are allowed" % (ndays, first))
+    if a.days is None and ndays > MAX_DAYS:
+        # a feed of more days than a file holds (the new year's timetable handed in early): its far end is left out
+        print("left out: the feed's days after %s (it has %d from %s; a file holds %d)"
+              % (first + datetime.timedelta(days=MAX_DAYS - 1), ndays, first, MAX_DAYS))
+        last, ndays = first + datetime.timedelta(days=MAX_DAYS - 1), MAX_DAYS
+    if ndays < 1 or ndays > MAX_DAYS:
+        sys.exit("days: %d, from %s; 1 to %d are allowed" % (ndays, first, MAX_DAYS))
     svc_bits = {}
     for k, ds in services.items():
         b = 0
@@ -623,6 +660,17 @@ def main():
     tz = {x.get("agency_timezone", "") for x in agencies}
     if len(tz) > 1:
         meta.append(("timezones", " ".join(sorted(tz))))
+    # the days the clock changes: the next service day begins an hour sooner or later than 86,400 s after
+    zone = agencies[0].get("agency_timezone", "") if agencies else ""
+    odd = odd_days(zone, first, ndays) if zone else []
+    if odd is None:
+        if a.strict:
+            sys.exit("refused (--strict): this Python does not know the timezone %r (no tz database?), so the days the clock "
+                     "changes can't be written. Nothing was written." % zone)
+        print("left out: the days the clock changes (this Python does not know the timezone %r)" % zone)
+    elif odd:
+        meta.append(("odd_days", " ".join("%s:%d" % (d.strftime("%Y%m%d"), secs) for d, secs in odd)))
+        print("the clock changes: %s" % ", ".join("the day after %s begins %d s after it" % (d, secs) for d, secs in odd))
 
     # ---- sections
     def u32s(vals):
@@ -746,6 +794,8 @@ def main():
     for k, v in sorted(count.items()):
         print("  %s: %d" % (k, v))
     print("file: %d bytes" % len(out))
+    peak = peak_memory()
+    print("packed in %d s%s" % (time.time() - T0, "" if peak is None else ", with %d MB of memory at the most" % round(peak / 1e6)))
     if a.sizes:
         print("%-6s %10s %12s %12s %12s" % ("tag", "records", "bytes", "gzip -9", "xz -9"))
         for tag, off, ln, n in table:
