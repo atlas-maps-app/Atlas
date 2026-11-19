@@ -964,7 +964,7 @@ map_phase() {
 # within HIDDEN_BACK_S seconds (10: lavapipe's frames take about 2 s with the water's light), the same process (no
 # second `vk first frame`). Called in the map phase, after the swipe.
 hidden_check() {
-  local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-10} frames back delay firsts
+  local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-10} frames back delay firsts surface
   adb shell input keyevent KEYCODE_HOME
   if ! wait_line mapwarm 10 "vk hidden: on"; then
     echo "MAP FAILED: no 'vk hidden: on' within 10 s of the home key (the core was not told the app went to the background)"
@@ -980,7 +980,14 @@ hidden_check() {
   delay=$(since_marker mapwarm | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
     /AtlasMap: vk hidden: off/ { off = t($2) } off && /AtlasMap: vk frame / { d = t($2) - off; if (d < 0) d += 86400; printf "%.1f", d; exit }')
   firsts=$(since_marker mapwarm | grep -c 'AtlasMap: vk first frame ')
-  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames in $wait s, the first ${delay:-none} s after 'vk hidden: off'; $(since_marker mapwarm | grep -o 'vk hidden: off.*' | tail -1)"
+  # A window whose surface did not outlive the stop comes back with a new one, and the core makes its pipelines again
+  # for it (Session::release_window) before the first frame: say which, as that is the delay's cause.
+  if since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk window: surface created'; then
+    surface="a new surface (the old one went at the stop), the pipelines made again"
+  else
+    surface="the surface kept"
+  fi
+  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames in $wait s, the first ${delay:-none} s after 'vk hidden: off', $surface; $(since_marker mapwarm | grep -o 'vk hidden: off.*' | tail -1)"
   [ "$frames" -eq 0 ] || { echo "MAP FAILED: the core drew $frames frames while the app was hidden (none, ENGINE.md's audit B1)"; FAIL=1; }
   [ "$back" -gt 0 ] || { echo "MAP FAILED: no frame within $wait s of the return from the background"; FAIL=1; }
   [ "$firsts" -le 1 ] || { echo "MAP FAILED: the return started the map again ($firsts 'vk first frame' lines)"; FAIL=1; }
