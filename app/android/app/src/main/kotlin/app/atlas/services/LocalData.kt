@@ -391,16 +391,21 @@ class LocalData(
      */
     private fun packsAndWindows(at: LatLon, box: BBox, accept: (Map<String, String>) -> Boolean, windowsToo: Boolean = true): Pair<List<Place>, Boolean>? {
         val pack = packsCovering(at)
-        val windows = if (windowsToo && pack?.covers(box) != true) heldWindows(box, at, pack) else null
+        val windows = if (windowsToo && pack?.covers(box) != true) heldWindows(box, at) else null
         return joined(pack, windows, box, accept)
     }
 
-    /** [pack]'s places in [box] whose tags [accept] keeps and then [windows]', and whether the two hold the whole box. */
+    /**
+     * [pack]'s places in [box] whose tags [accept] keeps and then [windows]', and whether the two hold the whole box: the
+     * pack where its box holds the whole, else the windows each of the box's (the app maintainer, 18 November 2026,
+     * batch 5 A2: a pack's box is no proof of what it holds, so a window past a border inside it, the pack's place for
+     * none, no longer counts as held by it, as it did before batch 4 too).
+     */
     private fun joined(pack: PackFeatures?, windows: WindowPlaces.Held?, box: BBox, accept: (Map<String, String>) -> Boolean): Pair<List<Place>, Boolean>? {
         if (pack == null && windows == null) return null
         val found = pack?.let { packPlaces(it, box, accept) }.orEmpty() +
             windows?.places?.filter { p -> (p.bbox?.intersects(box) ?: (p.location in box)) && accept(p.tags) }.orEmpty()
-        val whole = pack?.covers(box) == true || windows?.covers(box) { b -> pack?.covers(b) == true } == true
+        val whole = pack?.covers(box) == true || windows?.covers(box) == true
         return found.distinctBy { it.key } to whole
     }
 
@@ -421,8 +426,7 @@ class LocalData(
         val pack = packsCovering(at)
         if (pack?.covers(box) == true) return null
         val held = try {
-            // the windows the pack holds whole are none of those to make the box whole with (batch 4 B12)
-            w.fetched(box, at, windowWaitMs, waitForPart) { b -> pack?.covers(b) == true }
+            w.fetched(box, at, windowWaitMs, waitForPart)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -458,8 +462,7 @@ class LocalData(
             try {
                 val pack = packsCovering(at)
                 if (storeCovering(at) != null || pack?.covers(box) == true) null
-                // the windows the pack holds whole are none of those to make the box whole with (batch 4 B12)
-                else pack to w.start(box, at, windowWaitMs) { b -> pack?.covers(b) == true }
+                else pack to w.start(box, at, windowWaitMs)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -502,12 +505,9 @@ class LocalData(
         null
     }
 
-    /**
-     * The map's windows the phone holds meeting [box], nearest [at] first ([WindowPlaces.held]), none that [pack] holds
-     * whole; null where none, or where they did not read.
-     */
-    private fun heldWindows(box: BBox, at: LatLon, pack: PackFeatures? = null): WindowPlaces.Held? = try {
-        windowPlaces?.held(box, at) { b -> pack?.covers(b) == true }
+    /** The map's windows the phone holds meeting [box], nearest [at] first ([WindowPlaces.held]); null where none, or where they did not read. */
+    private fun heldWindows(box: BBox, at: LatLon): WindowPlaces.Held? = try {
+        windowPlaces?.held(box, at)
     } catch (e: Exception) {
         null
     }

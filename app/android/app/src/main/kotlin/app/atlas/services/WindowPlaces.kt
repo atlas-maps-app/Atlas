@@ -58,9 +58,11 @@ class WindowPlaces(
 ) {
     /** The places of the windows meeting a box that the phone holds, and which windows they are. */
     class Held internal constructor(val places: List<Place>, private val windows: Set<Long>) {
-        /** Whether these windows hold the whole of [box], with the places [also] says it holds whole (a pack). */
-        fun covers(box: BBox, also: (BBox) -> Boolean = { false }): Boolean =
-            Mercator.tilesIn(box, LEVEL).all { key(it.x, it.y) in windows || also(it.bbox) }
+        /**
+         * Whether these windows hold the whole of [box]: each of its windows, a pack's box beside them being no proof of
+         * what the pack holds (the app maintainer, 18 November 2026, batch 5 A2: the Netherlands' reaches Antwerp).
+         */
+        fun covers(box: BBox): Boolean = Mercator.tilesIn(box, LEVEL).all { key(it.x, it.y) in windows }
     }
 
     private class Window(val stamp: String, val places: List<Place>)
@@ -89,11 +91,10 @@ class WindowPlaces(
 
     /**
      * The places of the windows meeting [box] that the phone holds: their kept data, or a window's data from the packs
-     * read lately; nearest [centre] first, from at most [HELD] windows, none that [covered] holds whole (the pack the
-     * lookup reads beside them). Null where it holds none. Reads files: call it off the main thread.
+     * read lately; nearest [centre] first, from at most [HELD] windows. Null where it holds none. Reads files: call it
+     * off the main thread.
      */
-    fun held(box: BBox, centre: LatLon = box.center, covered: (BBox) -> Boolean = { false }): Held? =
-        look(box, centre, waiting = emptySet(), covered)
+    fun held(box: BBox, centre: LatLon = box.center): Held? = look(box, centre, waiting = emptySet())
 
     /**
      * [held], once the windows meeting [box] the phone keeps no data for have come from Atlas's packs, where what they
@@ -106,12 +107,12 @@ class WindowPlaces(
      * asks for the same nearest windows once. (The reviewer, 17 November 2026: nine windows were waited for, up to 10 s,
      * for a circle of any size; the app maintainer, 18 November 2026: and then, where the packs could not make a box
      * whole, none was read, so where Overpass failed the answer was empty where it had held the nine nearest.) A window
-     * [covered] holds whole (the pack the lookup reads beside them) is none of the box's to make whole: never missing,
-     * asked for or read (the app maintainer, 18 November 2026, batch 4 B12: at a pack's edge, twelve windows of a circle
-     * the pack held nine of were all missing, so the three it lacked were not waited for and Overpass was asked).
+     * inside the box of a pack read beside them is read and counted as any other, the pack's box being no proof of what
+     * it holds (the app maintainer, 18 November 2026, batch 5 A2: batch 4 B12 took those for the pack's, never asked or
+     * read, so at a border inside a pack's box the places past it were lost).
      */
-    suspend fun fetched(box: BBox, centre: LatLon, withinMs: Long, waitForPart: Boolean = false, covered: (BBox) -> Boolean = { false }): Held? =
-        start(box, centre, withinMs, covered).use { f -> if (f.makesWhole || waitForPart) f.landed() else f.held() }
+    suspend fun fetched(box: BBox, centre: LatLon, withinMs: Long, waitForPart: Boolean = false): Held? =
+        start(box, centre, withinMs).use { f -> if (f.makesWhole || waitForPart) f.landed() else f.held() }
 
     /**
      * Asks Atlas's packs for the windows meeting [box] the phone keeps no data for, as [fetched] asks them, for a lookup
@@ -120,27 +121,26 @@ class WindowPlaces(
      * once the answer held none of them, and where it was slow they showed only once it answered). [Fetch.landed] waits
      * for them at most [withinMs] from now. The lookup's windows are held as its own until the [Fetch] is closed.
      */
-    fun start(box: BBox, centre: LatLon, withinMs: Long, covered: (BBox) -> Boolean = { false }): Fetch {
+    fun start(box: BBox, centre: LatLon, withinMs: Long): Fetch {
         val until = System.nanoTime() + withinMs * 1_000_000
         val range = Range.of(box)
         val kept = keptIn(range)
         val now = clock()
-        val own = { k: Long -> !covered(boxOf(k)) }
         // the windows this lookup can hold, nearest its middle first: none past them is read or asked for
-        val windows = range.closest(centre, HELD, own)
+        val windows = range.closest(centre, HELD)
         val unread = windows.count { k -> kept[k]?.let { cached(k, stampOf(it)) == null } == true }
         val missing = windows.filter { k -> k !in kept && cached(k, PACKED) == null }
         val inNoPack = synchronized(none) { missing.filter { k -> none[k]?.let { now - it < NONE_MS } == true }.toSet() }
         val asked = missing.filter { it !in inNoPack }.take(FETCH_MAX)
-        if (asked.isEmpty()) return Fetch(box, centre, emptyList(), emptyList(), makesWhole = false, covered, until)
-        val whole = range.count(own, HELD + 1) <= HELD && inNoPack.isEmpty() && missing.size <= FETCH_MAX && unread <= READ_MAX
+        if (asked.isEmpty()) return Fetch(box, centre, emptyList(), emptyList(), makesWhole = false, until)
+        val whole = range.size <= HELD && inNoPack.isEmpty() && missing.size <= FETCH_MAX && unread <= READ_MAX
         // this lookup's windows, those still to come among them, are held when they come, whatever lookup comes between
         synchronized(cache) {
             middle = centre
             mine = windows.toSet()
             for (k in windows) waited.merge(k, 1, Int::plus)
         }
-        return Fetch(box, centre, windows, asked, whole, covered, until)
+        return Fetch(box, centre, windows, asked, whole, until)
     }
 
     /**
@@ -154,7 +154,6 @@ class WindowPlaces(
         private val asked: List<Long>,
         /** Whether the windows asked for make the box whole beside those held: worth their wait before Overpass is asked. */
         val makesWhole: Boolean,
-        private val covered: (BBox) -> Boolean,
         private val until: Long,
     ) : Closeable {
         private val reads = asked.map(::read)
@@ -164,7 +163,7 @@ class WindowPlaces(
         val asks: Boolean get() = asked.isNotEmpty()
 
         /** [held] now, the windows asked for held as this lookup's own when they come. */
-        fun held(): Held? = look(box, centre, waiting = asked.toSet(), covered)
+        fun held(): Held? = look(box, centre, waiting = asked.toSet())
 
         /** [held] once the windows asked for came, waited for until the wait [start] was given is over. */
         suspend fun landed(): Held? {
@@ -183,12 +182,11 @@ class WindowPlaces(
         }
     }
 
-    /** [held], [waiting] (windows of [box] asked of the packs) held as this lookup's own when they come; none [covered] holds whole. */
-    private fun look(box: BBox, centre: LatLon, waiting: Set<Long>, covered: (BBox) -> Boolean): Held? {
+    /** [held], [waiting] (windows of [box] asked of the packs) held as this lookup's own when they come. */
+    private fun look(box: BBox, centre: LatLon, waiting: Set<Long>): Held? {
         val range = Range.of(box)
         val kept = keptIn(range)
-        val near = (kept.keys + synchronized(cache) { cache.keys.filter { range.has(it) } }).distinct()
-            .filter { !covered(boxOf(it)) }.sortedWith(nearest(centre))
+        val near = (kept.keys + synchronized(cache) { cache.keys.filter { range.has(it) } }).distinct().sortedWith(nearest(centre))
         val used = LinkedHashSet<Long>()
         val read = HashMap<Long, Window>()
         val places = ArrayList<Place>()
@@ -285,19 +283,12 @@ class WindowPlaces(
          * Its [n] windows nearest [centre], nearest first: of those within [NEAR] windows of the one holding [centre] (or
          * of its window nearest it), never every window of a wide range.
          */
-        fun closest(centre: LatLon, n: Int, own: (Long) -> Boolean = { true }): List<Long> {
+        fun closest(centre: LatLon, n: Int): List<Long> {
             val t = Mercator.tileAt(centre, LEVEL)
             val cx = t.x.coerceIn(x0, x1)
             val cy = t.y.coerceIn(y0, y1)
             val near = (maxOf(x0, cx - NEAR)..minOf(x1, cx + NEAR)).flatMap { x -> (maxOf(y0, cy - NEAR)..minOf(y1, cy + NEAR)).map { y -> key(x, y) } }
-            return near.filter(own).sortedWith(nearest(centre)).take(n)
-        }
-
-        /** How many of its windows [own] keeps, counted as far as [upTo]. */
-        fun count(own: (Long) -> Boolean, upTo: Int): Int {
-            var n = 0
-            for (x in x0..x1) for (y in y0..y1) if (own(key(x, y)) && ++n >= upTo) return n
-            return n
+            return near.sortedWith(nearest(centre)).take(n)
         }
 
         companion object {

@@ -515,14 +515,16 @@ class WindowLookupsTest {
     }
 
     /**
-     * At a pack's edge the windows the pack holds whole are no window missing (the app maintainer, 18 November 2026,
-     * batch 4 B12): 2 km around [off], in a pack that ends a column of windows east of it, meet twelve windows, nine of
-     * them the pack's; the three past its edge are asked of the packs and waited for, and with the pack they make the
-     * circle whole, so Overpass is not asked. All twelve counted as missing, more than nine: the nine nearest were asked,
-     * eight of them the pack's, none waited for, and Overpass was asked for the whole.
+     * A pack's box is no proof of what it holds (the app maintainer, 18 November 2026, batch 5 A2: the box of the
+     * Netherlands' extract reaches Antwerp and Aachen). 2 km around [here], in a pack that holds the column of windows
+     * west of [tile] and whose box ends at [tile]'s east edge: [tile]'s column lies inside the box, but the pack holds
+     * none of its places (Belgium's, as Lanaken's beside Maastricht). Its windows are read as on 38ddafa1, and its café
+     * is found; where its window cannot come, the circle is not whole without it, and Overpass is asked. With batch 4's
+     * B12 the windows inside the box were the pack's: never asked or read, and counted whole, so the café was lost and
+     * Overpass not asked; and the pack's box counted for the windows it lacked before batch 4 too.
      */
     @Test
-    fun windowsAPackHoldsAreNoneMissing() = runBlocking {
+    fun aPacksBoxIsNoProofOfWhatItHolds() = runBlocking {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 asked.incrementAndGet()
@@ -531,26 +533,30 @@ class WindowLookupsTest {
         }
         server.start()
         val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
-        val sent = java.util.Collections.synchronizedList(ArrayList<String>())
-        val empty = tmp.newFolder("edge")
-        val windows = WindowPlaces({ empty }, packed = { x, y -> sent += "$x/$y"; cafeAt(x, y) })
-        val box = BBox.around(off, 2_000.0)
+        val box = BBox.around(here, 2_000.0)
         val tiles = Mercator.tilesIn(box, WindowPlaces.LEVEL)
-        assertEquals(12, tiles.size)
-        // the pack: the circle but its east column of windows, a café in each as the window holds it
-        val edge = tiles.maxOf { it.x }
-        val ends = TileId(WindowPlaces.LEVEL, edge, tile.y).bbox.west
-        val inPack = tiles.filter { it.x < edge }
-        val pack = PackFeatures(listOf(MemoryBoxes(inPack.map { cafeNode(it.x, it.y) }, BBox(box.west - 0.1, box.south - 0.1, ends, box.north + 0.1))))
-        val local = LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
-        val found = local.placesAsFound(off, 2_000.0, cafe).toList()
+        assertEquals(9, tiles.size)
+        val pack = PackFeatures(
+            listOf(MemoryBoxes(tiles.filter { it.x == tile.x - 1 }.map { cafeNode(it.x, it.y) }, BBox(box.west - 0.1, box.south - 0.1, tile.bbox.east, box.north + 0.1))),
+        )
+        assertTrue(pack.covers(tile.bbox))
+        assertFalse(pack.covers(box))
+        val belgian = "${tile.x}/${tile.y}"
+        fun local(comes: Boolean): LocalData {
+            val dir = tmp.newFolder()
+            val windows = WindowPlaces({ dir }, packed = { x, y -> if (!comes && "$x/$y" == belgian) null else cafeAt(x, y) })
+            return LocalData(stores = { null }, packs = { pack }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        }
+        val found = local(comes = true).placesAsFound(here, 2_000.0, cafe).toList()
         assertEquals(PlaceOrigin.PACK, found.last().origin)
+        assertTrue("the Belgian café", belgian in found.last().value.map { it.name() })
         assertFalse(found.last().partial)
         assertEquals(0, asked.get())
-        // the east column alone was asked of the packs, and its cafés within 2 km are found beside the pack's
-        assertEquals(tiles.filter { it.x == edge }.map { "${it.x}/${it.y}" }.toSet(), sent.toSet())
-        val near = tiles.filter { Geo.distance(off, it.bbox.center) <= 2_000.0 }.map { "${it.x}/${it.y}" }.toSet()
-        assertEquals(near, found.last().value.map { it.name() }.toSet())
+        // its window does not come: the circle is a part, and Overpass is asked for the whole
+        val without = local(comes = false).placesAsFound(here, 2_000.0, cafe).toList()
+        assertTrue(without.filter { it.origin == PlaceOrigin.PACK }.all { it.partial })
+        assertEquals(PlaceOrigin.ONLINE, without.last().origin)
+        assertEquals(1, asked.get())
     }
 
     /**
