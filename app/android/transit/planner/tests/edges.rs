@@ -37,6 +37,10 @@
 //! - Dicht: A to B is in at 10:00; line D2 leaves C at 10:01 and 10:13 and waits for line D1. B and C are 201 m
 //!   apart, a walk of 270 s: the 10:13 is made on foot.
 //! - Halte: A to S is in at 10:00; line H2 leaves S, the same stop, at 10:01, 10:03 and 10:15 and waits for line H1.
+//!
+//! And two service days of one route:
+//! - Ochtend: the bus A to Z (20 minutes) leaves at 23:00 on Friday's service and at 06:00 on Saturday's, and at no
+//!   other time.
 
 use atlas_transit::file::{StopText, TripText};
 use atlas_transit::reference::{Reference, impossible};
@@ -99,7 +103,7 @@ fn the_file_is_sound() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
     tt.verify().unwrap();
-    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270326, 4, 54, 59, 8, 11));
+    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270326, 4, 56, 61, 8, 11));
 }
 
 /// A window late in the evening has its last connection, though it takes far longer than the journey's least and
@@ -514,4 +518,30 @@ fn a_walk_all_the_way_can_begin_at_any_moment() {
         assert_eq!(got.remove(0), (hm(8, 0), hm(8, 0) + secs, String::new()), "at {speed} mm/s");
         assert_eq!(got, want, "at {speed} mm/s");
     }
+}
+
+/// Where trips differ in what they cost, a boarding reads on into the next service day: the bus a wish avoids
+/// tonight does not hide the one that costs nothing in the morning. And the same read back, arriving by.
+#[test]
+fn a_cheaper_trip_of_the_next_service_day() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let trip = |id: &str| (0..tt.trips()).find(|t| tt.trip_text(*t, TripText::Id) == id).unwrap();
+    let ways = |p: &mut Planner, at: u32, by: bool, wish: (&str, u32), weigh: bool| {
+        let mut q = query(&tt, "OA", "OZ", 0, at);
+        (q.arrive_by, q.weigh) = (by, weigh);
+        q.wishes.push(Wish { what: What::Trip(trip(wish.0)), how: How::Avoid(wish.1) });
+        ask(p, &q).iter().map(|j| (j.depart as u32, j.arrive as u32, said(&tt, j).2, j.penalty)).collect::<Vec<_>>()
+    };
+    let (tonight, morning) = (|cost: u32| (hm(23, 0), hm(23, 20), "O1a".to_string(), cost), |cost: u32| (hm(30, 0), hm(30, 20), "O1b".to_string(), cost));
+    // asked at 22:50 with tonight's bus avoided: every option has the morning's, which costs nothing
+    assert_eq!(ways(&mut p, hm(22, 50), false, ("O1a", 600), false), [tonight(600), morning(0)]);
+    // weighed, ten minutes are not worth a night; ten hours are
+    assert_eq!(ways(&mut p, hm(22, 50), false, ("O1a", 600), true), [tonight(600)]);
+    assert_eq!(ways(&mut p, hm(22, 50), false, ("O1a", 36_000), true), [tonight(36_000), morning(0)]);
+    // arriving by 06:30 with the morning's bus avoided: the mirror
+    assert_eq!(ways(&mut p, hm(30, 30), true, ("O1b", 600), false), [tonight(0), morning(600)]);
+    assert_eq!(ways(&mut p, hm(30, 30), true, ("O1b", 600), true), [morning(600)]);
+    assert_eq!(ways(&mut p, hm(30, 30), true, ("O1b", 36_000), true), [tonight(0), morning(36_000)]);
 }

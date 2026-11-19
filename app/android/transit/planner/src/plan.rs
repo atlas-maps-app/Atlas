@@ -2495,6 +2495,9 @@ impl<'s> Search<'s, '_> {
         }
         let before = if held { self.before(lab, stop) } else { None };
         let least = cost(&self.prefs.route_least, r);
+        // The earliest boarding so far; where trips differ in cost, the earliest at the least any trip of the route
+        // costs. Whoever has that has nothing to gain from a later service day, none of whose trips leaves before
+        // the day begins. Until then the days are read on: the bus that costs nothing may be tomorrow's.
         let mut best = NEVER;
         let step = if self.back { -1 } else { 1 };
         let mut off = if self.back { self.off_hi } else { self.off_lo };
@@ -2534,7 +2537,9 @@ impl<'s> Search<'s, '_> {
                 let c = cost(&self.prefs.trip_cost, trip);
                 if c < cheapest {
                     cheapest = c;
-                    best = best.min(time);
+                    if !trip_costs || c <= least {
+                        best = best.min(time);
+                    }
                     self.join(riding, Riding { trip, times, off, cost: base.saturating_add(c), from: l, pos }, pos);
                 }
                 // (no trip of this route costs less than that: nothing later is cheaper)
