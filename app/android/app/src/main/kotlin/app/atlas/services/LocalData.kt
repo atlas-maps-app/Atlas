@@ -495,8 +495,15 @@ class LocalData(
         if (started == null) return ask?.invoke()
         val (pack, fetch) = started
         return fetch.use { f ->
-            // what the packs and the windows hold once those asked for came, or the wait is over; null where none
-            val landed = suspend { withContext(Dispatchers.IO) { joined(pack, orNull { f.landed() }, box, accept) } }
+            // what the packs and the windows hold once those asked for came, or the wait is over; null where none. A
+            // pack that does not read holds nothing there, as where there is none, so Overpass is asked (the app
+            // maintainer, 19 November 2026, batch 6 A5: it threw through the lookup, where 38ddafa1 asked Overpass)
+            val landed = suspend {
+                withContext(Dispatchers.IO) {
+                    val held = orNull { f.landed() }
+                    orNull { joined(pack, held, box, accept) } ?: joined(null, held, box, accept)
+                }
+            }
             if (!f.asks || f.makesWhole || ask == null) {
                 val got = landed()
                 if (got != null) show(got)

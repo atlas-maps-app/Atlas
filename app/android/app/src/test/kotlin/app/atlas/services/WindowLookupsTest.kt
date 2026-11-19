@@ -755,6 +755,96 @@ class WindowLookupsTest {
         assertEquals("the windows east asked of the packs again", 0, sent.get() - before)
     }
 
+    /**
+     * A pack that does not read (cut short, or its disk failing) holds nothing, and Overpass is asked for the circle
+     * (the app maintainer, 19 November 2026, batch 6 A5): it threw through the windows step, so the category row's and
+     * the shop screens' lookups threw, and the wheel showed no kind, where 38ddafa1 asked Overpass. The pack holds
+     * [here] but not 300 m around it; no window comes from the packs.
+     */
+    @Test
+    fun aPackThatDoesNotReadLeavesTheCircleToOverpass() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val dir = tmp.newFolder("cut")
+        val local = LocalData(stores = { null }, packs = { cutShort(here) }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val all = setOf("Café de Vliet", "Café de Overkant", "Café Ver Weg")
+
+        val row = runCatching { finder.nearby("eat", here, 300.0, 20).toList().last() }
+        assertTrue("the row: ${row.exceptionOrNull()}", row.isSuccess)
+        assertEquals(PlaceOrigin.ONLINE, row.getOrThrow().source)
+        assertEquals(all, row.getOrThrow().places.map { it.name() }.toSet())
+
+        val wheel = runCatching { finder.nearbyMany(listOf("eat"), here, 300.0, 20).getValue("eat") }
+        assertTrue("the wheel: ${wheel.exceptionOrNull()}", wheel.isSuccess)
+        assertEquals(PlaceOrigin.ONLINE, wheel.getOrThrow().source)
+        assertEquals(all, wheel.getOrThrow().places.map { it.name() }.toSet())
+
+        val shop = runCatching {
+            app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+                .around("cafes-cut", cafe, here, 300.0).toList().last()
+        }
+        assertTrue("the shop screens: ${shop.exceptionOrNull()}", shop.isSuccess)
+        assertEquals(PlaceOrigin.ONLINE, shop.getOrThrow().origin)
+        assertEquals(listOf("Café de Vliet"), shop.getOrThrow().places.map { it.name() })
+        assertEquals(3, asked.get())
+    }
+
+    /**
+     * Beside [aPackThatDoesNotReadLeavesTheCircleToOverpass]: where the windows from the packs make the circle whole,
+     * the pack that does not read holds nothing and the windows answer, Overpass not asked; the wheel's kind holds them
+     * too, though the read after them fails again (batch 6 A5; 38ddafa1 asked Overpass there).
+     */
+    @Test
+    fun aPackThatDoesNotReadUnderWindowsThatMakeTheCircleWhole() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val dir = tmp.newFolder("cut-whole")
+        val windows = WindowPlaces({ dir }, packed = { x, y -> cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { cutShort(here) }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val window = listOf("${tile.x}/${tile.y}")
+
+        val row = runCatching { finder.nearby("eat", here, 300.0, 20).toList().last() }
+        assertTrue("the row: ${row.exceptionOrNull()}", row.isSuccess)
+        assertEquals(window, row.getOrThrow().places.map { it.name() })
+
+        val wheel = runCatching { finder.nearbyMany(listOf("eat"), here, 300.0, 20)["eat"] }
+        assertTrue("the wheel: ${wheel.exceptionOrNull()}", wheel.isSuccess)
+        assertEquals(window, wheel.getOrThrow()?.places?.map { it.name() })
+
+        val shop = runCatching {
+            app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+                .around("cafes-cut-whole", cafe, here, 300.0).toList().last()
+        }
+        assertTrue("the shop screens: ${shop.exceptionOrNull()}", shop.isSuccess)
+        assertEquals(window, shop.getOrThrow().places.map { it.name() })
+        assertEquals("Overpass asked", 0, asked.get())
+    }
+
+    /** A pack whose box holds the [m] metres around [at] and whose every read fails, as a pack cut short does. */
+    private fun cutShort(at: LatLon, m: Double = 200.0) = PackFeatures(
+        listOf(
+            object : app.atlas.render.data.ElementBoxes {
+                override val coverage = BBox.around(at, m)
+
+                override fun query(box: BBox): List<OsmElement> = throw java.io.EOFException("the pack was cut short")
+            },
+        ),
+    )
+
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {
         val until = System.nanoTime() + 5_000_000_000L

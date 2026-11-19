@@ -172,8 +172,11 @@ class LayeredPlaceFinder(
                         },
                     )
                 } else {
-                    // not asked: what the phone holds once the windows came
-                    inPacks(centre, radiusM, filter, limit)?.let { NearbyPlaces(it.value, PlaceOrigin.PACK) }
+                    // not asked: what the phone holds once the windows came, with what they brought (a pack that does
+                    // not read holds nothing there: the app maintainer, 19 November 2026, batch 6 A5)
+                    val now = inPacks(centre, radiusM, filter, limit)
+                    val came = landed.filter { filter.matches(it.tags) }
+                    if (now == null && came.isEmpty()) null else NearbyPlaces(nearest(now?.value.orEmpty() + came, centre, limit), PlaceOrigin.PACK)
                 }
                 if (got != null) out[id] = got
             }

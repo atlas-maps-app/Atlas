@@ -147,6 +147,42 @@ class EatWindowsTest {
     }
 
     /**
+     * A pack that does not read (cut short, or its disk failing) holds nothing, and Overpass is asked for the circle
+     * (the app maintainer, 19 November 2026, batch 6 A5): it threw through the windows step, so the eat screens showed
+     * its error and Overpass was not asked, where 38ddafa1 asked it. The pack holds [centre] but not the circle; no
+     * window comes from the packs.
+     */
+    @Test
+    fun aPackThatDoesNotReadLeavesTheCircleToOverpass() {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                val cafe = """{"type":"node","id":7,"lat":${centre.lat},"lon":${centre.lon},"tags":{"amenity":"cafe","name":"Café aan de Grens"}}"""
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body("""{"version":0.6,"elements":[$cafe]}""").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val cut = app.atlas.render.data.PackFeatures(
+            listOf(
+                object : app.atlas.render.data.ElementBoxes {
+                    override val coverage = BBox.around(centre, 200.0)
+
+                    override fun query(box: BBox): List<app.atlas.render.data.OsmElement> = throw java.io.EOFException("the pack was cut short")
+                },
+            ),
+        )
+        val dir = tmp.newFolder()
+        val local = LocalData(stores = { null }, packs = { cut }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
+        val repo = EatRepository(testServices(), localData = { local }, overpass = { op }, isOnline = { true })
+        val area = runBlocking { withTimeout(30_000) { repo.area(centre).first { !it.loading } } }
+        assertEquals("no error", null, area.error)
+        assertEquals(PlaceOrigin.ONLINE, area.origin)
+        assertEquals(listOf("Café aan de Grens"), area.places.map { it.name })
+        assertEquals(1, asked.get())
+    }
+
+    /**
      * The eat screens' state with a phone that holds no region and keeps no window: the windows come from the packs,
      * each after [slow], none past the border; a lookup before found those past it in no pack.
      */
