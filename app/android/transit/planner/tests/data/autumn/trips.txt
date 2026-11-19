@@ -1,0 +1,8 @@
+route_id,service_id,trip_id,realtime_trip_id,trip_headsign,trip_short_name,trip_long_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed
+K1,SAT,K1a,HA:K1a,KB,200,,0,,,,
+K2,SUN,K2a,HA:K2a,KZ,201,,0,,,,
+K2,SUN,K2b,HA:K2b,KZ,202,,0,,,,
+K2,SUN,K2c,HA:K2c,KZ,203,,0,,,,
+G1,ALL,G1a,HA:G1a,GS,204,,0,,,,
+G2,ALL,G2a,HA:G2a,GZ,205,,0,,,,
+G3,ALL,G3a,HA:G3a,GZ,206,,0,,,,

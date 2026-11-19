@@ -54,6 +54,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import app.atlas.search.covers
 import app.atlas.ui.kit.StateMessage
@@ -61,6 +62,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import java.time.LocalDate
 import java.util.Locale
 import androidx.compose.ui.semantics.heading
@@ -225,7 +227,8 @@ internal fun NoteEntry(n: Note, index: Int, now: java.time.Instant, zone: java.t
     }
     val heritage = n.facts.any { it is NoteFact.Protected }
     val head = if (heritage && n.title == null && common != null) stringResource(R.string.nature_heritage, common) else title
-    val texts = n.facts.mapNotNull { factText(it, now, zone) }
+    val hours = rememberHoursAt(n.place.location)
+    val texts = n.facts.mapNotNull { factText(it, now, zone, hours) }
     val tilt = TILTS[index % 5]
     val tape = TAPES[index % 5]
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
@@ -248,7 +251,7 @@ internal fun NoteEntry(n: Note, index: Int, now: java.time.Instant, zone: java.t
 }
 
 @Composable
-private fun factText(f: NoteFact, now: java.time.Instant, zone: java.time.ZoneId): String? = when (f) {
+private fun factText(f: NoteFact, now: java.time.Instant, zone: java.time.ZoneId, hours: OpeningHoursContext): String? = when (f) {
     is NoteFact.Planted -> stringResource(R.string.nature_fact_planted, f.year)
     is NoteFact.Age -> stringResource(R.string.nature_fact_age, f.years)
     is NoteFact.Height -> stringResource(R.string.nature_fact_height, f.metres.toInt())
@@ -256,7 +259,7 @@ private fun factText(f: NoteFact, now: java.time.Instant, zone: java.time.ZoneId
     is NoteFact.Protected -> stringResource(R.string.nature_fact_protected)
     is NoteFact.Autumn -> stringResource(R.string.nature_fact_autumn)
     NoteFact.Blossom -> stringResource(R.string.nature_fact_blossom)
-    is NoteFact.Hours -> { val context = androidx.compose.ui.platform.LocalContext.current; marketLine(f.text, now, zone) { context.getString(R.string.moment_market_open_until, it) } }
+    is NoteFact.Hours -> { val context = androidx.compose.ui.platform.LocalContext.current; marketLine(f.text, now, zone, hours, context.getString(R.string.kit_open)) { context.getString(R.string.moment_market_open_until, it) } }
     is NoteFact.Class -> f.protectClass?.let { stringResource(protectClassName(it)) }
     NoteFact.StepFree -> stringResource(R.string.picnic_step_free)
     is NoteFact.Elevation -> stringResource(R.string.nature_fact_elevation, f.metres)

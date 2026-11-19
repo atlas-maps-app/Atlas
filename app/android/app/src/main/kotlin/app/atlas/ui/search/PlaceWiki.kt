@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.atlas.R
+import app.atlas.providers.SwitchedOffException
 import app.atlas.providers.WikipediaArticle
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.PrimaryButton
@@ -57,8 +58,10 @@ internal fun WikiReader(url: String, load: suspend () -> WikipediaArticle?, onDi
             val article = read?.getOrNull()
             when {
                 read == null -> Looking()
+                // Wikipedia switched off in Data sources & keys: said in the user's language, not the gate's own sentence
                 article == null -> StateMessage(
-                    "ui-book", stringResource(R.string.place_wiki_none), Modifier.padding(16.dp), text = read?.exceptionOrNull()?.message,
+                    "ui-book", stringResource(R.string.place_wiki_none), Modifier.padding(16.dp),
+                    text = read?.exceptionOrNull()?.let { if (it is SwitchedOffException) stringResource(R.string.place_wiki_off) else it.message },
                     action = { PrimaryButton(stringResource(R.string.place_wiki_read), { runCatching { uri.openUri(url) } }) },
                 )
                 else -> Article(article) { runCatching { uri.openUri(article.url) } }

@@ -5,6 +5,7 @@ import app.atlas.ui.local.astro.OrbitSource
 import app.atlas.ui.local.astro.Planet
 import app.atlas.ui.local.astro.TleStore
 import app.atlas.ui.local.astro.Tonight
+import app.atlas.ui.search.PlaceLocale
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -57,8 +58,28 @@ class LocalReviewTest {
             here, 0.0, "Europe/Amsterdam", 7200, null, listOf(app.atlas.providers.Precipitation15(now.plusSeconds(1800), 2.0)), emptyList(), emptyList(),
             fetchedAt = now.minus(Duration.ofDays(3)), kept = true,
         )
-        val moments = Moments.build(MomentInputs(now, ZoneId.of("Europe/Amsterdam"), here, old, emptyList(), emptyList(), null, emptyList()))
+        val moments = Moments.build(MomentInputs(now, ZoneId.of("Europe/Amsterdam"), here, old, emptyList(), emptyList(), null, emptyList()) { PlaceLocale("NL", ZoneId.of("Europe/Amsterdam")) })
         assertTrue(moments.none { it is Moment.RainStarts || it is Moment.RainStops })
+    }
+
+    @Test
+    fun aMarketOpenToAnOpenEndNamesNoClosingTime() {
+        val zone = ZoneId.of("Europe/Amsterdam")
+        val saturday = Instant.parse("2026-11-21T10:00:00Z") // 11:00 in Amsterdam
+        fun line(hours: String) = marketLine(hours, saturday, zone, PlaceLocale("NL", zone).hours(LatLon(52.3731, 4.8922)), "open") { "open now until $it" }
+        assertEquals("open now until 13:00", line("Sa 08:00-13:00"))
+        assertEquals("open", line("Sa 08:00-13:00+"))
+        assertEquals("open", line("Sa 08:00+"))
+        // the home's moment of the same market: open now, until no time
+        val here = LatLon(52.3731, 4.8922)
+        fun moment(hours: String): Moment.Market {
+            val market = app.atlas.model.Place(app.atlas.model.OsmId(app.atlas.model.OsmType.NODE, 1), here, mapOf("amenity" to "marketplace", "name" to "Markt", "opening_hours" to hours))
+            return Moments.build(MomentInputs(saturday, zone, here, null, emptyList(), listOf(Found(market, 300.0)), null, emptyList()) { PlaceLocale("NL", zone) })
+                .filterIsInstance<Moment.Market>().single()
+        }
+        assertEquals(Instant.parse("2026-11-21T12:00:00Z"), moment("Sa 08:00-13:00").until)
+        assertNull(moment("Sa 08:00-13:00+").until)
+        assertEquals(saturday, moment("Sa 08:00-13:00+").at)
     }
 
     @Test

@@ -22,8 +22,8 @@ data class EvalContext(
     val lang: String = "en",
     /** How many results to return at most (a [Query.Limit] can ask for fewer). */
     val limit: Int = 50,
-    /** Holidays and the sun, for opening hours. */
-    val hours: OpeningHoursContext = OpeningHoursContext.Default,
+    /** Holidays and the sun, for opening hours: those of where the search is (the app's `HereContext`). */
+    val hours: OpeningHoursContext,
     /** A place's rating 0..5 when a provider gave one: from `extra["rating"]` unless told otherwise. */
     val rating: (Place) -> Double? = { it.extra["rating"]?.toDoubleOrNull() },
     /** Resolves [Query.InArea] names that came without a box. */

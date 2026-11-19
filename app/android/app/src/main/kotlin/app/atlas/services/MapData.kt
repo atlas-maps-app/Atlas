@@ -301,6 +301,8 @@ class MapData(private val services: Services) {
                     // which tiles this phone takes: none of its core's version means every window is built here, and
                     // no frame cell's levels are drawn (they come from those tiles alone)
                     val version = MapEngine.windowVersion()
+                    // each country's code first, so a frame that reads the country of the tiles there finds it
+                    services.packCountries.learn(list)
                     MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { p ->
                         CountryTiles(p.id, p.name, p.bbox, levels = version != null && p.tilesOf(version) != null)
                     }
@@ -320,6 +322,11 @@ class MapData(private val services: Services) {
         // which places within a country's box its tiles hold, as their index lists them: beyond its border (Antwerp and
         // Aachen in the Netherlands' box) no country's levels are, and the world draws under the cover
         MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
+        // and the country question's (HereContext), from the indexes in memory alone: it never has one read or fetched,
+        // which the camera above does (the app maintainer, 18 November 2026, batch 5 A3)
+        services.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            MapEngine.windowVersion()?.let { windowTiles.level(id, it, lat, lon) }
+        }
         MapEngine.windowsAllowed = { !services.ciRun }
         // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
         // index and the globe of its release at the first start and each new version (a new one drops the old one and

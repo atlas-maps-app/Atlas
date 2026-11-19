@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <format>
 
 namespace atlas::frame {
 
@@ -36,6 +37,12 @@ constexpr std::array frame_bindings{
 }
 
 [[nodiscard]] vk::DeviceSize align_up(vk::DeviceSize v, vk::DeviceSize a) noexcept { return (v + a - 1) / a * a; }
+
+/// The alignment of the ring's parts: the device's for uniform and storage offsets, 256 bytes at least.
+[[nodiscard]] vk::DeviceSize ring_align(const vk::PhysicalDeviceLimits& limits) noexcept {
+    return std::max<vk::DeviceSize>(
+        {limits.minUniformBufferOffsetAlignment, limits.minStorageBufferOffsetAlignment, 256});
+}
 
 } // namespace
 
@@ -114,7 +121,12 @@ gpu::Result<std::unique_ptr<FrameLayout>> FrameLayout::create(const gpu::Device&
                  "the frame's placeholder sampler");
     self->placeholder_sampler_ = std::move(sampler);
     for (std::uint32_t i = 0; i < global_count; ++i) self->reset(static_cast<Global>(i));
-    ATLAS_GPU_CHECK(self->make_ring(items, kinds));
+    // the items whose rank table, its range aligned, one storage binding holds
+    const vk::PhysicalDeviceLimits& limits = device.facts().limits;
+    const vk::DeviceSize align = ring_align(limits);
+    self->device_items_ = static_cast<std::uint32_t>(vk::DeviceSize{limits.maxStorageBufferRange} / align * align / 4);
+    self->most_items_ = self->device_items_;
+    ATLAS_GPU_CHECK(self->make_ring(std::min(items, self->most_items_), kinds));
     return self;
 }
 
@@ -175,9 +187,7 @@ void FrameLayout::record_setup(const vk::raii::CommandBuffer& cmd, const gpu::Sy
 }
 
 gpu::Result<void> FrameLayout::make_ring(std::uint32_t items, std::uint32_t kinds) {
-    const vk::PhysicalDeviceLimits& limits = device_.facts().limits;
-    const auto align =
-        std::max<vk::DeviceSize>({limits.minUniformBufferOffsetAlignment, limits.minStorageBufferOffsetAlignment, 256});
+    const vk::DeviceSize align = ring_align(device_.facts().limits);
     RingSlice s;
     s.block = 0;
     s.ranks = align_up(sizeof(shaders::FrameBlock), align);
@@ -245,7 +255,12 @@ gpu::Result<void> FrameLayout::begin_frame(std::uint64_t frame, std::uint64_t fi
     drop(global_sets_);
     std::erase_if(old_rings_, [finished](const OldRing& r) { return r.last_frame <= finished; });
     if (items > items_ || kinds > kinds_) {
-        ATLAS_GPU_CHECK(make_ring(std::max(items, items_ + items_ / 2), std::max(kinds, kinds_)));
+        if (items > most_items_) {
+            return gpu::fail(std::format("the frame's {} items, past the {} the ring grows to", items, most_items_));
+        }
+        // half as many again, as far as the ring grows (most_items_ is below items_ only where a test lowered it)
+        ATLAS_GPU_CHECK(make_ring(std::clamp(items_ + (items_ / 2), items, std::max(most_items_, items_)),
+                                  std::max(kinds, kinds_)));
     }
     if (frame_dirty_ || frame_sets_.empty()) ATLAS_GPU_CHECK(write_frame_set());
     if (globals_dirty_ || global_sets_.empty()) ATLAS_GPU_CHECK(write_global_set());

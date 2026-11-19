@@ -25,7 +25,7 @@ class SavedExportTest {
 
     @Test
     fun gpxIsWellFormedWithAWaypointEach() {
-        val gpx = SavedExport.gpx("Rainy \"day\"", places, Instant.parse("2026-10-13T17:30:00Z"), "en")
+        val gpx = SavedExport.gpx("Rainy \"day\"", places, Instant.parse("2026-10-13T17:30:00Z"), "en") { "NL" }
         val doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(gpx.byteInputStream())
         val wpts = doc.getElementsByTagName("wpt")
         assertEquals(3, wpts.length)

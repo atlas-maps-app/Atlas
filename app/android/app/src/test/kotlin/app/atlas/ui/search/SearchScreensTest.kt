@@ -265,6 +265,30 @@ class SearchScreensTest {
         capture("place_wiki")
     }
 
+    /**
+     * Wikipedia switched off in Data sources & keys, through the gate as the app wires it: the reader says so in the
+     * user's language, not the gate's English sentence, and leads on to Wikipedia as before; no name is looked up.
+     */
+    @Test
+    fun theReaderSaysWikipediaIsSwitchedOff() {
+        val services = testServices()
+        runBlocking { services.settings.set(app.atlas.services.SettingsKeys.PROVIDERS_OFF, setOf("wikipedia")) }
+        val looked = java.util.Collections.synchronizedList(ArrayList<String>())
+        val http = app.atlas.providers.Http(base = services.http.client.newBuilder().dns { looked += it; throw java.net.UnknownHostException(it) }.build())
+        val wiki = app.atlas.providers.Wikipedia(http)
+        compose.setContent {
+            app.atlas.ui.kit.AtlasTheme(dark = false) {
+                WikiReader("https://en.wikipedia.org/wiki/Westerkerk", load = { wiki.article("en", "Westerkerk") }) {}
+            }
+        }
+        waitFor("could not be read")
+        capture("place_wiki_off")
+        compose.onNodeWithText("Wikipedia is switched off in Data sources & keys").assertExists()
+        compose.onNodeWithText("Read on Wikipedia").assertExists()
+        assertTrue("the gate's own sentence", compose.onAllNodes(hasText("nothing was sent", substring = true)).fetchSemanticsNodes().isEmpty())
+        assertEquals("no name looked up", emptyList<String>(), looked.toList())
+    }
+
     @Test
     fun placeCafe() {
         open(Dest.Place(52.37390, 4.88300, "n1147560517", "Café Kalkhoven"))
@@ -884,7 +908,7 @@ class SearchScreensTest {
                 far(1, 0.27, "leisure" to "bowling_alley", "name" to "Bowling"),
                 far(2, 0.36, "leisure" to "ice_rink", "name" to "IJsbaan"),
                 far(3, 0.50, "leisure" to "water_park", "name" to "Zwemparadijs"),
-            ),
+            ), country = null,
         )
         open(Dest.Category("fun"), testServices(stores = listOf(Fixtures.amsStore, further)))
         waitFor("Playground")

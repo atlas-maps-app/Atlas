@@ -292,7 +292,7 @@ private fun MarketDays(week: List<MarketDay>, chosen: LocalDate, today: LocalDat
             for (s in sessions) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     // The times never break ("10–18:30" stays whole); the name gives way.
-                    Text("${hour(s.from)}–${hour(s.to)}", Modifier.widthIn(min = 64.dp), style = SESSION.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum"), maxLines = 1, softWrap = false)
+                    Text(sessionHours(s), Modifier.widthIn(min = 64.dp), style = SESSION.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum"), maxLines = 1, softWrap = false)
                     Column(Modifier.weight(1f)) {
                         CssLine(s.place.name, SESSION)
                         s.what?.let { CssLine(it, SESSION.copy(fontSize = 12.sp, lineHeight = 13.5.sp), color = KRAFT_INK.copy(alpha = 0.7f)) }
@@ -304,6 +304,10 @@ private fun MarketDays(week: List<MarketDay>, chosen: LocalDate, today: LocalDat
 }
 
 /** "8" for 8:00, "9:30" otherwise, as the board writes market hours. */
+/** "10–18:30", and "8–13+" or "17+" for an open end, whose closing time is not stated. */
+internal fun sessionHours(s: MarketSession): String =
+    (s.to?.let { "${hour(s.from)}–${hour(it)}" } ?: hour(s.from)) + if (s.openEnd) "+" else ""
+
 private fun hour(t: LocalTime): String = if (t.minute == 0) t.hour.toString() else t.format(HM)
 
 /** A checkbox as the board's (20 px, green when ticked) and its typed label. */

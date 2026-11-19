@@ -163,6 +163,7 @@
     <string name="find_hours_known">%1$d of %2$d say their hours</string>
     <string name="find_hours_today">Today most open %1$s–%2$s; the first at %3$s, the last till %4$s</string>
     <string name="find_hours_today_none">None open today</string>
+    <string name="find_hours_today_from">Today most open from %1$s</string>
     <string name="find_fact_none">The map does not say</string>
     <!-- A wish of a search that a place does not say, asked of the searcher ("Toilets?"). -->
     <string name="find_unknown_ask">Answer: %1$s?</string>

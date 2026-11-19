@@ -6,17 +6,19 @@ import app.atlas.model.OsmType
 /**
  * The tables of a region's store file. Bump [VERSION] when they change, or what goes into the text index does (its
  * words, kind tokens or importance): a store of another version is then refused when it is opened ([PlaceStore.open]
- * says so), and its region downloaded again. A change of the category rules is no reason: a store opened under other
- * rules than it was filed under files its places anew from their tags ([Filing], [StoreRefile]). Nor is a table that a
- * store can do without: one opened from before it has it created empty ([PlaceStore] runs [CREATE] on every opening),
- * and an Atlas from before it does not read it (the outlines, 10 November 2026).
+ * says so), and its region downloaded again. So do the brands its places are matched to, by which a typed brand is
+ * answered (5: the app maintainer, 18 November 2026, batch 4; a store of 4 answered with the brands before it). A
+ * change of the category rules is no reason: a store opened under other rules than it was filed under files its places
+ * anew from their tags ([Filing], [StoreRefile]). Nor is a table that a store can do without: one opened from before it
+ * has it created empty ([PlaceStore] runs [CREATE] on every opening), and an Atlas from before it does not read it (the
+ * outlines, 10 November 2026).
  *
  * Coordinates are integers of 1e-7 degree ([E7]). Tags are varint blobs over two dictionaries ([TagBlob]); the lookup
  * table holds only the keys searches filter on ([TagIndex]); pure address points live in a compact table of their
  * own under deduplicated streets ([Addresses]); trees are keyed by their position's Morton code ([Morton]).
  */
 internal object StoreSchema {
-    const val VERSION = 4
+    const val VERSION = 5
 
     /** The tokenizer of both text indexes: Atlas folds the text itself, so it only splits; `_` starts a kind token. */
     private const val TOKENIZE = "tokenize=\"unicode61 remove_diacritics 0 tokenchars '_'\""

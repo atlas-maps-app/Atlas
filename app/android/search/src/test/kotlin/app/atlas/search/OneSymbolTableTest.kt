@@ -64,7 +64,7 @@ class OneSymbolTableTest {
                 w.add(OverpassElement(OsmType.NODE, 1, mapOf("amenity" to "library", "name" to "OBA Oosterdok"), amsterdam.lat, amsterdam.lon))
                 w.finish()
             }
-            val r = runBlocking { SearchEngine(s).search("library", SearchContext(location = amsterdam, lang = "en", now = Fixtures.saturday)) }
+            val r = runBlocking { SearchEngine(s).search("library", SearchContext(location = amsterdam, lang = "en", now = Fixtures.saturday, hours = Nowhere)) }
             assertEquals(Kinds.symbolOf(library), r.items.filterIsInstance<SearchItem.Kind>().first().symbol)
             assertEquals(Kinds.symbolOf(library), r.places.first().hit.symbol)
         }
@@ -77,7 +77,7 @@ class OneSymbolTableTest {
         PlaceStore.open(File(tmp.root, "earlier.db")).use { s ->
             s.writer(regionName = "Grachtengordel").use { w ->
                 val place = Place(filedEarlier, amsterdam, mapOf("amenity" to "library", "name" to "OBA Oosterdok"))
-                val filed = PlaceRecord.of(place, Geometry.POINT, null)
+                val filed = PlaceRecord.of(place, Geometry.POINT, null, country = null)
                 assertEquals(library.id, filed.preset)
                 w.add(PlaceRecord(filed.place, filed.category, filed.brand, filed.preset, library.icon!!))
                 // no kind to ask about: what was filed stands

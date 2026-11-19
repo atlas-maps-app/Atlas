@@ -175,6 +175,8 @@ foreach(area IN ITEMS base/pymath osm load tiles)
     file(GLOB_RECURSE _found CONFIGURE_DEPENDS "${area}/*.cpp" "${area}/*.c")
     list(APPEND _stage_p_sources ${_found})
 endforeach()
+# a big road's size (geometry/BigRoad.hpp), which stage T draws it with and stage P pads its box by
+list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/geometry/BigRoad.cpp")
 list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/text/Utf8.cpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/geometry/Seams.cpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")

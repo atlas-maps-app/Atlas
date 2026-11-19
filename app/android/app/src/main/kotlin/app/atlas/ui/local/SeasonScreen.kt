@@ -55,6 +55,7 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.ui.kit.SansFamily
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.WalkTime
@@ -250,7 +251,9 @@ internal suspend fun nearestMarket(services: app.atlas.Services, at: LatLon, now
     val pick = found.firstOrNull { isFarmersMarket(it.place.tags) } ?: found.firstOrNull { it.place.tags["opening_hours"] != null } ?: found.firstOrNull() ?: return null
     val tags = pick.place.tags
     val name = app.atlas.places.Localise.name(tags, lang) ?: return null
-    return MarketNow(pick.place, name, pick.distanceM, marketLine(tags["opening_hours"], now, zone) { services.context.getString(R.string.moment_market_open_until, it) })
+    // the regions are asked off the main thread, which this runs on (the screen's produceState; batch 5 A5)
+    val hours = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { app.atlas.ui.search.HereContext.hours(services, pick.place.location, zone) }
+    return MarketNow(pick.place, name, pick.distanceM, marketLine(tags["opening_hours"], now, zone, hours, services.context.getString(R.string.kit_open)) { services.context.getString(R.string.moment_market_open_until, it) })
 }
 
 private val FARM_WORDS = listOf("boeren", "farm", "biolog", "organic", "bauern", "wochenmarkt", "producteurs", "paysan", "greenmarket", "streekmarkt", "groente", "fresh")
@@ -261,19 +264,23 @@ internal fun isFarmersMarket(tags: Map<String, String>): Boolean {
     return tags["market"] == "farmers" || tags["farmers_market"] == "yes" || FARM_WORDS.any { it in text }
 }
 
-/** "Sat 8–13" for the next opening of a market's hours, "open now until 13:00" while it is open; null when the hours are not mapped. */
-internal fun marketLine(hours: String?, now: Instant, zone: ZoneId, openUntil: (String) -> String): String? {
+/**
+ * "Sat 8–13" for the next opening of a market's hours read in [context] (the holidays and the sun where it is), "open
+ * now until 13:00" while it is open, [openNow] while it is open to an open end, which states no closing time; null when
+ * the hours are not mapped.
+ */
+internal fun marketLine(hours: String?, now: Instant, zone: ZoneId, context: OpeningHoursContext, openNow: String, openUntil: (String) -> String): String? {
     val parsed = OpeningHours.parseOrNull(hours) ?: return null
     val local = LocalDateTime.ofInstant(now, zone)
-    val st = parsed.status(local)
+    val st = parsed.status(local, context)
     val hm = DateTimeFormatter.ofPattern("H:mm")
     val day = DateTimeFormatter.ofPattern("EEE", Locale.getDefault())
     fun short(t: LocalDateTime) = if (t.minute == 0) t.hour.toString() else hm.format(t)
     val change = st.changesAt ?: return null
     return if (st.isOpen) {
-        openUntil(hm.format(change))
+        st.statedChangeAt?.let { openUntil(hm.format(it)) } ?: openNow
     } else {
-        val close = parsed.status(change).changesAt
+        val close = parsed.status(change, context).statedChangeAt
         val range = if (close != null && close.toLocalDate() == change.toLocalDate()) "${short(change)}–${short(close)}" else hm.format(change)
         "${day.format(change)} $range"
     }

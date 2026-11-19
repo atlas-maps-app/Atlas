@@ -6,6 +6,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.ui.kit.hasSymbol
+import app.atlas.ui.search.PlaceLocale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -17,6 +18,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.Locale
 
 /** What the review of the shop package found: links and numbers a tag can spoil, claims the map does not make, and strings. */
@@ -27,9 +29,10 @@ class ShopReviewTest {
     private val shopSources = File(repo, "app/android/app/src/main/kotlin/app/atlas/ui/shop")
     private val res = File(repo, "app/android/app/src/main/res")
     private val here = LatLon(52.37452, 4.88377)
+    private val amsterdam = PlaceLocale("NL", ZoneId.of("Europe/Amsterdam"))
 
     private fun place(id: Long, tags: Map<String, String>, where: LatLon = Geo.destination(here, 0.0, 80.0)): ShopPlace =
-        ShopPlace(Place(OsmId(OsmType.NODE, id), where, tags), tags["name"] ?: "x", Geo.distance(here, where))
+        ShopPlace(Place(OsmId(OsmType.NODE, id), where, tags), tags["name"] ?: "x", Geo.distance(here, where), country = null)
 
     @Test
     fun everySymbolIdInTheSourcesIsOneAtlasCanDraw() {
@@ -106,13 +109,13 @@ class ShopReviewTest {
         assertTrue(Fact.FREE in PointMe.facts(NeedKind.TOILET, free))
         assertTrue(Fact.PAID in PointMe.facts(NeedKind.TOILET, paid))
         // The FREE filter still keeps the one nobody tagged (most toilets are untagged) and drops the paid one.
-        val area = ShopArea(here, 500.0, listOf(unknownFee, free, paid), null, loading = false)
+        val area = ShopArea(here, 500.0, listOf(unknownFee, free, paid), null, loading = false, local = amsterdam)
         val kept = PointMe.targets(NeedKind.TOILET, area, here, setOf(NeedFilter.FREE), LocalDateTime.of(2026, 10, 13, 12, 0)).map { it.place.name }
         assertEquals(setOf("Restroom", "Free"), kept.toSet())
         // Food: FREE keeps only what the map says is free.
         val fridge = place(4, mapOf("amenity" to "fridge", "name" to "Fridge"))
         val cafe = place(5, mapOf("amenity" to "cafe", "name" to "Cafe"))
-        val foodArea = ShopArea(here, 500.0, listOf(fridge, cafe), null, loading = false)
+        val foodArea = ShopArea(here, 500.0, listOf(fridge, cafe), null, loading = false, local = amsterdam)
         val foodFree = PointMe.targets(NeedKind.FOOD, foodArea, here, setOf(NeedFilter.FREE), LocalDateTime.of(2026, 10, 13, 12, 0)).map { it.place.name }
         assertEquals(listOf("Fridge"), foodFree)
     }
@@ -154,7 +157,7 @@ class ShopReviewTest {
         assertFalse(Fact.BOTTLE in PointMe.facts(NeedKind.WATER, bubbler))
         assertTrue(Fact.BOTTLE in PointMe.facts(NeedKind.WATER, filler))
         assertFalse(Fact.BOTTLE in PointMe.facts(NeedKind.WATER, plain))
-        val area = ShopArea(here, 500.0, listOf(bubbler, filler, plain, refill), null, loading = false)
+        val area = ShopArea(here, 500.0, listOf(bubbler, filler, plain, refill), null, loading = false, local = amsterdam)
         val kept = PointMe.targets(NeedKind.WATER, area, here, setOf(NeedFilter.BOTTLE), LocalDateTime.of(2026, 10, 13, 12, 0)).map { it.place.name }
         assertEquals(setOf("Filler", "Tap", "Refill"), kept.toSet())
     }

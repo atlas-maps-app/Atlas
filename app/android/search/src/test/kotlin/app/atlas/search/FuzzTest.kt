@@ -57,7 +57,7 @@ class FuzzTest {
             val t = text(rnd, 6)
             val ctx = SearchContext(
                 location = if (rnd.nextBoolean()) Fixtures.westerkerk else null, viewport = if (rnd.nextBoolean()) box else null,
-                lang = Lexicon.LANGS[rnd.nextInt(4)], now = Fixtures.saturday,
+                lang = Lexicon.LANGS[rnd.nextInt(4)], now = Fixtures.saturday, hours = Nowhere,
             )
             try {
                 runBlocking { engine.search(t, ctx) }

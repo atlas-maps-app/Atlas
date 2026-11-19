@@ -147,6 +147,7 @@
     <string name="find_hours_known">%1$d von %2$d nennen Öffnungszeiten</string>
     <string name="find_hours_today">Heute meist offen %1$s–%2$s; der erste ab %3$s, der letzte bis %4$s</string>
     <string name="find_hours_today_none">Heute keiner offen</string>
+    <string name="find_hours_today_from">Heute meist offen ab %1$s</string>
     <string name="find_fact_none">Die Karte sagt es nicht</string>
     <string name="find_unknown_ask">Beantworten: %1$s?</string>
     <string name="find_unknown_title">%1$s?</string>

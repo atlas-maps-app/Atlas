@@ -6,6 +6,7 @@ import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.ChangeKind
 import app.atlas.places.OpenStatus
+import app.atlas.testing.Nowhere
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -34,7 +35,7 @@ class KitLogicTest {
             OsmId(OsmType.NODE, 1), LatLon(52.3740, 4.8840),
             mapOf("amenity" to "cafe", "name" to "Café Papeneiland", "opening_hours" to "Mo-Su 10:00-23:00"),
         )
-        val s = PlaceSummary.of(cafe, LatLon(52.37452, 4.88377), "en", LocalDateTime.of(2026, 10, 13, 19, 0))
+        val s = PlaceSummary.of(cafe, LatLon(52.37452, 4.88377), "en", LocalDateTime.of(2026, 10, 13, 19, 0), hours = Nowhere)
         assertEquals("Café Papeneiland", s.name)
         assertEquals("Cafe", s.kind)
         assertTrue(s.symbol, hasSymbol(s.symbol))
@@ -47,7 +48,7 @@ class KitLogicTest {
     @Test
     fun aPlaceWithoutNameOrHours() {
         val bench = Place(null, LatLon(52.0, 4.0), mapOf("amenity" to "bench"))
-        val s = PlaceSummary.of(bench, null, "en")
+        val s = PlaceSummary.withOpen(bench, null, "en", null, country = null)
         assertEquals("Bench", s.name)
         assertNull(s.kind)
         assertNull(s.open)
@@ -58,11 +59,11 @@ class KitLogicTest {
     @Test
     fun aShopIsCalledWhatItSellsAndANamelessOneWhatItIs() {
         // the owner, 6 November: "instead of clothing store and gift shop only show Clothes, Gifts?", "apply that everywhere"
-        val named = PlaceSummary.of(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en")
+        val named = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift", "name" to "Het Kleine Cadeau")), null, "en", null, country = null)
         assertEquals("Gifts", named.kind)
-        assertEquals("Cadeaus", PlaceSummary.of(named.place, null, "nl").kind)
+        assertEquals("Cadeaus", PlaceSummary.withOpen(named.place, null, "nl", null, country = null).kind)
         // a title says what the place is: a gift shop, and no line says "Gifts" under it
-        val nameless = PlaceSummary.of(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en")
+        val nameless = PlaceSummary.withOpen(Place(null, LatLon(52.0, 4.0), mapOf("shop" to "gift")), null, "en", null, country = null)
         assertEquals("Gift Shop", nameless.name)
         assertNull(nameless.kind)
     }
@@ -120,6 +121,22 @@ class KitLogicTest {
         val gappy = ProfileShape.of(doubleArrayOf(10.0, Double.NaN, 12.0, 14.0), doubleArrayOf(0.0, 100.0, 200.0, 300.0), 0.05)
         assertTrue(gappy.y.none { it.isNaN() })
         assertEquals(0, ProfileShape.of(DoubleArray(3) { Double.NaN }, null, 0.05).size)
+    }
+
+    /**
+     * A guessed tail never makes a place read "open 24/7" (the app maintainer, 18 November 2026, batch 4 B9):
+     * `Mo-Su 02:00-24:00+` runs on unbroken only through each night's guessed tail, so no change comes within a year;
+     * it is open, as far as the hours say, and names no end. Its tail is marked: the status says it runs into an open end.
+     */
+    @Test
+    fun aGuessedTailNeverReadsOpenAroundTheClock() {
+        val now = LocalDateTime.of(2026, 10, 13, 19, 0)
+        val place = Place(null, LatLon(52.0, 4.0), mapOf("name" to "Nachtcafé", "amenity" to "cafe", "opening_hours" to "Mo-Su 02:00-24:00+"))
+        val s = PlaceSummary.of(place, null, "en", now, hours = Nowhere)
+        assertEquals(OpenWords.Open, OpenWords.of(s, now))
+        // stated around the clock, it says so as before
+        val always = Place(null, LatLon(52.0, 4.0), mapOf("name" to "Shop", "shop" to "convenience", "opening_hours" to "Mo-Su 00:00-24:00"))
+        assertEquals(OpenWords.Always, OpenWords.of(PlaceSummary.of(always, null, "en", now, hours = Nowhere), now))
     }
 
     private fun summary(open: OpenStatus?, always: Boolean = false) =

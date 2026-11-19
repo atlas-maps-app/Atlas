@@ -2,7 +2,6 @@ package app.atlas.places
 
 import app.atlas.model.Place
 import java.time.LocalDateTime
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -83,29 +82,24 @@ data class Fact(
  */
 object Facts {
     /**
-     * The facts of [place] in [lang], most prominent first, mapped before unmapped. The hours are read at [now] in
-     * [context] (by default the holidays of `addr:country`, else of [country], and the sun at the place).
+     * The facts of [place] in [lang], most prominent first, mapped before unmapped. The hours are read at [now], on the
+     * place's own clock, in [context]: its country's holidays and its sun, which the caller works out the one way for
+     * every screen (`HereContext.localeOf` in the app).
      */
     fun of(
         place: Place,
-        lang: String? = "en",
-        now: LocalDateTime = LocalDateTime.now(),
-        context: OpeningHoursContext? = null,
-        country: String? = null,
+        lang: String?,
+        now: LocalDateTime,
+        context: OpeningHoursContext,
         geometry: Geometry = Geometry.POINT,
-    ): List<Fact> {
-        val ctx = context ?: OpeningHoursContext.forPlace(
-            place.tags["addr:country"] ?: country, ZoneId.systemDefault(), place.location.lat, place.location.lon,
-        )
-        return of(place.tags, lang, now, ctx, geometry)
-    }
+    ): List<Fact> = of(place.tags, lang, now, context, geometry)
 
     /** The facts of a bare tag map; see the overload for places. */
     fun of(
         tags: Map<String, String>,
-        lang: String? = "en",
-        now: LocalDateTime = LocalDateTime.now(),
-        context: OpeningHoursContext = OpeningHoursContext.Default,
+        lang: String?,
+        now: LocalDateTime,
+        context: OpeningHoursContext,
         geometry: Geometry = Geometry.POINT,
     ): List<Fact> {
         val b = Builder(tags, lang)
@@ -154,6 +148,21 @@ object Facts {
 
     private val PAVED = setOf("paved", "asphalt", "concrete", "paving_stones", "sett", "concrete:plates", "concrete:lanes", "metal", "wood", "chipseal", "bricks", "brick", "rubber", "tartan", "acrylic", "artificial_turf")
     private val ROUGH = setOf("compacted", "fine_gravel", "gravel", "unpaved", "pebblestone", "cobblestone", "unhewn_cobblestone", "grass_paver", "rock", "stepping_stones")
+
+    /**
+     * A bottle refill's name (the reviewer, 17 November, finding 11): the fields Atlas bundles have none of their own,
+     * and their drinking_water's "Drinkable" is the water's; in each language Atlas bundles ([Langs.bundled]; the app
+     * maintainer, 18 November 2026, batch 4 B22: fourteen read English), else English.
+     */
+    private val REFILL = mapOf(
+        "en" to "Bottle refill", "nl" to "Fles bijvullen", "de" to "Flasche auffüllen", "fr" to "Remplissage de gourde",
+        "es" to "Rellenado de botellas", "it" to "Ricarica borracce", "pt" to "Recarga de garrafas", "pl" to "Napełnianie butelek",
+        "sv" to "Påfyllning av flaskor", "da" to "Påfyldning af flasker", "nb" to "Påfylling av flasker", "fi" to "Pullon täyttö",
+        "cs" to "Plnění lahví", "ja" to "ボトル給水", "zh-CN" to "水瓶加水", "ru" to "Наполнение бутылок",
+        "ar" to "إعادة تعبئة الزجاجات", "tr" to "Şişe doldurma",
+    )
+
+    internal fun refillLabel(lang: String?): String = REFILL[Langs.resolve(lang)] ?: REFILL.getValue("en")
 
     /** Asks for these when the preset lists them first and they are not mapped. */
     private val ASKABLE = mapOf(
@@ -327,7 +336,9 @@ object Facts {
             flag(FactKind.AIR_CONDITIONING, "air_conditioning")
             t("level")?.let { add(FactKind.LEVEL, "level", FactState.YES, "L" + it.substringBefore(';')) }
             (t("drinking_water:refill") ?: t("bottle"))?.let { v ->
-                add(FactKind.BOTTLE_REFILL, if (t("drinking_water:refill") != null) "drinking_water:refill" else "bottle", stateOf(v) ?: FactState.YES)
+                // named as a refill, not as its field's water ("Drinkable: No" said the water was not to drink)
+                add(FactKind.BOTTLE_REFILL, if (t("drinking_water:refill") != null) "drinking_water:refill" else "bottle", stateOf(v) ?: FactState.YES,
+                    label = refillLabel(lang))
             }
         }
 
@@ -425,7 +436,9 @@ object Facts {
                 // the facts that read several keys count as mapped when any of their keys is there
                 if (kind == FactKind.DIET && tags.keys.any { it.startsWith("diet:") }) continue
                 if (key in tags) continue
-                out += Fact(kind, key, kind.symbol, FactState.UNKNOWN, label = fieldLabel(kind), mapped = false)
+                // the question names what a yes maps: the diets ask for diet:vegetarian, so "Vegetarian?", not "Dietary Options?"
+                val label = (if (kind == FactKind.DIET) option(f, key.substringAfter("diet:")) else null) ?: fieldLabel(kind)
+                out += Fact(kind, key, kind.symbol, FactState.UNKNOWN, label = label, mapped = false)
                 kinds += kind
             }
         }

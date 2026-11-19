@@ -214,6 +214,14 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     val unreadableStores: StateFlow<Map<File, UnreadableStore>> = unreadable.asStateFlow()
 
+    /**
+     * How many places and addresses the downloaded regions held when [app.atlas.ui.search.HereContext] last asked them,
+     * off the main thread; -1 before it has. What a frame that cannot wait reads their answers by, so it touches no
+     * store: the first to read [placeStores] opens every region's file (the app maintainer, 18 November 2026, batch 5 A5).
+     */
+    @Volatile
+    internal var regionsCounted: Int = -1
+
     /** The offline place stores of the downloaded regions (`places/<region>.db`), all searched at once. */
     val placeStores: Regions by lazy {
         Regions(config.placeStores.orEmpty()).also { if (config.placeStores == null) syncPlaceStores(it) }
@@ -253,6 +261,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
             }
         }
         unreadable.value = refused
+    }
+
+    /**
+     * The country of each published pack, as the list names it: the country of the region whose store holds a point, or
+     * of the tiles that serve its windows, before the countries' boxes ([app.atlas.ui.search.HereContext]). The map
+     * tells it the list as it reads it; until then the copies Mine and the windows keep say.
+     */
+    val packCountries: app.atlas.services.PackCountries by lazy {
+        app.atlas.services.PackCountries(
+            app.atlas.ui.mine.offline.RegionFiles(dirs.regions, dirs.places, dirs.segments),
+            listOf(File(dirs.regions, "packs-latest.json"), File(dirs.engine, "windows/index/packs-latest.json")),
+        )
     }
 
     /** The search box: offline over [placeStores]; online it adds Photon and Overpass. */
@@ -469,6 +489,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         app.atlas.services.LocalData(
             stores = { placeStores },
             packs = shelf,
+            countryAt = { at -> app.atlas.ui.search.HereContext.country(this, at) },
             overpass = { if (config.offline) null else overpass },
             isOnline = { !config.offline && connectivity.online.value },
             onClose = shelf::close,

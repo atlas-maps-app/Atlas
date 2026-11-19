@@ -65,7 +65,7 @@ class LargestScreensTest {
     )
 
     private fun open(dest: Dest, dark: Boolean = false): BackStackNavigator {
-        val services: Services = testServices(stores = listOf(MemoryPlaces(places)))
+        val services: Services = testServices(stores = listOf(MemoryPlaces(places, country = null)))
         val nav = BackStackNavigator(listOf(Dest.Home(), dest))
         compose.setContent { AtlasRoot(services, nav, dark = dark) }
         compose.settle(15_000)
