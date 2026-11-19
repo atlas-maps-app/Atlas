@@ -4,9 +4,7 @@
 //! walked into rings. A is read by the even-odd rule (a footprint's own rings: its outer and its courtyards, as mapped),
 //! B by the nonzero rule (shapes this crate made: outers counterclockwise, holes clockwise).
 
-use crate::geom::{
-    area2, cross, crossing, dot, proper_cross, strictly_inside_segment, winding_scaled, Where, P,
-};
+use crate::geom::{P, Where, area2, cross, crossing, dot, proper_cross, strictly_inside_segment, winding_scaled};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -269,11 +267,7 @@ fn later_ccw(d: P, o: P, p: P) -> bool {
     let z = P::new(0, 0);
     let half = |v: P| -> u8 {
         let c = cross(z, d, v);
-        if c > 0 || (c == 0 && dot(z, d, v) > 0) {
-            0
-        } else {
-            1
-        }
+        if c > 0 || (c == 0 && dot(z, d, v) > 0) { 0 } else { 1 }
     };
     let (ho, hp) = (half(o), half(p));
     if ho != hp {
@@ -317,11 +311,7 @@ fn walk(half: &[(P, P)]) -> Option<Vec<Vec<P>>> {
                     None => Some(o),
                     Some(b) => {
                         let bdir = P::new(half[b].1.x - v.x, half[b].1.y - v.y);
-                        if later_ccw(back, dir, bdir) {
-                            Some(o)
-                        } else {
-                            Some(b)
-                        }
+                        if later_ccw(back, dir, bdir) { Some(o) } else { Some(b) }
                     }
                 };
             }

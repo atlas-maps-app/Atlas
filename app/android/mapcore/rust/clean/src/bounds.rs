@@ -2,11 +2,11 @@
 //! `large`, and its seeds seed-crossing-combs, seed-tangles and seed-blind-courtyard): past each, what it was doing is
 //! put back as mapped, and what it holds at once stays bounded.
 
-use crate::arrange::{boolean, Op, Poly, MAX_SEGMENTS};
-use crate::bridge::{bridge, BUDGET};
-use crate::clean::{clean, Footprint, Params, WORK};
+use crate::arrange::{MAX_SEGMENTS, Op, Poly, boolean};
+use crate::bridge::{BUDGET, bridge};
+use crate::clean::{Footprint, Params, WORK, clean};
 use crate::counted::peak;
-use crate::geom::{area2, P};
+use crate::geom::{P, area2};
 use std::vec;
 use std::vec::Vec;
 
@@ -82,10 +82,8 @@ fn two_combs_that_cross_tooth_by_tooth_are_given_up_inside_the_round() {
 
 #[test]
 fn two_combs_that_cross_come_back_as_mapped_within_a_bounded_memory() {
-    let fps = vec![
-        footprint(vec![comb(1499, 2, 0, -20, false)], 10.0),
-        footprint(vec![comb(1499, 2, -20, 0, true)], 15.0),
-    ];
+    let fps =
+        vec![footprint(vec![comb(1499, 2, 0, -20, false)], 10.0), footprint(vec![comb(1499, 2, -20, 0, true)], 15.0)];
     let (c, bytes) = peak(|| clean(&fps, here()));
     assert!(c.counts.unsettled >= 1);
     assert!(c.ring.iter().all(Option::is_none), "as mapped");

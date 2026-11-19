@@ -3,10 +3,10 @@
 //! operation, a seam or the cleaning gives crosses itself or another; seams come undone into the rings they joined;
 //! and the cleaning ends on any window, in its bounds, without a panic (the tests check arithmetic for overflow).
 
-use crate::arrange::{area2_of, boolean, rings_of, Op, Poly};
+use crate::arrange::{Op, Poly, area2_of, boolean, rings_of};
 use crate::bridge::{bridge, rings, seams};
-use crate::clean::{clean, Footprint, Params};
-use crate::geom::{area2, proper_cross, P};
+use crate::clean::{Footprint, Params, clean};
+use crate::geom::{P, area2, proper_cross};
 
 // The least each test checks of the cases it draws, some 5 % under what these seeds give (the same cases on every
 // run: 2,000 of 2,000 stars, 500 of 500 seamed rings, 1,170 of 1,500 windows where something overlapped and all of
@@ -137,9 +137,10 @@ fn seams_come_undone_into_the_rings_they_joined() {
     let mut checked = 0;
     for _ in 0..500 {
         let a = vec![rect(0, 0, 300, 300)];
-        let b: Vec<Vec<P>> = (0..r.range(1, 5)).map(|_| random_rect(&mut r)).map(|q| {
-            q.into_iter().map(|p| P::new(p.x + 40, p.y + 40)).collect()
-        }).collect();
+        let b: Vec<Vec<P>> = (0..r.range(1, 5))
+            .map(|_| random_rect(&mut r))
+            .map(|q| q.into_iter().map(|p| P::new(p.x + 40, p.y + 40)).collect())
+            .collect();
         let polys = boolean(&a, &b, Op::Diff).unwrap();
         let Some(ring) = bridge(&polys) else { continue };
         assert_eq!(area2(&ring), area2_of(&polys));

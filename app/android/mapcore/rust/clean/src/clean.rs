@@ -10,9 +10,9 @@
 //! bodies is cut through; a piece too small, or with no body wider than Params::thin_m, goes. Then what is left of
 //! each is one ring (crate::bridge), and the counts of what still cannot be there.
 
-use crate::arrange::{area2_of, boolean, rings_of, Op, Poly};
+use crate::arrange::{Op, Poly, area2_of, boolean, rings_of};
 use crate::bridge::bridge;
-use crate::geom::{area2, cross, interiors_overlap, proper_cross, Box2, P};
+use crate::geom::{Box2, P, area2, cross, interiors_overlap, proper_cross};
 use alloc::collections::BinaryHeap;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -429,7 +429,11 @@ impl Run {
                     let hair = rings.iter().enumerate().any(|(si, s)| {
                         (0..s.len()).any(|j| {
                             let (a, b) = (s[j], s[(j + 1) % s.len()]);
-                            if v.x < a.x.min(b.x) - hx || v.x > a.x.max(b.x) + hx || v.y < a.y.min(b.y) - hy || v.y > a.y.max(b.y) + hy {
+                            if v.x < a.x.min(b.x) - hx
+                                || v.x > a.x.max(b.x) + hx
+                                || v.y < a.y.min(b.y) - hy
+                                || v.y > a.y.max(b.y) + hy
+                            {
                                 return false;
                             }
                             if a == v || b == v {
@@ -544,8 +548,7 @@ impl Run {
             if outer.len() < 3 {
                 continue; // a hair and no more
             }
-            let holes: Vec<Vec<P>> =
-                rings.filter(|h| h.len() >= 3 && -self.m2(area2(h)) >= self.p.hole_m2).collect();
+            let holes: Vec<Vec<P>> = rings.filter(|h| h.len() >= 3 && -self.m2(area2(h)) >= self.p.hole_m2).collect();
             let poly = Poly { outer, holes };
             let a = self.m2(poly.area2());
             if a < self.p.small_m2 {
@@ -992,10 +995,8 @@ pub fn clean(fps: &[Footprint], p: Params) -> Cleaned {
             Some(polys) => rings_of(polys),
             None => run.orig[o].clone(),
         };
-        let by: Vec<Vec<P>> = (0..n)
-            .filter(|&k| drawn[k] && boxes[k].meets(&boxes[o]))
-            .flat_map(|k| run.shape(k))
-            .collect();
+        let by: Vec<Vec<P>> =
+            (0..n).filter(|&k| drawn[k] && boxes[k].meets(&boxes[o])).flat_map(|k| run.shape(k)).collect();
         match run.cut(&full, &by) {
             Some((r, plain)) => {
                 // slivers (an outline mapped a little wider than its parts) and crumbs count apart
@@ -1089,7 +1090,8 @@ mod tests {
         // a bow tie high up: as mapped its lower lobe (10 m wide, 10 m deep) runs the other way. Under that lobe a
         // hall stands, and in the hall a shed that gives way to it: the shed's ground is the hall's, not ground that
         // the lobe and the hall leave between them
-        let tie = fp(vec![vec![P::new(0, 0), P::new(1000, 0), P::new(-500, 3000), P::new(1500, 3000)]], 30.0, 40.0, false);
+        let tie =
+            fp(vec![vec![P::new(0, 0), P::new(1000, 0), P::new(-500, 3000), P::new(1500, 3000)]], 30.0, 40.0, false);
         let hall = fp(vec![sq(-2000, -2000, 3000, 4000)], 0.0, 20.0, false);
         let shed = fp(vec![sq(300, 100, 700, 400)], 3.0, 14.0, false);
         let c = clean(&[tie, hall, shed], params());
@@ -1223,7 +1225,8 @@ mod tests {
 
     #[test]
     fn row_houses_sharing_walls_are_left_alone() {
-        let fps: Vec<Footprint> = (0..5).map(|i| fp(vec![sq(i * 600, 0, (i + 1) * 600, 1000)], 0.0, 12.0, false)).collect();
+        let fps: Vec<Footprint> =
+            (0..5).map(|i| fp(vec![sq(i * 600, 0, (i + 1) * 600, 1000)], 0.0, 12.0, false)).collect();
         let c = clean(&fps, params());
         assert!(c.ring.iter().all(Option::is_none));
         assert!(c.drawn.iter().all(|&d| d));
