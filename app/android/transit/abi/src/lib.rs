@@ -472,6 +472,7 @@ const IDLE: u8 = 0;
 const PLANNING: u8 = 1;
 const STOPPING: u8 = 2;
 const READING: u8 = 3;
+const TRIMMING: u8 = 4;
 
 /// An open timetable's planner and answer, taken for one call: given back when this goes.
 struct Taken<'t>(&'t AtomicU8);
@@ -483,7 +484,7 @@ impl Drop for Taken<'_> {
 }
 
 /// Takes an open timetable's planner and answer for a call that is `doing` this, or nothing where another call
-/// has them: a plan under way, a reading.
+/// has them: a plan under way, a reading, the working memory being given back.
 ///
 /// # Safety
 /// `t` is an open timetable.
@@ -808,6 +809,26 @@ pub unsafe extern "C" fn atlas_transit_stop(t: *const AtlasTransit) {
         // SAFETY: an open timetable; the flag is read and written by any thread, as an atomic is
         let _ = unsafe { &(*t).doing }.compare_exchange(PLANNING, STOPPING, Ordering::Release, Ordering::Relaxed);
     }
+}
+
+/// Gives a timetable's working memory back to the C library: the search's lists and the days' lists, which the next
+/// plan makes again. The index, made at open, and the last answer stay. 1 when it was given back; 0, with nothing
+/// done, for no timetable, and while a plan on this one is under way or its answer is being read: ask again then.
+///
+/// # Safety
+/// `t` is null or an open timetable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn atlas_transit_trim(t: *mut AtlasTransit) -> i32 {
+    if t.is_null() {
+        return 0;
+    }
+    // SAFETY: an open timetable
+    let Some(_taken) = (unsafe { take(t, TRIMMING) }) else {
+        return 0;
+    };
+    // SAFETY: an open timetable, whose planner no other call touches for as long as this one has taken it
+    unsafe { (*t).planner.trim() };
+    1
 }
 
 /// Copies the last answer's numbers into `out`, `cap` of them at most, and gives how many the answer has. 0, with

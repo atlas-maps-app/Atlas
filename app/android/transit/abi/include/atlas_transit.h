@@ -19,8 +19,9 @@
  * Threads otherwise: a timetable's numbers and names (atlas_transit_number, _text, _meta) may be read from any
  * thread at any time while it is open, during a plan too. One plan at a time on a timetable, and its answer read
  * before the next plan: here the library holds to it itself. While a plan is under way, a second atlas_transit_plan
- * on that timetable is refused (0), and so is atlas_transit_answer (0: the answer is not there yet); neither
- * touches anything. Two timetables know nothing of each other.
+ * on that timetable is refused (0), and so are atlas_transit_answer (0: the answer is not there yet) and
+ * atlas_transit_trim (0: the memory is in use); none of them touches anything. Two timetables know nothing of each
+ * other.
  *
  * What it gets: a query that cannot be read is refused whole (atlas_transit_plan gives 0) and never planned without
  * the part that was not understood; a number out of range names nothing (ATLAS_TRANSIT_NONE, or no bytes); a null
@@ -248,6 +249,13 @@ void atlas_transit_stop(const atlas_transit *t);
  *                               before midnight)
  *   ATLAS_TRANSIT_L_BOARD, _L_ALIGHT   the places along the route where the rider gets on and off */
 size_t atlas_transit_answer(const atlas_transit *t, int32_t *out, size_t cap);
+
+/* Gives a timetable's working memory back to the C library: the search's lists and the lists of the days asked
+ * about, which the next plan makes again (it takes that much longer, once). The index made at open stays, and so
+ * does the last answer. For when nobody waits for a plan: the screen was left, the system asks for memory. 1: given
+ * back. 0, and nothing done: no timetable; or a plan on it is under way or its answer is being read (ask again once
+ * that has returned, or stop the plan first). */
+int32_t atlas_transit_trim(atlas_transit *t);
 
 #define ATLAS_TRANSIT_Q_FROM 0
 #define ATLAS_TRANSIT_Q_TO 3

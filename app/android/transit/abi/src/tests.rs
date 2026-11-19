@@ -236,11 +236,11 @@ fn the_header_names_the_same_numbers() {
     // "no such stop" is told where -1 is a place on the map, that the library is built for 64 bits alone, and
     // what holds between threads
     let said = header.split_whitespace().filter(|word| *word != "*").collect::<Vec<_>>().join(" ");
-    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other", "built for 64-bit targets alone", "after every other call on that timetable has returned", "a second atlas_transit_plan on that timetable is refused (0), and so is atlas_transit_answer"] {
+    for words in ["3 a generic node, 4 a boarding area", "-1 is a latitude and a longitude like any other", "built for 64-bit targets alone", "after every other call on that timetable has returned", "a second atlas_transit_plan on that timetable is refused (0), and so are atlas_transit_answer", "atlas_transit_trim (0: the memory is in use)"] {
         assert!(said.contains(words), "the header no longer says: {words}");
     }
     // and each function the library gives is declared there
-    for function in ["abi", "open", "close", "number", "text", "meta", "plan", "stop", "answer"] {
+    for function in ["abi", "open", "close", "number", "text", "meta", "plan", "stop", "answer", "trim"] {
         assert!(header.contains(&format!("atlas_transit_{function}(")), "{function}");
     }
 }
@@ -886,8 +886,9 @@ fn a_long_question(tt: &Timetable) -> Query {
 }
 
 /// One plan at a time on a timetable, and the library holds to it: while a plan runs, a second plan is refused and
-/// so is a reading of the answer (0, both), and neither touches what the plan is writing. So three threads that
-/// plan the same question and read its answer, with no lock between them, each get the whole answer or nothing.
+/// so is a reading of the answer and a giving back of the working memory (0, all three), and none touches what the
+/// plan is writing. So three threads that plan the same question, read its answer and have the working memory
+/// given back, with no lock between them, each get the whole answer or nothing.
 #[test]
 fn a_plan_under_way_refuses_a_second_plan_and_a_reading() {
     struct Shared(*mut AtlasTransit);
@@ -905,7 +906,7 @@ fn a_plan_under_way_refuses_a_second_plan_and_a_reading() {
             .map(|_| {
                 let (shared, sent, whole) = (&shared, &sent, &whole);
                 scope.spawn(move || {
-                    let (mut planned, mut refused, mut read, mut unread) = (0u32, 0u32, 0u32, 0u32);
+                    let (mut planned, mut refused, mut read, mut unread, mut trimmed, mut untrimmed) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
                     let mut out = vec![0i32; whole.len()];
                     // (until this thread has made forty plans of its own, so that the three are at it together
                     // for the whole run and not one after the others have given up)
@@ -918,6 +919,20 @@ fn a_plan_under_way_refuses_a_second_plan_and_a_reading() {
                         } else {
                             assert_eq!(n, whole.len());
                             planned += 1;
+                            // (after every tenth plan of its own a thread has the working memory given back,
+                            // asking until no plan of the others' is under way: the plans after it make their
+                            // lists anew, and answer the same)
+                            while planned % 10 == 0 {
+                                // SAFETY: an open timetable
+                                match unsafe { atlas_transit_trim(shared.0) } {
+                                    0 => untrimmed += 1,
+                                    _ => {
+                                        trimmed += 1;
+                                        break;
+                                    }
+                                }
+                                std::thread::yield_now();
+                            }
                         }
                         // SAFETY: an open timetable, and room for as many numbers as said
                         let m = unsafe { atlas_transit_answer(shared.0, out.as_mut_ptr(), out.len()) };
@@ -927,15 +942,23 @@ fn a_plan_under_way_refuses_a_second_plan_and_a_reading() {
                             assert_eq!((m, &out), (whole.len(), whole));
                             read += 1;
                         }
+                        // (and now and then it is asked for in the middle of the others' plans)
+                        if refused % 64 == 1 {
+                            // SAFETY: an open timetable
+                            match unsafe { atlas_transit_trim(shared.0) } {
+                                0 => untrimmed += 1,
+                                _ => trimmed += 1,
+                            }
+                        }
                     }
-                    [planned, refused, read, unread]
+                    [planned, refused, read, unread, trimmed, untrimmed]
                 })
             })
             .collect();
-        threads.into_iter().map(|h| h.join().unwrap()).fold([0u32; 4], |sum, one| core::array::from_fn(|k| sum[k] + one[k]))
+        threads.into_iter().map(|h| h.join().unwrap()).fold([0u32; 6], |sum, one| core::array::from_fn(|k| sum[k] + one[k]))
     });
-    println!("three threads at one timetable: {} plans made and {} refused, {} answers read and {} refused", counts[0], counts[1], counts[2], counts[3]);
-    assert!(counts[0] == 120 && counts[1] > 100 && counts[2] > 0 && counts[3] > 100, "{counts:?}");
+    println!("three threads at one timetable: {} plans made and {} refused, {} answers read and {} refused, its working memory given back {} times and {} times not", counts[0], counts[1], counts[2], counts[3], counts[4], counts[5]);
+    assert!(counts[0] == 120 && counts[1] > 100 && counts[2] > 0 && counts[3] > 100 && counts[4] >= 12 && counts[5] > 100, "{counts:?}");
     // and when all is quiet the answer is there, whole
     assert_eq!(t.plan(&sent), whole);
 }
@@ -1006,5 +1029,99 @@ fn a_plan_is_stopped_from_another_thread() {
     }
     println!("300 plans of {},000 steps told to stop from another thread: {stopped} stopped (the soonest after {fewest},000 steps), {late} done before the word came, {refused} refused", whole[A_STEPS_K]);
     assert!(stopped >= 100 && fewest * 4 < whole[A_STEPS_K], "{stopped} stopped, the soonest after {fewest},000 of {},000 steps", whole[A_STEPS_K]);
+}
+
+// The bytes the tests' own thread asks for and gives back, as the planner's tests/memory.rs counts them: the
+// system's allocator with a count, for the test of the working memory given back. (The library's own allocator,
+// malloc, is not built into the tests; check.sh runs it.)
+mod counted {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+
+    /// Where a count begins, so that bytes given back that were taken before it began pull nothing below zero.
+    const START: usize = 1 << 48;
+    static LIVE: AtomicUsize = AtomicUsize::new(START);
+
+    thread_local! {
+        static ON: Cell<bool> = const { Cell::new(false) };
+    }
+
+    struct Counting;
+
+    fn on() -> bool {
+        ON.try_with(|c| c.get()).unwrap_or(false)
+    }
+
+    // (the system's allocator, with the bytes counted)
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            if on() {
+                LIVE.fetch_add(l.size(), Relaxed);
+            }
+            unsafe { System.alloc(l) }
+        }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+            if on() {
+                LIVE.fetch_sub(l.size(), Relaxed);
+            }
+            unsafe { System.dealloc(p, l) }
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
+            if on() {
+                LIVE.fetch_add(new, Relaxed);
+                LIVE.fetch_sub(l.size(), Relaxed);
+            }
+            unsafe { System.realloc(p, l, new) }
+        }
+    }
+
+    #[global_allocator]
+    static COUNTING: Counting = Counting;
+
+    /// How many bytes more (or, below zero, fewer) this thread holds after `f` than before. One count at a time.
+    pub fn held_by(f: impl FnOnce()) -> isize {
+        static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        LIVE.store(START, Relaxed);
+        ON.with(|c| c.set(true));
+        f();
+        ON.with(|c| c.set(false));
+        LIVE.load(Relaxed) as isize - START as isize
+    }
+}
+
+/// A timetable gives its working memory back when asked (the app's screen was left, the system asks for memory):
+/// what a plan left held, all but the answer, which stays to be read. The next plan takes the same memory anew and
+/// answers the same. No timetable gives nothing back.
+#[test]
+fn a_timetable_gives_its_working_memory_back() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let t = Open::of(&b);
+    let sent = send(&a_long_question(&tt));
+    // SAFETY (here and below): an open timetable; four arrays with their lengths
+    let plan = || unsafe { atlas_transit_plan(t.0, sent.query.as_ptr(), sent.query.len(), sent.from.as_ptr(), sent.from.len(), sent.to.as_ptr(), sent.to.len(), sent.wishes.as_ptr(), sent.wishes.len()) };
+    let read = |n: usize| {
+        let mut out = vec![0i32; n];
+        assert_eq!(unsafe { atlas_transit_answer(t.0, out.as_mut_ptr(), n) }, n);
+        out
+    };
+    let mut n = 0;
+    let first = counted::held_by(|| n = plan());
+    let whole = read(n);
+    assert!(n > A_HEAD + J_HEAD && first > 500_000, "{n} numbers, {first} bytes");
+    // planned again, nothing more is held; given back, all of it but the answer's own numbers
+    assert_eq!(counted::held_by(|| assert_eq!(plan(), n)), 0);
+    let back = -counted::held_by(|| assert_eq!(unsafe { atlas_transit_trim(t.0) }, 1));
+    println!("a plan on Utrecht's day left {first} bytes held; {back} were given back, and the answer of {n} numbers stays");
+    assert!(back > 500_000 && back <= first && first - back <= 8 * n as isize + 64, "{back} of {first}");
+    // the answer stays to be read, nothing more is there to give back, and no timetable has nothing
+    assert_eq!(read(n), whole);
+    assert_eq!(counted::held_by(|| assert_eq!(unsafe { atlas_transit_trim(t.0) }, 1)), 0);
+    assert_eq!(unsafe { atlas_transit_trim(null_mut()) }, 0);
+    // and the next plan takes anew what was given back, to the byte, and answers the same
+    assert_eq!(counted::held_by(|| assert_eq!(plan(), n)), back);
+    assert_eq!(read(n), whole);
 }
 

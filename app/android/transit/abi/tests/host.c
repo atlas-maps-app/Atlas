@@ -56,6 +56,11 @@ static const char *spot(int32_t s) {
 static void plan(atlas_transit *t, const char *what, const int32_t *query, size_t query_len, const int32_t *wishes, size_t wishes_len) {
     /* (a word to stop before a plan begins is for no plan: this one runs whole) */
     atlas_transit_stop(t);
+    /* (and every plan here begins with the working memory given back: it makes its lists anew, and answers the same) */
+    if (atlas_transit_trim(t) != 1 || atlas_transit_trim(NULL) != 0) {
+        printf("%s: the working memory was not given back\n", what);
+        exit(1);
+    }
     size_t n = atlas_transit_plan(t, query, query_len, NULL, 0, NULL, 0, wishes, wishes_len);
     printf("%s: ", what);
     if (n == 0) {

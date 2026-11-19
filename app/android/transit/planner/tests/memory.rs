@@ -90,6 +90,15 @@ fn taken<T>(f: impl FnOnce() -> T) -> (T, usize, usize) {
     (out, LIVE.load(Relaxed).saturating_sub(START), MOST.load(Relaxed).saturating_sub(START))
 }
 
+/// The bytes `f` gives back of what was taken before it.
+fn given_back(f: impl FnOnce()) -> usize {
+    LIVE.store(START, Relaxed);
+    COUNTED.with(|c| c.set(true));
+    f();
+    COUNTED.with(|c| c.set(false));
+    START.saturating_sub(LIVE.load(Relaxed))
+}
+
 /// A file's bytes taken, each as (kept, the most at once): to open it, for the planner's index, by eight questions
 /// of two hours on the first day, and by one more on each of up to twenty more days (a planner keeps the lists of
 /// the days asked about lately, sixteen at most).
@@ -276,3 +285,35 @@ fn an_index_over_what_it_may_take_is_refused_before_any_memory_is_asked_for() {
     }
     assert_eq!(Limits::default().index, 256 << 20);
 }
+
+/// A planner that has answered gives its working memory back when asked: all of it, to the byte, so that what it
+/// holds is its index again. Asked the same afterwards it answers the same, and takes the same memory anew.
+#[test]
+fn a_planner_gives_its_working_memory_back() {
+    let _one = alone();
+    let bytes = read("utrecht-20261117.tt");
+    let tt = Timetable::open(&bytes).unwrap();
+    let mut planner = Planner::new(tt).unwrap();
+    let served: Vec<u32> = (0..tt.stops()).filter(|s| tt.stop(*s).kind == 0 && tt.routes_at(*s).0 != tt.routes_at(*s).1).collect();
+    let mut q = Query::new(Place::Stop(served[served.len() / 8]), Place::Stop(served[served.len() * 5 / 8]), 0, 8 * 3600);
+    q.window = 7200;
+    // (what an answer is made of is given back with the answer, inside the count)
+    let ask = |planner: &mut Planner| {
+        let a = planner.plan(&q);
+        let said: Vec<(i32, i32, u32)> = a.journeys.iter().map(|j| (j.depart, j.arrive, j.rides)).collect();
+        (said.len(), said.iter().fold(0i64, |sum, j| sum.wrapping_mul(31).wrapping_add(j.0 as i64 + j.1 as i64 * 7 + j.2 as i64)), a.steps)
+    };
+    let (first, kept, most) = taken(|| ask(&mut planner));
+    println!("Utrecht, two hours: {} options; the planner keeps {kept} bytes to work with ({most} at most)", first.0);
+    assert!(first.0 > 3 && kept > 500_000, "{first:?}, {kept} bytes kept");
+    // asked again it takes nothing more; trimmed, it gives back what it kept, to the byte
+    assert_eq!(taken(|| ask(&mut planner)), (first, 0, taken(|| ask(&mut planner)).2));
+    assert_eq!(given_back(|| planner.trim()), kept);
+    // and the next plan takes it anew: the same answer, and the same memory as a planner that never answered
+    let (anew, kept_anew, _) = taken(|| ask(&mut planner));
+    assert_eq!((anew, kept_anew), (first, kept));
+    // (nothing to give back twice, and nothing taken to give it back)
+    assert_eq!(given_back(|| planner.trim()), kept);
+    assert_eq!((given_back(|| planner.trim()), taken(|| planner.trim()).2), (0, 0));
+}
+

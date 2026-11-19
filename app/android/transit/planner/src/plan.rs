@@ -126,6 +126,9 @@ struct Label {
     kind: u8,
 }
 
+// (README, "What it takes in memory"; the interface's header says what the labels' cap may cost by it)
+const _: () = assert!(size_of::<Label>() == 32 && size_of::<Cell>() == 16);
+
 /// A trip being ridden along a route, in a round.
 #[derive(Clone, Copy)]
 struct Riding {
@@ -828,6 +831,15 @@ impl<'a> Planner<'a> {
         odd.sort_unstable();
         odd.shrink_to_fit();
         Ok(Planner { tt, ix: Index { by_lat, back_first, back, rules_by_to, rule_from, rule_to, bound, max_time, hop, odd, own_change, waits, waits_at, waiting, wait_reach }, days: Vec::new(), work: Work::default() })
+    }
+
+    /// Gives back the memory a planner works with: the search's lists, which it keeps from one plan to the next so
+    /// that they are asked for once, and the lists of the days asked about lately. The index stays. The next plan
+    /// asks for them again, as the first did, and answers the same. For an app whose planner is not in use: its
+    /// screen was left, or the system asks for memory.
+    pub fn trim(&mut self) {
+        self.work = Work::default();
+        self.days = Vec::new();
     }
 
     pub fn timetable(&self) -> &Timetable<'a> {
