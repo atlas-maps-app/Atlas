@@ -1358,6 +1358,7 @@ private class BenchRun(
                             "vignette ${if (MapEngine.vignette) "on" else "off"}, grain ${if (MapEngine.grain) "on" else "off"}, " +
                             "${java.lang.Long.bitCount(MapParts.cameraBits(MapEngine.leftOut))} parts left out); the world's names; pills on",
                         refresh = refreshWords(),
+                        glyphs = MapBench.glyphs(withContext(Dispatchers.Default) { runCatching { core.stats() }.getOrDefault("") }),
                     )
                     val text = MapBench.table(head, results)
                     for (l in MapBench.tableLines(text)) emit(l)
