@@ -339,3 +339,61 @@ fn what_is_asked_wrongly_comes_back_empty() {
     q.arrive_by = true;
     assert!(p.plan(&q).journeys.is_empty());
 }
+
+/// What a wish names ends at its edge, and a station is its stops: on paper.
+///
+/// Fort and Gracht lie 0.0002 degree of latitude apart, 22.24 m. To Fort from Aan Zee at 08:00 the way is the bus
+/// of 08:00 and the tram that waits for it, in at 08:31. Never in an area round Gracht: while the area ends short
+/// of Fort that way stays, and once it holds Fort there is none. A circle of 22 m against one of 23; a box whose
+/// south edge lies a hundredth of a second of arc north of Fort against one whose edge is Fort's own latitude (an
+/// edge is inside); an outline drawn between the two stops against one drawn round both.
+///
+/// Centrum is a station of two platforms 120 s apart (and a third stop the feed gives no place). From the station
+/// at 08:20:30 the tram of 08:21 leaves platform 2, in at 08:31; from platform 1 it is two minutes on foot, and
+/// the tram is the 08:25, in at 08:35. To the station the fast bus is in at 08:12 at platform 1; to platform 2 it
+/// is 08:14.
+#[test]
+fn an_area_ends_at_its_edge_and_a_station_is_its_stops() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt);
+    let (a, f, g, e) = (stop(&tt, "A"), stop(&tt, "F"), stop(&tt, "G"), stop(&tt, "E"));
+    let (fort, gracht) = (tt.stop(f), tt.stop(g));
+    assert_eq!((gracht.lat - fort.lat, gracht.lon - fort.lon), (2000, 0));
+    let to_fort = Query::new(Place::Stop(a), Place::Stop(f), 0, hm(8, 0));
+    let times = |js: &[Journey]| js.iter().map(|j| (j.depart as u32, j.arrive as u32)).collect::<Vec<_>>();
+    assert_eq!(times(&ask(&mut p, &to_fort)), [(hm(8, 0), hm(8, 31))]);
+    let (lat, lon) = (gracht.lat, gracht.lon);
+    let outline = |south: i32| Area::Outline(vec![(south, lon - 1000), (south, lon + 1000), (lat + 1000, lon + 1000), (lat + 1000, lon - 1000)]);
+    let areas = [
+        (Area::Circle { lat, lon, radius_m: 22 }, Area::Circle { lat, lon, radius_m: 23 }),
+        (Area::Box { south: fort.lat + 1, west: lon - 1000, north: lat + 1000, east: lon + 1000 }, Area::Box { south: fort.lat, west: lon - 1000, north: lat + 1000, east: lon + 1000 }),
+        (outline(fort.lat + 1000), outline(fort.lat - 1000)),
+    ];
+    for (short, holding) in areas {
+        for through in [false, true] {
+            let with = |area: &Area, q: &Query| {
+                let mut q = q.clone();
+                q.wishes.push(Wish { what: What::Area { area: area.clone(), through }, how: How::Never });
+                q
+            };
+            assert_eq!(times(&ask(&mut p, &with(&short, &to_fort))), [(hm(8, 0), hm(8, 31))], "{short:?}");
+            assert_eq!(times(&ask(&mut p, &with(&holding, &to_fort))), [], "{holding:?}");
+            // (and the area that ends short of Fort does hold Gracht: nobody begins there, where the train of
+            // 08:45 is in at Eind two minutes later)
+            let from_gracht = Query::new(Place::Stop(g), Place::Stop(e), 0, hm(8, 40));
+            assert_eq!(times(&ask(&mut p, &from_gracht)), [(hm(8, 45), hm(8, 47))]);
+            assert_eq!(times(&ask(&mut p, &with(&short, &from_gracht))), [], "{short:?}");
+        }
+    }
+    // a station is its stops
+    let (station, one, two) = (stop(&tt, "ST"), stop(&tt, "C1"), stop(&tt, "C2"));
+    let from = |place: Place| Query::new(place, Place::Stop(f), 0, hm(8, 20) + 30);
+    assert_eq!(times(&ask(&mut p, &from(Place::Station(station)))), [(hm(8, 21), hm(8, 31))]);
+    assert_eq!(times(&ask(&mut p, &from(Place::Stop(two)))), [(hm(8, 21), hm(8, 31))]);
+    assert_eq!(times(&ask(&mut p, &from(Place::Stop(one)))), [(hm(8, 23), hm(8, 35))]);
+    let to = |place: Place| Query::new(Place::Stop(a), place, 0, hm(8, 0));
+    assert_eq!(times(&ask(&mut p, &to(Place::Station(station)))), [(hm(8, 5), hm(8, 12))]);
+    assert_eq!(times(&ask(&mut p, &to(Place::Stop(one)))), [(hm(8, 5), hm(8, 12))]);
+    assert_eq!(times(&ask(&mut p, &to(Place::Stop(two)))), [(hm(8, 5), hm(8, 14))]);
+}

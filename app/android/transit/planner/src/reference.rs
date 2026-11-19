@@ -1,7 +1,6 @@
-//! The second opinion: a connection scan (Dibbelt, Pajor, Strasser and Wagner) over the same file, with the same
-//! closed stops and lines, and nothing else in common with the search by rounds. It answers two
-//! questions only (the earliest arrival, the latest departure) and holds a whole day's connections in memory, so it
-//! is the tests' and the tool's, not the phone's.
+//! The second opinion: a connection scan (Dibbelt, Pajor, Strasser and Wagner) over the same file, with nothing of
+//! the search by rounds in it. It answers two questions only (the earliest arrival, the latest departure) and holds
+//! a whole day's connections in memory, so it is the tests' and the tool's, not the phone's.
 //!
 //! What a search could get wrong it reads from the file by itself, in its own way: when each service day begins
 //! (the days the clock changes, `day_start`), which days' trips reach into the seconds asked for, what a
@@ -11,9 +10,13 @@
 //! and the search's number must lie within what a tenth of a degree of latitude changes), and whether two points
 //! are near enough to walk all the way, and how long that takes.
 //!
-//! What the wishes cost it works out from the wish list, a wish and a ride at a time (`wished`), where the search
-//! adds up tables made beforehand; and a scan of its own carries that cost (`cheapest`), so the options of a
-//! query with wishes are held to it too (`costs_differ`).
+//! What the wishes close and what they cost it works out from the wish list, a wish and a ride or a stop at a time
+//! (`Reference::asked`, `wished`), where the search adds up tables made beforehand; and a scan of its own carries
+//! the cost (`cheapest`), so the options of a query with wishes are held to it too (`costs_differ`). What it has in
+//! common with the search is what a wish means of one thing, which is not the search's either: whether a point
+//! lies in an area ([`crate::query::Area::contains`]), which kind of vehicle a line's type is
+//! ([`Mode::of`]), and how far a query is followed ([`Query::followed`]). tests/tiny.rs holds the first to paper
+//! (an area's edge a metre from a stop), and a station's stops.
 //!
 //! It knows no cap on rides: a query it is compared on sets `max_rides` high. It keeps to the
 //! seconds the query follows ([`Query::followed`]): what ends past them is no answer to either. And it holds to the
@@ -29,7 +32,7 @@ use crate::NONE;
 use crate::file::{Rule, Timetable, TripText};
 use crate::journey::{Journey, Leg, Spot};
 use crate::plan::Planner;
-use crate::query::{How, Mode, Place, Prefs, Query, What, Wish, bit};
+use crate::query::{How, Mode, Place, Query, What, Wish};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -205,7 +208,26 @@ pub struct Places {
 /// its wishes close.
 pub struct Asked {
     places: Places,
-    prefs: Prefs,
+    /// By stop: a wish of "never" speaks of it (nobody boards or alights there, walks there, or begins or ends
+    /// there), and of riding past it too. By ride of this scan: one speaks of its trip, its line, or what they
+    /// are. Read from the wish list, a wish at a time (`of_stop`, `of_ride`); empty where no wish says never.
+    closed: Vec<bool>,
+    closed_through: Vec<bool>,
+    ride_closed: Vec<bool>,
+}
+
+impl Asked {
+    fn closed(&self, stop: u32) -> bool {
+        self.closed.get(stop as usize).copied().unwrap_or(false)
+    }
+
+    fn closed_through(&self, stop: u32) -> bool {
+        self.closed_through.get(stop as usize).copied().unwrap_or(false)
+    }
+
+    fn ride_closed(&self, ride: u32) -> bool {
+        self.ride_closed.get(ride as usize).copied().unwrap_or(false)
+    }
 }
 
 /// How far on foot a point reaches at the most, how much longer a way is than the line between its ends (in
@@ -562,7 +584,16 @@ impl Reference {
 
     /// What the scan makes of a query before it scans.
     pub fn asked(&self, planner: &Planner, q: &Query) -> Asked {
-        Asked { places: self.places(planner, q), prefs: planner.prefs(q) }
+        let tt = planner.timetable();
+        let never: Vec<&Wish> = q.wishes.iter().take(64).filter(|w| w.how == How::Never).collect();
+        let (mut closed, mut closed_through, mut ride_closed) = (Vec::new(), Vec::new(), Vec::new());
+        if !never.is_empty() {
+            let said: Vec<Option<(bool, bool)>> = (0..tt.stops()).map(|s| never.iter().filter_map(|w| of_stop(tt, w, s)).filter(|is| is.0).max()).collect();
+            closed = said.iter().map(|is| is.is_some()).collect();
+            closed_through = said.iter().map(|is| *is == Some((true, true))).collect();
+            ride_closed = self.rides.iter().map(|&(trip, line)| never.iter().any(|w| of_ride(tt, w, trip, line) == Some(true))).collect();
+        }
+        Asked { places: self.places(planner, q), closed, closed_through, ride_closed }
     }
 
     /// A query's places as the scan reads them (`stops_of`).
@@ -710,7 +741,7 @@ impl Reference {
     fn earliest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Option<(i32, u32)> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
-        let (ends, prefs) = (&asked.places, &asked.prefs);
+        let ends = &asked.places;
         let stops = tt.stops() as usize;
         let (mut ready, mut arrived, mut last) = (vec![i32::MAX; stops], vec![i32::MAX; stops], vec![NONE; stops]);
         let mut on = vec![false; self.rides.len()];
@@ -721,7 +752,7 @@ impl Reference {
         let mut origin = vec![i32::MAX; if ruled { stops } else { 0 }];
         let mut arrivals: Vec<Vec<(i32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
         for &(s, secs) in ends.from.iter() {
-            if !bit(&prefs.closed, s) {
+            if !asked.closed(s) {
                 ready[s as usize] = ready[s as usize].min(time + secs as i32);
                 if ruled {
                     origin[s as usize] = ready[s as usize];
@@ -729,7 +760,7 @@ impl Reference {
             }
         }
         for &(s, secs) in ends.to.iter() {
-            if !bit(&prefs.closed, s) {
+            if !asked.closed(s) {
                 last[s as usize] = secs;
             }
         }
@@ -742,7 +773,7 @@ impl Reference {
             }
             if !on[c.ride as usize] {
                 let (trip, line) = self.rides[c.ride as usize];
-                if !c.board || bit(&prefs.closed, c.from) || bit(&prefs.line_closed, line) || bit(&prefs.trip_closed, trip) {
+                if !c.board || asked.closed(c.from) || asked.ride_closed(c.ride) {
                     continue;
                 }
                 // where a rule speaks of boarding this trip here, the arrivals one by one; else the stop's soonest
@@ -756,11 +787,11 @@ impl Reference {
                 on[c.ride as usize] = true;
                 took[c.ride as usize] = so_far + 1;
             }
-            if bit(&prefs.closed_through, c.to) {
+            if asked.closed_through(c.to) {
                 on[c.ride as usize] = false;
                 continue;
             }
-            if !c.alight || bit(&prefs.closed, c.to) || c.arrive > until {
+            if !c.alight || asked.closed(c.to) || c.arrive > until {
                 continue;
             }
             let rides = took[c.ride as usize];
@@ -781,7 +812,7 @@ impl Reference {
                 let (lo, hi) = tt.walks_from(c.to);
                 for i in lo..hi {
                     let (y, secs) = tt.walk(i);
-                    if !bit(&prefs.closed, y) {
+                    if !asked.closed(y) {
                         sooner(y, c.arrive + secs as i32);
                     }
                 }
@@ -837,7 +868,7 @@ impl Reference {
     fn cheapest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Vec<(i32, u32)> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
-        let (ends, prefs) = (&asked.places, &asked.prefs);
+        let ends = &asked.places;
         let stops = tt.stops() as usize;
         let wishes: Vec<&Wish> = q.wishes.iter().take(64).filter(|w| w.how != How::Never).collect();
         let sum = |costs: &mut dyn Iterator<Item = u32>| costs.fold(0u32, |a, b| a.saturating_add(b)).min(COST_MOST);
@@ -852,7 +883,7 @@ impl Reference {
         let mut origin = vec![i32::MAX; if ruled { stops } else { 0 }];
         let mut arrivals: Vec<Vec<(i32, u32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
         for &(s, secs) in ends.from.iter() {
-            if !bit(&prefs.closed, s) {
+            if !asked.closed(s) {
                 let at = time + secs as i32;
                 if ready[s as usize].first().is_none_or(|l| at < l.0) {
                     ready[s as usize] = vec![(at, 0)];
@@ -863,7 +894,7 @@ impl Reference {
             }
         }
         for &(s, secs) in ends.to.iter() {
-            if !bit(&prefs.closed, s) {
+            if !asked.closed(s) {
                 last[s as usize] = secs;
             }
         }
@@ -876,7 +907,7 @@ impl Reference {
                 break;
             }
             let (trip, line) = self.rides[c.ride as usize];
-            if c.board && !bit(&prefs.closed, c.from) && !bit(&prefs.line_closed, line) && !bit(&prefs.trip_closed, trip) {
+            if c.board && !asked.closed(c.from) && !asked.ride_closed(c.ride) {
                 let spoken_of = ruled && self.rules_into(c.from).iter().any(|i| fits(tt.rule(*i).to_trip, trip) && fits(tt.rule(*i).to_line, line));
                 let so_far = if spoken_of {
                     self.boards_at_cost(planner, q, &origin, &arrivals, c.from, c.ride, c.depart)
@@ -889,13 +920,13 @@ impl Reference {
                 }
             }
             let Some(riding) = aboard[c.ride as usize] else { continue };
-            if bit(&prefs.closed_through, c.to) {
+            if asked.closed_through(c.to) {
                 aboard[c.ride as usize] = None;
                 continue;
             }
             let riding = sum(&mut [riding, called[c.to as usize]].into_iter());
             aboard[c.ride as usize] = Some(riding);
-            if !c.alight || bit(&prefs.closed, c.to) || c.arrive > until {
+            if !c.alight || asked.closed(c.to) || c.arrive > until {
                 continue;
             }
             let cost = sum(&mut [riding, used[c.to as usize]].into_iter());
@@ -910,7 +941,7 @@ impl Reference {
                 let (lo, hi) = tt.walks_from(c.to);
                 for i in lo..hi {
                     let (y, secs) = tt.walk(i);
-                    if (y as usize) < stops && !bit(&prefs.closed, y) {
+                    if (y as usize) < stops && !asked.closed(y) {
                         offer(&mut ready[y as usize], (c.arrive + secs as i32, cost));
                     }
                 }
@@ -980,7 +1011,7 @@ impl Reference {
     fn latest_in(&self, planner: &Planner, q: &Query, asked: &Asked, time: i32) -> Option<i32> {
         debug_assert_eq!(self.day, q.day);
         let tt = planner.timetable();
-        let (ends, prefs) = (&asked.places, &asked.prefs);
+        let ends = &asked.places;
         let stops = tt.stops() as usize;
         // by when one must be at a stop, off a ride; when the latest useful ride leaves it; the walk from the origin
         let (mut due, mut left, mut first) = (vec![i32::MIN; stops], vec![i32::MIN; stops], vec![NONE; stops]);
@@ -990,7 +1021,7 @@ impl Reference {
         let mut destination = vec![i32::MIN; if ruled { stops } else { 0 }];
         let mut departures: Vec<Vec<(i32, u32)>> = vec![Vec::new(); if ruled { stops } else { 0 }];
         for &(s, secs) in ends.to.iter() {
-            if !bit(&prefs.closed, s) {
+            if !asked.closed(s) {
                 due[s as usize] = due[s as usize].max(time - secs as i32);
                 if ruled {
                     destination[s as usize] = due[s as usize];
@@ -998,7 +1029,7 @@ impl Reference {
             }
         }
         for &(s, secs) in ends.from.iter() {
-            if !bit(&prefs.closed, s) {
+            if !asked.closed(s) {
                 first[s as usize] = secs;
             }
         }
@@ -1012,7 +1043,7 @@ impl Reference {
             }
             if !on[c.ride as usize] {
                 let (trip, line) = self.rides[c.ride as usize];
-                if !c.alight || bit(&prefs.closed, c.to) || bit(&prefs.line_closed, line) || bit(&prefs.trip_closed, trip) {
+                if !c.alight || asked.closed(c.to) || asked.ride_closed(c.ride) {
                     continue;
                 }
                 let spoken_of = ruled && self.rules_out_of(c.to).iter().any(|i| fits(tt.rule(*i).from_trip, trip) && fits(tt.rule(*i).from_line, line));
@@ -1022,11 +1053,11 @@ impl Reference {
                 }
                 on[c.ride as usize] = true;
             }
-            if bit(&prefs.closed_through, c.from) {
+            if asked.closed_through(c.from) {
                 on[c.ride as usize] = false;
                 continue;
             }
-            if !c.board || bit(&prefs.closed, c.from) || c.depart < since {
+            if !c.board || asked.closed(c.from) || c.depart < since {
                 continue;
             }
             if first[c.from as usize] != NONE && c.depart - first[c.from as usize] as i32 >= since {
@@ -1039,7 +1070,7 @@ impl Reference {
                 left[c.from as usize] = c.depart;
                 due[c.from as usize] = due[c.from as usize].max(c.depart.saturating_sub(self.change(tt, q, c.from)));
                 for &(y, secs) in self.walks_into(c.from) {
-                    if !bit(&prefs.closed, y) {
+                    if !asked.closed(y) {
                         due[y as usize] = due[y as usize].max(c.depart - secs as i32);
                     }
                 }
