@@ -12,7 +12,7 @@
     reason = "a tool run by hand: a bad file or argument stops it, saying what was wrong"
 )]
 
-use atlas_clean::clean::{clean, Footprint, Params};
+use atlas_clean::clean::{Footprint, Params, clean};
 use atlas_clean::geom::P;
 use std::io::Write;
 
@@ -39,14 +39,31 @@ fn main() {
     let c = clean(&fps, Params::new(kx / 1e7, 110540.0 / 1e7));
     let ms = t.elapsed().as_secs_f64() * 1e3;
     println!("{} footprints in {:.0} ms: {:?}", fps.len(), ms, c.counts);
-    let mut worst: Vec<(f64, usize)> = (0..fps.len()).filter(|&k| c.uncovered[k] > 5.0).map(|k| (c.uncovered[k], k)).collect();
+    let mut worst: Vec<(f64, usize)> =
+        (0..fps.len()).filter(|&k| c.uncovered[k] > 5.0).map(|k| (c.uncovered[k], k)).collect();
     worst.sort_by(|a, b| b.0.total_cmp(&a.0));
     for (a, k) in worst.iter().take(25) {
-        let area: f64 = fps[*k].rings.iter().map(|r| atlas_clean::geom::area2(r) as f64).sum::<f64>().abs() * 0.5 * (kx / 1e7) * (110540.0 / 1e7);
-        println!("uncovered {:7.1} m2 of {:8.1}  {} drawn {} ring {:?}", a, area, ids[*k], c.drawn[*k], c.ring[*k].as_ref().map(Vec::len));
+        let area: f64 = fps[*k].rings.iter().map(|r| atlas_clean::geom::area2(r) as f64).sum::<f64>().abs()
+            * 0.5
+            * (kx / 1e7)
+            * (110540.0 / 1e7);
+        println!(
+            "uncovered {:7.1} m2 of {:8.1}  {} drawn {} ring {:?}",
+            a,
+            area,
+            ids[*k],
+            c.drawn[*k],
+            c.ring[*k].as_ref().map(Vec::len)
+        );
     }
     for k in (0..fps.len()).filter(|&k| c.uncovered[k] < 0.0) {
-        println!("unmeasured {} drawn {} rings in {} ring out {:?}", ids[k], c.drawn[k], fps[k].rings.len(), c.ring[k].as_ref().map(Vec::len));
+        println!(
+            "unmeasured {} drawn {} rings in {} ring out {:?}",
+            ids[k],
+            c.drawn[k],
+            fps[k].rings.len(),
+            c.ring[k].as_ref().map(Vec::len)
+        );
     }
     if let Ok(show) = std::env::var("ATLAS_CLEAN_SHOW") {
         for id in show.split(',') {
@@ -54,8 +71,18 @@ fn main() {
                 let r = c.ring[k].as_ref();
                 let a2 = r.map(|r| atlas_clean::geom::area2(r));
                 let seams = r.map(|r| atlas_clean::bridge::seams(r).iter().filter(|&&s| s).count());
-                println!("{id}: drawn {} part {} rings in {} ring out {:?} area2 {:?} seams {:?}", c.drawn[k], fps[k].part, fps[k].rings.len(), r.map(Vec::len), a2, seams);
-                if let Some(r) = r { println!("   {:?}", r); }
+                println!(
+                    "{id}: drawn {} part {} rings in {} ring out {:?} area2 {:?} seams {:?}",
+                    c.drawn[k],
+                    fps[k].part,
+                    fps[k].rings.len(),
+                    r.map(Vec::len),
+                    a2,
+                    seams
+                );
+                if let Some(r) = r {
+                    println!("   {:?}", r);
+                }
             }
         }
     }
@@ -86,7 +113,14 @@ fn main() {
         .unwrap();
         first = false;
         for (i, p) in ring.iter().chain(std::iter::once(&ring[0])).enumerate() {
-            write!(out, "{}{{\"lat\":{},\"lon\":{}}}", if i == 0 { "" } else { "," }, p.y as f64 / 1e7, p.x as f64 / 1e7).unwrap();
+            write!(
+                out,
+                "{}{{\"lat\":{},\"lon\":{}}}",
+                if i == 0 { "" } else { "," },
+                p.y as f64 / 1e7,
+                p.x as f64 / 1e7
+            )
+            .unwrap();
         }
         write!(out, "]}}").unwrap();
     }

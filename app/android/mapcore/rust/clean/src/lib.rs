@@ -13,11 +13,11 @@
 extern crate alloc;
 
 pub mod arrange;
+#[cfg(test)]
+mod bounds;
 pub mod bridge;
 pub mod clean;
 pub mod geom;
-#[cfg(test)]
-mod bounds;
 #[cfg(test)]
 mod props;
 

@@ -4,7 +4,7 @@
 //! seam (stage T leaves out an edge whose reverse is in the ring).
 
 use crate::arrange::Poly;
-use crate::geom::{cross, proper_cross, strictly_inside_segment, winding_scaled, Where, P};
+use crate::geom::{P, Where, cross, proper_cross, strictly_inside_segment, winding_scaled};
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -26,7 +26,9 @@ fn clear(a: P, b: P, rings: &[&[P]], inside: bool) -> bool {
             }
             // running along an edge: collinear and sharing more than a point
             if cross(a, b, c) == 0 && cross(a, b, d) == 0 {
-                let along = |p: P| ((p.x - a.x) as i128) * ((b.x - a.x) as i128) + ((p.y - a.y) as i128) * ((b.y - a.y) as i128);
+                let along = |p: P| {
+                    ((p.x - a.x) as i128) * ((b.x - a.x) as i128) + ((p.y - a.y) as i128) * ((b.y - a.y) as i128)
+                };
                 let len = along(b);
                 let (t0, t1) = (along(c).min(along(d)), along(c).max(along(d)));
                 if t0.max(0) < t1.min(len) {
@@ -169,8 +171,8 @@ pub fn seams<K: Ord + Copy>(ring: &[K]) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arrange::{boolean, Op};
-    use crate::geom::{area2, winding, Where};
+    use crate::arrange::{Op, boolean};
+    use crate::geom::{Where, area2, winding};
 
     fn sq(x0: i64, y0: i64, x1: i64, y1: i64) -> Vec<P> {
         vec![P::new(x0, y0), P::new(x1, y0), P::new(x1, y1), P::new(x0, y1)]
@@ -206,7 +208,16 @@ mod tests {
     fn a_ring_without_seams_has_none() {
         assert!(seams(&sq(0, 0, 3, 3)).iter().all(|&b| !b));
         // a vertex visited twice without a seam (two pieces touching at a corner) is no seam either
-        let bow = vec![P::new(0, 0), P::new(2, 0), P::new(2, 2), P::new(4, 2), P::new(4, 4), P::new(2, 4), P::new(2, 2), P::new(0, 2)];
+        let bow = vec![
+            P::new(0, 0),
+            P::new(2, 0),
+            P::new(2, 2),
+            P::new(4, 2),
+            P::new(4, 4),
+            P::new(2, 4),
+            P::new(2, 2),
+            P::new(0, 2),
+        ];
         assert!(seams(&bow).iter().all(|&b| !b));
     }
 }
