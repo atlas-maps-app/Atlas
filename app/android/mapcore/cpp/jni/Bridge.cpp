@@ -842,15 +842,42 @@ private:
         pacer_.rest();
         session_->rest();
         // The window's frames come at 60 a second again once the map has been still for a second since it moved
-        // (frame/Motion.hpp): the render thread's timer says so then, unless the map moves again first.
-        if (motion_.rested(platform::now_ns())) {
-            loop_->set_timer(motion_.drop_ns(), [this] {
-                if (!closing_.load() && motion_.drop()) session_->set_moving(false);
-            });
+        // (frame/Motion.hpp), unless the map moves again first; and a frame the map is due by itself though nothing
+        // lands (a waiting pack switch's hold ending, MapFrame::due_in) is asked for then. The render thread's one
+        // timer is armed for the earlier.
+        const std::int64_t now = platform::now_ns();
+        (void)motion_.rested(now); // a drop to come is motion_.drop_ns()
+        due_ns_ = 0;
+        if (map_on_) {
+            if (const std::optional<double> in = map_->due_in()) {
+                due_ns_ = now + std::max<std::int64_t>(1, static_cast<std::int64_t>(*in * 1e9));
+            }
         }
+        arm_timer();
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
         drew_since_rest_ = false;
+    }
+
+    /// The render thread's one timer (platform::Loop::set_timer) at the earlier of what waits on a time at rest: the
+    /// window's drop to 60 (motion_) and the frame the map is due by itself (due_ns_); none where neither waits.
+    void arm_timer() {
+        std::int64_t at = motion_.drop_ns();
+        if (due_ns_ != 0 && (at == 0 || due_ns_ < at)) at = due_ns_;
+        if (at == 0) return;
+        loop_->set_timer(at, [this] {
+            if (closing_.load()) return;
+            const std::int64_t now = platform::now_ns();
+            if (motion_.drop_ns() != 0 && motion_.drop_ns() <= now && motion_.drop()) session_->set_moving(false);
+            if (due_ns_ != 0 && due_ns_ <= now) {
+                // the frame drawn at the camera last written (Due::changed), held while hidden like any other
+                due_ns_ = 0;
+                due_.changed();
+                requested_ = true;
+                ask_vsync();
+            }
+            arm_timer(); // the other, where it is still to come
+        });
     }
 
     void on_vsync(const platform::Vsync& v) {
@@ -998,6 +1025,7 @@ private:
     bool off_told_ = false;
     bool requested_ = false;
     bool hidden_ = false;              // the app's window hidden: no vsync asked, what asks held (set_hidden)
+    std::int64_t due_ns_ = 0;          // when a frame is due by itself at rest (now_ns, MapFrame::due_in; 0: none)
     std::uint64_t hidden_updates_ = 0; // the scene's updates without a frame while hidden (update_scene)
     bool camera_warned_ = false;
     frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)

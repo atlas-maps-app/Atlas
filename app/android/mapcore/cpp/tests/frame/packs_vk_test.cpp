@@ -27,6 +27,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -538,5 +539,118 @@ TEST_CASE("the world asks for a frame cell's newer composition with what its pas
     CHECK(seen[0].before == nullptr);
     CHECK(seen[1].before == kept.get());
     CHECK(seen[1].tiles == 2);
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+}
+
+TEST_CASE("a pack switch waiting for the named pack draws no frame while nothing of it lands: its stage T published "
+          "wakes the loop, and the end of its hold is the world's due time (ENGINE.md's audit, B1)") {
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    auto owned = std::make_unique<GateProbe>();
+    GateProbe& probe = *owned;
+    passes.push_back(std::move(owned));
+    auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+    ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+    frame::FrameBuilder& fb = **builder;
+    std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+    std::atomic<int> wakes{0};  // before the world: its threads call the wake until it is gone
+    auto world =
+        scene::World::create(*session->device, fb.passes(),
+                             {.workers = 2, .sun = {.enabled = false}, .clock = [&now] { return now.load(); }});
+    ATLAS_REQUIRE(world.has_value(), world.error().text());
+    scene::World& w = **world;
+    w.set_wake([&wakes] { wakes.fetch_add(1); });
+    // a build held when a check ends the case early is let go of before the world joins its threads
+    const std::unique_ptr<GateProbe, void (*)(GateProbe*)> opened(&probe, [](GateProbe* p) { p->open(); });
+    const std::string path =
+        test::building::write_pack(test::building::tile(), test::building::tile_features, "packs-switch");
+    ATLAS_REQUIRE(w.store().add({.id = "synthetic", .kind = tiles::PackKind::bundled, .path = path}).has_value());
+    fb.set_inputs({.camera = over_the_tile(), .scene = &w});
+    std::uint64_t n = 0;
+    double t = 0;
+    const auto draw = [&] {
+        ++n;
+        now = t;
+        ATLAS_REQUIRE(fb.derive(n, 0, nullptr));
+        w.update(fb.state());
+        w.residency().wait_idle();
+    };
+    // the synthetic pack drawn, its stage T in and its tiles faded in
+    for (int k = 0; k < 200 && (k < 5 || w.animating()); ++k) {
+        t += 1.0 / 60.0;
+        draw();
+        w.pack_stage().wait_idle();
+    }
+    ATLAS_REQUIRE(w.active() != nullptr);
+    ATLAS_REQUIRE(w.active()->id == "synthetic");
+    CHECK_FALSE(w.animating());
+    CHECK_FALSE(w.due_at().has_value());
+    const tiles::StorePack* const before = w.active();
+    // A frame cell's window named while the synthetic pack still holds the target: the switch waits for the cell's
+    // pack, its stage T held from before the pack was added (no pack_stage().wait_idle() while it is held).
+    probe.hold(CellWindows::cell());
+    CellWindows cell(std::filesystem::path(ATLAS_TEST_SCRATCH) / "packs-switch-cell");
+    const tiles::PackRef a = cell.window(0, 0, 300, -300);
+    ATLAS_REQUIRE(!a.path.empty());
+    ATLAS_REQUIRE(w.store().add(a).has_value());
+    w.set_active(a.id);
+    // The frame loop's rule at 60 vsyncs a second (jni/Bridge.cpp's on_vsync and rest, frame/Due.hpp): a vsync draws
+    // where the camera is new (the pack named is in it), a wake came since the last, the last frame left the world
+    // animating, or the world's due time has come (the render thread's timer); else the loop rests.
+    const auto run = [&](std::optional<double> open_after) {
+        wakes = 0;
+        bool due = true;
+        const double named = t;
+        double let_go = -1;
+        int vsyncs = 0;
+        int drawn = 0;
+        double switched = -1;
+        while (t < named + 6.0) {
+            t += 1.0 / 60.0;
+            now = t;
+            ++vsyncs;
+            if (open_after && let_go < 0 && t >= named + *open_after) {
+                probe.open();
+                w.pack_stage().wait_idle(); // its stage T published: the wake
+                let_go = t;
+            }
+            const bool woke = wakes.exchange(0) > 0;
+            const std::optional<double> at = w.due_at();
+            if (!(due || woke || (at && t >= *at))) continue;
+            draw();
+            ++drawn;
+            due = w.animating();
+            if (w.active() != before) {
+                switched = t;
+                break;
+            }
+        }
+        ATLAS_REQUIRE(switched >= 0);
+        CHECK(w.active()->id == CellWindows::cell());
+        CHECK_FALSE(w.due_at().has_value());
+        MESSAGE(std::format("the switch waited {} vsyncs ({:.2f} s; each drew a frame before B1) and drew {} frames, "
+                            "switching {:.3f} s after the pack was named{}",
+                            vsyncs, switched - named, drawn, switched - named,
+                            let_go >= 0 ? std::format(", {:.3f} s after its stage T was let go", switched - let_go)
+                                        : std::string(" (its stage T held)")));
+        // a few frames: the camera's, the wake's or the hold's end, and the switch's own (a tile of the cell's asked
+        // for meanwhile wakes one more)
+        CHECK(drawn <= 8);
+        if (let_go >= 0) {
+            // drawn as soon as its stage T is in, as before
+            CHECK(switched - let_go <= 3.0 / 60.0 + 1e-9);
+        } else {
+            // at the hold's end, as before: the first vsyncs after it
+            CHECK(switched - named >= scene::World::incoming_hold);
+            CHECK(switched - named <= scene::World::incoming_hold + 3.0 / 60.0 + 1e-9);
+        }
+    };
+    SUBCASE("its stage T held through the hold") { run(std::nullopt); }
+    SUBCASE("its stage T let go of after a second") { run(1.0); }
+    probe.open();
+    w.pack_stage().wait_idle();
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
 }

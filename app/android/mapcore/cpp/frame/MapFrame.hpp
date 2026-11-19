@@ -202,6 +202,9 @@ public:
     /// a label's or a canal name's: FrameBuilder::fading): another is due at the same camera, so none stops part-faded
     /// when the gesture ends on its first frame.
     [[nodiscard]] bool animating() const noexcept { return made() && (world_->animating() || builder_->fading()); }
+    /// How long from now until a frame is due though nothing lands or moves (scene::World::due_at: a waiting pack
+    /// switch's hold ends), seconds, at least 0; none where no such frame is to come. The frame loop's timer asks it.
+    [[nodiscard]] std::optional<double> due_in() const noexcept;
     /// The pack the last frame drew ("" for none).
     [[nodiscard]] std::string_view drawn_pack() const noexcept;
     /// Its world's `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
