@@ -15,6 +15,7 @@ import app.atlas.services.PackCountries
 import app.atlas.services.RegionLayer
 import app.atlas.testing.TempFiles
 import app.atlas.testing.testServices
+import app.atlas.tiles.PackCatalog
 import app.atlas.ui.mine.MineFixtures
 import app.atlas.ui.mine.offline.LayerRecord
 import app.atlas.ui.mine.offline.RegionFiles
@@ -53,6 +54,9 @@ class PackCountryTest {
     private val terneuzen = LatLon(51.3353, 3.8278)
     private val towns = listOf(maastricht, eindhoven, venlo, terneuzen)
     private val antwerp = LatLon(51.2194, 4.4025)
+    private val munich = LatLon(48.1374, 11.5755)
+    private val arlon = LatLon(49.6833, 5.8167)
+    private val amsterdam = LatLon(52.3728, 4.8936)
 
     /** Sluis, in Zeelandic Flanders: with it the Dutch store's box reaches Antwerp, as the real one's does, with none of its places there. */
     private val sluis = LatLon(51.3086, 3.3861)
@@ -101,6 +105,9 @@ class PackCountryTest {
         MapEngine.countryHolds = kept.second
         Locale.setDefault(phone)
     }
+
+    /** A phone whose language and region are [tag]'s, as its settings make it. */
+    private fun onPhone(tag: String) = Locale.setDefault(Locale.forLanguageTag(tag))
 
     private fun dutchHolidays(at: LatLon, hours: app.atlas.places.OpeningHoursContext) {
         assertEquals("$at", "NL", hours.country)
@@ -332,5 +339,126 @@ class PackCountryTest {
         }
         assertNull("its file was read again", countries.ofStore(store))
         store.close()
+    }
+
+    /**
+     * Where neither a region nor an index in memory says, the phone's country says where its box holds the point,
+     * before the smallest box (the app maintainer, 19 November 2026, batch 6 A2): the smallest box put Maastricht,
+     * Eindhoven and Terneuzen in Belgium on a Dutch phone at each cold start, till the camera had read the Netherlands'
+     * index, and for good where it had not been over them that run; 38ddafa1 read the phone's country. So too with the
+     * Netherlands published and its index not read yet.
+     */
+    @Test
+    fun aDutchPhoneReadsTheDutchTownsInBelgiumsBoxDutch() {
+        onPhone("nl-NL")
+        val root = TempFiles.dir("atlas-phone")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        val dutch = listOf(maastricht, eindhoven, terneuzen)
+        for (t in dutch) {
+            assertEquals("$t", "BE", Countries.of(t))
+            assertEquals("$t", "NL", HereContext.region(s, t).country)
+            assertEquals("$t", "NL", HereContext.regionNow(s, t).country)
+            dutchHolidays(t, HereContext.hours(s, t, ZoneId.of("Europe/Amsterdam")))
+        }
+        // the Netherlands published, its index not in memory: nothing says the towns are not the phone's country's
+        s.packCountries.learn(PackCatalog.parse(published).packs)
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        s.packCountries.tiles = PackCountries.Tiles { _, _, _ -> null }
+        for (t in dutch) {
+            assertEquals("$t", "NL", HereContext.region(s, t).country)
+            assertEquals("$t", "NL", HereContext.regionNow(s, t).country)
+        }
+        s.close()
+    }
+
+    /** The same on a German phone in Munich, which the smallest box put in Austria (no calendar there). */
+    @Test
+    fun aGermanPhoneReadsMunichGerman() {
+        onPhone("de-DE")
+        val s = testServices()
+        assertEquals("AT", Countries.of(munich))
+        assertEquals("DE", HereContext.region(s, munich).country)
+        assertEquals("DE", HereContext.regionNow(s, munich).country)
+        val hours = HereContext.hours(s, munich, ZoneId.of("Europe/Berlin"))
+        assertEquals("DE", hours.country)
+        assertEquals("German Unity Day", true, hours.publicHolidays?.isHoliday(LocalDate.of(2027, 10, 3)))
+        s.close()
+    }
+
+    /**
+     * The same on a Belgian phone in Arlon, which the smallest box put in Luxembourg: its address number first, as
+     * Luxembourg writes them, where 38ddafa1 wrote it street first, and no calendar.
+     */
+    @Test
+    fun aBelgianPhoneReadsArlonBelgianItsAddressStreetFirst() {
+        onPhone("nl-BE")
+        val s = testServices()
+        assertEquals("LU", Countries.of(arlon))
+        val bakery = Place(
+            OsmId.parse("n9731")!!, arlon,
+            mapOf("shop" to "bakery", "name" to "Boulangerie", "addr:street" to "Grand-Rue", "addr:housenumber" to "12", "addr:postcode" to "6700", "addr:city" to "Arlon"),
+        )
+        val local = HereContext.localeOf(s, bakery, arlon, ZoneId.of("Europe/Brussels"))
+        assertEquals("BE", local.country)
+        assertEquals("as the rows write it", "Grand-Rue 12, 6700 Arlon", addressOf(bakery, local.country))
+        assertEquals("Belgium's National Day", true, local.hours(arlon).publicHolidays?.isHoliday(LocalDate.of(2027, 7, 21)))
+        s.close()
+    }
+
+    /**
+     * The places around read in the phone's country too, where the regions name none: Munich's, which name their state
+     * and not their country, Bavaria's, and its Epiphany (the smallest box read them in Austria, and no state).
+     */
+    @Test
+    fun aGermanPhoneReadsThePlacesAroundMunichInBavaria() {
+        onPhone("de-DE")
+        // three places of no pack naming their state alone: no other store by Munich holds three
+        val around = MemoryPlaces(
+            (1..3).map { i -> Place(OsmId.parse("n${9_740 + i}")!!, LatLon(munich.lat + 0.001 * i, munich.lon), mapOf("shop" to "bakery", "addr:state" to "Bayern")) },
+            country = null,
+        )
+        val s = testServices(stores = listOf(around))
+        assertEquals(HereRegion("DE", "DE-BY"), HereContext.region(s, munich))
+        assertEquals("Epiphany", true, HereContext.hours(s, munich, ZoneId.of("Europe/Berlin")).publicHolidays?.isHoliday(LocalDate.of(2027, 1, 6)))
+        s.close()
+    }
+
+    /**
+     * Its neighbours, as before: the phone's country is not taken where its index in memory lists nothing (Antwerp on a
+     * Dutch phone), the tiles say first (Maastricht on a Belgian phone), nor where its box does not hold the point
+     * (Amsterdam on a French phone), and a phone that names no country reads the boxes.
+     */
+    @Test
+    fun thePhonesCountryGivesWayToItsIndexAndToItsBox() {
+        val root = TempFiles.dir("atlas-phone")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        s.packCountries.learn(PackCatalog.parse(published).packs)
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        // the Netherlands' index in memory: the Dutch towns' windows are listed, Antwerp's are not
+        s.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            if (id == "netherlands" && towns.any { Geo.distance(it, LatLon(lat, lon)) < 5_000.0 }) 14 else 0
+        }
+        onPhone("nl-NL")
+        assertEquals("BE", HereContext.region(s, antwerp).country)
+        assertEquals("BE", HereContext.regionNow(s, antwerp).country)
+        onPhone("nl-BE")
+        assertEquals("NL", HereContext.region(s, maastricht).country)
+        assertEquals("NL", HereContext.regionNow(s, maastricht).country)
+        s.close()
+        val bare = testServices()
+        onPhone("fr-FR")
+        assertEquals("NL", HereContext.region(bare, amsterdam).country)
+        assertEquals("NL", HereContext.regionNow(bare, amsterdam).country)
+        for (tag in listOf("nl", "und")) {
+            onPhone(tag)
+            for (t in towns + antwerp) {
+                assertEquals("$tag $t", Countries.of(t), HereContext.region(bare, t).country)
+                assertEquals("$tag $t", Countries.of(t), HereContext.regionNow(bare, t).country)
+                assertEquals("$tag $t", Countries.of(t), HereContext.hours(bare, t, ZoneId.of("Europe/Amsterdam")).country)
+            }
+        }
+        bare.close()
     }
 }
