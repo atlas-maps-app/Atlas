@@ -141,10 +141,11 @@ public:
     };
     [[nodiscard]] Counts counts() const noexcept { return counts_; }
 
-    /// The tests' (items_vk_test): `whole`, a module whose items_cs decides every kind's jobs in one stage
-    /// (tests/item/items_whole.slang, the stage before it was split by kind), made at prepare beside the kinds'
-    /// stages, which a frame runs over every job but the roof masts' in their place while use_whole is on; and
-    /// `readable`, the records' lists in memory the CPU reads (records()). Set before prepare.
+#if defined(ATLAS_TESTS)
+    /// The tests' (items_vk_test; only where the tests are built): `whole`, a module whose items_cs decides every
+    /// kind's jobs in one stage (tests/item/items_whole.slang, the stage before it was split by kind), made at prepare
+    /// beside the kinds' stages, which a frame runs over every job but the roof masts' in their place while use_whole
+    /// is on; and `readable`, the records' lists in memory the CPU reads (records()). Set before prepare.
     struct Testing {
         std::vector<std::uint32_t> whole;
         bool readable = false;
@@ -160,6 +161,7 @@ public:
         bool operator==(const Records&) const = default;
     };
     [[nodiscard]] Records records() const;
+#endif
     [[nodiscard]] std::uint16_t kind() const noexcept { return kind_; }
 
 private:
@@ -210,10 +212,8 @@ private:
     std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
-    std::vector<vk::raii::Pipeline> stages_;       ///< each kind's decide stage, in the kinds' order (kind_stages)
-    vk::raii::Pipeline roof_masts_{nullptr};       ///< roof_masts_cs, over the roof masts' jobs
-    vk::raii::ShaderModule whole_module_{nullptr}; ///< the tests' (Testing::whole)
-    vk::raii::Pipeline whole_{nullptr};
+    std::vector<vk::raii::Pipeline> stages_; ///< each kind's decide stage, in the kinds' order (kind_stages)
+    vk::raii::Pipeline roof_masts_{nullptr}; ///< roof_masts_cs, over the roof masts' jobs
     vk::raii::Pipeline faces_pipeline_{nullptr};
     vk::raii::Pipeline fills_pipeline_{nullptr}; ///< the faces' fans alone at true depth (ENGINE.md gain 18)
     vk::raii::Pipeline fills_fading_{nullptr};   ///< the same while a tile fades (items_fills_fading_fs)
@@ -231,8 +231,12 @@ private:
     std::vector<std::uint32_t> fade_words_;
     bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
+#if defined(ATLAS_TESTS)
+    vk::raii::ShaderModule whole_module_{nullptr}; ///< the tests' (Testing::whole)
+    vk::raii::Pipeline whole_{nullptr};
     Testing testing_;
     bool use_whole_ = false;
+#endif
 };
 
 } // namespace atlas::passes

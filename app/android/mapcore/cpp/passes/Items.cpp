@@ -543,6 +543,7 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
                                        *module_, k.entry, *compute_layout_));
         stages_.push_back(std::move(stage));
     }
+#if defined(ATLAS_TESTS)
     if (!testing_.whole.empty()) {
         ATLAS_GPU_LET(whole_module, frame::make_module(context, "items_whole", testing_.whole));
         whole_module_ = std::move(whole_module);
@@ -553,6 +554,7 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
                           *whole_module_, "items_cs", *compute_layout_));
         whole_ = std::move(whole);
     }
+#endif
     ATLAS_GPU_LET(masts,
                   frame::make_compute(
                       context, {.name = "roof masts", .module = "item_draw", .configuration = context.configuration},
@@ -613,8 +615,10 @@ void Items::release() noexcept {
     fills_fading_.clear();
     fills_pipeline_.clear();
     faces_pipeline_.clear();
+#if defined(ATLAS_TESTS)
     whole_.clear();
     whole_module_.clear();
+#endif
     roof_masts_.clear();
     stages_.clear();
     compute_layout_.clear();
@@ -893,11 +897,13 @@ void Items::update(const frame::FrameState& state) {
     auto tones_made = fit(*device_, tones_[slot], sizeof tones, B::eStorageBuffer, gpu::MemoryUse::upload);
     auto extra_made = fit(*device_, extra_[slot], extra_words_.size() * sizeof(std::uint32_t), B::eStorageBuffer,
                           gpu::MemoryUse::upload);
-    // (where a test reads them, in memory the CPU reads: records())
-    const gpu::MemoryUse records = testing_.readable ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
-    auto faces_made = fit(*device_, faces_[slot], vectors(faces), B::eStorageBuffer, records);
-    auto parts_made = fit(*device_, parts_[slot], vectors(parts), B::eStorageBuffer, records);
-    auto sides_made = fit(*device_, sides_[slot], vectors(sides), B::eStorageBuffer, records);
+    gpu::MemoryUse kept = gpu::MemoryUse::gpu; // the records' lists
+#if defined(ATLAS_TESTS)
+    if (testing_.readable) kept = gpu::MemoryUse::readback; // where a test reads them (records())
+#endif
+    auto faces_made = fit(*device_, faces_[slot], vectors(faces), B::eStorageBuffer, kept);
+    auto parts_made = fit(*device_, parts_[slot], vectors(parts), B::eStorageBuffer, kept);
+    auto sides_made = fit(*device_, sides_[slot], vectors(sides), B::eStorageBuffer, kept);
     auto fades_made = fit(*device_, fades_[slot], std::max<std::size_t>(fade_words_.size(), 1) * sizeof(std::uint32_t),
                           B::eStorageBuffer, gpu::MemoryUse::upload);
     for (const auto* made :
@@ -970,15 +976,18 @@ void Items::record_decide(const frame::Recording& recording) {
         recording.counters.dispatch(name);
     };
     const std::uint32_t rest = counts_.jobs - counts_.masts;
+    bool whole = false;
+#if defined(ATLAS_TESTS)
     if (use_whole_ && whole_ != nullptr) {
         // the tests': the stage before the split, over every kind's jobs at once (Testing::whole)
         run(whole_, rest, 0, "items whole");
-    } else {
-        std::uint32_t first = 0;
-        for (std::size_t k = 0; k < item_kind_stages; ++k) {
-            run(stages_[k], counts_.kinds[k], first, kind_stages[k].name);
-            first += counts_.kinds[k];
-        }
+        whole = true;
+    }
+#endif
+    std::uint32_t first = 0;
+    for (std::size_t k = 0; k < item_kind_stages && !whole; ++k) {
+        run(stages_[k], counts_.kinds[k], first, kind_stages[k].name);
+        first += counts_.kinds[k];
     }
     run(roof_masts_, counts_.masts, rest, "roof masts");
     // the records, for the vertex and fragment stages
@@ -990,6 +999,7 @@ void Items::record_decide(const frame::Recording& recording) {
                                                             .dst_access = A::eShaderRead});
 }
 
+#if defined(ATLAS_TESTS)
 Items::Records Items::records() const {
     Records r;
     if (!testing_.readable || counts_.jobs == 0) return r;
@@ -1005,6 +1015,7 @@ Items::Records Items::records() const {
     read(sides_[slot_], counts_.sides, r.sides);
     return r;
 }
+#endif
 
 void Items::record_draw(const frame::Recording& recording) {
     if (faces_pipeline_ == nullptr || counts_.jobs == 0) return;
