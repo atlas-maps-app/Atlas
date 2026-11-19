@@ -281,6 +281,17 @@ if(ATLAS_ANDROID)
         "{\n  global: JNI_On*; Java_*; atlas_*;\n  local: *;\n};\n")
     target_link_options(atlasmap PRIVATE "-Wl,--version-script=${_exports}" -Wl,-z,max-page-size=16384)
     set_target_properties(atlasmap PROPERTIES LINK_DEPENDS "${_exports}")
+    # What the Rust library takes of this build's libatlasmap.so, for its ABI: counted from lld's map of the link after
+    # every link (cmake/LinkedBytes.cmake), printed, and kept in rust-bytes.txt, which CI's Android build puts in its
+    # summary. The cost of a crate stays in sight as crates are added.
+    set(_link_map "${CMAKE_BINARY_DIR}/libatlasmap.so.map")
+    target_link_options(atlasmap PRIVATE "-Wl,-Map=${_link_map}")
+    add_custom_command(TARGET atlasmap POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" "-DMAP=${_link_map}" -DARCHIVE=libatlas_clean.a
+                "-DWHAT=libatlasmap.so (${ATLAS_BUILD}, ${ANDROID_ABI})" "-DOUT=${CMAKE_BINARY_DIR}/rust-bytes.txt"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinkedBytes.cmake"
+        BYPRODUCTS "${_link_map}" "${CMAKE_BINARY_DIR}/rust-bytes.txt"
+        VERBATIM)
 else()
     add_library(atlasmap SHARED ${_core_objects} ${_jni_sources} ${_jni_test_sources})
     set_target_properties(atlasmap PROPERTIES OUTPUT_NAME atlasmap_host)

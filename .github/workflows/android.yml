@@ -190,6 +190,15 @@ jobs:
           ccache --zero-stats > /dev/null
           ./gradlew assembleDebug assembleBench :app:benchTiles testDependencies --stacktrace
           ccache --show-stats
+      # What the Rust library takes of each libatlasmap.so just linked, by build and ABI (each link writes its line:
+      # mapcore/cpp/cmake/LinkedBytes.cmake), into the log and the run's summary.
+      - name: The Rust library's bytes in each libatlasmap.so
+        if: ${{ !cancelled() && steps.apk.outcome == 'success' }}
+        run: |
+          lines=$(find mapcore/build -name rust-bytes.txt -exec cat {} + | sort -t'(' -k2)
+          if [ -z "$lines" ]; then echo "::error::no build wrote rust-bytes.txt"; exit 1; fi
+          echo "$lines"
+          { echo "### The Rust library's bytes in libatlasmap.so"; echo "$lines" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
       # The caches' entries, once the build is done: what this run's compilations used (the hits and the new units),
       # and nothing older, so each entry is one build's size however many runs came before. ccache marks a unit used
       # by its file's time.
