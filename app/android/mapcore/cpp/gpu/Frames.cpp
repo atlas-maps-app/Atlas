@@ -258,6 +258,7 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
     const auto start = clock::now();
     FrameReport report;
     report.number = ++number_;
+    unsubmitted_ = false;
     auto begun = [&] {
         const trace::Section traced("atlas frame fence"); // the slot's frame from two frames ago, done on the GPU
         return frames_->begin(report.number);
@@ -288,7 +289,11 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
     report.record_ms = std::chrono::duration<double, std::milli>(clock::now() - recording).count();
     {
         const trace::Section traced("atlas submit");
-        ATLAS_GPU_CHECK(frames_->submit(*slot, output_->acquire_signals(), output_->rendered(image)));
+        auto submitted = frames_->submit(*slot, output_->acquire_signals(), output_->rendered(image));
+        if (!submitted) {
+            unsubmitted_ = true; // recorded, and never on the GPU (unsubmitted())
+            return std::unexpected(std::move(submitted.error()));
+        }
     }
     const Acquired presented = [&] {
         const trace::Section traced("atlas present");

@@ -224,6 +224,11 @@ public:
 
     /// Draws one frame, presented at `desired_ns` where the output can say when (0: as soon as possible).
     [[nodiscard]] Result<FrameReport> draw(std::uint64_t desired_ns);
+    /// Whether the last draw recorded its frame and then failed to submit it: what the content moved on as it recorded
+    /// (its kept results, the layouts it tracks, the uploads it let go of) is not what the GPU holds, nor is the
+    /// output's (an image acquired and not presented, its semaphore signalled), so only a rebuild of what was made on
+    /// the device makes them agree again (standin::Session takes the path of a lost device).
+    [[nodiscard]] bool unsubmitted() const noexcept { return unsubmitted_; }
     /// Switches the configuration (VK bench): waits for the frames in flight, then remakes the main pass and the
     /// content.
     [[nodiscard]] Result<void> reconfigure(const Configuration& configuration);
@@ -251,7 +256,8 @@ private:
     Sync sync_;
     std::unique_ptr<Frames> frames_;
     std::unique_ptr<MainPass> pass_;
-    bool prepared_ = false; // the content holds what this renderer prepared for pass_
+    bool prepared_ = false;    // the content holds what this renderer prepared for pass_
+    bool unsubmitted_ = false; // unsubmitted()
     std::uint64_t number_ = 0;
 };
 
