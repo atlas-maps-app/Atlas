@@ -361,6 +361,61 @@ class HttpTest {
     }
 
     @Test
+    fun whatIsAskedIsCountedBySourceAndHostAloneAndARefusalOnce() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            m.dispatch { r ->
+                when (r.url.encodedPath) {
+                    "/hop" -> MockResponse.Builder().code(302).addHeader("Location", "http://127.0.0.1:$port/there").build()
+                    "/off" -> MockResponse.Builder().code(302).addHeader("Location", "http://b.example:$port/x").build()
+                    "/kept" -> MockResponse.Builder().code(200).addHeader("Cache-Control", "max-age=600").body("kept").build()
+                    else -> MockResponse.Builder().code(200).body("ok").build()
+                }
+            }
+            var now = 1_000L
+            val asked = Asked { now }
+            // localhost is source a's; b.example is bee's, switched off; 127.0.0.1 is in no list
+            val root = Http(
+                cacheDir = tmp.newFolder("c"), policies = emptyMap(), gate = { host, _ -> if (host == "b.example") "bee" else null },
+                listed = { host, _ -> if (host == "localhost") "a" else null }, asked = asked,
+            )
+            val view = root.of("a")
+            fun get(path: String, host: String = "localhost") =
+                view.client.newCall(okhttp3.Request.Builder().url("http://$host:$port$path").build()).execute().use { it.body.string() }
+            assertEquals("ok", get("/plain?q=Westerkerk"))
+            now = 2_000L
+            // two hops: localhost, a's own, and 127.0.0.1, beyond its list
+            assertEquals("ok", get("/hop?q=Westerkerk"))
+            // the second from the cache: nothing sent
+            repeat(2) { assertEquals("kept", get("/kept")) }
+            now = 3_000L
+            // refused before it is sent, and at a hop: once each
+            assertTrue(runCatching { get("/x?q=Westerkerk", host = "b.example") }.exceptionOrNull() is SwitchedOffException)
+            assertTrue(runCatching { get("/off") }.exceptionOrNull() is SwitchedOffException)
+            assertEquals(Asked.Count(sent = 5, refused = 0, lastSent = 3_000, lastRefused = null, hosts = setOf("127.0.0.1")), asked.of("a"))
+            assertEquals(Asked.Count(sent = 0, refused = 2, lastSent = null, lastRefused = 3_000, hosts = emptySet()), asked.of("bee"))
+            assertEquals(setOf("a", "bee"), asked.all().keys)
+            assertEquals("the root and its views count in one place", asked.of("a"), root.asked.of("a"))
+            assertEquals(5, m.count)
+            // hosts and counts alone: no path, no query
+            val said = asked.all().toString()
+            for (w in listOf("Westerkerk", "/plain", "/hop", "/there", "/x", "q=")) assertFalse("$w in $said", w in said)
+        }
+    }
+
+    @Test
+    fun aCountCountsEveryRequestOfManyAtOnceAndKeepsAFewHostsBeyond() {
+        val asked = Asked { 1L }
+        val threads = (1..8).map { t -> Thread { repeat(1_000) { i -> asked.sent("a", beyond = "h${(t * 1_000 + i) % 40}.example") } } }
+        threads.forEach { it.start() }; threads.forEach { it.join() }
+        assertEquals(8_000, asked.of("a").sent)
+        assertEquals(Asked.MAX_HOSTS, asked.of("a").hosts.size)
+        asked.sent("b", beyond = "Nl.Panoramax.XYZ.")
+        assertEquals(setOf("nl.panoramax.xyz"), asked.of("b").hosts)
+        assertEquals(Asked.Count(0, 0, null, null, emptySet()), asked.of("never"))
+    }
+
+    @Test
     fun keysOfIgnoresBlankKeys() {
         val keys = Keys.of("ocm" to "abc", "yelp" to " ")
         assertEquals("abc", keys.key("ocm"))

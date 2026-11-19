@@ -168,7 +168,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      * The one HTTP client of the providers, and of the map's clients built on it: shared pool, disk cache, polite per-host
      * limits, and no request to a source the user switched off (Settings · Data).
      */
-    private val rootHttp: Http by lazy { Http(cacheDir = dirs.http, gate = { host, source -> SourcesModel.blockedBy(host, sourcesOff(), named = source) }) }
+    private val rootHttp: Http by lazy {
+        Http(
+            cacheDir = dirs.http, gate = { host, source -> SourcesModel.blockedBy(host, sourcesOff(), named = source) },
+            listed = { host, source -> SourcesModel.listedFor(host, source) }, asked = asked,
+        )
+    }
+
+    /**
+     * What the app asked since it was opened, per source: requests sent and refused, when last, and hosts beyond a source's
+     * list (the Privacy screen). In memory only; hosts and counts, never a path nor a query.
+     */
+    val asked: app.atlas.providers.Asked = app.atlas.providers.Asked { clock.millis() }
 
     private val views = java.util.concurrent.ConcurrentHashMap<String, Http>()
 

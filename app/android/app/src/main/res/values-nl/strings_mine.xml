@@ -944,4 +944,15 @@
         <item quantity="one">van %2$s · %1$d kleur anders</item>
         <item quantity="other">van %2$s · %1$d kleuren anders</item>
     </plurals>
+    <plurals name="mine_asked">
+        <item quantity="one">%1$d keer gevraagd sinds Atlas openging, het laatst om %2$s</item>
+        <item quantity="other">%1$d keer gevraagd sinds Atlas openging, het laatst om %2$s</item>
+    </plurals>
+    <string name="mine_asked_none">niet gevraagd sinds Atlas openging</string>
+    <plurals name="mine_asked_refused">
+        <item quantity="one">%1$d keer tegengehouden, het laatst om %2$s</item>
+        <item quantity="other">%1$d keer tegengehouden, het laatst om %2$s</item>
+    </plurals>
+    <string name="mine_asked_hosts">ook bij %1$s</string>
+    <string name="mine_privacy_held">Tegengehouden sinds Atlas openging</string>
 </resources>

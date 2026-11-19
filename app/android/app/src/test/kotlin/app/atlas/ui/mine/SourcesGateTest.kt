@@ -17,6 +17,7 @@ import okhttp3.Dns
 import okhttp3.EventListener
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -262,6 +263,33 @@ class SourcesGateTest {
             services.switch(emptySet())
             assertEquals("picture", get())
             assertEquals(3, server.requestCount)
+        }
+        services.close()
+    }
+
+    @Test
+    fun whatTheAppAskedIsCountedBySourceAndShownOnThePrivacyScreen() = runBlocking {
+        val services = testServices()
+        MockWebServer().use { server ->
+            server.dispatcher = object : mockwebserver3.Dispatcher() {
+                override fun dispatch(request: mockwebserver3.RecordedRequest) = MockResponse.Builder().code(200).body("{}").build()
+            }
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val watch = Watch { true }
+            fun ask(source: String, host: String) = services.http(source).client.newBuilder().direct().dns(watch.dns).eventListener(watch).build()
+                .newCall(okhttp3.Request.Builder().url("http://$host:${server.port}/api/interpreter?data=Westerkerk").build()).execute().close()
+            services.switch(setOf("wikipedia"))
+            // Overpass twice at its own host; Panoramax once at an instance no list names; Wikipedia held back
+            repeat(2) { ask(app.atlas.providers.Overpass.INFO.id, "overpass-api.de") }
+            ask(SourcesModel.PANORAMAX.id, "nl.panoramax.xyz")
+            assertTrue(runCatching { ask(Wikipedia.ID, "en.wikipedia.org") }.exceptionOrNull() is SwitchedOffException)
+            assertEquals(3, server.requestCount)
+            val asked = services.asked
+            assertEquals(2, asked.of("overpass").sent)
+            assertEquals(setOf("nl.panoramax.xyz"), asked.of("panoramax").hosts)
+            assertEquals(1, asked.of("wikipedia").refused)
+            assertEquals(emptySet<String>(), asked.of("overpass").hosts)
+            assertFalse("no query kept", "Westerkerk" in asked.all().toString())
         }
         services.close()
     }

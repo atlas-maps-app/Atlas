@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
+import app.atlas.providers.Asked
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
@@ -49,6 +50,9 @@ import app.atlas.ui.mine.offline.RegionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * On this phone, the privacy board: the promise, what is kept here with a switch or a button to forget each thing (where
@@ -155,8 +159,11 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
         BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp)) {
             CardLabel(stringResource(R.string.mine_privacy_online), Modifier.padding(bottom = 9.dp))
             val live = SourcesModel.asked(rows)
+            // what each was asked since Atlas was opened, as it stands when the screen is opened
+            val counts = remember(off, keys, tick) { services.asked.all() }
+            val zone = services.clock.zone
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id))
+                for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id), askedLine(counts[r.info.id], zone))
                 if (live.isEmpty()) BText(stringResource(R.string.mine_privacy_online_none), bt(12f, 400, 15.5f), SOFT, lines = 3)
             }
             // What a download you start asks of its server (these hosts see your address and what you asked for), where its
@@ -168,6 +175,14 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (packs) OnlineRow(stringResource(R.string.mine_offline_title), "github.com", stringResource(R.string.mine_sent_pack))
                     if (routing) OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
+                }
+            }
+            // Sources not asked now that a request was held back from since Atlas was opened: switched off on the way.
+            val held = rows.filter { r -> live.none { it.info.id == r.info.id } && (counts[r.info.id]?.refused ?: 0L) > 0L }
+            if (held.isNotEmpty()) {
+                CardLabel(stringResource(R.string.mine_privacy_held), Modifier.padding(top = 14.dp, bottom = 9.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    for (r in held) OnlineRow(r.info.name, r.host, askedLine(counts[r.info.id], zone))
                 }
             }
         }
@@ -185,16 +200,38 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
 
 /**
  * One host something is sent to, as the board's lines: a 6 px blue dot, the name (13, 800 on 17) and 8 px on what it is
- * told and the host (12 on 15.5, grey, wrapping beside the name).
+ * told and the host (12 on 15.5, grey, wrapping beside the name), and under it what was asked since Atlas was opened
+ * (11 on 14, grey).
  */
 @Composable
-private fun OnlineRow(name: String, host: String?, line: String) {
+private fun OnlineRow(name: String, host: String?, line: String, asked: String? = null) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         Box(Modifier.padding(top = 5.dp).size(6.dp).bbox(0xFF2E7BFF, cr(3f)))
         BText(name, bt(13f, 800, 17f), INK, Modifier.widthIn(max = 170.dp), lines = 2)
-        BText(if (host != null) "$line · $host" else line, bt(12f, 400, 15.5f), SOFT, Modifier.weight(1f).padding(top = 1.dp), lines = 3)
+        Column(Modifier.weight(1f).padding(top = 1.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            BText(if (host != null) "$line · $host" else line, bt(12f, 400, 15.5f), SOFT, lines = 3)
+            if (asked != null) BText(asked, bt(11f, 400, 14f), SOFT, lines = 3)
+        }
     }
 }
+
+/**
+ * What a source was asked since Atlas was opened ([Services.asked]): how often and when last, how often it was held
+ * back, and the hosts beyond its list its requests went to.
+ */
+@Composable
+internal fun askedLine(c: Asked.Count?, zone: ZoneId): String {
+    fun at(ms: Long?) = ms?.let { HOUR_MINUTE.format(Instant.ofEpochMilli(it).atZone(zone)) }.orEmpty()
+    val sent = (c?.sent ?: 0L).toInt()
+    val refused = (c?.refused ?: 0L).toInt()
+    return listOfNotNull(
+        if (sent == 0) stringResource(R.string.mine_asked_none) else pluralStringResource(R.plurals.mine_asked, sent, sent, at(c?.lastSent)),
+        if (refused > 0) pluralStringResource(R.plurals.mine_asked_refused, refused, refused, at(c?.lastRefused)) else null,
+        c?.hosts?.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.mine_asked_hosts, it.sorted().joinToString(", ")) },
+    ).joinToString(" · ")
+}
+
+private val HOUR_MINUTE: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 /** What each source is sent, in a few plain words. */
 @Composable

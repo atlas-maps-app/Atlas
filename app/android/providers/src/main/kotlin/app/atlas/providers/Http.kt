@@ -44,7 +44,8 @@ const val USER_AGENT = "Atlas/0.1 (+https://github.com/atlas-maps-app/Atlas)"
  * Every request passes [gate] first, by its host and the source it is asked for: a request a switched-off source would
  * answer is never sent (a [SwitchedOffException] instead). The app hands out named views of it only ([of]): each stamps
  * its source on every request ([SourceTag]), and shares the root's pool, cache and limiter. The map's clients build on a
- * view's [client], so the stamp and the gate hold for every request the app sends.
+ * view's [client], so the stamp and the gate hold for every request the app sends. What is sent and refused is counted
+ * in [asked], by source and host alone.
  */
 class Http private constructor(
     /** The OkHttp client this view sends with; other modules may build on it with [OkHttpClient.newBuilder] to share its pool. */
@@ -56,6 +57,8 @@ class Http private constructor(
     val source: String?,
     /** The root's client, which every view builds on. */
     private val root: OkHttpClient,
+    /** What was asked since it was made, per source: one count for the root and all its views. */
+    val asked: Asked,
 ) {
     constructor(
         cacheDir: File? = null,
@@ -72,9 +75,16 @@ class Http private constructor(
          * [SourceTag], null where none); null lets it go.
          */
         gate: (host: String, source: String?) -> String? = { _, _ -> null },
-    ) : this(rootClient(cacheDir, cacheBytes, userAgent, connectTimeout, readTimeout, callTimeout, base, gate), HostLimiter(policies, clock), userAgent, null)
+        /**
+         * The source that lists a host, the request's own source ([SourceTag]) first where it does; null where none does.
+         * [asked] counts a request under it, else under the request's own source, with the host as one beyond its list.
+         */
+        listed: (host: String, source: String?) -> String? = { _, _ -> null },
+        asked: Asked = Asked(),
+    ) : this(rootClient(cacheDir, cacheBytes, userAgent, connectTimeout, readTimeout, callTimeout, base, gate, listed, asked), HostLimiter(policies, clock), userAgent, null, asked)
 
-    private constructor(client: OkHttpClient, limiter: HostLimiter, userAgent: String, source: String?) : this(client, limiter, userAgent, source, client)
+    private constructor(client: OkHttpClient, limiter: HostLimiter, userAgent: String, source: String?, asked: Asked) :
+        this(client, limiter, userAgent, source, client, asked)
 
     /**
      * The view of this client for [source], a provider's id: every request it sends, and every request of a client built on
@@ -82,7 +92,7 @@ class Http private constructor(
      * other interceptor, the gate's too, also after [OkHttpClient.newBuilder]. A view's view is the root's.
      */
     fun of(source: String): Http =
-        Http(root.newBuilder().apply { interceptors().add(0, Stamp(source)) }.build(), limiter, userAgent, source, root)
+        Http(root.newBuilder().apply { interceptors().add(0, Stamp(source)) }.build(), limiter, userAgent, source, root, asked)
 
     /** A request builder for [url] with the Atlas User-Agent and JSON accepted. */
     fun request(url: String): Request.Builder = request(url.toHttpUrl())
@@ -160,10 +170,14 @@ class Http private constructor(
          * interceptors, so each hop is asked again by its host alone: in the name lookup, so a refused hop is never looked
          * up nor connected to, and in a network interceptor, for a hop that would reuse a connection already open. A hop
          * to a host no list names goes, as the request did; an answer from the cache makes no hop.
+         *
+         * The network interceptor counts each hop it lets go in [asked] (by [listed], else the request's source, with the
+         * host beyond its list); the first interceptor counts a request refused, wherever below it was, once.
          */
         private fun rootClient(
             cacheDir: File?, cacheBytes: Long, userAgent: String, connectTimeout: Duration, readTimeout: Duration, callTimeout: Duration,
-            base: OkHttpClient?, gate: (host: String, source: String?) -> String?,
+            base: OkHttpClient?, gate: (host: String, source: String?) -> String?, listed: (host: String, source: String?) -> String?,
+            asked: Asked,
         ): OkHttpClient {
             val lookup = base?.dns ?: Dns.SYSTEM
             return (base?.newBuilder() ?: OkHttpClient.Builder())
@@ -173,13 +187,22 @@ class Http private constructor(
                 .apply { if (cacheDir != null) cache(Cache(cacheDir, cacheBytes)) }
                 .addInterceptor { chain ->
                     val req = chain.request()
-                    gate(req.url.host, req.tag(SourceTag::class.java)?.id)?.let { throw SwitchedOffException(it, req.url.host) }
-                    chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
+                    gate(req.url.host, req.tag(SourceTag::class.java)?.id)?.let { asked.refused(it); throw SwitchedOffException(it, req.url.host) }
+                    try {
+                        chain.proceed(if (req.header("User-Agent") == null) req.newBuilder().header("User-Agent", userAgent).build() else req)
+                    } catch (e: SwitchedOffException) {
+                        // a hop refused, in the name lookup or at the network interceptor
+                        asked.refused(e.source)
+                        throw e
+                    }
                 }
                 .dns { host -> gate(host, null)?.let { throw SwitchedOffException(it, host) } ?: lookup.lookup(host) }
                 .addNetworkInterceptor { chain ->
                     val req = chain.request()
                     gate(req.url.host, null)?.let { throw SwitchedOffException(it, req.url.host) }
+                    val named = req.tag(SourceTag::class.java)?.id
+                    val by = listed(req.url.host, named)
+                    (by ?: named)?.let { asked.sent(it, beyond = req.url.host.takeIf { by == null }) }
                     chain.proceed(req)
                 }
                 .build()
