@@ -735,7 +735,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * The start's paper over the core ([CoreMap.cover]), stepped each frame from the core's first complete picture until
-     * it has faded out; nothing covers the core's picture after.
+     * it has faded out; nothing covers the core's picture after. Until that picture, and while a fade waits for the
+     * picture to be complete again, the paper is not drawn again: the core's frames say when it is ([coreChanged]).
      */
     private fun stepCover() {
         val c = core ?: return
@@ -747,6 +748,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
                 if (coverReady(c)) c.cover.faded++ else c.cover.waited++
                 if (!advanceCover(c)) break
             }
+            // a fade waiting for the picture again: the core's next complete one steps it on
+            if (core === c && !c.cover.started) return@launch
             // the core's picture shows alone: the puck goes to the core with the camera, and the status says so
             publishCamera(force = true)
             noteFrame()
