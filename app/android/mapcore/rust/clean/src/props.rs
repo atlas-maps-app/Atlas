@@ -8,6 +8,14 @@ use crate::bridge::{bridge, rings, seams};
 use crate::clean::{clean, Footprint, Params};
 use crate::geom::{area2, proper_cross, P};
 
+// The least each test checks of the cases it draws, some 5 % under what these seeds give (the same cases on every
+// run: 2,000 of 2,000 stars, 500 of 500 seamed rings, 1,170 of 1,500 windows where something overlapped and all of
+// it settled, 19 Nov): one that falls means an arrangement, the bridge or a bound now refuses cases they did not,
+// and the test checks less.
+const STARS_CHECKED: usize = 1900;
+const SEAMS_CHECKED: usize = 475;
+const CLEANINGS_CHECKED: usize = 1100;
+
 /// A small deterministic generator (a 64-bit LCG, its high bits).
 struct Rng(u64);
 
@@ -97,6 +105,7 @@ fn a_less_b_and_a_and_b_add_up_to_a_exactly_on_the_grid() {
 #[test]
 fn a_less_b_and_a_and_b_add_up_to_a_within_the_snapping() {
     let mut r = Rng(7);
+    let mut checked = 0;
     for _ in 0..2000 {
         let a = vec![random_star(&mut r, 500, 500)];
         let b: Vec<Vec<P>> = (0..r.range(1, 3))
@@ -116,12 +125,16 @@ fn a_less_b_and_a_and_b_add_up_to_a_within_the_snapping() {
         assert!(err <= 2 * (perimeter(&a) + perimeter(&b)), "{err} of {}", area2_of(&whole));
         assert!(!any_crossing(&rings_of(&d)));
         assert!(!any_crossing(&rings_of(&i)));
+        checked += 1;
     }
+    // the cases an arrangement refused are skipped: most must have been checked
+    assert!(checked >= STARS_CHECKED, "{checked} of 2000 checked");
 }
 
 #[test]
 fn seams_come_undone_into_the_rings_they_joined() {
     let mut r = Rng(11);
+    let mut checked = 0;
     for _ in 0..500 {
         let a = vec![rect(0, 0, 300, 300)];
         let b: Vec<Vec<P>> = (0..r.range(1, 5)).map(|_| random_rect(&mut r)).map(|q| {
@@ -138,12 +151,17 @@ fn seams_come_undone_into_the_rings_they_joined() {
         let count = |ps: &[Poly]| ps.iter().map(|p| 1 + p.holes.len()).sum::<usize>();
         assert_eq!(count(&back), count(&polys));
         assert_eq!(seams(&ring).iter().filter(|&&s| s).count(), 2 * (count(&polys) - 1));
+        checked += 1;
     }
+    assert!(checked >= SEAMS_CHECKED, "{checked} of 500 checked");
 }
 
 #[test]
 fn the_cleaning_ends_on_any_window_and_leaves_nothing_crossing() {
     let mut r = Rng(23);
+    // the rounds where something overlapped and all of it settled: there the check that nothing overlaps after says
+    // something
+    let mut checked = 0;
     for round in 0..1500 {
         let n = r.range(1, 14) as usize;
         // on OSM's grid at 52° N: a unit is 6.85 mm east and 11.05 mm north, a footprint some tens of metres
@@ -173,8 +191,12 @@ fn the_cleaning_ends_on_any_window_and_leaves_nothing_crossing() {
         }
         if c.counts.unsettled == 0 {
             assert_eq!(c.counts.overlapping_pairs, 0, "round {round}");
+            if c.counts.pairs_before > 0 {
+                checked += 1;
+            }
         }
     }
+    assert!(checked >= CLEANINGS_CHECKED, "{checked} of 1500 rounds checked");
 }
 
 #[test]
