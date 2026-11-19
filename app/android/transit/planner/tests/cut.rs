@@ -93,15 +93,19 @@ fn the_planner_and_the_scan_agree() {
                 let mut back = q.clone();
                 (back.arrive_by, back.time, back.max_rides) = (true, j.arrive as u32, j.rides);
                 assert_eq!(ask(&mut p, &back).iter().map(|k| k.depart).max(), Some(j.depart), "{q:?}\n{j:?}");
-                // The scan's latest departure for that arrival can't be held equal to the option's: the scan
-                // knows no cap on rides, and a way with more rides may leave later. What can be held: asked back
-                // with rides enough, the planner's latest departure is the scan's; and where that is later than
-                // the option's, every way that leaves later than the option has more rides than it.
+                // The scan's latest departure for that arrival knows no cap on rides, and a way with more rides
+                // may leave later than the option. Asked back with rides enough, the planner's latest departure
+                // is the scan's. And where that is later than the option's, the scan that counts rides says of
+                // every way that leaves after the option and arrives no later that it has more rides: the
+                // planner is not asked.
                 back.max_rides = 16;
                 let any = ask(&mut p, &back);
                 let scanned = scan.latest_departure(&p, &back, j.arrive);
                 assert_eq!(any.iter().map(|k| k.depart).max(), scanned, "{back:?}\n{j:?}");
                 assert!(any.iter().all(|k| k.depart <= j.depart || k.rides > j.rides), "{back:?}\n{j:?}");
+                let after = scan.ways(&p, &q, j.depart + 1, j.arrive);
+                assert!(after.iter().all(|w| w.2 > j.rides), "{q:?}\n{j:?}\n{after:?}");
+                assert_eq!(after.is_empty(), scanned == Some(j.depart), "{q:?}\n{j:?}\n{after:?}");
                 (latest, as_late, later_with_more) = (latest + 1, as_late + (scanned == Some(j.depart)) as u32, later_with_more + (scanned > Some(j.depart)) as u32);
             }
             let mut window = q.clone();
@@ -134,8 +138,9 @@ fn the_planner_and_the_scan_agree() {
         }
     }
     println!("{compared} pairs compared, {latest} options asked back ({stepped} of them from an answer that stepped through its later moments, the most {most_later}), {arriving} options of windows asked to arrive in");
-    println!("of the options asked back, {as_late} leave when the scan's latest way to their arrival does, and for {later_with_more} the scan's leaves later, with more rides");
+    println!("of the options asked back, {as_late} leave when the scan's latest way to their arrival does, and for {later_with_more} the scan's leaves later, with more rides by the scan's own count");
     assert_eq!(as_late + later_with_more, latest);
+    assert!(later_with_more > 10, "{later_with_more}");
     // (the options asked back are the proof that stepping through the later moments finds the latest: enough of
     // them come from an answer that stepped)
     assert!(compared > 100 && latest > 100 && arriving > 100 && stepped > 40, "{compared} {latest} {arriving} {stepped}");
