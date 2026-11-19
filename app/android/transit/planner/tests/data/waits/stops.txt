@@ -1,0 +1,5 @@
+stop_id,stop_code,stop_name,stop_lat,stop_lon,location_type,parent_station,stop_timezone,wheelchair_boarding,platform_code,zone_id
+KA,,Druk A,52.5000,4.0000,0,,,,,
+KB,,Druk B,52.5000,4.0500,0,,,,,
+KC,,Druk C,52.5000,4.0600,0,,,,,
+KZ,,Druk Z,52.5000,4.1000,0,,,,,

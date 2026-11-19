@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The packer's checks: python3 -I app/android/transit/pack/test_ttpack.py
 
-- the hand-written feeds (planner/tests/data/tiny, edges and autumn) pack to the very bytes kept beside them
-  (tiny.tt, edges.tt, autumn.tt), twice over: the planner's tests read those files, so they can't drift from the
+- the hand-written feeds (planner/tests/data/tiny, edges, autumn and waits) pack to the very bytes kept beside them
+  (tiny.tt, edges.tt, autumn.tt, waits.tt), twice over: the planner's tests read those files, so they can't drift from the
   packer, and the same feed gives the same bytes;
 - the days the clock changes are found from the feed's timezone and written into the file (edges has the night it
   goes forward, autumn the night it goes back);
@@ -62,6 +62,15 @@ class Packer(unittest.TestCase):
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "autumn"), kept)
             self.assertIn("the clock changes: the day after 2027-10-30 begins 90000 s after it", self.said)
         self.assertIn(b"odd_days=20271030:90000", kept.replace(b"\0", b"="))
+
+    def test_the_waits_feed_packs_to_the_kept_bytes(self):
+        # (planner/tests/many.rs: 45 buses in a row before one that waits for them, by a rule that names its line)
+        with open(os.path.join(DATA, "waits.tt"), "rb") as f:
+            kept = f.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.pack(os.path.join(tmp, "a.tt"), "waits"), kept, "waits.tt is stale: pack planner/tests/data/waits again")
+            self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "waits"), kept)
+            self.assertIn("47 trips, 0 walks, 1 transfer rules", self.said)
 
     def test_the_days_the_clock_changes(self):
         day = datetime.date

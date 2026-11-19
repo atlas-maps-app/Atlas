@@ -11,8 +11,8 @@
 //!   08:12 one. The one way is 08:00 to 08:28.
 
 use atlas_transit::file::{StopText, TripText};
-use atlas_transit::reference::{between_mm, impossible, places};
-use atlas_transit::{Journey, Leg, Place, Planner, Query, Timetable};
+use atlas_transit::reference::{Reference, between_mm, day_start, impossible, places};
+use atlas_transit::{How, Journey, Leg, Place, Planner, Query, Timetable, What, Wish};
 
 const NONE: u32 = u32::MAX;
 
@@ -169,11 +169,89 @@ fn many_rules_into_one_stop_cost_no_more_than_reading_them() {
 }
 
 /// A waiting rule that names a line and no trip, put into a piece of the real timetable (the city of Utrecht): every
-/// bus of the line with the most trips waits, at its second stop, for whatever arrives at the stop most routes call
-/// at. Looking for the bus that waits must end where the search does: at the first trip past the moment the search
-/// follows journeys to, since every trip after it on its day is later still. (It read on to the end of each day:
-/// 150 questions took 7.0 million steps without the rule and 1.75 million more with it, a quarter. Now 0.38 million
-/// more, a twentieth: what it costs that every arrival at that stop is held apart, as under any rule.)
+/// bus of `line` waits at `second` for whatever arrives at `from`. The questions are asked of the file without the
+/// rule and with it, for one moment and over half an hour, leaving and arriving, and held:
+///
+/// - every answer, with the rule and without, is the scan's on the same file (the scan reads a waiting rule in its
+///   own way, pair of rides by pair), and each journey can be made;
+/// - the answers the rule changes are those in which a journey makes the change it speaks of in less time than
+///   the walk between the two stops takes (where there is no walk: makes it at all), and no other answer differs;
+/// - whoever makes it so boards the one bus that waits: the first of the line to leave once the other vehicle is in.
+///
+/// Returns the steps without the rule and with it, how many answers the rule changes, how often its change is made
+/// in those, and how often the same change is made by the walk.
+fn a_waiting_rule(b: &[u8], from: u32, second: u32, line: u32, pairs: &[(u32, u32)]) -> ([u64; 2], u32, u32, usize) {
+    let tt = Timetable::open(b).unwrap();
+    let (lo, hi) = tt.walks_from(from);
+    let walk = (lo..hi).map(|w| tt.walk(w)).find(|w| w.0 == second).map_or(i32::MAX, |w| w.1 as i32);
+    let with = with_rules(b, [[from, second, NONE, line, NONE, NONE, 1, NONE]].into_iter());
+    let ruled = Timetable::open(&with).unwrap();
+    ruled.verify().unwrap();
+    let (mut plain, mut waiting) = (Planner::new(tt), Planner::new(ruled));
+    let scans: Vec<[Reference; 2]> = (0..2).map(|day| [Reference::new(&plain, day, -86_400, 3 * 86_400), Reference::new(&waiting, day, -86_400, 3 * 86_400)]).collect();
+    // whether a bus of the line, other than `own` on its day, leaves the second stop from `since` on and before `until`
+    let leaves_between = |day: i32, since: i32, until: i32, own: (u32, i32)| {
+        let (lo, hi) = tt.routes_at(second);
+        (lo..hi).map(|e| tt.route_at(e)).filter(|(r, pos)| tt.route(*r).line == line && pos + 1 < tt.route(*r).stops).any(|(r, pos)| {
+            let r = tt.route(r);
+            (r.first_trip..r.first_trip + r.trips).any(|t| {
+                (-1..=1).any(|off| {
+                    let at = day_start(&tt, day, off) + tt.time(tt.trip_times(t), pos).1 as i32;
+                    at >= since && at < until && (t, day + off) != own && tt.runs(tt.trip(t).service, day + off)
+                })
+            })
+        })
+    };
+    // the change the rule speaks of: off at the one stop, on to a bus of the line at the other; as the moment one
+    // is in, the moment the bus leaves, and the bus on its day
+    let changes = |j: &Journey| -> Vec<(i32, i32, (u32, i32))> {
+        let rides: Vec<&Leg> = j.legs.iter().filter(|l| matches!(l, Leg::Ride { .. })).collect();
+        let mut out = Vec::new();
+        for w in rides.windows(2) {
+            if let (Leg::Ride { to, arrive, .. }, Leg::Ride { from: on, depart, trip, day, route, .. }) = (w[0], w[1]) {
+                if (*to, *on, tt.route(*route).line) == (from, second, line) {
+                    out.push((*arrive, *depart, (*trip, *day)));
+                }
+            }
+        }
+        out
+    };
+    // (without the rule the change takes the walk; with it, less only where the rule is used)
+    let by_rule = |js: &[Journey]| -> Vec<(i32, i32, (u32, i32))> { js.iter().flat_map(changes).filter(|c| c.1 - c.0 < walk).collect() };
+    let (mut steps, mut differ, mut made, mut walked) = ([0u64; 2], 0, 0, 0);
+    for (i, &(a, z)) in pairs.iter().enumerate() {
+        let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 6 * 3600 + 421 * i as u32);
+        (q.arrive_by, q.window, q.max_rides) = (i % 3 == 1, if i % 2 == 0 { 0 } else { 1800 }, 16);
+        let (without, held) = (plain.plan(&q), waiting.plan(&q));
+        assert!(!without.cut_short && !held.cut_short, "{q:?}");
+        for (k, (planner, answer)) in [(&plain, &without), (&waiting, &held)].into_iter().enumerate() {
+            for j in answer.journeys.iter() {
+                assert_eq!(impossible(planner, &q, j), None, "{q:?}\n{j:?}");
+            }
+            let scan = &scans[q.day as usize][k];
+            let differs = if q.window == 0 { scan.moment_differs(planner, &q, &answer.journeys) } else { scan.window_differs(planner, &q, &answer.journeys) };
+            assert_eq!(differs, None, "question {i}, {}: {q:?}", ["without the rule", "with it"][k]);
+        }
+        assert!(by_rule(&without.journeys).is_empty(), "question {i}: {q:?}");
+        let uses = by_rule(&held.journeys);
+        walked += held.journeys.iter().flat_map(changes).count() - uses.len();
+        assert_eq!(without.journeys != held.journeys, !uses.is_empty(), "question {i}: the rule changes an answer in which nobody uses it, or is used and changes nothing: {q:?}");
+        differ += !uses.is_empty() as u32;
+        for (arrive, depart, bus) in uses {
+            made += 1;
+            assert!(depart >= arrive && !leaves_between(q.day, arrive, depart, bus), "question {i}: in at {arrive}, on the bus of {depart}, and another of the line leaves between: {q:?}");
+        }
+        (steps[0], steps[1]) = (steps[0] + without.steps, steps[1] + held.steps);
+    }
+    (steps, differ, made, walked)
+}
+
+/// Every bus of the line with the most trips waits, at its second stop, for whatever arrives at the stop most
+/// routes call at. Looking for the bus that waits must end where the search does: at the first trip past the moment
+/// the search follows journeys to, since every trip after it on its day is later still. (It read on to the end of
+/// each day, which cost a quarter more steps on these 150 questions; now a twentieth: what it costs that every
+/// arrival at that stop is held apart, as under any rule.) A walk of four minutes joins the two stops, and of these
+/// answers the rule changes none: that is held too, with the rest of `a_waiting_rule`.
 #[test]
 fn a_line_that_waits_is_read_no_further_than_the_search_goes() {
     let b = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/utrecht-20261117.tt")).unwrap();
@@ -184,25 +262,92 @@ fn a_line_that_waits_is_read_no_further_than_the_search_goes() {
     let served: Vec<u32> = (0..tt.stops()).filter(|s| tt.routes_at(*s).0 != tt.routes_at(*s).1).collect();
     let hub = *served.iter().max_by_key(|s| (tt.routes_at(**s).1 - tt.routes_at(**s).0, **s)).unwrap();
     assert!(tt.route(route).trips > 100 && hub != second, "{} trips", tt.route(route).trips);
-    let with = with_rules(&b, [[hub, second, NONE, line, NONE, NONE, 1, NONE]].into_iter());
-    let ruled = Timetable::open(&with).unwrap();
-    ruled.verify().unwrap();
-    let (mut plain, mut waiting) = (Planner::new(tt), Planner::new(ruled));
-    let (mut steps, mut differ) = ([0u64; 2], 0);
-    for i in 0..150usize {
-        let (a, z) = (served[(i * 131 + 7) % served.len()], served[(i * 197 + 61) % served.len()]);
-        let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 6 * 3600 + 421 * i as u32);
-        (q.arrive_by, q.window) = (i % 3 == 1, if i % 2 == 0 { 0 } else { 1800 });
-        let (without, held) = (plain.plan(&q), waiting.plan(&q));
-        assert!(!without.cut_short && !held.cut_short, "{q:?}");
-        for j in held.journeys.iter() {
-            assert_eq!(impossible(&waiting, &q, j), None, "{q:?}\n{j:?}");
-        }
-        (steps[0], steps[1], differ) = (steps[0] + without.steps, steps[1] + held.steps, differ + (without.journeys != held.journeys) as u32);
-    }
+    let pairs: Vec<(u32, u32)> = (0..150usize).map(|i| (served[(i * 131 + 7) % served.len()], served[(i * 197 + 61) % served.len()])).collect();
+    let (steps, differ, made, walked) = a_waiting_rule(&b, hub, second, line, &pairs);
     let more = steps[1].saturating_sub(steps[0]);
-    println!("150 questions: {} steps without the rule, {} with it ({more} more); the rule changes {differ} answers", steps[0], steps[1]);
+    println!("150 questions: {} steps without the rule, {} with it ({more} more); the rule changes {differ} answers ({made} changes by it, {walked} by the walk)", steps[0], steps[1]);
     assert!(more < steps[0] / 10, "{more} steps more than the {} without the rule", steps[0]);
+}
+
+/// The same rule where it changes answers: the buses of that line wait for whatever arrives at a stop a long way
+/// off, which no walk joins to theirs; the stop most routes call at among those. The questions lead from stops
+/// with a ride to that stop to stops along the line. What the rule changes and what it must not is
+/// `a_waiting_rule`'s to hold; here, that it changes enough answers for that to mean something.
+#[test]
+fn a_line_that_waits_changes_the_answers_it_should_and_no_other() {
+    let b = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/utrecht-20261117.tt")).unwrap();
+    let tt = Timetable::open(&b).unwrap();
+    let route = (0..tt.routes()).max_by_key(|r| (tt.route(*r).trips, *r)).unwrap();
+    let (line, second) = (tt.route(route).line, tt.pattern_stop(tt.route(route).first_stop + 1).stop);
+    let served: Vec<u32> = (0..tt.stops()).filter(|s| tt.routes_at(*s).0 != tt.routes_at(*s).1).collect();
+    // more than two kilometres from the line's second stop, by latitude or by longitude alone
+    let apart = |s: u32| (tt.stop(s).lat - tt.stop(second).lat).abs().max((tt.stop(s).lon - tt.stop(second).lon).abs() * 6 / 10);
+    let far = *served.iter().filter(|s| apart(**s) > 180_000).max_by_key(|s| (tt.routes_at(**s).1 - tt.routes_at(**s).0, **s)).unwrap();
+    let (lo, hi) = tt.walks_from(far);
+    assert!(!(lo..hi).any(|w| tt.walk(w).0 == second));
+    // the stops with a ride to that stop, and the stops of the line's route past its second
+    let (lo, hi) = tt.routes_at(far);
+    let mut towards: Vec<u32> = (lo..hi).map(|e| tt.route_at(e)).flat_map(|(r, pos)| (0..pos).map(move |k| (r, k))).map(|(r, k)| tt.pattern_stop(tt.route(r).first_stop + k).stop).collect();
+    towards.sort_unstable();
+    towards.dedup();
+    let along: Vec<u32> = (2..tt.route(route).stops).map(|pos| tt.pattern_stop(tt.route(route).first_stop + pos).stop).collect();
+    assert!(towards.len() >= 4 && along.len() >= 4, "{} {}", towards.len(), along.len());
+    let pairs: Vec<(u32, u32)> = (0..150usize).map(|i| (towards[(i * 7 + 3) % towards.len()], along[(i * 5) % along.len()])).collect();
+    let (steps, differ, made, walked) = a_waiting_rule(&b, far, second, line, &pairs);
+    println!("150 questions towards the line that waits: {} steps without the rule, {} with it; the rule changes {differ} answers ({made} changes by it, {walked} by a walk)", steps[0], steps[1]);
+    assert!(differ > 40 && made >= differ && walked == 0, "{differ} {made} {walked}");
+}
+
+/// A bus that waits is boarded by whoever came in since the one before it left: searching back from it, by every
+/// arrival of a route in that time, and where those trips differ in cost, by the last of them and by each cheaper
+/// one before it, however many costlier ones stand between (a boarding once looked at 32 and no further).
+///
+/// A feed written by hand for it (tests/data/waits, packed to waits.tt; Monday 5 April 2027 is day 0). The buses
+/// of line K1 leave Druk A every two minutes from 08:00 to 09:28, 45 of them (K1_00 to K1_44), and are at Druk B
+/// five minutes later. Line K2 leaves Druk C at 07:00 and at 09:40 and is at Druk Z twenty minutes later; its buses
+/// wait at C for whatever arrives at B (the feed's rule, which names the line), and no walk joins B and C. So the
+/// 09:40 waits for all 45, and whoever is at Z by 10:00 left A at 09:28 at the latest.
+///
+/// With the last 40 of the 45 each avoided, a minute a ride: to be at Z by 10:00 one leaves at 09:28, which costs
+/// a minute, or at 08:08 by K1_04, the last that costs nothing, 40 costlier trips before the bus that waits.
+/// Weighed, the first alone: a minute is less than the hour and twenty it leaves later. Leaving at 08:00, every way
+/// is in at 10:00, so the one that costs nothing is the answer, as late as it can leave; from 08:09 only the
+/// costly are left. Every answer is the scan's too.
+#[test]
+fn more_costly_trips_in_a_row_before_a_bus_that_waits() {
+    let b = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/waits.tt")).unwrap();
+    let tt = Timetable::open(&b).unwrap();
+    tt.verify().unwrap();
+    assert_eq!((tt.first_day(), tt.days(), tt.stops(), tt.trips(), tt.walks(), tt.rules()), (20270405, 2, 4, 47, 0, 1));
+    let mut p = Planner::new(tt);
+    let scan = Reference::new(&p, 0, -86_400, 3 * 86_400);
+    let avoided: Vec<Wish> = (5..45).map(|n| Wish { what: What::Trip(trip(&tt, &format!("K1_{n:02}"))), how: How::Avoid(60) }).collect();
+    let mut asked = |time: u32, by: bool, weigh: bool, wishes: &[Wish]| -> Vec<(u32, u32, String, u32)> {
+        let mut q = Query::new(Place::Stop(stop(&tt, "KA")), Place::Stop(stop(&tt, "KZ")), 0, time);
+        (q.arrive_by, q.weigh, q.max_rides, q.limits.options, q.limits.bag) = (by, weigh, 16, 1024, 16);
+        q.wishes = wishes.to_vec();
+        let a = p.plan(&q);
+        assert!(!a.cut_short, "{q:?}");
+        for j in a.journeys.iter() {
+            assert_eq!(impossible(&p, &q, j), None, "{j:?}");
+        }
+        assert_eq!(scan.moment_differs(&p, &q, &a.journeys), None, "{q:?}");
+        let trips = |j: &Journey| j.legs.iter().filter_map(|l| if let Leg::Ride { trip, .. } = l { Some(tt.trip_text(*trip, TripText::Id)) } else { None }).collect::<Vec<_>>().join(" ");
+        a.journeys.iter().map(|j| (j.depart as u32, j.arrive as u32, trips(j), j.penalty)).collect()
+    };
+    let way = |leaves: (u32, u32), trips: &str, cost: u32| (hm(leaves.0, leaves.1), hm(10, 0), trips.to_string(), cost);
+    let (last, free) = (way((9, 28), "K1_44 K2b", 60), way((8, 8), "K1_04 K2b", 0));
+    // without wishes, the last bus the 09:40 waits for, whichever way it is asked
+    assert_eq!(asked(hm(10, 0), true, false, &[]), [way((9, 28), "K1_44 K2b", 0)]);
+    assert_eq!(asked(hm(8, 0), false, false, &[]), [way((9, 28), "K1_44 K2b", 0)]);
+    assert_eq!(asked(hm(9, 59), true, false, &[]), []);
+    // the last 40 avoided
+    assert_eq!(asked(hm(10, 0), true, false, &avoided), [free.clone(), last.clone()]);
+    assert_eq!(asked(hm(10, 0), true, true, &avoided), [last.clone()]);
+    assert_eq!(asked(hm(8, 0), false, false, &avoided), [free.clone()]);
+    assert_eq!(asked(hm(8, 0), false, true, &avoided), [free.clone()]);
+    assert_eq!(asked(hm(8, 9), false, false, &avoided), [last.clone()]);
+    assert_eq!(asked(hm(8, 9), false, true, &avoided), [last.clone()]);
 }
 
 /// A place may stand for more stops than a search begins at (4,096): a list of walks the app worked out, a

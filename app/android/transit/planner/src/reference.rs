@@ -573,11 +573,15 @@ impl Reference {
                 }
             }
         }
-        connections.sort_unstable_by_key(|c| (c.depart, c.ride, c.pos));
+        // Of the connections that leave in the same second, one that takes no time comes first: it may be in for
+        // another of that second (two stops in the same minute of the timetable, then a vehicle that waits, or a
+        // change that takes no time). Scanning back the same turned round: of those in at the same second, the one
+        // that leaves last.
+        connections.sort_unstable_by_key(|c| (c.depart, c.arrive, c.ride, c.pos));
         let mut by_arrival: Vec<u32> = (0..connections.len() as u32).collect();
         by_arrival.sort_unstable_by_key(|i| {
             let c = &connections[*i as usize];
-            (core::cmp::Reverse(c.arrive), c.ride, core::cmp::Reverse(c.pos))
+            (core::cmp::Reverse(c.arrive), core::cmp::Reverse(c.depart), c.ride, core::cmp::Reverse(c.pos))
         });
         // the feed's rules, by either stop
         let stops = tt.stops() as usize;
