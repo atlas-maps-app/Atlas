@@ -138,4 +138,33 @@ class SourcesGateTest {
         }
         services.close()
     }
+
+    @Test
+    fun eachOfTheAppsOwnSourcesSwitchedOffIsRefusedByItsIdThroughServicesOwnClient() = runBlocking {
+        // the six SourcesModel adds to the providers' catalogue: a gate wired with the catalogue alone would let them go
+        val own = listOf(SourcesModel.ATLAS_PACKS, SourcesModel.BROUTER, SourcesModel.PANORAMAX, SourcesModel.OPEN_PRICES, SourcesModel.ISS_ORBIT, SourcesModel.TANKERKOENIG)
+        val services = testServices()
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse.Builder().code(200).body("ok").build())
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val looked = Collections.synchronizedList(ArrayList<String>())
+            val client = services.http.client.newBuilder().direct()
+                .dns { name -> looked += name; listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }.build()
+            fun ask(host: String) = runCatching { client.newCall(okhttp3.Request.Builder().url("http://$host:${server.port}/").build()).execute().close() }.exceptionOrNull()
+            for (s in own) {
+                services.switch(setOf(s.id))
+                for (h in s.hosts) {
+                    val refused = ask(h)
+                    assertTrue("${s.id} at $h: $refused", refused is SwitchedOffException && refused.source == s.id && refused.host == h)
+                }
+            }
+            assertEquals("no name looked up", emptyList<String>(), looked.toList())
+            assertEquals(0, server.requestCount)
+            // switched on: it goes
+            services.switch(emptySet())
+            assertEquals(null, ask(SourcesModel.OPEN_PRICES.hosts.first()))
+            assertEquals(1, server.requestCount)
+        }
+        services.close()
+    }
 }
