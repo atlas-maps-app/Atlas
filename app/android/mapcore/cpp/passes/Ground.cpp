@@ -1673,6 +1673,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_light(v, state);
     write_lit(v, state);
     write_ripple(v, state);
+    key_shadow_mask(v, state);
     write_wind_glints(v, state);
     write_clouds(v, state);
     write_canopy(v, state);
