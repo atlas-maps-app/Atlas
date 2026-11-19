@@ -184,6 +184,8 @@ def main():
                 fuzz = True
                 packages.update(CHECK_PACKAGES["load"] + CHECK_PACKAGES["geometry"])
                 other.append(path)
+                # the pin is the planner's too
+                transit = transit or rel == Path("rust-toolchain.toml")
             elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "style":
                 gradle_changed.update(["mapcore", "packer"])
                 check_all = True
@@ -250,7 +252,8 @@ def main():
         print(f"The transit planner (in {ANDROID / 'transit'}; Rust from ~/.cargo/bin, a build folder outside the tree):")
         print("  python3 -I pack/test_ttpack.py   # the packer: the hand-written feed's bytes, the cosine table")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
-        print("  (.github/workflows/transit.yml runs them on x86_64 and arm64 Linux, on a push that changes app/android/transit)")
+        print("  (.github/workflows/transit.yml runs them on x86_64 and arm64 Linux, on a push that changes app/android/transit")
+        print("   or app/android/rust-toolchain.toml)")
     if other:
         print()
         print("Other paths, which no local suite covers (CI's do): " + ", ".join(other[:12]) + (" ..." if len(other) > 12 else ""))
