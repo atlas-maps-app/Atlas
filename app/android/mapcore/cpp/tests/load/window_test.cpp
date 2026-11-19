@@ -14,9 +14,11 @@
 //   - a window by the sea builds: the sea regions.py closes from a coastline, whose points along its box are computed,
 //     lies on the grid at their nearest grid points;
 //   - a window that holds nothing to draw is a pack without a tile, whose manifest says so, and joins no frame cell;
-//   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it.
+//   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it;
+//   - the canal ring's and Paris's houseboats carry no seam, cut whole and in their windows.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Clean.hpp"
 #include "load/Countries.hpp"
@@ -1012,4 +1014,151 @@ TEST_CASE(
     CHECK(store.remove("window/" + load::place_of(keys[2]).name));
     CHECK(store.packs().empty());
     CHECK_FALSE(store.remove("window/none"));
+}
+
+namespace {
+
+/// The drawn houseboats of a decoded tile, its buildings and parts as stage T draws them (not hidden, with a height and
+/// a ring: geometry/Walls.cpp:901-918), and the ones whose ring carries a seam, by element (`p:` a part).
+struct Houseboats {
+    std::size_t drawn = 0;
+    std::vector<std::string> seamed;
+};
+
+void houseboats_of(const tl::Tile& tile, const tl::Frame& frame, Houseboats& out) {
+    for (const tl::LayerId id : {tl::LayerId::building, tl::LayerId::part}) {
+        const tl::Layer* l = tile.layer(id);
+        if (l == nullptr) continue;
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            const tl::RingView ring = l->ring(tl::building::ring, i);
+            if (l->boolean(tl::building::hidden, i).value_or(false) || !l->decimal(tl::building::h, i).has_value() ||
+                ring.size() == 0) {
+                continue;
+            }
+            if ((static_cast<std::uint64_t>(l->integer(tl::building::flags, i)) & tl::building::flag_houseboat) == 0) {
+                continue;
+            }
+            ++out.drawn;
+            std::vector<load::V2> poly;
+            poly.reserve(ring.size());
+            for (std::size_t k = 0; k < ring.size(); ++k) poly.emplace_back(frame.x(ring.lon[k]), frame.z(ring.lat[k]));
+            if (!atlas::geometry::seams(poly).empty()) {
+                const bool relation = l->string(tl::building::otype, i).value_or(std::string_view{}) == "relation";
+                out.seamed.push_back(std::format("{}{}{}", id == tl::LayerId::part ? "p:" : "", relation ? "r" : "w",
+                                                 l->integer(tl::building::id, i)));
+            }
+        }
+    }
+}
+
+} // namespace
+
+// A houseboat's ring carries no seam. Stage T walls a houseboat on its own (geometry/Houseboats.cpp): a hull on every
+// edge of its ring and a cabin within it, testing no seam, so a seam there would stand as a wall across the boat.
+// Nothing in the cleaning exempts a houseboat: one that overlaps a jetty or another boat, or that a part covers, is
+// cut and seamed as any building is (load/Clean.cpp). The engine audit's 7.1 counted them first (19 November 2026):
+// of the canal ring's 1,083 and Paris's 3, none, in each region cut whole (the canal ring as the app's bundled pack is
+// cut) and in its windows as the phone builds them.
+TEST_CASE("load: the canal ring's and Paris's houseboats carry no seam, cut whole and in windows (ATLAS_REGIONS_DIR)") {
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: no houseboat is looked at here");
+        return;
+    }
+    for (const std::string_view name : {std::string_view{"grachten"}, std::string_view{"paris"}}) {
+        const std::filesystem::path folder = std::filesystem::path(regions) / name;
+        const std::string text = read_text(folder / "raw.json");
+        const std::string json = read_text(folder / "region.json");
+        ATLAS_REQUIRE(!text.empty() && !json.empty(), name);
+        const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+        ATLAS_REQUIRE(doc.has_value(), name);
+        const auto region = tl::read_json(std::as_bytes(std::span(json.data(), json.size())));
+        ATLAS_REQUIRE(region.has_value(), name);
+        const tl::Value origin = region->root().find("origin").value_or(tl::Value());
+        const tl::Value bbox = region->root().find("bbox").value_or(tl::Value());
+        ATLAS_REQUIRE(origin.size() == 2 && bbox.size() == 4, name);
+        std::array<double, 4> box{};
+        for (std::size_t i = 0; i < box.size(); ++i) box.at(i) = bbox.child(i).number().value_or(0);
+        const double lat0 = origin.child(0).number().value_or(0);
+        // the region's frame, as the packer gives it (regions_test.cpp's)
+        const tl::Frame frame{.lat0 = lat0,
+                              .lon0 = origin.child(1).number().value_or(0),
+                              .kx = 111320 * atlas::pymath::cos(atlas::pymath::radians(lat0)),
+                              .kz = 110540};
+
+        // the region cut whole, the canal ring as the app's bundled pack is (new looks: its homes', no tradition,
+        // close up)
+        Houseboats whole;
+        {
+            std::shared_ptr<const load::Tradition> tradition;
+            if (const auto t = region->root().find("tradition")) {
+                if (const auto named = t->string()) tradition = load::tradition_named(*named);
+            }
+            load::RegionConfig config{.name = name,
+                                      .frame = frame,
+                                      .bbox = box,
+                                      .tradition = tradition,
+                                      .palette = load::region_palette(name)};
+            if (name == "grachten") {
+                config.keep_homes = true;
+                config.tradition.reset();
+                config.close_up = true;
+            }
+            const auto scene = load::load_region(*doc, config);
+            ATLAS_REQUIRE(scene.has_value(), name);
+            const auto cut = load::cut_region(*scene, frame, {});
+            ATLAS_REQUIRE(cut.has_value(), cut.error().what);
+            for (const tl::TileFill& t : *cut) {
+                if (t.level() != load::window_level) continue;
+                auto raw = tl::encode_tile(t);
+                ATLAS_REQUIRE(raw.has_value(), tl::describe(raw.error()));
+                tl::TileDecoder decoder;
+                atlas::Arena arena(8U << 20U, atlas::Growth::grows, "houseboat test, a region's tile");
+                const auto tile = decoder.decode(*raw, arena);
+                ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+                houseboats_of(*tile, frame, whole);
+            }
+        }
+
+        // its windows, each as the phone builds it
+        Houseboats windows;
+        const auto at = [](double degrees) { return static_cast<std::int32_t>(std::lround(degrees * 1e7)); };
+        const tl::TileKey sw = tl::tile_of(load::window_level, at(box[0]), at(box[1]));
+        const tl::TileKey ne = tl::tile_of(load::window_level, at(box[2]), at(box[3]));
+        for (std::uint32_t y = ne.y; y <= sw.y; ++y) {
+            for (std::uint32_t x = sw.x; x <= ne.x; ++x) {
+                const tl::TileKey key{load::window_level, x, y};
+                const load::WindowPlace place = load::place_of(key);
+                const auto built =
+                    load::build_window(query(*doc, load::window_box(key)), tl::Sha256Digest{}, key, place);
+                ATLAS_REQUIRE(built.has_value(), built.error().what);
+                auto pack = tl::Pack::open(std::make_unique<tl::MemorySource>(built->pack));
+                ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+                if (pack->chunks().chunks().empty()) continue;
+                tl::Zstd zstd;
+                tl::TileDecoder decoder;
+                atlas::Arena arena(8U << 20U, atlas::Growth::grows, "houseboat test, a window's tile");
+                std::vector<std::byte> raw;
+                std::vector<std::byte> scratch;
+                const auto tile = pack->decode(pack->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
+                ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+                houseboats_of(*tile, place.frame, windows);
+            }
+        }
+
+        const auto first = [](const Houseboats& h) {
+            std::string out;
+            for (std::size_t i = 0; i < h.seamed.size() && i < 6; ++i) out += " " + h.seamed[i];
+            return out;
+        };
+        const std::string line = std::format(
+            "{}'s houseboats: {} drawn cut whole, {} with a seam{}; {} drawn in its windows, {} with a seam{}", name,
+            whole.drawn, whole.seamed.size(), first(whole), windows.drawn, windows.seamed.size(), first(windows));
+        MESSAGE(line);
+        (void)std::printf("%s\n", line.c_str()); // NOLINT: the line a run's log keeps
+        CHECK(whole.drawn > 0);
+        CHECK(whole.seamed.empty());
+        CHECK(windows.drawn == whole.drawn);
+        CHECK(windows.seamed.empty());
+    }
 }
