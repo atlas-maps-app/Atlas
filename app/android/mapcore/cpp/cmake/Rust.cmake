@@ -1,13 +1,16 @@
 # Rust libraries (the core's buildings' cleaning, and what else includes this file): a crate built by cargo into the
 # build directory as a static library, linked by the build's own linker (the NDK's on Android).
 #
-#   atlas_rust_library(<target> CRATE <dir> LIB <name> [RUSTFLAGS <flags>] [CARGO_ARGS <arg>...])
+#   atlas_rust_library(<target> CRATE <dir> LIB <name> [RUSTFLAGS <flags>] [OVERFLOW_CHECKS] [CARGO_ARGS <arg>...])
 #
 # makes <target>, an imported static library (lib<name>.a, with what Rust's standard library links), and
 # <target>_build, the cargo build that makes it: `cargo build --release --offline --locked --lib` in the crate's folder
 # (CRATE, relative to the calling CMakeLists.txt's folder), for the Android ABI's target on Android, into
 # rust/ under the build directory. RUSTFLAGS is passed to rustc as it is (a fuzz build's sanitizer coverage, say);
-# CARGO_ARGS go after cargo's own (features, say). A crate takes the standard library and nothing else, so cargo
+# CARGO_ARGS go after cargo's own (features, say). OVERFLOW_CHECKS builds the crate with its overflow checks on
+# (-Coverflow-checks=on), which the release profile has off, and holds the build to it: after cargo,
+# cmake/RustOverflowChecks.cmake reads the crate's own object and fails the build if it names none of Rust's overflow
+# panics (the core's fuzz build). A crate takes the standard library and nothing else, so cargo
 # fetches nothing (--offline --locked); a crate from the network would fail the build, not be fetched.
 #
 # The Rust it builds with is the one the nearest rust-toolchain.toml pins, in the crate's folder or above it, as
@@ -18,9 +21,10 @@
 #
 # cargo is found on the PATH, or where rustup puts it (~/.cargo/bin, or $CARGO_HOME/bin): ATLAS_CARGO.
 include_guard(GLOBAL)
+set(_atlas_rust_cmake "${CMAKE_CURRENT_LIST_DIR}") # this folder, where RustOverflowChecks.cmake is
 
 function(atlas_rust_library target)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "" "CRATE;LIB;RUSTFLAGS" "CARGO_ARGS")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "OVERFLOW_CHECKS" "CRATE;LIB;RUSTFLAGS" "CARGO_ARGS")
     if(arg_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR "atlas_rust_library(${target}): what is '${arg_UNPARSED_ARGUMENTS}'?")
     endif()
@@ -80,6 +84,16 @@ function(atlas_rust_library target)
         set(triple_arg "")
     endif()
 
+    set(rustflags "${arg_RUSTFLAGS}")
+    set(check "")
+    set(check_script "")
+    if(arg_OVERFLOW_CHECKS)
+        string(JOIN " " rustflags ${rustflags} -Coverflow-checks=on)
+        set(check_script "${_atlas_rust_cmake}/RustOverflowChecks.cmake")
+        set(check COMMAND "${CMAKE_COMMAND}" "-DLIB=${lib}" "-DNAME=${arg_LIB}" "-DAR=${CMAKE_AR}"
+                  "-DDIR=${cargo_dir}/overflow-checks" -P "${check_script}")
+    endif()
+
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${crate}/src/*.rs")
     # the crate as the build names it: its folder from the pin's (mapcore/rust/clean), or its own name
     file(RELATIVE_PATH shown "${dir}" "${crate}")
@@ -88,10 +102,11 @@ function(atlas_rust_library target)
     endif()
     add_custom_command(
         OUTPUT "${lib}"
-        COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${cargo_dir}" "RUSTFLAGS=${arg_RUSTFLAGS}"
+        COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${cargo_dir}" "RUSTFLAGS=${rustflags}"
                 RUSTUP_AUTO_INSTALL=0 -- "${ATLAS_CARGO}" build --release --offline --locked --lib --quiet
                 ${triple_arg} ${arg_CARGO_ARGS}
-        DEPENDS ${sources} "${crate}/Cargo.toml" "${crate}/Cargo.lock" "${pin}"
+        ${check}
+        DEPENDS ${sources} "${crate}/Cargo.toml" "${crate}/Cargo.lock" "${pin}" ${check_script}
         WORKING_DIRECTORY "${crate}"
         COMMENT "Building lib${arg_LIB}.a (Rust, ${shown})"
         VERBATIM USES_TERMINAL)
@@ -99,7 +114,7 @@ function(atlas_rust_library target)
     add_library(${target} STATIC IMPORTED GLOBAL)
     set_target_properties(${target} PROPERTIES IMPORTED_LOCATION "${lib}" INTERFACE_LINK_LIBRARIES "${libs}")
     add_dependencies(${target} ${target}_build)
-    if(arg_RUSTFLAGS)
-        message(STATUS "Rust: lib${arg_LIB}.a from ${shown}, RUSTFLAGS ${arg_RUSTFLAGS}")
+    if(rustflags)
+        message(STATUS "Rust: lib${arg_LIB}.a from ${shown}, RUSTFLAGS ${rustflags}")
     endif()
 endfunction()
