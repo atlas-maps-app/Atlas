@@ -52,6 +52,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,7 +62,7 @@ import app.atlas.model.Place
 import app.atlas.nav.LocalServices
 import app.atlas.places.CategoryNode
 import app.atlas.places.Brand
-import app.atlas.places.Brands
+import app.atlas.places.Symbols
 import app.atlas.search.ResultHit
 import app.atlas.search.ResultItem
 import app.atlas.ui.eat.CuisineHouse
@@ -72,6 +73,7 @@ import app.atlas.ui.eat.drawPlate
 import app.atlas.ui.eat.houseMotif
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.BrandSigns
+import app.atlas.ui.kit.signOf
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.markOf
@@ -235,8 +237,8 @@ private fun CardPicture(h: ResultHit, eat: EatPlace?, house: CuisineHouse?, view
     val dish = remember(p.key) { eat?.let { dishOf(it, null) }?.takeIf { it != Dish.EMPTY } }
     val node = h.node ?: view
     val (mark, colour) = remember(p.key, country) { markOf(p, country) }
-    // a chain known by its logo and its colours, as the street knows it
-    val chain = remember(p.key, country) { Brands.forTags(p.tags, country)?.takeIf { it.logoSlug != null && it.colour != null } }
+    // a chain in its colours, as the street knows it: on its sign, as its row and its pin ([signOf]), a logo on it or not
+    val chain = remember(p.key, country) { signOf(p, country) }
     // the place's own symbol large, unless it wears a logo; its pin would only say it again
     val art = remember(p.key, node?.id) { (node?.let { artOf(it) } ?: Scene(Motif.CONTOURS)).let { a -> if (a is Emblem && !mark.startsWith("logo-")) Emblem(mark) else a } }
     Box(modifier) {
@@ -262,7 +264,7 @@ private fun CardPicture(h: ResultHit, eat: EatPlace?, house: CuisineHouse?, view
 
 /**
  * A chain's fascia, as its shop front shows it: its sign's colour edge to edge, lit from above and darker at its foot,
- * its logo large on it in its lettering's colour ([BrandSigns]).
+ * its logo large on it in its lettering's colour ([BrandSigns]); a chain with no logo its name, as a shop front says it.
  */
 @Composable
 private fun Fascia(chain: Brand, modifier: Modifier) {
@@ -270,7 +272,14 @@ private fun Fascia(chain: Brand, modifier: Modifier) {
         modifier.background(BrandSigns.colour(chain))
             .background(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.14f), 0.55f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.16f))),
         contentAlignment = Alignment.Center,
-    ) { Symbol("logo-${chain.logoSlug}", tint = BrandSigns.ink(chain), size = 76.dp) }
+    ) {
+        val slug = chain.logoSlug?.takeIf { Symbols.has("logo-$it") }
+        if (slug != null) Symbol("logo-$slug", tint = BrandSigns.ink(chain), size = 76.dp)
+        else Text(
+            brandName(chain), Modifier.padding(horizontal = 24.dp), style = indexTitle(34f).copy(textAlign = TextAlign.Center),
+            color = BrandSigns.ink(chain), maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 20.sp, maxFontSize = 34.sp),
+        )
+    }
 }
 
 /** A place's photo as a card shows it, with the credit its licence asks for. */
