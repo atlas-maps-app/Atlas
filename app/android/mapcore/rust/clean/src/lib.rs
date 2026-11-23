@@ -19,6 +19,8 @@ pub mod bridge;
 pub mod clean;
 pub mod geom;
 #[cfg(test)]
+mod layout;
+#[cfg(test)]
 mod props;
 
 use alloc::boxed::Box;
@@ -289,12 +291,8 @@ pub const STATE_COVERED: u8 = 4;
 pub const STATE_CLIPPED: u8 = 8;
 pub const STATE_COURTYARD: u8 = 16;
 
-// the sizes load/CleanAbi.h's structs have on a 64-bit target (load/Clean.cpp asserts the same of them)
-const _: () = assert!(core::mem::size_of::<AtlasCleanPoint>() == 8);
-const _: () = assert!(core::mem::size_of::<AtlasCleanFootprint>() == 32);
-const _: () = assert!(core::mem::size_of::<AtlasCleanInput>() == 64);
-const _: () = assert!(core::mem::size_of::<AtlasCleanCounts>() == 80);
-const _: () = assert!(core::mem::size_of::<AtlasCleanOutput>() == 120);
+// The structs' layout is written for the C side by src/layout.rs's test (load/CleanLayout.h), which load/Clean.cpp
+// holds load/CleanAbi.h's structs to.
 
 struct Owned {
     state: Vec<u8>,
