@@ -543,16 +543,17 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     private var closed = false
 
     /**
-     * The app's window hidden ([AtlasMap]'s lifecycle: ON_STOP) or shown again (ON_START; ENGINE.md's audit, B1): while
-     * hidden the core draws no frame ([MapCore.setHidden]), the minute's tick asks for none, and following puts the
-     * camera at each fix at once with the scene's update alone ([followUpdate]), so the tiles keep coming and the map
-     * is there on the return. Shown again: the moment and the windows as they are now, drawn at once. Main thread.
+     * The app's window hidden ([AtlasMap]'s lifecycle: ON_STOP) or shown again (ON_START; ENGINE.md's audit, B1), as
+     * this map tells the core's [MapCore.hiding]: the core is hidden while none of its maps is shown, so it draws no
+     * frame; the minute's tick asks for none, and following puts the camera at each fix at once with the scene's update
+     * alone ([followUpdate]), so the tiles keep coming and the map is there on the return. Shown again: the moment and
+     * the windows as they are now, drawn at once. Main thread.
      */
     var hidden = false
         set(value) {
             if (field == value) return
             field = value
-            core?.core?.setHidden(value)
+            core?.core?.hiding?.show(this, shown = !value)
             if (!value && !closed) update()
         }
 
@@ -600,10 +601,11 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             return
         }
         if (old != null && old.core === mapCore && old.packs === packs && old.texture == texture) return
-        old?.let(::closeCore)
+        // the same core with other packs: this map stays one of its maps, so that it is neither shown nor hidden between
+        old?.let { closeCore(it, leave = it.core !== mapCore) }
         val c = CoreMap(mapCore, packs, texture, coreChanged)
         core = c
-        if (hidden) mapCore.setHidden(true)
+        mapCore.hiding.join(this, shown = !hidden)
         canvasTick.intValue++
         place = MapPlace.DRAWN
         startRevision = -1L
@@ -666,11 +668,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     }
 
     /**
-     * The core's map goes off if [c] drew it (off the main thread: it waits for the core's render thread); a core this
-     * map hid draws again for whoever draws with it next.
+     * The core's map goes off if [c] drew it (off the main thread: it waits for the core's render thread); where
+     * [leave], this map is no longer one of the core's maps ([MapCore.hiding]), and a core hidden only for it is shown
+     * for whoever draws with it next.
      */
-    private fun closeCore(c: CoreMap) {
-        if (hidden) c.core.setHidden(false)
+    private fun closeCore(c: CoreMap, leave: Boolean = true) {
+        if (leave) c.core.hiding.leave(this)
         Thread({ runCatching { c.close() } }, "atlas-core-map-off").apply { isDaemon = true }.start()
     }
 
