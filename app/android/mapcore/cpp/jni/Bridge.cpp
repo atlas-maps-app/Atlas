@@ -46,6 +46,7 @@
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
+#include "text/SlugBands.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Kept.hpp"
 #include "tiles/Source.hpp"
@@ -292,7 +293,9 @@ public:
     [[nodiscard]] std::string stats() {
         return on_session([this] {
             std::string line = session_->stats();
-            if (map_on_) line += "; " + map_->tiles_line();
+            // while the map is on, its tiles and the glyphs its text has drawn (the process's atlas, every frame's);
+            // a core with no map on says what it always has ("vk no frames" before any)
+            if (map_on_) line += "; " + map_->tiles_line() + "; " + text::slug::shared_glyphs().line();
             return line;
         });
     }
