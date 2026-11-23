@@ -254,7 +254,7 @@ def main():
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-abi cargo test --locked --manifest-path abi/Cargo.toml   # the C interface against the planner")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-abi abi/check.sh   # the interface from C: the release library in a C and a C++ program")
-        print("  (.github/workflows/transit.yml runs the first two on x86_64 and arm64 Linux, on a push that changes app/android/transit")
+        print("  (.github/workflows/transit.yml runs them on x86_64 and arm64 Linux, on a push that changes app/android/transit")
         print("   or app/android/rust-toolchain.toml)")
     if other:
         print()

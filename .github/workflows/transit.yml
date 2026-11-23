@@ -4,6 +4,8 @@
 #   - the planner's tests, with tests/cut.rs's "the answers are the same everywhere" among them: its number was
 #     written down on an arm64 Mac, and here an x86_64 and an arm64 Linux come to the same;
 #   - the library without std, as an app links it;
+#   - the interface an app links (abi/): its tests against the planner itself, and the release library in a C and
+#     a C++ program that see the header alone, what the C program says held to tests/host.expected;
 #   - files a little wrong and queries at the edge of every field, with the overflow checks on: no panic from data.
 #
 # When: a push or a pull request to `app` (or `main`) that changes app/android/transit, the Rust it is built with
@@ -67,6 +69,16 @@ jobs:
       - name: The library without std
         working-directory: app/android/transit/planner
         run: cargo build --locked --lib --no-default-features
+      # The interface (abi/) is the planner without std behind C: core and alloc alone, a panic that aborts. Its tests
+      # ask it what the planner itself answers. check.sh then links the release library into a C and a C++ program
+      # with the runner's cc and c++, reads off what they ask of the C library (nothing of an unwinder or of Rust's
+      # standard library), and holds what the C program says of the hand-written feed to tests/host.expected.
+      - name: The interface's tests
+        working-directory: app/android/transit/abi
+        run: cargo test --locked
+      - name: The interface from C
+        working-directory: app/android/transit/abi
+        run: ./check.sh
       # The counts in each line (the files that still opened, the journeys they and the queries gave) come of the same
       # files on every platform: tests/data/fuzz-counts.txt keeps them, written down on an arm64 Mac.
       - name: Files a little wrong, and queries at their edges
