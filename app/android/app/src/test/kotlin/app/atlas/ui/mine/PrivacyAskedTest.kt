@@ -2,6 +2,8 @@ package app.atlas.ui.mine
 
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onRoot
 import app.atlas.R
 import app.atlas.Services
@@ -71,6 +73,34 @@ class PrivacyAskedTest {
         assertEquals("the screen reads the app's own count", 2L, s.asked.of(Overpass.INFO.id).sent)
         repeat(4) { compose.waitForIdle(); Thread.sleep(120) }
         val f = File(shotsDir, "mine_privacy_asked.png")
+        compose.onRoot().captureRoboImage(f.absolutePath)
+        assertTrue(f.isFile && f.length() > 1000)
+    }
+
+    /**
+     * The lower section, pictured: Wikipedia asked three times and then switched off, held back once; Commons switched
+     * off and never asked (not listed); Panoramax asked at five instances beyond its list (three named, "and 2 more").
+     */
+    @Test
+    fun theLowerSectionAsItReads() {
+        val s = testServices().apply {
+            runBlocking { settings.set(SettingsKeys.PROVIDERS_OFF, setOf(Wikipedia.ID, "commons")) }
+            repeat(2) { asked.sent(Overpass.INFO.id) }
+            repeat(3) { asked.sent(Wikipedia.ID) }
+            asked.refused(Wikipedia.ID)
+            for (h in listOf("nl.panoramax.xyz", "panoramax.ign.fr", "panoramax.openstreetmap.fr", "api.panoramax.xyz", "panoramax.mapcomplete.org")) {
+                asked.sent(SourcesModel.PANORAMAX.id, beyond = h)
+            }
+        }
+        show(s)
+        val t = at(s)
+        shown("Counted since Atlas started, at $t. Nothing of it is kept.")
+        shown("asked 3 times, last at $t · held back 1 time, last at $t")
+        shown("also at api.panoramax.xyz, nl.panoramax.xyz, panoramax.ign.fr and 2 more")
+        // the lower section's last line brought into view, so its heading and rows stand above it
+        compose.onNodeWithText("asked 3 times, last at $t · held back 1 time, last at $t").performScrollTo()
+        repeat(4) { compose.waitForIdle(); Thread.sleep(120) }
+        val f = File(shotsDir, "mine_privacy_lower.png")
         compose.onRoot().captureRoboImage(f.absolutePath)
         assertTrue(f.isFile && f.length() > 1000)
     }
