@@ -10,7 +10,7 @@ Atlas plans public transport journeys on the phone, without a signal, from a fil
 | `pack/test_ttpack.py` | Holds the packer to the bytes of the tests' four hand-written feeds, its cosine table to the planner's, the days the clock changes, what a planner's index takes, its refusals, and the list. |
 | `planner/` | The planner, in Rust: the crate `atlas_transit` and the tool `atlas-transit`. The standard library only; the library itself is core and alloc, with no unsafe code. `src/lib.rs` says what it holds to. |
 | `abi/` | The planner behind a C interface: the crate `atlas_transit_abi`, a static library for an app's own shared library, and its header `include/atlas_transit.h`. Only numbers cross it, and every line of unsafe code is here ("The interface", below). |
-| `rust-toolchain.toml` | The Rust it is built with, the same as the core's. |
+| `../rust-toolchain.toml` | The Rust it is built with, the core's too: one pin for both, a folder up. |
 
 ## Making a file
 
