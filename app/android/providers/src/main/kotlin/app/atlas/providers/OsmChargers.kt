@@ -15,7 +15,7 @@ class OsmChargers(private val overpass: Overpass) : ChargerProvider {
 
     override suspend fun near(center: LatLon, radiusM: Double, filters: ChargerFilters): List<Place> {
         val ql = OverpassQl.chargers(OverpassArea.Around(center, radiusM), socketsFor(filters))
-        return overpass.places(ql).map(::withId).filter(filters::accepts)
+        return overpass.places(ql, INFO.id).map(::withId).filter(filters::accepts)
             .sortedBy { Geo.distance(center, it.location) }.take(filters.maxResults)
     }
 
@@ -23,7 +23,7 @@ class OsmChargers(private val overpass: Overpass) : ChargerProvider {
         if (points.isEmpty()) return emptyList()
         val line = RequestLine.of(points, corridorM / 4)
         val ql = OverpassQl.chargers(OverpassArea.Along(line.points, corridorM + line.extraM), socketsFor(filters), timeoutSeconds = 120)
-        return inCorridor(points, corridorM, overpass.places(ql).map(::withId).filter(filters::accepts))
+        return inCorridor(points, corridorM, overpass.places(ql, INFO.id).map(::withId).filter(filters::accepts))
     }
 
     override suspend fun status(ids: List<String>): Map<String, ChargerStatus> = emptyMap()

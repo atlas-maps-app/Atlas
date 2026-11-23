@@ -61,11 +61,15 @@ class Overpass(
     /** Runs [ql] and returns the raw JSON text: for callers with their own parser (the route module's restriction checks). */
     suspend fun raw(ql: String): String = run(ql, retryOnRemark = true) { it.readText() }
 
-    /** Runs [ql] and parses the whole answer. */
-    suspend fun query(ql: String): OverpassResult = run(ql, retryOnRemark = true) { OverpassParser.parse(it) }
+    /**
+     * Runs [ql] and parses the whole answer. [source] is the source it is asked for where that is not Overpass, one
+     * whose data Overpass's servers serve (the chargers): the Privacy screen counts the query as that source's. The
+     * servers, their turns and the switch that holds it back stay Overpass's.
+     */
+    suspend fun query(ql: String, source: String? = null): OverpassResult = run(ql, retryOnRemark = true, source = source) { OverpassParser.parse(it) }
 
-    /** Runs [ql] and returns its tagged elements as places. */
-    suspend fun places(ql: String): List<Place> = query(ql).places()
+    /** Runs [ql] and returns its tagged elements as places; [source] as for [query]. */
+    suspend fun places(ql: String, source: String? = null): List<Place> = query(ql, source).places()
 
     /** Runs [ql] and returns its ways with geometry (ask for `out geom`, or `out body; >; out skel;`). */
     suspend fun ways(ql: String): List<OsmWay> = query(ql).ways()
@@ -94,7 +98,7 @@ class Overpass(
     }
 
     /** [retryOnRemark] is false when elements were already handed out, so a failed answer must not be repeated elsewhere. */
-    private suspend fun <T> run(ql: String, retryOnRemark: Boolean, retryable: () -> Boolean = { true }, parse: (Reader) -> T): T = sequential.withLock {
+    private suspend fun <T> run(ql: String, retryOnRemark: Boolean, retryable: () -> Boolean = { true }, source: String? = null, parse: (Reader) -> T): T = sequential.withLock {
         val query = OverpassQl.ensureJson(ql, defaultTimeoutSeconds)
         val timeout: Duration = (OverpassQl.timeoutOf(query, defaultTimeoutSeconds) + 15).seconds
         val failures = ArrayList<String>()
@@ -104,7 +108,7 @@ class Overpass(
             tried += i
             val url = endpoints[i]
             try {
-                val result = fetch(url, query, timeout, retryOnRemark, parse)
+                val result = fetch(url, query, timeout, retryOnRemark, source, parse)
                 servers.answered(url)
                 lastEndpoint = url
                 return@withLock result
@@ -145,9 +149,11 @@ class Overpass(
     /** Rests endpoint [i] for [pause], twice as long for each failure in a row before this one, [MAX_REST] at most. */
     private fun rest(i: Int, pause: Duration) = servers.failed(endpoints[i], pause.inWholeMilliseconds, MAX_REST.inWholeMilliseconds)
 
-    private suspend fun <T> fetch(url: String, query: String, timeout: Duration, retryOnRemark: Boolean, parse: (Reader) -> T): T {
+    private suspend fun <T> fetch(url: String, query: String, timeout: Duration, retryOnRemark: Boolean, source: String?, parse: (Reader) -> T): T {
         // OkHttp asks for gzip and inflates it itself, as long as we do not set Accept-Encoding by hand.
-        val request = http.request(url).post(FormBody.Builder().add("data", query).build()).build()
+        val request = http.request(url).post(FormBody.Builder().add("data", query).build())
+            .apply { if (source != null) tag(SourceTag::class.java, SourceTag(source)) }
+            .build()
         return try {
             http.stream(request, timeout) { body ->
                 val reader = InputStreamReader(body, Charsets.UTF_8).buffered(64 * 1024)

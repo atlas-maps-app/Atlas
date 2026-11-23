@@ -34,6 +34,8 @@ fun testServices(
     stores: List<PlaceSource>? = null,
     /** A router of a test's own, in place of the routing data's. */
     router: app.atlas.route.Router? = null,
+    /** Overpass's servers in place of the public ones (a mock's). */
+    overpass: List<String>? = null,
 ): Services = Services(
     context,
     ServicesConfig(
@@ -44,6 +46,7 @@ fun testServices(
         placeStores = stores ?: if (places) listOf(Fixtures.amsStore) else emptyList(),
         clock = clock,
         router = router,
+        overpassEndpoints = overpass,
     ),
 )
 

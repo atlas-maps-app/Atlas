@@ -92,6 +92,15 @@ class SourcesTruthTest {
             """\bDownloadManager\b|\bWebView\b|\bMediaPlayer\b""",
     )
 
+    /**
+     * The lines outside [ownConnections] that may hold one of [opens]' spellings, each by its file and the line's own
+     * code, with why: a source stamped by hand where a view would stamp another.
+     */
+    private val pinnedOpens = mapOf(
+        ("providers/src/main/kotlin/app/atlas/providers/Overpass.kt" to ".apply { if (source != null) tag(SourceTag::class.java, SourceTag(source)) }") to
+            "a query asked through Overpass's view for another source that Overpass's servers answer: the chargers' (OsmChargers)",
+    )
+
     /** OkHttp's builder written across two lines (`OkHttpClient` on one, `.Builder(` on the next), read in the whole text. */
     private val opensAcross = Regex("""\bOkHttpClient\s*\n\s*\.\s*Builder\s*\(|\bOkHttpClient\s*\.\s*\n\s*Builder\s*\(""")
 
@@ -100,7 +109,7 @@ class SourcesTruthTest {
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
     private val askedBy = mapOf(
-        "overpass" to "Overpass(http(Overpass.INFO.id), servers = overpassServers)", "nominatim" to "Nominatim(http(Nominatim.INFO.id))", "photon" to "Photon(http(Photon.INFO.id))", "mangrove" to "Mangrove(http(Mangrove.ID))",
+        "overpass" to "Overpass(http(Overpass.INFO.id), endpoints = config.overpassEndpoints ?: Overpass.ENDPOINTS, servers = overpassServers)", "nominatim" to "Nominatim(http(Nominatim.INFO.id))", "photon" to "Photon(http(Photon.INFO.id))", "mangrove" to "Mangrove(http(Mangrove.ID))",
         "foursquare" to "FoursquareRatings(http(FoursquareRatings.ID)", "yelp" to "YelpRatings(http(YelpRatings.ID)", "tripadvisor" to "TripAdvisorRatings(http(TripAdvisorRatings.ID)",
         "ocm" to "OpenChargeMap(http(OpenChargeMap.ID)", "osm-chargers" to "OsmChargers(overpass)", "ndw" to "NdwChargers(http(NdwChargers.ID)",
         "bnetza" to "BnetzaChargers(http(BnetzaChargers.ID)", "open-meteo" to "Weather(http(Weather.ID)",
@@ -504,7 +513,8 @@ class SourcesTruthTest {
                     val path = f.relativeTo(android).path
                     val lines = f.readLines().map { l -> l.trim().let { t -> if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) "" else l } }
                     val across = opensAcross.findAll(lines.joinToString("\n")).map { m -> path to lines.joinToString("\n").substring(0, m.range.first).count { it == '\n' } + 1 }
-                    lines.withIndex().filter { (_, l) -> opens.containsMatchIn(l) }.map { (i, _) -> path to i + 1 } + across
+                    lines.withIndex().filter { (_, l) -> opens.containsMatchIn(l) && pinnedOpens.keys.none { (file, code) -> file == path && code in l } }
+                        .map { (i, _) -> path to i + 1 } + across
                 }.toList()
         }
         assertTrue("the shipped sources at $android", found.isNotEmpty())
@@ -512,5 +522,7 @@ class SourcesTruthTest {
         assertTrue("these make a client or open a connection outside the gate: $elsewhere", elsewhere.isEmpty())
         val stale = ownConnections.keys.filter { k -> found.none { it.first == k } }
         assertTrue("these are named as opening their own but no longer do: $stale", stale.isEmpty())
+        val stalePins = pinnedOpens.keys.filter { (file, code) -> File(android, file).readLines().count { code in it } != 1 }
+        assertTrue("these pinned lines are not in their files once: $stalePins", stalePins.isEmpty())
     }
 }

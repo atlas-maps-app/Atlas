@@ -102,6 +102,8 @@ data class ServicesConfig(
     val router: Router? = null,
     /** Nearby places by category in place of the phone's own ([Services.places]; tests: answers of their own). */
     val placeFinder: PlaceFinder? = null,
+    /** Overpass's servers in place of the public ones ([Services.overpass]; tests: a mock). */
+    val overpassEndpoints: List<String>? = null,
 )
 
 /**
@@ -330,7 +332,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     val overpassServers: OverpassServers by lazy { OverpassServers(inUse = { url -> url.toHttpUrlOrNull()?.let { rootHttp.limiter.busy(it.host) } == true }) }
 
-    val overpass: Overpass by lazy { Overpass(http(Overpass.INFO.id), servers = overpassServers) }
+    val overpass: Overpass by lazy { Overpass(http(Overpass.INFO.id), endpoints = config.overpassEndpoints ?: Overpass.ENDPOINTS, servers = overpassServers) }
     val weather: Weather by lazy { Weather(http(Weather.ID), dirs.providers, keys, clock = { clock.instant() }) }
     /** Photon for the search box; for an address here, Nominatim too where Photon cannot answer (each unless switched off). */
     val geocoder: Geocoder by lazy { FailoverGeocoder(Photon(http(Photon.INFO.id)), Nominatim(http(Nominatim.INFO.id))) }
