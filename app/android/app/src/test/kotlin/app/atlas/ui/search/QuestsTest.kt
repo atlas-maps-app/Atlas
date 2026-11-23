@@ -5,6 +5,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.Place
 import app.atlas.places.FactKind
 import app.atlas.places.Facts
+import app.atlas.testing.Nowhere
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -24,13 +25,13 @@ class QuestsTest {
 
     @Test
     fun unmappedYesNoFactsBecomeQuestsMostImportantFirst() {
-        val quests = Quests.of(Facts.of(cafe.tags, "en", now))
+        val quests = Quests.of(Facts.of(cafe.tags, "en", now, context = Nowhere))
         assertTrue("quests: ${quests.map { it.key }}", quests.isNotEmpty())
         assertTrue(quests.size <= 3)
         // Wheelchair is mapped (no): never asked again.
         assertTrue(quests.none { it.fact.kind == FactKind.WHEELCHAIR })
         assertEquals(quests.sortedByDescending { it.fact.priority }, quests)
-        val wifi = Quests.of(Facts.of(cafe.tags, "en", now), max = 10).firstOrNull { it.fact.kind == FactKind.INTERNET }
+        val wifi = Quests.of(Facts.of(cafe.tags, "en", now, context = Nowhere), max = 10).firstOrNull { it.fact.kind == FactKind.INTERNET }
         if (wifi != null) {
             assertEquals("internet_access", wifi.key)
             assertEquals("wlan", wifi.valueFor(true))
@@ -41,13 +42,13 @@ class QuestsTest {
     @Test
     fun mappedFactsAskNothing() {
         val full = cafe.tags + mapOf("outdoor_seating" to "yes", "internet_access" to "wlan", "diet:vegetarian" to "yes", "takeaway" to "no", "toilets" to "yes")
-        val quests = Quests.of(Facts.of(full, "en", now), max = 20)
+        val quests = Quests.of(Facts.of(full, "en", now, context = Nowhere), max = 20)
         assertFalse(quests.any { it.key in setOf("outdoor_seating", "internet_access", "diet:vegetarian", "takeaway", "toilets") })
     }
 
     @Test
     fun theNoteSaysWhatWhereAndWhichTag() {
-        val quest = Quests.of(Facts.of(cafe.tags, "en", now), max = 10).first()
+        val quest = Quests.of(Facts.of(cafe.tags, "en", now, context = Nowhere), max = 10).first()
         val note = Quests.noteText(cafe, quest, yes = true)
         val lines = note.lines()
         assertTrue(lines[0], lines[0].startsWith("Café Kalkhoven (Cafe) — https://www.openstreetmap.org/node/1147560517"))

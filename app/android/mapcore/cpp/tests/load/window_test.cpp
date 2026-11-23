@@ -1,11 +1,12 @@
 // A window of the map the phone builds (load/Window.hpp): where a place is (load/Countries.hpp, the port's Countries),
 // a window's box, frame and place, and windows built from a region's data:
-//   - every L14 tile of the canal ring built as a window, from the elements of the region's raw.json that the renders'
-//     Overpass query returns for the window's box (each built in the region's frame, by its rules), is the packer's
-//     tile of the whole region feature for feature: their canonical dumps are the same once the places in the scene's
-//     lists are taken out (a window's lists hold its own data, so its indexes and the ground's ranks are its own), and
-//     the variants of the region's home view, which a window has no views for, are left out; and the app's canal ring,
-//     cut in the renders' New looks, is the New looks' windows so (one Netherlands: the same cut and looks);
+//   - the app's canal ring, cut by the core in the renders' New looks (ATLAS_APP_TILES_DIR), is the New looks'
+//     windows (one Netherlands: the same cut and looks): every L14 tile of it built again as a window, from the
+//     elements of the region's raw.json that the renders' Overpass query returns for the window's box (each built in
+//     the region's frame, by its rules), is the tile of the whole region feature for feature: their canonical dumps are
+//     the same once the places in the scene's lists are taken out (a window's lists hold its own data, so its indexes
+//     and the ground's ranks are its own), and the variants of the region's home view, which a window has no views
+//     for, are left out (the packer's own pack of the canal ring, the port's cut, no longer is since core-p14);
 //   - a window in Paris, anywhere's place (its country's tradition, its frame cell's frame) builds, with fr_paris's
 //     looks, and its pack opens and says what it is;
 //   - a window carries a sign gantry and a goods conveyor, each a line of its own (sources 7 and 8, with their ids and
@@ -13,9 +14,13 @@
 //   - a window by the sea builds: the sea regions.py closes from a coastline, whose points along its box are computed,
 //     lies on the grid at their nearest grid points;
 //   - a window that holds nothing to draw is a pack without a tile, whose manifest says so, and joins no frame cell;
-//   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it.
+//   - a water ring that reaches too far (the fuzzer's) refuses a region's cut, and a window cuts its own tile of it;
+//   - the canal ring's and Paris's houseboats carry no seam, cut whole and in their windows.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Seams.hpp"
+#include "load/Amsterdam.hpp"
+#include "load/Clean.hpp"
 #include "load/Countries.hpp"
 #include "load/Cut.hpp"
 #include "load/PackStyle.hpp"
@@ -41,6 +46,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -53,6 +59,8 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -656,16 +664,6 @@ void canal_ring_window_by_window(const std::string& regions, const std::string& 
 
 } // namespace
 
-TEST_CASE("load: the canal ring built window by window is the packer's, tile for tile (ATLAS_REGIONS_DIR)") {
-    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
-    const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
-    if (regions.empty() || dir.empty()) {
-        MESSAGE("ATLAS_REGIONS_DIR or ATLAS_TILES_DIR is not set: no window is built from the canal ring here");
-        return;
-    }
-    canal_ring_window_by_window(regions, dir, false);
-}
-
 // The app's canal ring (cut in the New looks by its bundled set, :app:generateBundledTiles with the core's tool) and
 // the windows the phone builds around it are one cut in one look (ENGINE.md step 3, one Netherlands): each of its L14
 // tiles is the New looks' window of its place, but for the frame (a window's is its frame cell's, so the test builds
@@ -679,6 +677,159 @@ TEST_CASE(
         return;
     }
     canal_ring_window_by_window(regions, dir, true);
+}
+
+// Every rule of the buildings' cleaning fits the window (load/Clean.hpp): a window holds its tile's box and 200 m,
+// each way whole, and a building is cleaned in the window of the tile its mapped centroid lies in, with what that
+// window holds. The canal ring's 16 windows, each loaded as the phone loads it, its buildings kept where they are
+// filed, and all of them together cleaned once more: what that finds still to do is what the windows left (a pair one
+// of which reaches more than 200 m past the other's tile is in neither's window whole).
+TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that cannot be there (ATLAS_REGIONS_DIR)") {
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: no window is built from the canal ring here");
+        return;
+    }
+    const std::string text = read_text(std::filesystem::path(regions) / "grachten" / "raw.json");
+    ATLAS_REQUIRE(!text.empty());
+    const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    // the region's frame, for all of them together
+    const tl::Frame whole{.lat0 = 52.372, .lon0 = 4.891, .kx = 0x1.097c73fb3b404p+16, .kz = 110540};
+    const load::RegionConfig region{.name = "grachten",
+                                    .frame = whole,
+                                    .bbox = {52.36, 4.872, 52.393, 4.922},
+                                    .tradition = nullptr,
+                                    .palette = load::amsterdam_palette()};
+    const auto loaded = load::load_region(*doc, region);
+    ATLAS_REQUIRE(loaded.has_value());
+    // each drawn footprint of the region loaded whole, by its element and its mapped place, for the comparison
+    const auto key_of = [](const load::Building& b, bool part, const tl::GridPoint& first) {
+        return std::format("{}{}{}@{},{}", part ? "p" : "b", b.relation ? "r" : "w", b.id, first.lat, first.lon);
+    };
+    const auto grid_of = [](const tl::Frame& f, const std::vector<load::V2>& poly) {
+        std::vector<tl::GridPoint> out;
+        out.reserve(poly.size());
+        for (const load::V2& p : poly) {
+            out.emplace_back(tl::grid_lat(f, p.z).value_or(0), tl::grid_lon(f, p.x).value_or(0));
+        }
+        return out;
+    };
+    struct Kept {
+        std::vector<tl::GridPoint> ring;
+        double min = 0;
+        double h = 0;
+        bool part = false;
+    };
+    std::unordered_map<std::string, std::vector<tl::GridPoint>> as_whole;
+    // what the region loaded whole has of an element a window draws and it does not: hidden there, or filed elsewhere
+    const auto element_of = [](const load::Building& b, bool part) {
+        return std::format("{}{}{}", part ? "p" : "b", b.relation ? "r" : "w", b.id);
+    };
+    std::unordered_set<std::string> hidden_whole;
+    std::unordered_set<std::string> elements_whole;
+    for (const auto* list : {&loaded->buildings, &loaded->parts}) {
+        for (const load::Building& b : *list) {
+            const load::V2 at = b.at ? *b.at : atlas::geometry::centroid(b.poly);
+            const tl::GridPoint ref = tl::nearest_grid(whole, at.x, at.z);
+            elements_whole.insert(element_of(b, list == &loaded->parts));
+            if (b.hidden) {
+                hidden_whole.insert(key_of(b, list == &loaded->parts, ref));
+                continue;
+            }
+            as_whole[key_of(b, list == &loaded->parts, ref)] = grid_of(whole, b.poly);
+        }
+    }
+    const tl::TileKey sw = tl::tile_of(load::window_level, 523'600'000, 48'720'000);
+    const tl::TileKey ne = tl::tile_of(load::window_level, 523'930'000, 49'220'000);
+    std::vector<Kept> kept;
+    std::size_t windows = 0;
+    std::size_t differ = 0;
+    std::size_t absent = 0;
+    std::size_t absent_hidden = 0; // of them: hidden in the region loaded whole
+    std::size_t absent_moved = 0;  // of them: the element is there, filed at another point
+    std::string absent_first;
+    load::BuildingCounts sum;
+    for (std::uint32_t y = ne.y; y <= sw.y; ++y) {
+        for (std::uint32_t x = sw.x; x <= ne.x; ++x) {
+            const tl::TileKey tile{load::window_level, x, y};
+            const load::WindowPlace place = load::place_of(tile);
+            const osm::Document mine = query(*doc, load::window_box(tile));
+            const load::RegionConfig config{.name = place.region,
+                                            .frame = place.frame,
+                                            .bbox = load::window_box(tile),
+                                            .tradition = nullptr,
+                                            .keep_homes = place.new_looks,
+                                            .close_up = place.close_up,
+                                            .palette = load::region_palette(place.region)};
+            const auto scene = load::load_region(mine, config);
+            ATLAS_REQUIRE(scene.has_value());
+            ++windows;
+            sum.unsettled += scene->counts.unsettled;
+            sum.overlapping_pairs += scene->counts.overlapping_pairs;
+            for (const auto* list : {&scene->buildings, &scene->parts}) {
+                for (const load::Building& b : *list) {
+                    const load::V2 at = b.at ? *b.at : atlas::geometry::centroid(b.poly);
+                    const tl::GridPoint ref = tl::nearest_grid(place.frame, at.x, at.z);
+                    if (tl::tile_of(load::window_level, ref.lat, ref.lon) != tile || b.hidden) continue;
+                    Kept k{.ring = grid_of(place.frame, b.poly), .min = b.min, .h = b.h, .part = list == &scene->parts};
+                    // as the region loaded whole has it? (the same element filed at the same place, the same ring)
+                    const tl::GridPoint in_whole =
+                        tl::nearest_grid(whole, whole.x(ref.lon), whole.z(ref.lat)); // the same grid point, both frames
+                    // (a centroid is its corners' mean, which for one footprint in a hundred lies half a grid step
+                    // between two points: it then rounds either way, by the frame it is measured in)
+                    std::string key = key_of(b, k.part, in_whole);
+                    auto it = as_whole.find(key);
+                    for (std::int32_t d = 0; d < 9 && it == as_whole.end(); ++d) { // the nine points around it
+                        const tl::GridPoint beside{in_whole.lat + (d / 3) - 1, in_whole.lon + (d % 3) - 1};
+                        const std::string other = key_of(b, k.part, beside);
+                        if (as_whole.contains(other) || hidden_whole.contains(other)) {
+                            key = other;
+                            it = as_whole.find(key);
+                            break;
+                        }
+                    }
+                    if (it == as_whole.end()) {
+                        const bool hidden = hidden_whole.contains(key);
+                        const bool moved = !hidden && elements_whole.contains(element_of(b, k.part));
+                        absent_hidden += hidden ? 1U : 0U;
+                        absent_moved += moved ? 1U : 0U;
+                        if (absent++ < 6) {
+                            absent_first += std::format(" {}{}", key, hidden ? " (hidden)" : (moved ? " (moved)" : ""));
+                        }
+                    } else if (it->second != k.ring) {
+                        ++differ;
+                    }
+                    kept.push_back(std::move(k));
+                }
+            }
+        }
+    }
+    // all of them together, cleaned once more: whatever it finds, the windows left
+    load::Scene together;
+    for (const Kept& k : kept) {
+        load::Building b;
+        for (const tl::GridPoint& p : k.ring) b.poly.emplace_back(whole.x(p.lon), whole.z(p.lat));
+        b.min = k.min;
+        b.h = k.h;
+        b.bb = load::box_of(b.poly);
+        (k.part ? together.parts : together.buildings).push_back(std::move(b));
+    }
+    load::clean_buildings(together, whole);
+    const load::BuildingCounts& c = together.counts;
+    const std::string line = std::format(
+        "the canal ring's {} windows: {} drawn footprints kept; together they leave {} pairs overlapping in plan and "
+        "height, {} outlines to cut by parts, {} to hide, {} bases to raise; {} are not the region's loaded whole, {} "
+        "it does not draw ({} hidden there, {} filed at another point; the first:{}); {} cleanings unsettled",
+        windows, kept.size(), c.pairs_before, c.covered, c.hidden, c.raised, differ, absent, absent_hidden,
+        absent_moved, absent_first, sum.unsettled);
+    MESSAGE(line);
+    (void)std::printf("%s\n", line.c_str()); // NOLINT: the line a run's log keeps
+    CHECK(windows == 16);
+    CHECK(sum.overlapping_pairs == 0);
+    CHECK(sum.unsettled == 0);
+    CHECK(c.pairs_before == 0);
+    CHECK(c.covered + c.hidden == 0);
 }
 
 TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_REGIONS_DIR)") {
@@ -863,4 +1014,151 @@ TEST_CASE(
     CHECK(store.remove("window/" + load::place_of(keys[2]).name));
     CHECK(store.packs().empty());
     CHECK_FALSE(store.remove("window/none"));
+}
+
+namespace {
+
+/// The drawn houseboats of a decoded tile, its buildings and parts as stage T draws them (not hidden, with a height and
+/// a ring: geometry/Walls.cpp:901-918), and the ones whose ring carries a seam, by element (`p:` a part).
+struct Houseboats {
+    std::size_t drawn = 0;
+    std::vector<std::string> seamed;
+};
+
+void houseboats_of(const tl::Tile& tile, const tl::Frame& frame, Houseboats& out) {
+    for (const tl::LayerId id : {tl::LayerId::building, tl::LayerId::part}) {
+        const tl::Layer* l = tile.layer(id);
+        if (l == nullptr) continue;
+        for (std::uint32_t i = 0; i < l->count; ++i) {
+            const tl::RingView ring = l->ring(tl::building::ring, i);
+            if (l->boolean(tl::building::hidden, i).value_or(false) || !l->decimal(tl::building::h, i).has_value() ||
+                ring.size() == 0) {
+                continue;
+            }
+            if ((static_cast<std::uint64_t>(l->integer(tl::building::flags, i)) & tl::building::flag_houseboat) == 0) {
+                continue;
+            }
+            ++out.drawn;
+            std::vector<load::V2> poly;
+            poly.reserve(ring.size());
+            for (std::size_t k = 0; k < ring.size(); ++k) poly.emplace_back(frame.x(ring.lon[k]), frame.z(ring.lat[k]));
+            if (!atlas::geometry::seams(poly).empty()) {
+                const bool relation = l->string(tl::building::otype, i).value_or(std::string_view{}) == "relation";
+                out.seamed.push_back(std::format("{}{}{}", id == tl::LayerId::part ? "p:" : "", relation ? "r" : "w",
+                                                 l->integer(tl::building::id, i)));
+            }
+        }
+    }
+}
+
+} // namespace
+
+// A houseboat's ring carries no seam. Stage T walls a houseboat on its own (geometry/Houseboats.cpp): a hull on every
+// edge of its ring and a cabin within it, testing no seam, so a seam there would stand as a wall across the boat.
+// Nothing in the cleaning exempts a houseboat: one that overlaps a jetty or another boat, or that a part covers, is
+// cut and seamed as any building is (load/Clean.cpp). The engine audit's 7.1 counted them first (19 November 2026):
+// of the canal ring's 1,083 and Paris's 3, none, in each region cut whole (the canal ring as the app's bundled pack is
+// cut) and in its windows as the phone builds them.
+TEST_CASE("load: the canal ring's and Paris's houseboats carry no seam, cut whole and in windows (ATLAS_REGIONS_DIR)") {
+    const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
+    if (regions.empty()) {
+        MESSAGE("ATLAS_REGIONS_DIR is not set: no houseboat is looked at here");
+        return;
+    }
+    for (const std::string_view name : {std::string_view{"grachten"}, std::string_view{"paris"}}) {
+        const std::filesystem::path folder = std::filesystem::path(regions) / name;
+        const std::string text = read_text(folder / "raw.json");
+        const std::string json = read_text(folder / "region.json");
+        ATLAS_REQUIRE(!text.empty() && !json.empty(), name);
+        const auto doc = osm::read_overpass(std::as_bytes(std::span(text.data(), text.size())));
+        ATLAS_REQUIRE(doc.has_value(), name);
+        const auto region = tl::read_json(std::as_bytes(std::span(json.data(), json.size())));
+        ATLAS_REQUIRE(region.has_value(), name);
+        const tl::Value origin = region->root().find("origin").value_or(tl::Value());
+        const tl::Value bbox = region->root().find("bbox").value_or(tl::Value());
+        ATLAS_REQUIRE(origin.size() == 2 && bbox.size() == 4, name);
+        std::array<double, 4> box{};
+        for (std::size_t i = 0; i < box.size(); ++i) box.at(i) = bbox.child(i).number().value_or(0);
+        const double lat0 = origin.child(0).number().value_or(0);
+        // the region's frame, as the packer gives it (regions_test.cpp's)
+        const tl::Frame frame{.lat0 = lat0,
+                              .lon0 = origin.child(1).number().value_or(0),
+                              .kx = 111320 * atlas::pymath::cos(atlas::pymath::radians(lat0)),
+                              .kz = 110540};
+
+        // the region cut whole, the canal ring as the app's bundled pack is (new looks: its homes', no tradition,
+        // close up)
+        Houseboats whole;
+        {
+            std::shared_ptr<const load::Tradition> tradition;
+            if (const auto t = region->root().find("tradition")) {
+                if (const auto named = t->string()) tradition = load::tradition_named(*named);
+            }
+            load::RegionConfig config{.name = name,
+                                      .frame = frame,
+                                      .bbox = box,
+                                      .tradition = tradition,
+                                      .palette = load::region_palette(name)};
+            if (name == "grachten") {
+                config.keep_homes = true;
+                config.tradition.reset();
+                config.close_up = true;
+            }
+            const auto scene = load::load_region(*doc, config);
+            ATLAS_REQUIRE(scene.has_value(), name);
+            const auto cut = load::cut_region(*scene, frame, {});
+            ATLAS_REQUIRE(cut.has_value(), cut.error().what);
+            for (const tl::TileFill& t : *cut) {
+                if (t.level() != load::window_level) continue;
+                auto raw = tl::encode_tile(t);
+                ATLAS_REQUIRE(raw.has_value(), tl::describe(raw.error()));
+                tl::TileDecoder decoder;
+                atlas::Arena arena(8U << 20U, atlas::Growth::grows, "houseboat test, a region's tile");
+                const auto tile = decoder.decode(*raw, arena);
+                ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+                houseboats_of(*tile, frame, whole);
+            }
+        }
+
+        // its windows, each as the phone builds it
+        Houseboats windows;
+        const auto at = [](double degrees) { return static_cast<std::int32_t>(std::lround(degrees * 1e7)); };
+        const tl::TileKey sw = tl::tile_of(load::window_level, at(box[0]), at(box[1]));
+        const tl::TileKey ne = tl::tile_of(load::window_level, at(box[2]), at(box[3]));
+        for (std::uint32_t y = ne.y; y <= sw.y; ++y) {
+            for (std::uint32_t x = sw.x; x <= ne.x; ++x) {
+                const tl::TileKey key{load::window_level, x, y};
+                const load::WindowPlace place = load::place_of(key);
+                const auto built =
+                    load::build_window(query(*doc, load::window_box(key)), tl::Sha256Digest{}, key, place);
+                ATLAS_REQUIRE(built.has_value(), built.error().what);
+                auto pack = tl::Pack::open(std::make_unique<tl::MemorySource>(built->pack));
+                ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+                if (pack->chunks().chunks().empty()) continue;
+                tl::Zstd zstd;
+                tl::TileDecoder decoder;
+                atlas::Arena arena(8U << 20U, atlas::Growth::grows, "houseboat test, a window's tile");
+                std::vector<std::byte> raw;
+                std::vector<std::byte> scratch;
+                const auto tile = pack->decode(pack->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
+                ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+                houseboats_of(*tile, place.frame, windows);
+            }
+        }
+
+        const auto first = [](const Houseboats& h) {
+            std::string out;
+            for (std::size_t i = 0; i < h.seamed.size() && i < 6; ++i) out += " " + h.seamed[i];
+            return out;
+        };
+        const std::string line = std::format(
+            "{}'s houseboats: {} drawn cut whole, {} with a seam{}; {} drawn in its windows, {} with a seam{}", name,
+            whole.drawn, whole.seamed.size(), first(whole), windows.drawn, windows.seamed.size(), first(windows));
+        MESSAGE(line);
+        (void)std::printf("%s\n", line.c_str()); // NOLINT: the line a run's log keeps
+        CHECK(whole.drawn > 0);
+        CHECK(whole.seamed.empty());
+        CHECK(windows.drawn == whole.drawn);
+        CHECK(windows.seamed.empty());
+    }
 }

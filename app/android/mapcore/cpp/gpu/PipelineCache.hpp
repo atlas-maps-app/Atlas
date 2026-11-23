@@ -2,7 +2,9 @@
 // a header of our own with the vendor, device, driver version, pipelineCacheUUID, the hash of the core's SPIR-V and a
 // checksum of the data. Any mismatch or damage discards the file before the driver sees it (a corrupt cache can crash a
 // driver, D5.10). Written back atomically after pipelines are made through it and when the app goes to the background,
-// only where a pipeline was made through it since its last write (a write is a crash-guard stage of its own).
+// only where a pipeline was made through it since its last write (a write is a crash-guard stage of its own), and then
+// only where the driver's data differs from what the file holds: a launch whose pipelines all came from the file
+// writes nothing, and one that added to it writes once.
 #pragma once
 
 #include "gpu/Error.hpp"
@@ -60,7 +62,10 @@ public:
     /// Whether a pipeline was made through it since it was opened or last written back.
     [[nodiscard]] bool changed() const noexcept { return std::atomic_ref(changed_).load(std::memory_order_relaxed); }
     /// Writes the cache's data behind its header, through a temporary file renamed into place and synced, when a
-    /// pipeline was made through it since it was opened or last written back (changed); else nothing (0 bytes).
+    /// pipeline was made through it since it was opened or last written back (changed) and the driver's data is not
+    /// what the file holds (its size and checksum as read at the open or written last); else nothing (0 bytes). Each
+    /// save that reads the driver's data logs which of the two it did, in one line (`vk pipeline cache: …`). One thread
+    /// at a time.
     [[nodiscard]] Result<std::size_t> save() const;
     /// Deletes the file (the crash guard's retry without the cache).
     static void remove(const std::filesystem::path& path) noexcept;
@@ -76,6 +81,13 @@ private:
     /// A pipeline was made through it since it was opened or last written back (through a const cache, as the driver's
     /// data behind the handle changes), read and written atomically.
     alignas(std::atomic_ref<bool>::required_alignment) mutable bool changed_ = false;
+    /// What the file holds behind its header, when it is the driver's data: its size and checksum, as read at the open
+    /// (a hit) or written last (save, through a const cache as changed_ is).
+    struct Held {
+        std::uint64_t size = 0;
+        std::uint64_t checksum = 0;
+    };
+    mutable std::optional<Held> held_;
 };
 
 /// The header the cache of `facts`' device carries.

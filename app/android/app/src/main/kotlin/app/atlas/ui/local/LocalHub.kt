@@ -85,7 +85,7 @@ class LocalHub(private val services: Services) {
         marineOverride?.invoke(at) ?: runCatching { if (online()) services.weather.marine(at) else services.weather.keptMarine(at) }.getOrNull()
 
     /** Wikidata for "named after"; tests replace the way it reads a URL. */
-    var etymology: Etymology = Etymology { url -> services.http.text(url) }
+    var etymology: Etymology = Etymology { url -> services.http(app.atlas.providers.Wikidata.ID).text(url) }
 
     /** Tests: the height above sea level of a point, instead of the forecast's. */
     @Volatile
@@ -114,9 +114,9 @@ class LocalHub(private val services: Services) {
         TleStore(
             file = File(services.dirs.files, "local/iss.tle"),
             bundled = { services.context.resources.openRawResource(R.raw.local_iss).bufferedReader().use { it.readText() } },
-            fetch = { services.http.text(TleStore.URL) },
+            fetch = { services.http(app.atlas.ui.mine.SourcesModel.ISS_ORBIT.id).text(TleStore.URL) },
             clock = services.clock,
-            second = { services.http.text(TleStore.SECOND_URL) },
+            second = { services.http(app.atlas.ui.mine.SourcesModel.ISS_ORBIT.id).text(TleStore.SECOND_URL) },
         )
     }
 

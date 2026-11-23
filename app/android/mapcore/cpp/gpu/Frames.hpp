@@ -9,6 +9,7 @@
 #include "gpu/Passes.hpp"
 #include "gpu/Sync.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -98,11 +99,19 @@ struct FrameSlot {
 class Frames {
 public:
     static constexpr std::uint32_t in_flight = 2;
+    /// The longest the frame loop waits on a device's GPU at once (a slot's previous frame, an image to draw into, a
+    /// present's fence), ns: a GPU that never finishes (a hang the driver does not report as a lost device) fails the
+    /// frame there and leaves the render thread free, where a wait without end would hold it, and the app with it. A
+    /// phone's GPU (integrated or discrete) finishes a frame in milliseconds: 2 s. A rasterizer on the CPU or a virtual
+    /// GPU (CI's lavapipe, the emulator's) takes seconds over a whole map's frame under the sanitizers: 60 s.
+    [[nodiscard]] static std::uint64_t wait_ns(const Device& device) noexcept;
 
     [[nodiscard]] static Result<Frames> create(const Device& device);
 
     /// Waits for the next slot's previous frame (it has had a whole frame to finish), reads its GPU times, resets its
-    /// command pool and begins its command buffer for frame `number`.
+    /// command pool and begins its command buffer for frame `number`. A previous frame not finished within
+    /// slot_wait_ns() fails the frame (vk::Result::eTimeout) and leaves the slot as it was: the next begin waits for it
+    /// again.
     [[nodiscard]] Result<FrameSlot*> begin(std::uint64_t number);
     /// Writes a timestamp mark.
     void mark(const FrameSlot& slot, Mark mark) const;
@@ -113,7 +122,22 @@ public:
     [[nodiscard]] const GpuTimes& last_times() const noexcept { return last_; }
     /// How long the last begin waited for its slot's previous frame, ms (0 where it had finished or none was there).
     [[nodiscard]] double waited_ms() const noexcept { return waited_ms_; }
-    /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests).
+    /// How long a begin waits for its slot's previous frame at most, ns: wait_ns(device), or a test's shorter limit.
+    [[nodiscard]] std::uint64_t slot_wait_ns() const noexcept { return slot_wait_ns_; }
+    /// A test's: a begin waits `most` ns at most, when that is shorter.
+    void limit_slot_wait(std::uint64_t most) noexcept { slot_wait_ns_ = std::min(most, slot_wait_ns_); }
+    /// A test's: the next begin's slot is taken as holding a frame the GPU never finishes (its fence unsignalled and
+    /// nothing submitted to signal it), so that begin waits its bound out, as on a hung GPU; let_go() submits the fence
+    /// alone, which the GPU then signals. A held slot's earlier frame is waited for first.
+    [[nodiscard]] Result<void> hold_next();
+    [[nodiscard]] Result<void> let_go();
+#if defined(ATLAS_TESTS)
+    /// A test's: the next submit ends its frame's commands, then fails as a queue that refuses them does (out of device
+    /// memory) before they reach the GPU: a frame recorded and never submitted.
+    void fail_next_submit() noexcept { fail_submit_ = true; }
+#endif
+    /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests): without a
+    /// bound, since what follows destroys or remakes what those frames use.
     void drain();
 
 private:
@@ -125,6 +149,11 @@ private:
     vk::raii::QueryPool timestamps_{nullptr}; // empty where the queue has no timestamps
     vk::raii::QueryPool statistics_{nullptr}; // empty without pipelineStatisticsQuery
     std::uint32_t next_ = 0;
+    std::uint64_t slot_wait_ns_ = 0;
+    std::uint32_t held_ = in_flight; // the slot hold_next() holds, else in_flight
+#if defined(ATLAS_TESTS)
+    bool fail_submit_ = false; // fail_next_submit
+#endif
     double period_ns_ = 1.0;
     std::uint64_t mask_ = 0;
     GpuTimes last_;
@@ -195,6 +224,11 @@ public:
 
     /// Draws one frame, presented at `desired_ns` where the output can say when (0: as soon as possible).
     [[nodiscard]] Result<FrameReport> draw(std::uint64_t desired_ns);
+    /// Whether the last draw recorded its frame and then failed to submit it: what the content moved on as it recorded
+    /// (its kept results, the layouts it tracks, the uploads it let go of) is not what the GPU holds, nor is the
+    /// output's (an image acquired and not presented, its semaphore signalled), so only a rebuild of what was made on
+    /// the device makes them agree again (standin::Session takes the path of a lost device).
+    [[nodiscard]] bool unsubmitted() const noexcept { return unsubmitted_; }
     /// Switches the configuration (VK bench): waits for the frames in flight, then remakes the main pass and the
     /// content.
     [[nodiscard]] Result<void> reconfigure(const Configuration& configuration);
@@ -206,6 +240,7 @@ public:
     [[nodiscard]] const Configuration& configuration() const noexcept { return pass_->spec().config; }
     [[nodiscard]] const MainPass& pass() const noexcept { return *pass_; }
     [[nodiscard]] const Frames& frames() const noexcept { return *frames_; }
+    [[nodiscard]] Frames& frames() noexcept { return *frames_; }
     [[nodiscard]] std::uint64_t frame_count() const noexcept { return number_; }
 
 private:
@@ -221,7 +256,8 @@ private:
     Sync sync_;
     std::unique_ptr<Frames> frames_;
     std::unique_ptr<MainPass> pass_;
-    bool prepared_ = false; // the content holds what this renderer prepared for pass_
+    bool prepared_ = false;    // the content holds what this renderer prepared for pass_
+    bool unsubmitted_ = false; // unsubmitted()
     std::uint64_t number_ = 0;
 };
 

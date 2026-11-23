@@ -35,9 +35,17 @@
 // the coverage of the union's edges (4x samples, the port's analytic coverage of each path, composited) and the
 // bilinear filter's rounding; the grid, the boxes and the fade are the port's.
 //
-// The grid, the mask and the blur's buffers are the frame slot's own (SoftShadowSlot, ENGINE.md's gain 17): only the
-// frame before in the same slot read them, finished by then, so none of the steps waits for an earlier frame's work,
-// and the frame's compute and binning can run while the last frame is still shading.
+// The result is kept (key_shadow_mask): the grid, the mask and its blur are a function of what the steps read and of
+// nothing else (the camera, the mask's size, the sun's vector, the deviation and the opacity as printed, each casting
+// tile's place, records and radius cut), none of which a tile's fade, a label or the location's dot moves. Where it is
+// the last result's, that stands: no step runs and nothing is dispatched, and soft_fs draws the last result back.
+//
+// The grid, the mask and the blur's buffers are one of two entries (SoftShadowSlot, ENGINE.md's gain 17), not the
+// frame slot's: a kept result stands in its entry, which each frame after it reads. A new result goes to the entry the
+// last frame did not read (the ripple's rule), which only frames that have finished read, so none of the steps waits
+// for an earlier frame's work, and the frame's compute and binning can run while the last frame is still shading. Each
+// frame slot's set 3 is made to name its frame's entry before the frame is recorded (the frame before in that slot has
+// finished with it).
 #include "base/log.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -54,10 +62,12 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <tuple>
+#include <vector>
 
 namespace atlas::passes {
 
@@ -91,8 +101,14 @@ constexpr float widest_sigma = 2.6F * 8.0F;
 constexpr vk::DeviceSize grid_bytes = 96;
 /// The texels a workgroup of shadow_blur.slang writes along each side.
 constexpr std::uint32_t blur_tile = 32;
-/// The blur's passes (vImage's three boxes), a set each in a frame slot's.
+/// The blur's passes (vImage's three boxes), a set each in an entry's.
 constexpr std::uint32_t blur_passes = std::tuple_size_v<decltype(SoftShadowSlot::blur_sets)>;
+/// A tile's record in the tile table (ground.slang's TILE_WORDS), its place first (camera.slang's TilePlace).
+constexpr std::size_t tile_words = 20;
+/// The frame camera's words (shared/camera.slang's FrameCamera), of which the mask's steps read all but flags.y, the
+/// frame's number: its six float4s, flags.x (the snap at rest) and flags.zw (the bend's target).
+constexpr std::size_t frame_camera_words = 28;
+constexpr std::size_t frame_number_word = 25;
 
 /// Whether a surface transform turns the view a quarter or three quarters (the output's size is the view's turned).
 [[nodiscard]] bool turned(vk::SurfaceTransformFlagBitsKHR transform) noexcept {
@@ -522,18 +538,86 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     return {};
 }
 
+void Ground::key_shadow_mask(const std::vector<std::uint32_t>& words, const frame::FrameState& state) {
+    mask_kept_ = false;
+    if (!soft(state)) return;
+    Pipelines& p = *pipelines_;
+    SoftShadows& s = *p.soft;
+    const Words& w = *words_;
+    const style::ThemeBlock& th = state.theme;
+    // What the steps read, and nothing else: the camera as they project with it (its basis, principal point and focal
+    // length, the frame's size, density and near plane, the output's turn, the bend and the snap at rest; not the
+    // frame's number), the mask's size, the sun's vector, the deviation and the opacity as printed, and each casting
+    // tile by its entry in the table: its handle and its heap's base (another tile in the same range is another key),
+    // its place as the steps read it (the offset's xyz and the scale's x, eye_relative: not its fade, scale.w, nor the
+    // dither's start, offset.w, which none of them reads), its shadows' points and records, how many it casts, and
+    // which of them the frame draws (the radius cut). A tile that casts none is read by no step. So the key holds
+    // through a tile's fade, a label's and the location's dot; a moving camera makes it again each frame.
+    static_assert(sizeof(shaders::FrameCamera) == frame_camera_words * sizeof(std::uint32_t));
+    std::array<std::uint32_t, frame_camera_words> camera{};
+    std::memcpy(camera.data(), &state.block.camera, sizeof(shaders::FrameCamera));
+    std::vector<std::uint32_t> key;
+    for (std::size_t k = 0; k < camera.size(); ++k) {
+        if (k != frame_number_word) key.push_back(camera[k]);
+    }
+    key.push_back(s.extent.width);
+    key.push_back(s.extent.height);
+    for (const double v :
+         {frame_.sun_x, frame_.sun_y, frame_.sun_z, printed(th.shadow_blur, 1), printed(th.shadow_opacity, 2)}) {
+        key.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(v)));
+    }
+    for (std::size_t i = 0; i < frame_.tiles.size(); ++i) {
+        const DrawnTile& t = frame_.tiles[i];
+        if (!casts(t)) continue;
+        const std::size_t place = w.tiles + (i * tile_words);
+        key.push_back(static_cast<std::uint32_t>(i));
+        key.push_back(t.tile != nullptr ? t.tile->handle : 0U);
+        for (const std::size_t k : {0U, 1U, 2U, 4U, 8U, 16U, 17U, 18U}) key.push_back(words[place + k]);
+        const std::size_t bits = words[place + 15];
+        const std::size_t n = (t.ground->shadows.size() + 31) / 32;
+        key.insert(key.end(), words.begin() + static_cast<std::ptrdiff_t>(bits),
+                   words.begin() + static_cast<std::ptrdiff_t>(bits + n));
+    }
+    mask_kept_ = s.result && key == mask_key_;
+#if defined(ATLAS_TESTS)
+    if (mask_always_) mask_kept_ = false;
+#endif
+    if (!mask_kept_) {
+        // made again, into the entry the last frame did not read
+        mask_key_ = std::move(key);
+        s.result = false;
+    }
+    mask_entry_ = mask_kept_ ? s.last : 1U - s.last;
+    // this frame slot's set 3 names the entry (the frame before in the slot has finished with it: gpu::Frames::begin)
+    const std::uint32_t slot = state.slot & 1U;
+    if (s.bound[slot] != mask_entry_) {
+        const SoftShadowSlot& e = s.slots[mask_entry_];
+        gpu::SetWriter(*p.soft_sets[slot])
+            .buffer(0, vk::DescriptorType::eStorageBuffer, e.grid.handle())
+            .buffer(1, vk::DescriptorType::eStorageBuffer, e.blurred[0].handle())
+            .buffer(2, vk::DescriptorType::eStorageBuffer, e.grid.handle())
+            .apply(p.device->handle());
+        s.bound[slot] = mask_entry_;
+    }
+}
+
 void Ground::record_shadow_mask(const frame::Recording& r) {
     drew_soft_ = false;
     if (!soft(r.state)) return;
+    if (mask_kept_) {
+        // the last result stands (key_shadow_mask): its entry holds it, and the frame slot's set 3 names it
+        drew_soft_ = true;
+        return;
+    }
     Pipelines& p = *pipelines_;
     SoftShadows& s = *p.soft;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const gpu::Sync& sync = r.frame.sync;
     const Words& w = *words_;
     const style::ThemeBlock& th = r.state.theme;
-    // the frame slot's grid, mask and blur: the frame before it in the slot read them, and has finished
+    // the entry's grid, mask and blur: the last frame did not read them, and the frames that did have finished
     // (gpu::Frames::begin), so no barrier below waits for an earlier frame's work
-    SoftShadowSlot& mine = s.slots[w.slot];
+    SoftShadowSlot& mine = s.slots[mask_entry_];
     using S = vk::PipelineStageFlagBits2;
     using A = vk::AccessFlagBits2;
     using L = vk::ImageLayout;
@@ -684,7 +768,11 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
                                                 .dst_stage = S::eHost,
                                                 .dst_access = A::eHostRead});
     }
-    s.last = w.slot;
+    s.last = mask_entry_;
+    s.result = true;
+#if defined(ATLAS_TESTS)
+    ++mask_made_;
+#endif
     drew_soft_ = true;
 }
 
@@ -693,7 +781,8 @@ void Ground::record_shadows(const frame::Recording& r) {
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const Words& w = *words_;
     if (drew_soft_) {
-        // the frame slot's blurred mask drawn back over the frame at the shadows' slot
+        // the frame's entry's blurred mask, made this frame or kept, drawn back over the frame at the shadows' slot:
+        // its own kind, so a kept mask's frame still counts the soft shadows' work
         const SoftShadows& s = *pipelines_->soft;
         const style::ThemeBlock& th = r.state.theme;
         Push pc{};
@@ -706,7 +795,7 @@ void Ground::record_shadows(const frame::Recording& r) {
                                {});
         cmd.pushConstants<Push>(*pipelines_->layout, frame::push_stages, 0, pc);
         cmd.draw(3, 1, 0, 0);
-        r.counters.draw("ground shadows", 1);
+        r.counters.draw("ground soft shadows", 1);
         return;
     }
     layouts::ground_ground::PushConstants pc{};

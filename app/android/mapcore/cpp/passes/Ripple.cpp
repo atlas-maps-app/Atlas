@@ -101,7 +101,7 @@ void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameS
     w.ripple_plan = 0;
     w.leaf_offsets = 0;
     if (!rippled(state)) {
-        ripple_key_.clear();
+        ripple_next_.emplace();
         return;
     }
     // DisplacementNode's srcX = x + fma(scaleForColor, channel, offset).toInt(), for each of the map's 256 levels.
@@ -344,7 +344,7 @@ void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::Fr
         ++ripple_keyed_;
     }
     ripple_stale_ = key != ripple_key_;
-    ripple_key_ = std::move(key);
+    ripple_next_ = std::move(key); // the frame's, once its layer records (record_ripple_layer)
 }
 
 gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelines& p) const {
@@ -562,6 +562,9 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
 }
 
 void Ground::record_ripple_layer(const frame::Recording& r) {
+    // the key this frame's result stands for, now that its frame records (key_ripple compares the next one with it)
+    if (ripple_next_) ripple_key_ = std::move(*ripple_next_);
+    ripple_next_.reset();
     const bool drew = drew_ripple_;
     drew_ripple_ = false;
     const Words& w = *words_;

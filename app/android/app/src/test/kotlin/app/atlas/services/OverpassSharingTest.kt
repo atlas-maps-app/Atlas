@@ -26,7 +26,7 @@ class OverpassSharingTest {
         val main = Overpass.ENDPOINTS.first()
         assertFalse(services.overpassServers.busy(main))
         // a window in its turn (MapData's posts): the server is busy, under either client's name for it, and only that one
-        val turn = services.http.limiter.turn("overpass-api.de")
+        val turn = services.http(Overpass.INFO.id).limiter.turn("overpass-api.de")
         assertTrue(services.overpassServers.busy(main))
         assertTrue(services.overpassServers.busy("https://overpass-api.de"))
         assertFalse(services.overpassServers.busy(Overpass.ENDPOINTS[1]))
@@ -38,6 +38,6 @@ class OverpassSharingTest {
     fun theMapsWindowsAskThroughTheSameRecordAndTurns() {
         val android = File(System.getProperty("atlas.repo") ?: "../..", "app/android")
         val mapData = File(android, "app/src/main/kotlin/app/atlas/services/MapData.kt").readText()
-        assertTrue(mapData.contains("OverpassClient(post.inTurns(services.http.limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)"))
+        assertTrue(mapData.contains("OverpassClient(post.inTurns(services.http(Overpass.INFO.id).limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)"))
     }
 }

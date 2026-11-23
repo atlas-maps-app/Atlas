@@ -57,6 +57,13 @@ Result<RenderHead> read_head(std::span<const std::byte> section) {
     h.frame.lon0 = r.f64le();
     h.frame.kx = r.f64le();
     h.frame.kz = r.f64le();
+    // a place on the Earth and its metres a degree (111,320 at the equator): a frame of none, NaN or past the Earth's
+    // would put each point of the pack past what stage T's conversions of it hold
+    const auto within = [](double v, double least, double most) { return v >= least && v <= most; };
+    if (r.ok() && !(within(h.frame.lat0, -90.0, 90.0) && within(h.frame.lon0, -180.0, 180.0) &&
+                    within(h.frame.kx, 0.0, Frame::most_k) && within(h.frame.kz, 0.0, Frame::most_k))) {
+        return fail(Fault::bad_value);
+    }
     h.region = r.utf8();
     h.engine_version = r.utf8();
     h.style_version = r.utf8();

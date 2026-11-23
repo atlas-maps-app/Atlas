@@ -84,7 +84,7 @@ class BrandsAroundTest {
         val branches = got.value
         assertEquals(PlaceOrigin.STORE, got.origin)
         assertTrue("branches: ${branches.size}", branches.isNotEmpty())
-        assertTrue(branches.all { app.atlas.places.Brands.forTags(it.tags)?.id == "albertheijn-1cf55d" })
+        assertTrue(branches.all { app.atlas.places.Brands.forTags(it.tags, "NL")?.id == "albertheijn-1cf55d" })
         assertTrue(branches.zipWithNext().all { (a, b) ->
             app.atlas.geo.Geo.distance(Services.WESTERKERK, a.location) <= app.atlas.geo.Geo.distance(Services.WESTERKERK, b.location)
         })

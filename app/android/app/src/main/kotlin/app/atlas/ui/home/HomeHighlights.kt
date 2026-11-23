@@ -8,6 +8,7 @@ import app.atlas.mapview.MarkerStyle
 import app.atlas.model.Place
 import app.atlas.places.Brands
 import app.atlas.places.OpeningHours
+import app.atlas.places.OpeningHoursContext
 import app.atlas.search.PlaceRecord
 import app.atlas.search.PlaceSource
 import app.atlas.ui.kit.WalkTime
@@ -60,7 +61,8 @@ object HomeHighlights {
 
     private val STOPS = listOf("railway" to "tram_stop", "railway" to "station", "railway" to "halt", "station" to "subway")
 
-    fun pick(source: PlaceSource, anchor: LatLon, at: LocalDateTime, saved: List<Place> = emptyList()): List<Highlight> {
+    /** The highlights around [anchor] at [at], their hours read in [hours] (the holidays and the sun there). */
+    fun pick(source: PlaceSource, anchor: LatLon, at: LocalDateTime, hours: OpeningHoursContext, saved: List<Place> = emptyList()): List<Highlight> {
         if (source.size == 0 && saved.isEmpty()) return emptyList()
         val box = BBox.around(anchor, RADIUS_M)
         val out = ArrayList<Highlight>()
@@ -80,14 +82,14 @@ object HomeHighlights {
             .sortedBy { if (it.tags["wikipedia"] != null) 0 else 1 }
             .firstOrNull()?.let { add(HighlightKind.SIGHT, it.place) }
         // A museum open now, the notable (on Wikidata) first.
-        nearest(source.byTag("tourism", "museum", box).filter { it.name() != null && openNow(it, at) })
+        nearest(source.byTag("tourism", "museum", box).filter { it.name() != null && openNow(it, at, hours) })
             .sortedBy { if (it.tags["wikidata"] != null) 0 else 1 }
             .firstOrNull()?.let { add(HighlightKind.MUSEUM, it.place) }
         // The nearest stop, one per name (a tram stop is mapped once for each direction).
         nearest(STOPS.flatMap { (k, v) -> source.byTag(k, v, box) }.filter { it.name() != null && it.distanceTo(anchor) <= STOP_M })
             .firstOrNull()?.let { add(HighlightKind.TRANSIT, it.place) }
         // A café chain's branch open now.
-        nearest(source.byTag("amenity", "cafe", box).filter { it.tags["brand"] != null && openNow(it, at) })
+        nearest(source.byTag("amenity", "cafe", box).filter { it.tags["brand"] != null && openNow(it, at, hours) })
             .firstOrNull()?.let { add(HighlightKind.BRANCH, it.place) }
         // Charging points: the nearest few, with their sockets as mapped.
         nearest(source.byTag("amenity", "charging_station", box)).take(CHARGERS).forEach {
@@ -96,18 +98,21 @@ object HomeHighlights {
         return out
     }
 
-    /** Open at [at] by its hours; a place without hours (or with hours that cannot be read) does not count as open. */
-    private fun openNow(r: PlaceRecord, at: LocalDateTime): Boolean {
+    /** Open at [at] by its hours read in [context]; a place without hours (or with hours that cannot be read) does not count as open. */
+    private fun openNow(r: PlaceRecord, at: LocalDateTime, context: OpeningHoursContext): Boolean {
         val hours = r.tags["opening_hours"] ?: return false
-        val s = OpeningHours.statusOf(hours, at)
+        val s = OpeningHours.statusOf(hours, at, context)
         return !s.unknown && s.isOpen
     }
 
-    /** The markers for [highlights], in the board's looks, a kind of place in its family's colour ([HighlightKind]). */
-    fun markers(highlights: List<Highlight>): List<Marker> = highlights.map { h ->
+    /**
+     * The markers for [highlights], in the board's looks, a kind of place in its family's colour ([HighlightKind]); a
+     * branch with its brand's logo, as it trades in [country], the country of the map here.
+     */
+    fun markers(highlights: List<Highlight>, country: String?): List<Marker> = highlights.map { h ->
         val p = h.place
         val id = "hl:${h.kind.name.lowercase()}:${p.key}"
-        val (symbol, family) = markOf(p)
+        val (symbol, family) = markOf(p, country)
         val colour = h.kind.colour ?: (family.toLong() and 0xFFFFFFFFL)
         when (h.kind) {
             HighlightKind.SAVED -> Marker(
@@ -118,7 +123,7 @@ object HomeHighlights {
             HighlightKind.SIGHT -> Marker(id, p.location, "maki-star", colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)
             HighlightKind.BRANCH -> Marker(
                 id, p.location, symbol, colour, MarkerStyle.BRAND,
-                logo = Brands.forTags(p.tags)?.id, priority = h.kind.priority, place = p,
+                logo = Brands.forTags(p.tags, country)?.id, priority = h.kind.priority, place = p,
             )
             HighlightKind.CHARGER -> Marker(id, p.location, "maki-charging-station", colour, MarkerStyle.CHIP, value = h.value, priority = h.kind.priority, place = p)
             else -> Marker(id, p.location, symbol, colour, MarkerStyle.PIN, priority = h.kind.priority, place = p)

@@ -32,13 +32,17 @@ import app.atlas.nav.Dest
 import app.atlas.ui.go.GoJson
 import app.atlas.nav.Navigator
 import app.atlas.places.OpenStatus
+import app.atlas.places.OpeningHours
 import app.atlas.search.SearchItem
 import app.atlas.search.SearchResults
 import app.atlas.search.Travel
 import app.atlas.search.TravelMode
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.Symbol
+import app.atlas.ui.kit.appClock
+import app.atlas.ui.kit.rememberLocaleOf
 import app.atlas.ui.kit.shortDistance
+import app.atlas.ui.kit.signOf
 import java.time.LocalDateTime
 import java.util.Locale
 
@@ -126,7 +130,15 @@ private fun TypedRow(
     when (item) {
         is SearchItem.PlaceResult -> TypedPlace(item.hit.place, item.title, item.subtitle, item.parts, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
         is SearchItem.Element -> TypedPlace(item.hit.place, null, item.hit.place.id?.toString(), 1, item.hit.distance, item.hit.open, here, mode, lang, now, seat) { open(item.hit.place) }
-        is SearchItem.Online -> TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place), 1, item.distance, null, here, mode, lang, now, seat, online = true) { open(item.place) }
+        is SearchItem.Online -> {
+            // an online find comes with no status: its hours read where it is, on its own clock, as its pin fades by
+            // them (the app maintainer, 18 November 2026: the row said nothing; batch 4 B18: on the phone's clock)
+            val where = rememberLocaleOf(item.place)
+            val zone = appClock().zone
+            val local = remember(now, where, zone) { where.fromPhone(now, zone) }
+            val status = remember(item.place, local, where) { OpeningHours.parseOrNull(item.place.tags["opening_hours"])?.status(local, where.hours(item.place.location)) }
+            TypedPlace(item.place, null, item.place.extra["label"] ?: addressOf(item.place, where.country), 1, item.distance, status, here, mode, lang, local, seat, online = true) { open(item.place) }
+        }
         is SearchItem.Kind -> {
             // kinds are nouns: lower case inside a sentence, except in German
             val label = if (lang == "de") item.label else item.label.lowercase(Locale.getDefault())
@@ -190,7 +202,7 @@ internal fun routeTo(item: SearchItem.Route): Dest.Route {
 internal fun viaOf(stops: List<Pair<LatLon, String>>): String? =
     stops.joinToString("|") { (at, name) -> String.format(Locale.ROOT, "%.6f,%.6f,%s", at.lat, at.lon, name.replace('|', ' ')) }.ifEmpty { null }
 
-/** A place among typed results, a row of their panel: its kind's tile with the open light, its name, open or not, its kind and how far. */
+/** A place among typed results, a row of their panel: its chain's sign ([signOf], its own country's chain) or else its kind's tile, with the open light, its name, open or not, its kind and how far. */
 @Composable
 private fun TypedPlace(
     place: Place,
@@ -208,7 +220,9 @@ private fun TypedPlace(
     onClick: () -> Unit,
 ) {
     val c = indexColors()
-    val line = remember(place, now, open, distance) { PlaceLine.of(place, here, lang, now, open, name, distance) }
+    // its chain the one of its own country, not the phone's (the app maintainer, 18 November 2026, batch 4 B18)
+    val country = rememberLocaleOf(place).country
+    val line = remember(place, now, open, distance, country) { PlaceLine.of(place, here, lang, now, open, country, name, distance) }
     val metres = line.summary.distanceM
     val minutes = metres?.let { Travel.minutes(it, mode) }
     val arrival = if (minutes != null) arrivalWords(open, minutes, now) else null
@@ -219,7 +233,7 @@ private fun TypedPlace(
     IndexLine(
         line.summary.name, statusOf(words, tone, null, listOfNotNull(stepFree, subtitle ?: line.summary.kind, more, metres?.let(::shortDistance)?.takeIf { minutes != null && minutes < 100 })), onClick, Modifier.testTag(PLACE_TAG),
         reach = { Reach(minutes, metres) },
-        lead = { KindTile(line.summary.symbol, line.summary.colour, tone) },
+        lead = { remember(place, country) { signOf(place, country) }?.let { SignTile(it, tone) } ?: KindTile(line.summary.symbol, line.summary.colour, tone) },
         trailing = if (online) ({ Symbol("ui-cloud", tint = c.faint, size = 14.dp) }) else null,
         seat = seat,
     )

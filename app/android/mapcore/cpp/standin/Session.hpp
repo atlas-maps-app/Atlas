@@ -205,6 +205,9 @@ public:
     [[nodiscard]] bool renderer_made() const noexcept { return renderer_ != nullptr; }
     /// Draws one frame at `camera`.
     [[nodiscard]] Drawn draw(const style::CameraState& camera, const FrameTimes& times);
+    /// The app's map updated for `camera` without a frame (SessionMap::update_scene: the app hidden and following its
+    /// location), at the session's clock; nothing on the GPU's queue. False where no map is ready to draw.
+    bool update_scene(const style::CameraState& camera);
     /// A frame was due with none to draw (drawing() false): health counts it, and says why.
     void note_not_drawing();
     /// The frame loop came to rest (nothing changed, or the app's window went to the background): the frames stage
@@ -265,6 +268,13 @@ public:
     [[nodiscard]] const std::string& off_reason() const noexcept { return session_off_; }
     /// The tests' device loss: what a frame does when the device is lost.
     void lose_device() { device_lost(); }
+#if defined(ATLAS_TESTS)
+    /// A test's: the next frame is recorded and its submit fails (gpu::Frames::fail_next_submit), once a renderer is
+    /// made.
+    void fail_next_submit() {
+        if (renderer_) renderer_->frames().fail_next_submit();
+    }
+#endif
 
 private:
     /// Runs `step` behind the guard's `stage` (D5.10), then goes back to the frames stage while the first frames are

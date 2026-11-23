@@ -9,6 +9,7 @@
 // nearest first, so the tool takes them from their country's tiles as the phone's Windows does. They bind to the Kotlin
 // object app.atlas.mapcorecheck.likeness.LookHost by JNI's names; nothing of them is in the phone's library.
 #include "frame/MapFrame.hpp"
+#include "frame/Still.hpp"
 #include "fx/FieldCache.hpp"
 #include "gen/spirv/modules.hpp"
 #include "gpu/Guard.hpp"
@@ -285,12 +286,15 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
     std::optional<std::chrono::steady_clock::time_point> rest; // when the picture came to rest
     while (std::chrono::steady_clock::now() < until) {
         const bool fields = fields_in(); // before the frame, which draws with them
+        frame::Still still(map);         // the sun's work before it
         const standin::Drawn d = session.draw(*cam, {});
         if (d.stale) session.remake();
         frames += d.drawn ? 1 : 0;
         if (d.drawn) last = d.record;
-        complete_frames = map.complete() ? complete_frames + 1 : 0;
-        // complete, and the fades over: a few frames more at rest, the last drawn with the frame's fields
+        // final: complete and the sun's shadows in (frame/Still.hpp; complete() alone draws a tile by day until its
+        // bits come, which a slow host reads)
+        complete_frames = still.final_frame() ? complete_frames + 1 : 0;
+        // final, and the fades over: a few frames more at rest, the last drawn with the frame's fields
         if (complete_frames > 4 && !map.animating()) {
             const auto now = std::chrono::steady_clock::now();
             if (!rest) rest = now;

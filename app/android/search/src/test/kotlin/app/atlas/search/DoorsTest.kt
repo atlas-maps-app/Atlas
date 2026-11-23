@@ -5,6 +5,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.CategoryTree
+import app.atlas.places.NodeKind
 import app.atlas.places.Presets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,12 +20,12 @@ import org.junit.Test
  */
 class DoorsTest {
     private val here = Fixtures.westerkerk
-    private val saturday = Moment(Fixtures.saturday)
+    private val saturday = Moment(Fixtures.saturday, hours = Nowhere)
     private var next = 0L
 
     /** A node [north] metres north of the Westerkerk. */
     private fun place(north: Double, vararg tags: Pair<String, String>) =
-        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++next), LatLon(here.lat + north / 111_320.0, here.lon), mapOf(*tags)))
+        PlaceRecord.of(Place(OsmId(OsmType.NODE, ++next), LatLon(here.lat + north / 111_320.0, here.lon), mapOf(*tags)), country = null)
 
     private val playground = place(100.0, "leisure" to "playground")
     private val cinema = place(200.0, "amenity" to "cinema", "name" to "Kriterion")
@@ -78,6 +79,49 @@ class DoorsTest {
         assertEquals("cat:swim" to 2, row.last().first.id to row.last().second)
         assertEquals(swim.colour, row.last().first.colour)
         assertEquals(3, Browse.pulses(listOf(sport), listOf(gym, pitch, pool), here, saturday).single().count)
+    }
+
+    /**
+     * A shop that takes the post or dispenses medicine is a shop of its kind first (the reviewer, 17 November, finding 11)
+     * and behind Post's or Health's door as well (the app maintainer, 18 November, batch 4 A6: since that finding a kiosk
+     * that takes parcels and a chemist with a pharmacy counter were in no Post or Health list or count): the category and
+     * its shelf hold it, list it and count it, and read it from the store and online; its kind, colour and pin stay the
+     * shop's. A kiosk that takes no post, a chemist that dispenses nothing, stay out.
+     */
+    @Test
+    fun aShopThatTakesThePostIsBehindPostsDoorToo() {
+        val partner = place(900.0, "shop" to "kiosk", "post_office" to "post_partner", "name" to "Bruna")
+        val chemist = place(1000.0, "shop" to "chemist", "healthcare" to "pharmacy", "dispensing" to "yes", "name" to "Boots")
+        val postOffice = place(1100.0, "amenity" to "post_office", "name" to "PostNL")
+        val pharmacy = place(1200.0, "amenity" to "pharmacy", "healthcare" to "pharmacy", "name" to "Apotheek")
+        val kiosk = place(1300.0, "shop" to "kiosk", "name" to "Kiosk")
+        val drugstore = place(1400.0, "shop" to "chemist", "name" to "Etos")
+        val near = listOf(partner, chemist, postOffice, pharmacy, kiosk, drugstore)
+        val post = CategoryTree.category("post")!!
+        val health = CategoryTree.category("health")!!
+        assertEquals(NodeKind.CATEGORY, health.kind)
+        // the category and its shelf hold it
+        assertEquals(listOf(partner, postOffice), near.filter { Browse.holds(post, it) })
+        assertEquals(listOf(chemist, pharmacy), near.filter { Browse.holds(health, it) })
+        assertTrue(Browse.holds(CategoryTree.shelf("service")!!, partner))
+        assertTrue(Browse.holds(CategoryTree.shelf("health")!!, chemist))
+        // list it and count it
+        assertEquals(setOf(partner, postOffice), Browse.results(post, near, here, saturday).hits.map { it.record }.toSet())
+        assertEquals(2, Browse.pulses(listOf(post), near, here, saturday).single().count)
+        assertEquals(2, Browse.pulses(listOf(health), near, here, saturday).single().count)
+        // read it from the store and online: the node's filter, a typed category's query, Overpass's
+        assertTrue(post.filter.matches(partner.tags) && health.filter.matches(chemist.tags))
+        assertFalse(post.filter.matches(kiosk.tags) || health.filter.matches(drugstore.tags))
+        assertTrue(CategoryTree.shelf("service")!!.filter.matches(partner.tags))
+        val typed = OfflineEvaluator(MemoryPlaces(near.map { it.place }, country = null)).run(Query.Category("post"), Fixtures.context().copy(limit = 100))
+        assertEquals(setOf(partner.place, postOffice.place), typed.hits.map { it.record.place }.toSet())
+        val box = app.atlas.geo.BBox(4.87, 52.37, 4.89, 52.38)
+        assertTrue(OverpassCompiler.compile(Query.Category("post"), box).contains("[\"shop\"][\"post_office\"]"))
+        // its kind, colour and pin stay the shop's
+        assertEquals(CategoryTree.of(kiosk.tags), CategoryTree.of(partner.tags))
+        assertEquals(kiosk.category, partner.category)
+        assertEquals(drugstore.category, chemist.category)
+        assertEquals(kiosk.symbol, partner.symbol)
     }
 
     /** Stay opens on its hotels' kinds as before (the one category holding them is no step), the campsites after. */

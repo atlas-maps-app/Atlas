@@ -74,6 +74,7 @@
     <string name="ask_route_all">Route über alle Stopps</string>
     <string name="place_wiki_open">Artikel lesen</string>
     <string name="place_wiki_none">Der Artikel lässt sich gerade nicht lesen</string>
+    <string name="place_wiki_off">Wikipedia ist unter %1$s ausgeschaltet</string>
     <string name="place_wiki_minutes">%1$d Minuten Lesezeit</string>
     <string name="place_wiki_licence">Text aus Wikipedia, CC BY-SA</string>
     <string name="place_wiki_read">Auf Wikipedia lesen</string>

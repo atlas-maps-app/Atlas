@@ -96,7 +96,7 @@ class BorrowedHoursTest {
         val nearest = (1..7).map { starbucks(10L + it, it * 100.0, "Mo-Su 07:00-21:00") } + (8..9).map { starbucks(10L + it, it * 100.0, "Mo-Su 08:00-20:00") }
         val farther = (1..3).map { starbucks(30L + it, 5_000.0 + it * 100.0, "Mo-Su 06:00-23:00") }
         val beyond = starbucks(40, 30_000.0, "24/7")
-        val guess = BorrowedHours.of(MemoryPlaces(listOf(bare) + unmapped + nearest + farther + beyond), bare, "en")!!
+        val guess = BorrowedHours.of(MemoryPlaces(listOf(bare) + unmapped + nearest + farther + beyond, country = null), bare, "en", country = null)!!
         assertEquals(HoursFrom.BRAND, guess.from)
         assertEquals(9, guess.places)
         assertEquals(7, guess.keep)
@@ -105,11 +105,11 @@ class BorrowedHoursTest {
 
         // one branch lends its hours, and it is named; one 30 km away lends nothing
         val one = starbucks(60, 300.0, "Mo-Fr 08:00-18:00").let { Place(it.id, it.location, it.tags + mapOf("addr:street" to "Leidsestraat", "addr:housenumber" to "1")) }
-        val lent = BorrowedHours.of(MemoryPlaces(listOf(bare, one, beyond)), bare, "en")!!
+        val lent = BorrowedHours.of(MemoryPlaces(listOf(bare, one, beyond), country = null), bare, "en", country = null)!!
         assertEquals(1, lent.places)
         assertEquals(1, lent.keep)
         assertEquals("Leidsestraat 1", lent.branch)
-        assertNull(BorrowedHours.of(MemoryPlaces(listOf(bare, beyond)), bare, "en"))
+        assertNull(BorrowedHours.of(MemoryPlaces(listOf(bare, beyond), country = null), bare, "en", country = null))
     }
 
     @Test
@@ -121,7 +121,7 @@ class BorrowedHoursTest {
             bakery(3, 300.0, "Mo-Sa 07:00-17:30"), bakery(4, 400.0, "Tu-Sa 08:00-18:00"),
         )
         val bare = bakery(10, 250.0, null)
-        val guess = BorrowedHours.of(MemoryPlaces(bakeries + bare), bare, "en")!!
+        val guess = BorrowedHours.of(MemoryPlaces(bakeries + bare, country = null), bare, "en", country = null)!!
         assertEquals(HoursFrom.KIND, guess.from)
         assertEquals(4, guess.places)
         // the lower medians, day by day: as the first bakery keeps them
@@ -129,11 +129,11 @@ class BorrowedHoursTest {
         assertEquals(1, guess.keep)
         // hours of its own that do not read are no gap to fill
         val unread = bakery(11, 250.0, "when the bread is out")
-        assertNull(BorrowedHours.of(MemoryPlaces(bakeries + unread), unread, "en"))
+        assertNull(BorrowedHours.of(MemoryPlaces(bakeries + unread, country = null), unread, "en", country = null))
         // a park is open without hours
         val parks = (1..4).map { place(20L + it, it * 40.0, "leisure" to "park", "name" to "Park $it", "opening_hours" to "Mo-Su 08:00-20:00") }
         val park = place(30, 90.0, "leisure" to "park", "name" to "Park zonder uren")
-        assertNull(BorrowedHours.of(MemoryPlaces(parks + park), park, "en"))
+        assertNull(BorrowedHours.of(MemoryPlaces(parks + park, country = null), park, "en", country = null))
     }
 
     /** Hartenstraat 16-H's page: "≈" and whose hours they are under its dial; its week leads on to the real ones. */

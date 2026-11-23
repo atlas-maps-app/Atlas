@@ -80,7 +80,7 @@ class HereFinderTest {
         val kept = File(dir, "14-$x-$y.json.gz").apply { writeBytes(gz(WINDOW)) }
         var asked = 0
         val windows = HereWindows(kept = { wx, wy -> kept.takeIf { wx == x && wy == y } }, packed = { _, _ -> asked++; null })
-        val data = LocalData(stores = { null }, packs = { null }, windows = { p, r -> windows.around(p, r, 5_000) })
+        val data = LocalData(stores = { null }, packs = { null }, windows = { p, r -> windows.around(p, r, 5_000) }, countryAt = { null })
         val here = data.whatsHere(at)
         assertNull(here.gap)
         assertEquals(PlaceOrigin.PACK, here.origin)

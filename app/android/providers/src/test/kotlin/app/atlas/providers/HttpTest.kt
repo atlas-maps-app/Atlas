@@ -241,7 +241,7 @@ class HttpTest {
             repeat(2) { m.enqueue("""{"ok":true}""") }
             var off = setOf("photon")
             // the app's gate: the server here is "localhost", photon's host for this test
-            val http = Http(policies = emptyMap(), gate = { host -> if (host == "localhost" && "photon" in off) "photon" else null })
+            val http = Http(policies = emptyMap(), gate = { host, _ -> if (host == "localhost" && "photon" in off) "photon" else null })
             val refused = runCatching { http.text(m.url("/api")) }.exceptionOrNull()
             assertTrue("$refused", refused is SwitchedOffException && refused.source == "photon" && refused.host == "localhost")
             // a client built on the shared one, as the map's are, holds it back too
@@ -252,6 +252,110 @@ class HttpTest {
             // switched on again: it goes
             off = emptySet()
             assertEquals("""{"ok":true}""", http.text(m.url("/api")))
+            assertEquals(1, m.count)
+        }
+    }
+
+    @Test
+    fun aNamedViewStampsItsSourceOnEveryRequestBeforeTheGateAndSharesTheRootsPoolCacheAndLimiter() = runBlocking {
+        Mock().use { m ->
+            repeat(6) { m.enqueue("ok") }
+            val asked = java.util.Collections.synchronizedList(ArrayList<Pair<String, String?>>())
+            val root = Http(cacheDir = tmp.newFolder("http"), policies = emptyMap(), gate = { host, source -> asked += host to source; null })
+            val view = root.of("panoramax")
+            assertEquals("panoramax", view.source)
+            // one pool, one cache, one limiter, one agent
+            assertTrue(view.client.connectionPool === root.client.connectionPool)
+            assertTrue(view.client.cache === root.client.cache && root.client.cache != null)
+            assertTrue(view.limiter === root.limiter)
+            assertEquals(root.userAgent, view.userAgent)
+            // what the gate is asked first for one request: by its host and source; then each hop by its host alone
+            suspend fun firstAsked(send: suspend () -> Unit): String? {
+                asked.clear()
+                send()
+                assertTrue("after the first, the gate is asked by host alone: $asked", asked.drop(1).all { it.second == null })
+                return asked.first().second
+            }
+            // through the view's own calls, and through a client built on it with interceptors of its own, after or before
+            assertEquals("panoramax", firstAsked { view.text(m.url("/a")) })
+            val seen = java.util.concurrent.atomic.AtomicReference<String?>()
+            val built = view.client.newBuilder().addInterceptor { c -> seen.set(c.request().tag(SourceTag::class.java)?.id); c.proceed(c.request()) }.build()
+            assertEquals("panoramax", firstAsked { built.newCall(okhttp3.Request.Builder().url(m.url("/b")).build()).execute().close() })
+            assertEquals("the stamp runs before what is added after it", "panoramax", seen.get())
+            val first = view.client.newBuilder().apply { interceptors().add(0, okhttp3.Interceptor { c -> c.proceed(c.request()) }) }.build()
+            assertEquals("panoramax", firstAsked { first.newCall(okhttp3.Request.Builder().url(m.url("/c")).build()).execute().close() })
+            // the root stamps nothing; a view of another source stamps its own; a request already stamped keeps its stamp
+            assertEquals(null, firstAsked { root.text(m.url("/d")) })
+            assertEquals("open-meteo", firstAsked { root.of("open-meteo").text(m.url("/e")) })
+            assertEquals("commons", firstAsked { view.execute(view.request(m.url("/f")).tag(SourceTag::class.java, SourceTag("commons")).build()) })
+            assertTrue(asked.all { it.first == "localhost" })
+            assertEquals(6, m.count)
+        }
+    }
+
+    @Test
+    fun eachHopOfARedirectIsCheckedByTheGateAndCarriesTheRequestsSource() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            // localhost sends on to 127.0.0.1, another host to OkHttp: a hop below the application interceptors
+            m.dispatch { r ->
+                if (r.headers["Host"]!!.startsWith("localhost")) MockResponse.Builder().code(302).addHeader("Location", "http://127.0.0.1:$port/b").build()
+                else MockResponse.Builder().code(200).body("there").build()
+            }
+            var off = emptySet<String>()
+            val root = Http(policies = emptyMap(), gate = { host, _ -> if (host == "127.0.0.1" && "commons" in off) "commons" else null })
+            val hops = java.util.Collections.synchronizedList(ArrayList<Pair<String, String?>>())
+            val view = root.of("wikidata")
+            val watched = view.client.newBuilder().addNetworkInterceptor { c -> hops += c.request().url.host to c.request().tag(SourceTag::class.java)?.id; c.proceed(c.request()) }.build()
+            fun get() = watched.newCall(okhttp3.Request.Builder().url("http://localhost:$port/a").build()).execute().use { it.body.string() }
+            // on: both hops go, each with the request's source
+            assertEquals("there", get())
+            assertEquals(listOf("localhost" to "wikidata", "127.0.0.1" to "wikidata"), hops.toList())
+            // the hop's host is switched off: refused before it is sent; the first hop alone reached the server
+            off = setOf("commons")
+            hops.clear()
+            val refused = runCatching { get() }.exceptionOrNull()
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "commons" && refused.host == "127.0.0.1")
+            assertEquals(listOf("localhost" to "wikidata"), hops.toList())
+            assertEquals(3, m.count)
+        }
+    }
+
+    @Test
+    fun aRefusedHopIsNeverLookedUpNorConnected() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            m.dispatch { r ->
+                if (r.headers["Host"]!!.startsWith("a.example")) MockResponse.Builder().code(301).addHeader("Location", "http://b.example:$port/b").build()
+                else MockResponse.Builder().code(200).body("b").build()
+            }
+            val looked = java.util.Collections.synchronizedList(ArrayList<String>())
+            val connects = java.util.concurrent.atomic.AtomicInteger()
+            // every name is this machine; nothing leaves it whatever the gate does
+            val base = okhttp3.OkHttpClient.Builder()
+                .dns { name -> looked += name; listOf(java.net.InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }
+                .eventListener(object : okhttp3.EventListener() {
+                    override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy) { connects.incrementAndGet() }
+                })
+                .build()
+            val http = Http(policies = emptyMap(), base = base, gate = { host, _ -> if (host == "b.example") "commons" else null }).of("wikidata")
+            val refused = runCatching { http.text("http://a.example:$port/a") }.exceptionOrNull()
+            assertTrue("$refused", refused is SwitchedOffException && refused.host == "b.example")
+            assertEquals("b.example is never looked up", listOf("a.example"), looked.toList())
+            assertEquals("one connection, to a.example", 1, connects.get())
+            assertEquals(1, m.count)
+        }
+    }
+
+    @Test
+    fun anAnswerFromTheCacheMakesNoHop() = runBlocking {
+        Mock().use { m ->
+            m.enqueue("kept", 200, "Cache-Control" to "max-age=600")
+            val hops = java.util.concurrent.atomic.AtomicInteger()
+            val view = Http(cacheDir = tmp.newFolder("c"), policies = emptyMap()).of("wikidata")
+            val watched = view.client.newBuilder().addNetworkInterceptor { c -> hops.incrementAndGet(); c.proceed(c.request()) }.build()
+            repeat(2) { watched.newCall(okhttp3.Request.Builder().url(m.url("/k")).build()).execute().use { assertEquals("kept", it.body.string()) } }
+            assertEquals(1, hops.get())
             assertEquals(1, m.count)
         }
     }

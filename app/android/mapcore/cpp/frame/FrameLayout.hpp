@@ -16,6 +16,7 @@
 #include "gpu/Memory.hpp"
 #include "gpu/Sync.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -106,7 +107,9 @@ public:
     void record_setup(const vk::raii::CommandBuffer& cmd, const gpu::Sync& sync);
 
     /// Before frame `frame` records: frees the versions only frames before `finished` used, makes new versions of the
-    /// sets whose resources changed, and grows the ring for `items` items and `kinds` selector rows where needed.
+    /// sets whose resources changed, and grows the ring for `items` items and `kinds` selector rows where needed. On
+    /// a failure the ring and its slice may be the old ones, smaller than `items`, and the sets not the frame's: the
+    /// frame must write and bind none of them (FrameBuilder::record draws the clear alone).
     [[nodiscard]] gpu::Result<void> begin_frame(std::uint64_t frame, std::uint64_t finished, std::uint32_t items,
                                                 std::uint32_t kinds);
     /// The sets the frame binds, and its dynamic offsets (block, ranks, selectors) for frame slot `slot`.
@@ -120,6 +123,15 @@ public:
     /// The rank table's and the selector table's capacities.
     [[nodiscard]] std::uint32_t item_capacity() const noexcept { return items_; }
     [[nodiscard]] std::uint32_t kind_capacity() const noexcept { return kinds_; }
+    /// The most items the ring grows to: a frame of more fails to begin, as one whose ring the device's memory refuses.
+    /// At most the items one binding of the device holds (maxStorageBufferRange: a rank table's range past it binds
+    /// nothing valid), and so at first; a test lowers it to reach that failure.
+    void limit_items(std::uint32_t most) noexcept { most_items_ = std::min(most, device_items_); }
+#if defined(ATLAS_TESTS)
+    /// A test's: the next begin_frame fails as one whose items pass the ring's limit does, whatever the frame's items
+    /// (a map's frame at rest never passes the ring it has, which limit_items needs to fail).
+    void fail_next_begin() noexcept { fail_begin_ = true; }
+#endif
     /// Bytes of the ring and the placeholders.
     [[nodiscard]] vk::DeviceSize bytes() const noexcept;
     /// The buffer set 1's binding `g` reads from the next frame on (the placeholder's when nothing was given; null for
@@ -169,6 +181,11 @@ private:
     RingSlice slice_;
     std::uint32_t items_ = 0;
     std::uint32_t kinds_ = 0;
+    std::uint32_t device_items_ = 0; // the items one binding of the device holds
+    std::uint32_t most_items_ = 0;   // limit_items
+#if defined(ATLAS_TESTS)
+    bool fail_begin_ = false; // fail_next_begin
+#endif
     std::array<Resource, global_count> globals_{};
     bool globals_dirty_ = true;
     bool frame_dirty_ = true;

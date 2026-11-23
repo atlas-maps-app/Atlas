@@ -16,7 +16,9 @@ import androidx.compose.runtime.CompositionTracer
 import androidx.compose.runtime.InternalComposeTracingApi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -72,6 +74,12 @@ class MapStageFramesTest {
     /** The stage's and the map's composables run this frame. */
     private fun stageRuns(): Int = runs.count { it.startsWith("app.atlas.mapview.MapStageHost ") || "(AtlasMap.kt:" in it }
 
+    /** Of [stageRuns], the stage's. */
+    private fun hostRuns(): Int = runs.count { it.startsWith("app.atlas.mapview.MapStageHost ") }
+
+    /** Of [stageRuns], the map's. */
+    private fun mapRuns(): Int = runs.count { "(AtlasMap.kt:" in it }
+
     /** The map's picture, where it lies (root px). */
     private fun mapBounds(): Rect =
         compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf("Map")))
@@ -79,9 +87,31 @@ class MapStageFramesTest {
 
     private fun near(a: Rect, b: Rect) = abs(a.left - b.left) <= 1f && abs(a.top - b.top) <= 1f && abs(a.right - b.right) <= 1f && abs(a.bottom - b.bottom) <= 1f
 
-    /** One frame after [move], drawn as a phone draws it: the stage's runs in it, and the map's bounds after it. */
+    /**
+     * The control of the counts, each half of [stageRuns] on its own: a frame that changes what the stage reads (its
+     * cover's colour) recomposes the stage, and a change of what the map is given ([map]: its debug look) recomposes the
+     * map within three frames (the window's request, then the stage, then the map), so a tracer that sees nothing, or
+     * source info the compiler writes another way for either, fails a test rather than passing it (the app maintainer,
+     * 18 November 2026, batch 4 C25: the cover proved the stage's half alone).
+     */
+    private fun assertTheTracerSeesTheStage(cover: () -> Unit, map: () -> Unit) {
+        frame(cover)
+        val host = hostRuns()
+        assertTrue("a frame that changes what the stage reads recomposes it: $host of ${runs.size} the tracer saw, ${runs.distinct().take(12)}", host >= 1)
+        frame(map)
+        var drawn = mapRuns()
+        val seen = runs.distinct().take(12)
+        repeat(2) { if (drawn == 0) { frame {}; drawn += mapRuns() } }
+        assertTrue("a change of what the map is given recomposes it within three frames: $drawn, $seen", drawn >= 1)
+    }
+
+    /**
+     * One frame after [move], drawn as a phone draws it: the stage's runs in it, and the map's bounds after it. The
+     * change is sent to the composition at once, as a phone's main thread does before its next frame; else it would
+     * come a frame late, and the last frame's work would go uncounted.
+     */
     private fun frame(move: () -> Unit): Pair<Int, Rect> {
-        compose.runOnIdle(move)
+        compose.runOnIdle { move(); Snapshot.sendApplyNotifications() }
         runs.clear()
         compose.mainClock.advanceTimeByFrame()
         compose.waitForIdle()
@@ -96,14 +126,16 @@ class MapStageFramesTest {
         val state = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 0.0, 0.0)).apply { time = Fixtures.afternoon }
         lateinit var scroll: ScrollState
         var window = Rect.Zero
+        var cover by mutableStateOf(Color.White)
+        var debug by mutableStateOf(false)
         compose.setContent {
             Box(Modifier.fillMaxSize()) {
-                MapStageHost(stage, cover = Color.White)
+                MapStageHost(stage, cover = cover)
                 CompositionLocalProvider(LocalMapStage provides stage) {
                     scroll = rememberScrollState()
                     Column(Modifier.fillMaxSize().verticalScroll(scroll)) {
                         Spacer(Modifier.height(300.dp))
-                        StageMap(state, Modifier.fillMaxWidth().height(230.dp).onGloballyPositioned { window = it.boundsInRoot() })
+                        StageMap(state, Modifier.fillMaxWidth().height(230.dp).onGloballyPositioned { window = it.boundsInRoot() }, debug = debug)
                         Spacer(Modifier.height(1200.dp))
                     }
                 }
@@ -115,6 +147,7 @@ class MapStageFramesTest {
         Composer.setTracer(tracer)
         compose.mainClock.autoAdvance = false
         val frames = (1..12).map { frame { scroll.dispatchRawDelta(17f) } }
+        assertTheTracerSeesTheStage({ cover = Color.Black }, { debug = true })
         Composer.setTracer(null)
         compose.mainClock.autoAdvance = true
 
@@ -131,12 +164,14 @@ class MapStageFramesTest {
         val stage = MapStage()
         val state = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 0.0, 0.0)).apply { time = Fixtures.afternoon }
         var shift by mutableFloatStateOf(0f)
+        var cover by mutableStateOf(Color.White)
+        var debug by mutableStateOf(false)
         compose.setContent {
             Box(Modifier.fillMaxSize()) {
-                MapStageHost(stage, cover = Color.White)
+                MapStageHost(stage, cover = cover)
                 CompositionLocalProvider(LocalMapStage provides stage) {
                     // a push's slide: the screen in from a third of the width
-                    StageMap(state, Modifier.fillMaxSize().offset { IntOffset(shift.roundToInt(), 0) })
+                    StageMap(state, Modifier.fillMaxSize().offset { IntOffset(shift.roundToInt(), 0) }, debug = debug)
                 }
             }
         }
@@ -148,6 +183,7 @@ class MapStageFramesTest {
         compose.mainClock.autoAdvance = false
         val width = whole.width
         val frames = (10 downTo 0).map { k -> frame { shift = width / 3f * k / 10f } }
+        assertTheTracerSeesTheStage({ cover = Color.Black }, { debug = true })
         Composer.setTracer(null)
         compose.mainClock.autoAdvance = true
 

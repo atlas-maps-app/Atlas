@@ -22,6 +22,23 @@ class CategoriesTest {
         assertTrue(Categories.children("eat").map { it.id }.containsAll(listOf("restaurants", "drinks")))
     }
 
+    /**
+     * A shop is a shop of its kind first, whatever else its tags say it does (the reviewer, 17 November, finding 11:
+     * health, post and offices are asked before the shops, so a convenience store that takes parcels was Post, and a
+     * shoemaker's shoe shop an office); without a shop, what they do is what they are.
+     */
+    @Test
+    fun aShopKeepsItsKindBeforeWhatElseItDoes() {
+        assertEquals("food_shops", cat("shop" to "convenience", "post_office" to "post_partner"))
+        assertEquals("food_shops", cat("shop" to "bakery", "craft" to "bakery"))
+        assertEquals("shopping", cat("shop" to "shoes", "craft" to "shoemaker"))
+        assertEquals("shopping", cat("shop" to "optician", "healthcare" to "optometrist"))
+        assertEquals("post", cat("post_office" to "post_partner", "name" to "Pakketpunt"))
+        assertEquals("post", cat("amenity" to "post_office", "shop" to "convenience"))
+        assertEquals("offices", cat("craft" to "shoemaker"))
+        assertEquals("health", cat("healthcare" to "physiotherapist"))
+    }
+
     @Test
     fun firstMatchWinsInThePrototypesOrder() {
         assertEquals("restaurants", cat("amenity" to "restaurant"))

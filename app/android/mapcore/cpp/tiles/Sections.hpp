@@ -51,6 +51,9 @@ enum class Profile : std::uint8_t {
 /// (each the grid's integer divided by 1e7): x = (lon − lon0)·kx east, z = −(lat − lat0)·kz south. The same operations
 /// in the same order, contraction off, so a vertex lands bit for bit where the oracle puts it.
 struct Frame {
+    /// The most metres a degree a pack's frame may give (read_head refuses more): 111,320 at the equator, with room.
+    static constexpr double most_k = 200'000.0;
+
     double lat0 = 0.0;
     double lon0 = 0.0;
     double kx = 0.0;

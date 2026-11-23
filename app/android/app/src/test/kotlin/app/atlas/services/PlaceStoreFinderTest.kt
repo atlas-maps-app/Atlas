@@ -23,7 +23,7 @@ import org.robolectric.annotation.Config
 class PlaceStoreFinderTest {
     private val repo = java.io.File(System.getProperty("atlas.repo") ?: "../..")
     private val pack by lazy { PackFeatures(listOf(PackBoxes(PackReader.open(java.io.File(repo, "app/android/app/src/main/assets/packs/amsterdam.atlas"))))) }
-    private val packs = LocalData(stores = { null }, packs = { pack })
+    private val packs = LocalData(stores = { null }, packs = { pack }, countryAt = { null })
     private val finder = LayeredPlaceFinder(
         local = { packs },
         overpass = { null },

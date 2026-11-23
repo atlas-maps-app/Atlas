@@ -261,10 +261,12 @@ TEST_CASE("setts: the line stage's shares compose the path's exact layer, far, c
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
-        if (dir.empty() || !std::filesystem::exists(path)) {
+        if (dir.empty()) {
             MESSAGE("ATLAS_TILES_DIR has no " << name << ".atlas: its layer is not checked here");
             continue;
         }
+        // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+        ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
         auto pack = atlas::test::open_pack(path.string());
         ATLAS_REQUIRE(pack.has_value(), "the pack opens");
         std::vector<SettRoad> roads = sett_roads(*pack);

@@ -46,6 +46,7 @@ import app.atlas.R
 import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import app.atlas.ui.kit.CurrentWeather
 import app.atlas.ui.kit.SerifFamily
@@ -54,6 +55,7 @@ import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.cssShadow
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import app.atlas.ui.kit.shortDistance
 import app.atlas.geo.Sun
 import java.time.LocalDate
@@ -102,6 +104,7 @@ fun PicnicScreen(args: Dest.Picnic, nav: Navigator) {
     val zone = clock.zone
     val now = remember(clock) { clock.instant() }
     val local = remember(clock) { LocalDateTime.ofInstant(now, zone) }
+    val opening = rememberHoursAt(here)
     var plate by rememberSaveable { mutableStateOf(args.kind?.takeIf { k -> PLATES.any { it.id == k } } ?: "play") }
     var toddler by rememberSaveable { mutableStateOf(false) }
     var fence by rememberSaveable { mutableStateOf(false) }
@@ -179,9 +182,9 @@ fun PicnicScreen(args: Dest.Picnic, nav: Navigator) {
                             if (t["covered"] == "yes") add(stringResource(R.string.picnic_covered))
                             t["surface"]?.takeIf { plate == "play" }?.let { add(it.replace('_', ' ')) }
                         }
-                        val shut = remember(f, local) { isShut(f.place, here, local) }
+                        val shut = remember(f, local, opening) { isShut(f.place, here, local, opening) }
                         PlaceCard(
-                            f, here, facts.take(4), local, PICNIC_CARD, tile = { dim -> PlateTile(chosen, dim) }, dim = shut,
+                            f, here, facts.take(4), local, opening, PICNIC_CARD, tile = { dim -> PlateTile(chosen, dim) }, dim = shut,
                             onClick = { services.remember(f.place); nav.go(Dest.Place.of(f.place)) },
                         )
                     }
@@ -203,9 +206,9 @@ private val PICNIC_CARD = CardLook(
     walkSize = 18f, walkLine = 23.5f, factGap = 8f, dimBg = 0xBFFBFAF4, dimShadows = emptyList(), dimWalk = 0xFF676D7C,
 )
 
-/** True when the place's hours say it is shut now (closed, or opening later). */
-internal fun isShut(place: app.atlas.model.Place, here: app.atlas.geo.LatLon, now: LocalDateTime): Boolean {
-    val s = app.atlas.ui.kit.PlaceSummary.of(place, here, null, now)
+/** True when the place's hours, read in [hours] (the holidays and the sun there), say it is shut now (closed, or opening later). */
+internal fun isShut(place: app.atlas.model.Place, here: app.atlas.geo.LatLon, now: LocalDateTime, hours: OpeningHoursContext): Boolean {
+    val s = app.atlas.ui.kit.PlaceSummary.of(place, here, null, now, hours)
     val w = app.atlas.ui.kit.OpenWords.of(s, now)
     return w is app.atlas.ui.kit.OpenWords.Opens || w == app.atlas.ui.kit.OpenWords.Closed
 }

@@ -59,13 +59,19 @@ object Localise {
     }
 
     /**
-     * The postal address of a feature as lines, in the style of `addr:country` (else [country]): street and number,
-     * then postcode and place. Empty when no address is mapped.
+     * The postal address of a feature as lines, in the style of `addr:country`, else of [country], the country of the
+     * map at the feature, which every caller gives (the reviewer, 17 November, finding 11): street and number, then
+     * postcode and place. Where the number comes first, a unit (`addr:unit`) follows the street in America, "1600
+     * Pennsylvania Avenue NW, Suite 200", and comes before it in Britain and France, "Flat 2, 10 Downing Street" (the
+     * app maintainer, 18 November 2026, batch 4 B23), but for a unit of one letter in Britain, Ireland and the Crown
+     * dependencies, which joins a number of digits alone there, "10A Downing Street" (batch 5 B11; in France,
+     * Luxembourg and Monaco it is mostly a building: batch 6 B14). Empty when no address is mapped.
      */
-    fun addressLines(tags: Map<String, String>, country: String? = null): List<String> {
+    fun addressLines(tags: Map<String, String>, country: String?): List<String> {
         fun t(k: String) = tags["addr:$k"]?.trim()?.takeIf { it.isNotEmpty() }
         val street = t("street") ?: t("place")
-        val number = listOfNotNull(t("housenumber"), t("unit")).joinToString(" ").ifEmpty { null }
+        val unit = t("unit")
+        val number = listOfNotNull(t("housenumber"), unit).joinToString(" ").ifEmpty { null }
         val houseName = t("housename")
         val postcode = t("postcode")
         val city = t("city") ?: t("town") ?: t("village") ?: if (t("street") != null) t("place") else null
@@ -75,7 +81,16 @@ object Localise {
             street == null -> number
             number == null -> street
             style == AddressStyle.STREET_FIRST -> "$street $number"
-            else -> "$number $street"
+            style == AddressStyle.AMERICAN -> listOfNotNull(t("housenumber")?.let { "$it $street" } ?: street, unit).joinToString(", ")
+            else -> {
+                val house = t("housenumber")
+                // in Britain, Ireland and the Crown dependencies a unit of one letter joins a number of digits alone:
+                // "10A Downing Street", where "10A" with "B" or "10-12" with "A" would read as another number (batch 5
+                // B11); in France, Luxembourg and Monaco such a unit is mostly a building, and "12A Rue de Rivoli"
+                // reads as another number (batch 6 B14)
+                val letter = unit?.takeIf { style == AddressStyle.BRITISH && house != null && house.all(Char::isDigit) && it.length == 1 && it[0].isLetter() }
+                listOfNotNull(unit.takeIf { letter == null }, house?.let { "$it${letter.orEmpty()} $street" } ?: street).joinToString(", ")
+            }
         }
         val second = when (style) {
             AddressStyle.STREET_FIRST, AddressStyle.NUMBER_FIRST -> listOfNotNull(postcode, city).joinToString(" ")
@@ -88,7 +103,7 @@ object Localise {
         return listOfNotNull(houseName?.takeIf { it != street }, first, second.ifEmpty { null })
     }
 
-    /** The address on one line ("Prinsengracht 263, 1016 GV Amsterdam"), or null when none is mapped. */
-    fun address(tags: Map<String, String>, country: String? = null): String? =
+    /** The address on one line ("Prinsengracht 263, 1016 GV Amsterdam"), or null when none is mapped ([addressLines]). */
+    fun address(tags: Map<String, String>, country: String?): String? =
         addressLines(tags, country).joinToString(", ").ifEmpty { null }
 }

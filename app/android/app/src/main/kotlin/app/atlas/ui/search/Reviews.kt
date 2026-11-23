@@ -34,10 +34,10 @@ object Reviewer {
 
     /** A signed review of [place], ready to show and send; nothing is sent. */
     fun draft(services: Services, place: Place, stars: Int, opinion: String?, service: Service?): SignedReview =
-        MangroveWriter(services.http, key(services), clientId = "atlas").draft(place, stars.toDouble(), opinion?.takeIf { it.isNotBlank() }, service)
+        MangroveWriter(services.http(app.atlas.providers.Mangrove.ID), key(services), clientId = "atlas").draft(place, stars.toDouble(), opinion?.takeIf { it.isNotBlank() }, service)
 
     /** Publishes [review] on Mangrove: public, under CC BY 4.0, once this returns. */
-    suspend fun send(services: Services, review: SignedReview): Boolean = MangroveWriter(services.http, key(services), clientId = "atlas").submit(review)
+    suspend fun send(services: Services, review: SignedReview): Boolean = MangroveWriter(services.http(app.atlas.providers.Mangrove.ID), key(services), clientId = "atlas").submit(review)
 
     private fun keystoreKey(): ReviewerKey? = runCatching {
         val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

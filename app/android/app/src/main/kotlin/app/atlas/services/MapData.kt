@@ -64,11 +64,11 @@ class MapData(private val services: Services) {
 
     /** No call timeout: a region pack is megabytes, an Overpass answer can take minutes. */
     private val client: OkHttpClient by lazy {
-        services.http.client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
+        services.http(Overpass.INFO.id).client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
     }
 
     private val get = HttpGet { url ->
-        val res = client.newCall(Request.Builder().url(url).header("User-Agent", services.http.userAgent).build()).execute()
+        val res = client.newCall(Request.Builder().url(url).header("User-Agent", services.http(Overpass.INFO.id).userAgent).build()).execute()
         if (!res.isSuccessful) {
             res.close()
             throw IOException("$url answered ${res.code}")
@@ -127,12 +127,12 @@ class MapData(private val services: Services) {
 
     /** Atlas's published packs, as the windows read them: packs-latest's list, the last good copy kept. */
     private val windowCatalog: PackCatalog by lazy {
-        PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(packsIndexDir, "packs-latest.json"))
+        PackCatalog(PackCatalog.DEFAULT_URL, services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client, File(packsIndexDir, "packs-latest.json"))
     }
 
     /** The windows' data in Atlas's own packs, read on the windows' own thread. */
     private val windowPacks: WindowPacks by lazy {
-        WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
+        WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client)
     }
 
     /**
@@ -144,12 +144,12 @@ class MapData(private val services: Services) {
 
     /**
      * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
-     * thread.
+     * thread; each index that comes into memory told to the country question ([PackCountries.indexRead]).
      */
     private val windowTiles: WindowTiles by lazy {
-        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client, local = { _, set ->
+        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client, local = { _, set ->
             set.tiles.sha256?.let(regionFiles::keptTiles)?.let { (tiles, index) -> WindowTiles.Local(tiles, index) }
-        })
+        }, indexRead = { services.packCountries.indexRead() })
     }
 
     /** When each country's tiles' index was last asked for ([countryHolds]), by its id, ms of the uptime clock. */
@@ -164,13 +164,30 @@ class MapData(private val services: Services) {
      * memory allocates nothing.
      */
     private fun countryHolds(id: String, lat: Double, lon: Double): Boolean? {
-        val version = MapEngine.windowVersion() ?: return null
+        val version = coreVersion() ?: return null
         windowTiles.holds(id, version, lat, lon)?.let { return it }
         if (services.ciRun && !services.worldFetch.isCompleted) return null
         val now = android.os.SystemClock.uptimeMillis()
         val asked = indexAsked[id]
         if (asked != null && now - asked < COUNTRIES_RETRY_MS) return null
         indexAsked[id] = now
+        readIndex(id, version)
+        return null
+    }
+
+    /**
+     * This core's window version (MapCore.Window.version, as the map's engine has it): null where the phone's core
+     * builds no tiles of its own, and in a JVM test, which loads no core. The two country hooks read it here
+     * ([wireCountries]), so that a test wires them with a version of its own (the app maintainer, 19 November 2026,
+     * batch 6 B9).
+     */
+    internal var coreVersion: () -> String? = { MapEngine.windowVersion() }
+
+    /**
+     * Has country [id]'s tiles' index of core version [version] read in the background, and the maps drawn again once
+     * it is: the camera's hook's alone ([countryHolds]). A test gives its own, which reads nothing.
+     */
+    internal var readIndex: (id: String, version: String) -> Unit = { id, version ->
         services.scope.launch(Dispatchers.IO) {
             try {
                 val tiles = windowTiles.index(id, version) ?: return@launch
@@ -180,7 +197,22 @@ class MapData(private val services: Services) {
                 android.util.Log.w("AtlasMap", "vk windows: the tiles' index of $id did not come: ${e.message}")
             }
         }
-        return null
+    }
+
+    /**
+     * The two hooks that read the countries' tiles' indexes ([wire]'s). The camera's ([MapEngine.countryHolds]): which
+     * places within a country's box its tiles hold, as their index lists them, so that beyond its border (Antwerp and
+     * Aachen in the Netherlands' box) no country's levels are and the world draws under the cover; it has an index read
+     * where it is not in memory. And the country question's ([PackCountries.tiles], HereContext's), from the indexes in
+     * memory alone: it never has one read or fetched (the app maintainer, 18 November 2026, batch 5 A3). Internal so
+     * that a test wires them as [wire] does (19 November 2026, batch 6 B9: none did, so the country question's wired
+     * back to the camera's passed every test).
+     */
+    internal fun wireCountries() {
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
+        services.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            coreVersion()?.let { windowTiles.level(id, it, lat, lon) }
+        }
     }
 
     /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
@@ -193,7 +225,7 @@ class MapData(private val services: Services) {
      * each server between them.
      */
     private val overpass: OverpassClient by lazy {
-        OverpassClient(post.inTurns(services.http.limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)
+        OverpassClient(post.inTurns(services.http(Overpass.INFO.id).limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)
     }
 
     /**
@@ -301,6 +333,8 @@ class MapData(private val services: Services) {
                     // which tiles this phone takes: none of its core's version means every window is built here, and
                     // no frame cell's levels are drawn (they come from those tiles alone)
                     val version = MapEngine.windowVersion()
+                    // each country's code first, so a frame that reads the country of the tiles there finds it
+                    services.packCountries.learn(list)
                     MapEngine.countries = list.filter { it.tileSets.isNotEmpty() }.map { p ->
                         CountryTiles(p.id, p.name, p.bbox, levels = version != null && p.tilesOf(version) != null)
                     }
@@ -317,9 +351,9 @@ class MapData(private val services: Services) {
                 delay(COUNTRIES_RETRY_MS)
             }
         }
-        // which places within a country's box its tiles hold, as their index lists them: beyond its border (Antwerp and
-        // Aachen in the Netherlands' box) no country's levels are, and the world draws under the cover
-        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
+        // which places within a country's box its tiles hold, for the camera, and for the country question from the
+        // indexes in memory alone
+        wireCountries()
         MapEngine.windowsAllowed = { !services.ciRun }
         // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
         // index and the globe of its release at the first start and each new version (a new one drops the old one and
@@ -395,7 +429,7 @@ class MapData(private val services: Services) {
         // a new version drops the old one's heads and chunks, unless a country is kept by its tiles: then it waits
         // beside the old one until the keeper holds its kept world whole (ENGINE.md step 11: no kept world lost offline)
         val world = WorldFetch(
-            dir, client = services.http.client,
+            dir, client = services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client,
             drop = {
                 MapEngine.worldCacheDir()?.let { cache ->
                     val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
@@ -427,7 +461,7 @@ class MapData(private val services: Services) {
      */
     private fun wireTerrain(dir: File) {
         val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk terrain: $line") }
-        val terrain = TerrainFetch(dir, client = services.http.client)
+        val terrain = TerrainFetch(dir, client = services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client)
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
             val cache = MapEngine.worldCacheDir() ?: return@launch

@@ -70,7 +70,8 @@ inline void write_ppm(const gpu::Pixels& px, const std::filesystem::path& path) 
 /// buffers of 64 MB and the first is filled before any tile is built, so the tiles' ground and lines lie in the second.
 /// `each` (may be empty) changes the inputs before each frame, by its number from 0: the camera's size stays. With
 /// `every_pass`, every pass of the registry draws (the buildings, the trees and the rest over the ground), not the
-/// ground's alone.
+/// ground's alone. `drawn` (may be empty) sees each frame once it has finished: its number, its pixels and the frame
+/// builder (its counters).
 inline std::optional<GroundDraw>
 draw_ground(const Session& session, const style::CameraState& camera, const style::ThemeBlock& theme,
             const std::string& dir, const std::string& pack,
@@ -78,7 +79,8 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
             const std::function<void(passes::Ground&)>& before = {}, frame::Mode mode = frame::Mode::structural,
             const std::shared_ptr<frame::GlobalProvider>& globals = nullptr, const std::function<void()>& settle = {},
             const frame::FrameOptions& options = {.steps = 0}, bool second_buffer = false,
-            const std::function<void(int, frame::FrameInputs&)>& each = {}, bool every_pass = false) {
+            const std::function<void(int, frame::FrameInputs&)>& each = {}, bool every_pass = false,
+            const std::function<void(int, const gpu::Pixels&, const frame::FrameBuilder&)>& drawn = {}) {
     const gpu::Device& device = *session.device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
     if (!cache) return std::nullopt;
@@ -103,7 +105,9 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
     if (globals && !(*world)->add_globals(globals)) return std::nullopt;
     for (const char* name : {"amsterdam", "grachten"}) {
         const std::filesystem::path path = std::filesystem::path(dir) / (std::string(name) + ".atlas");
-        if (!std::filesystem::exists(path)) continue;
+        // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+        ATLAS_REQUIRE_OR_RETURN(std::nullopt, std::filesystem::exists(path),
+                                "ATLAS_TILES_DIR has no " << path.string());
         if (!(*world)->store().add({.id = name, .kind = tiles::PackKind::bundled, .path = path.string()})) {
             return std::nullopt;
         }
@@ -139,6 +143,12 @@ draw_ground(const Session& session, const style::CameraState& camera, const styl
         if (g->decided().kept) ++kept;
         (*world)->residency().wait_idle();
         if (settle) settle();
+        if (drawn) {
+            (*renderer)->drain();
+            auto frame = (*output)->read_packed((*output)->latest());
+            if (!frame) return std::nullopt;
+            drawn(f, gpu::to_rgba8(*frame), **builder);
+        }
     }
     (*renderer)->drain();
     auto packed = (*output)->read_packed((*output)->latest());

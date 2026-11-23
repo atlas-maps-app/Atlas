@@ -21,6 +21,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Toolchains)
 include(Warnings)
 include(Sanitizers)
+include(Rust)
 include(Tidy)
 include(Shaders)
 include(Data)
@@ -34,6 +35,11 @@ set(ATLAS_EXTRA_TEST_SOURCES "" CACHE STRING "More test sources, compiled into a
 option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's canary; never in a real build)" OFF)
 if(ATLAS_TESTS)
     enable_testing()
+    # A test's hook in one of the core's classes compiles only here, within #if defined(ATLAS_TESTS) (the Architect's
+    # review of 19 November 2026, section 3, point 4): every unit of the build sees it, since the tests link the same
+    # core objects as the library, so a class is laid out alike in all of them; Android's build and :mapcorecheck's
+    # library (ATLAS_TESTS off) have none of it.
+    add_compile_definitions(ATLAS_TESTS=1)
 endif()
 # At most ATLAS_JOBS of the build's compile, link and shader jobs at once (Ninja's pool atlas_jobs; the Vulkan-Hpp
 # units keep their own pool of two, below), for a build whose Ninja is run by a tool that gives it no -j: Gradle's NDK
@@ -166,24 +172,46 @@ list(FILTER _jni_test_sources INCLUDE REGEX "/Test[^/]*\\.cpp$")
 
 # Stage P (ENGINE.md step 3): OpenStreetMap's data into render tiles, for the phone's windows and the packer alike:
 # pymath, the Overpass reader, the loads and the cut, the tiles' reader and writer, the text's case and code points, the
-# roofs' shapes and the palette (the slots a building's colours go with). Its objects are a library of their own
-# (atlas_stage_p), in the core and in the packer's tool, which links nothing else: no Vulkan, shaders or HarfBuzz.
+# roofs' shapes, the buildings' seams and the palette (the slots a building's colours go with); and the buildings'
+# cleaning, a Rust library (cmake/Rust.cmake). Its objects are a library of their own (atlas_stage_p), in the core and
+# in the packer's tool, which links nothing else: no Vulkan, shaders or HarfBuzz.
 set(_stage_p_sources "")
 foreach(area IN ITEMS base/pymath osm load tiles)
     file(GLOB_RECURSE _found CONFIGURE_DEPENDS "${area}/*.cpp" "${area}/*.c")
     list(APPEND _stage_p_sources ${_found})
 endforeach()
+# a big road's size (geometry/BigRoad.hpp), which stage T draws it with and stage P pads its box by
+list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/geometry/BigRoad.cpp")
 list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/text/Utf8.cpp"
-     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
+     "${CMAKE_CURRENT_SOURCE_DIR}/geometry/RoofShapes.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/geometry/Seams.cpp"
+     "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
 list(REMOVE_ITEM _core_sources ${_stage_p_sources})
 
-# What stage P's code links: dialect, warnings, sanitizers, zstd, and the generated headers under the build directory
-# (gen/data/*: the style file and the traditions).
+# The buildings' cleaning (load/Clean.hpp), a Rust library: app/android/mapcore/rust/clean, built by cargo as a static
+# library (cmake/Rust.cmake) and linked into stage P (atlas_clean). Release settings in its Cargo.toml (opt-level s,
+# LTO over the crate and the standard library, one unit, panic = abort) keep it small. A fuzz build instruments it for
+# libFuzzer as the C++ is (sanitizer coverage), and turns on its overflow checks, which the build that ships has off
+# (overflow-checks = false): there an overflow is a panic, which aborts, and libFuzzer reports it where the shipped
+# build would wrap. The build fails if the library's code names no overflow panic (OVERFLOW_CHECKS, cmake/Rust.cmake).
+# The other sanitizers leave it as it is (it holds no C++ and shares no memory it does not own).
+set(_clean_crate "${CMAKE_CURRENT_SOURCE_DIR}/../rust/clean")
+set(_clean_rustflags "")
+set(_clean_checks "")
+if(ATLAS_SANITIZE STREQUAL "fuzzer")
+    string(JOIN " " _clean_rustflags -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
+        -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
+        -Cllvm-args=-sanitizer-coverage-trace-compares)
+    set(_clean_checks OVERFLOW_CHECKS)
+endif()
+atlas_rust_library(atlas_clean CRATE "${_clean_crate}" LIB atlas_clean RUSTFLAGS "${_clean_rustflags}" ${_clean_checks})
+
+# What stage P's code links: dialect, warnings, sanitizers, zstd, the buildings' cleaning, and the generated headers
+# under the build directory (gen/data/*: the style file and the traditions).
 find_package(Threads REQUIRED)
 add_library(atlas_stage_p_requirements INTERFACE)
 target_include_directories(atlas_stage_p_requirements INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
 target_link_libraries(atlas_stage_p_requirements INTERFACE
-    atlas_options atlas_warnings atlas_sanitizers atlas_zstd Threads::Threads)
+    atlas_options atlas_warnings atlas_sanitizers atlas_zstd atlas_clean Threads::Threads)
 if(ATLAS_ANDROID)
     target_link_libraries(atlas_stage_p_requirements INTERFACE log android)
 else()
@@ -258,6 +286,17 @@ if(ATLAS_ANDROID)
         "{\n  global: JNI_On*; Java_*; atlas_*;\n  local: *;\n};\n")
     target_link_options(atlasmap PRIVATE "-Wl,--version-script=${_exports}" -Wl,-z,max-page-size=16384)
     set_target_properties(atlasmap PROPERTIES LINK_DEPENDS "${_exports}")
+    # What the Rust library takes of this build's libatlasmap.so, for its ABI: counted from lld's map of the link after
+    # every link (cmake/LinkedBytes.cmake), printed, and kept in rust-bytes.txt, which CI's Android build puts in its
+    # summary. The cost of a crate stays in sight as crates are added.
+    set(_link_map "${CMAKE_BINARY_DIR}/libatlasmap.so.map")
+    target_link_options(atlasmap PRIVATE "-Wl,-Map=${_link_map}")
+    add_custom_command(TARGET atlasmap POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" "-DMAP=${_link_map}" -DARCHIVE=libatlas_clean.a
+                "-DWHAT=libatlasmap.so (${ATLAS_BUILD}, ${ANDROID_ABI})" "-DOUT=${CMAKE_BINARY_DIR}/rust-bytes.txt"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinkedBytes.cmake"
+        BYPRODUCTS "${_link_map}" "${CMAKE_BINARY_DIR}/rust-bytes.txt"
+        VERBATIM)
 else()
     add_library(atlasmap SHARED ${_core_objects} ${_jni_sources} ${_jni_test_sources})
     set_target_properties(atlasmap PROPERTIES OUTPUT_NAME atlasmap_host)
@@ -304,6 +343,28 @@ if(ATLAS_TESTS)
         atlas_vulkan_objects(atlas_tests_vulkan ${_test_vulkan_sources})
         target_link_libraries(atlas_tests_vulkan PRIVATE atlas_doctest)
         target_sources(atlas_tests PRIVATE $<TARGET_OBJECTS:atlas_tests_vulkan>)
+        # items_vk_test's: the region items' decide stage before it was split by kind (tests/item/items_whole.slang),
+        # compiled as the core's modules are, but neither embedded nor budgeted: the test reads it from this file
+        # (ATLAS_ITEMS_WHOLE) and holds the kinds' stages' records to its, byte for byte.
+        set(_items_whole_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/item/items_whole.slang")
+        set(_items_whole "${CMAKE_BINARY_DIR}/tests/item/items_whole")
+        add_custom_command(
+            OUTPUT "${_items_whole}.spv"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/tests/item"
+            COMMAND "${CMAKE_COMMAND}" -E env SLANG_RUN_SPIRV_VALIDATION=1
+                    "${ATLAS_SLANGC}" "${_items_whole_source}" -target spirv -profile spirv_1_3
+                    -fvk-use-entrypoint-name -entry items_cs -stage compute -std 2026 -warnings-as-errors all
+                    -I "${CMAKE_CURRENT_SOURCE_DIR}" -I "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+                    -o "${_items_whole}.slangc.spv" -depfile "${_items_whole}.d"
+            COMMAND ${ATLAS_NOCONTRACT} capabilities "${_items_whole}.slangc.spv" "${_items_whole}.spv"
+            DEPFILE "${_items_whole}.d"
+            DEPENDS "${_items_whole_source}" "${ATLAS_SLANGC}" ${ATLAS_NOCONTRACT_DEPENDS}
+            COMMENT "slangc tests/item/items_whole.slang"
+            ${ATLAS_JOB_POOL}
+            VERBATIM)
+        add_custom_target(atlas_items_whole DEPENDS "${_items_whole}.spv")
+        add_dependencies(atlas_tests atlas_items_whole)
+        target_compile_definitions(atlas_tests_vulkan PRIVATE ATLAS_ITEMS_WHOLE="${_items_whole}.spv")
     endif()
     atlas_tidy(atlas_tests)
     # One ctest entry per test file, tests/<area>/<name>.cpp as <area>/<name>, each a process of its own, so ctest -j
@@ -320,8 +381,11 @@ if(ATLAS_TESTS)
     # ground/ripple_vk_test and frame/map_frame_vk_test 11 each, frame/composite_vk_test 9 under TSan: their cases one a
     # part (each opens its own session, so a process apiece costs little); buildings_vk_test's tenth part its three
     # short cases, a case added since (the guessed roofs' shapes, 3 November) a part after them.
+    # frame/world_vk_test took 23 to 26 minutes on x86_64 once its world's cases had ATLAS_WORLD_DIR (18 November): its
+    # first four cases a part (the zoom to 100 km 5 of their 6 minutes), the three fades of about 4 minutes one a part,
+    # then the next four and the rest, each 2 to 7 minutes.
     set(_test_parts "building/buildings_vk_test=1,1,1,1,1,1,1,1,1,3" "frame/map_frame_vk_test=1,1,1,1,1,1,1,1"
-        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1")
+        "ground/ripple_vk_test=1,1,1" "frame/composite_vk_test=1,1,1" "frame/world_vk_test=4,1,1,1,4")
     set(_test_patterns "")
     set(_test_entries "")
     foreach(source IN LISTS _test_sources _test_vulkan_sources)
@@ -386,6 +450,13 @@ if(ATLAS_TESTS)
     add_test(NAME atlas_tests_split COMMAND "${CMAKE_COMMAND}" "-DATLAS_TESTS_EXE=$<TARGET_FILE:atlas_tests>"
         "-DATLAS_TESTS_SPLIT=${CMAKE_BINARY_DIR}/atlas_tests_split.tsv" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TestSplit.cmake")
     set_tests_properties(atlas_tests_rest atlas_tests_split PROPERTIES LABELS atlas_tests)
+    # the buildings' cleaning's own tests (rust/clean, cargo's), built in a folder of their own
+    if(ATLAS_HOST)
+        add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests"
+                 RUSTUP_AUTO_INSTALL=0 -- "${ATLAS_CARGO}" test --offline --locked --quiet --features std
+                 WORKING_DIRECTORY "${_clean_crate}")
+        set_tests_properties(rust/clean PROPERTIES LABELS "atlas_tests;load")
+    endif()
 endif()
 if(ATLAS_BENCH)
     add_subdirectory(bench)

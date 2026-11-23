@@ -153,18 +153,37 @@ internal class DaySelector(val weekdays: List<WeekdayRange>, val holidays: List<
     }
 }
 
-/** A time of day: fixed minutes (up to 48:00), or a sun event moved by [offset] minutes. */
+/**
+ * A time of day: fixed minutes (up to 48:00), or a sun event moved by [offset] minutes. A sun event that does not happen
+ * that day, the sun on one side of it all day ([DaySun.upAllDay], [DaySun.lightAllDay]), has happened at midnight when
+ * the whole day is after it (dawn in the white nights, sunrise in polar day) and never comes, 24:00, when the whole day
+ * is before it (dusk in the white nights): `dawn-dusk` in Trondheim in June is open all day (the reviewer, 17
+ * November, finding 11: it read closed). Null when the clock does not say why.
+ */
 internal class TimePoint(val minutes: Int, val event: SunEvent? = null, val offset: Int = 0) {
     fun resolve(date: LocalDate, sun: SunClock): Int? {
         if (event == null) return minutes
         val t = sun.times(date) ?: return null
-        val at = when (event) {
-            SunEvent.DAWN -> t.dawn
-            SunEvent.SUNRISE -> t.sunrise
-            SunEvent.SUNSET -> t.sunset
-            SunEvent.DUSK -> t.dusk
+        eventTime(t)?.let { return it.hour * 60 + it.minute + offset }
+        val sideAfter = when (event) {
+            SunEvent.DAWN, SunEvent.DUSK -> t.lightAllDay
+            SunEvent.SUNRISE, SunEvent.SUNSET -> t.upAllDay
         } ?: return null
-        return at.hour * 60 + at.minute + offset
+        // a rising (dawn, sunrise) leads to light, a setting away from it: the whole day is after a rising when it is
+        // light. An offset moves nothing that is not there: "(sunset+01:00)" in polar day never comes either
+        val rising = event == SunEvent.DAWN || event == SunEvent.SUNRISE
+        return if (rising == sideAfter) 0 else 1440
+    }
+
+    /** True when this is a sun event that does not happen on [date]. */
+    fun missed(date: LocalDate, sun: SunClock): Boolean = event != null && sun.times(date)?.let { eventTime(it) } == null
+
+    private fun eventTime(t: DaySun) = when (event) {
+        SunEvent.DAWN -> t.dawn
+        SunEvent.SUNRISE -> t.sunrise
+        SunEvent.SUNSET -> t.sunset
+        SunEvent.DUSK -> t.dusk
+        null -> null
     }
 }
 
@@ -176,19 +195,55 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
     /** Start and end minutes on [date] (end may pass 1440) and whether the span itself is open-ended; null when a sun event is missing. */
     fun resolve(date: LocalDate, sun: SunClock): Pair<Int, Int>? {
         val a = from.resolve(date, sun) ?: return null
-        if (to == null) return if (openEnd) a to a + openEndGuess(a) else a to a + 1
+        if (to == null) {
+            // a start the sun does not make that day never opens: one that never comes (`sunset+` in polar day; the app
+            // maintainer, 18 November 2026, batch 4 B19: it opened at midnight), and a sunset or a dusk that does not
+            // happen, with or without its `+` (`sunset+` in polar night, its evening read as midnight and open to six;
+            // 19 November 2026, batch 6 A7)
+            if (from.missed(date, sun) && (a >= 1440 || from.event == SunEvent.SUNSET || from.event == SunEvent.DUSK)) return null
+            // a start by sunrise or dawn is a morning's whatever its minute: to midnight, and all day where the sun does
+            // not set or the light does not go, its rising at midnight (the app maintainer, 18 November 2026, batch 5 A7:
+            // before 04:00, Stockholm's June, it closed at six as a written early start does)
+            if (openEnd && (from.event == SunEvent.SUNRISE || from.event == SunEvent.DAWN)) return a to (a / 1440 + 1) * 1440
+            return if (openEnd) a to a + openEndGuess(a) else a to a + 1
+        }
         var b = to.resolve(date, sun) ?: return null
-        if (b <= a) b += 1440
+        if (b <= a) {
+            // past midnight; but where a sun event did not happen, a span that ends before it starts never begins
+            // (`sunset-sunrise` in polar day: no night)
+            if (from.missed(date, sun) || to.missed(date, sun)) return null
+            b += 1440
+        }
         return a to b.coerceAtMost(a + 2880).coerceAtMost(2880)
     }
 
     companion object {
-        /** How long an open end ("17:00+") is assumed to last: to midnight by day, five hours in the evening, eight at night. */
-        fun openEndGuess(start: Int): Int = when {
-            start < 17 * 60 -> (1440 - start).coerceAtLeast(60)
-            start < 22 * 60 -> 300
-            else -> 480
+        /**
+         * How long an open end with no stated end (`17:00+`) is assumed to last from [at], where it begins, by the hour
+         * it begins: before 04:00 to six; from 04:00 to midnight; from 17:00 five hours; from 22:00 to six the next
+         * morning. After a stated end (`17:00-01:00+`) the tail is [STATED_TAIL] whatever the hour. (The reviewer, 17
+         * November 2026: `18:00-24:00+` read open around the clock; then the app maintainer's rule of 18 November: an
+         * early start was open for minutes, `Mo-Sa 05:30+` till six, and an end after six filled the day.) A start by
+         * sunrise or dawn is a morning's whatever its minute, to midnight ([resolve]; batch 5 A7).
+         */
+        fun openEndGuess(at: Int): Int {
+            val m = at % 1440
+            return when {
+                m < EARLY -> MORNING - m
+                m < EVENING -> 1440 - m
+                m < NIGHT -> 300
+                else -> 1440 - m + MORNING
+            }
         }
+
+        /** The tail after a stated end (`a-b+`): two hours, whatever the hour ("a few hours": a kitchen's `-22:00+` is not open at three). */
+        const val STATED_TAIL = 120
+
+        /** Where an open start's hour is early, evening, night, and morning again (minutes since midnight). */
+        private const val EARLY = 4 * 60
+        private const val EVENING = 17 * 60
+        private const val NIGHT = 22 * 60
+        private const val MORNING = 6 * 60
     }
 }
 

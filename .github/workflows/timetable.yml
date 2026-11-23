@@ -94,7 +94,7 @@ jobs:
       - name: Rust, as rust-toolchain.toml pins it
         run: |
           set -euo pipefail
-          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$DIR/rust-toolchain.toml")" --profile minimal --no-self-update
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' app/android/rust-toolchain.toml)" --profile minimal --no-self-update
       - name: The day, and what is published
         id: day
         env:

@@ -31,7 +31,7 @@ ANDROID = Path("app/android")
 # the engine's references, the frames drawn.
 CHECK_PACKAGES = {
     "base": ["numerics"], "osm": ["load"], "load": ["load"], "tiles": ["tiles", "load"],
-    "style": ["style", "likeness"], "sun": ["likeness"], "text": ["likeness"], "fx": ["likeness"],
+    "style": ["style", "likeness"], "sun": ["sun", "likeness"], "text": ["likeness"], "fx": ["likeness"],
     "geometry": ["twin", "likeness"], "stagep": ["load"],
 }
 # the areas whose code draws the frame: the twin, the engine's references, the frame's own checks
@@ -176,10 +176,24 @@ def main():
             rel = p.relative_to(ANDROID)
             if rel.parts[0] in ("gradle", "build.gradle.kts", "settings.gradle.kts", "gradle.properties"):
                 gradle_changed.add("*")
+            elif rel == Path("rust-toolchain.toml") or (rel.parts[0] == "mapcore" and len(rel.parts) > 1
+                                                         and rel.parts[1] == "rust"):
+                # the buildings' cleaning, a Rust library stage P links, or the Rust it is built with (the pin): its
+                # loads and what draws them, and its fuzzer
+                labels.update(["load", "building"])
+                fuzz = True
+                packages.update(CHECK_PACKAGES["load"] + CHECK_PACKAGES["geometry"])
+                other.append(path)
+                # the pin is the planner's too
+                transit = transit or rel == Path("rust-toolchain.toml")
             elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "style":
                 gradle_changed.update(["mapcore", "packer"])
                 check_all = True
                 labels.add("style")
+            elif rel.parts[0] == "mapcore" and len(rel.parts) > 1 and rel.parts[1] == "traditions":
+                # the building traditions the core embeds (CMakeLists.txt's atlas_embed_data) and reads typed
+                names.add("load/tradition_test")
+                gradle_changed.add("mapcore")
             elif rel.parts[0] == "ci":
                 other.append(path)
             elif rel.parts[0] == "transit":
@@ -240,7 +254,8 @@ def main():
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-planner cargo test --manifest-path planner/Cargo.toml")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-abi cargo test --locked --manifest-path abi/Cargo.toml   # the C interface against the planner")
         print("  CARGO_TARGET_DIR=~/atlas/var/build/transit-abi abi/check.sh   # the interface from C: the release library in a C and a C++ program")
-        print("  (.github/workflows/transit.yml runs the first two on x86_64 and arm64 Linux, on a push that changes app/android/transit)")
+        print("  (.github/workflows/transit.yml runs the first two on x86_64 and arm64 Linux, on a push that changes app/android/transit")
+        print("   or app/android/rust-toolchain.toml)")
     if other:
         print()
         print("Other paths, which no local suite covers (CI's do): " + ", ".join(other[:12]) + (" ..." if len(other) > 12 else ""))

@@ -13,7 +13,7 @@ import java.time.LocalDateTime
 class FactsTest {
     private val monday = LocalDateTime.of(2026, 10, 12, 20, 0)
     private fun facts(vararg kv: Pair<String, String>, lang: String = "en", at: LocalDateTime = monday) =
-        Facts.of(mapOf(*kv), lang, at)
+        Facts.of(mapOf(*kv), lang, at, context = Nowhere)
 
     private fun List<Fact>.of(kind: FactKind) = filter { it.kind == kind }
     private fun List<Fact>.one(kind: FactKind) = single { it.kind == kind }
@@ -68,7 +68,7 @@ class FactsTest {
         // a bench has nothing to ask about wheelchairs
         assertTrue(facts("amenity" to "bench").none { it.kind == FactKind.WHEELCHAIR })
         // a footway asks for its surface but not its access
-        val path = Facts.of(mapOf("highway" to "footway"), "en", monday, geometry = Geometry.LINE)
+        val path = Facts.of(mapOf("highway" to "footway"), "en", monday, geometry = Geometry.LINE, context = Nowhere)
         assertTrue(path.any { !it.mapped && it.key == "surface" })
         assertTrue(path.none { it.kind == FactKind.ACCESS })
     }
@@ -113,7 +113,7 @@ class FactsTest {
         assertEquals("maki-soccer", pitch.of(FactKind.SPORT).first().symbol)
         assertEquals(2, pitch.of(FactKind.SPORT).size)
         assertEquals(FactState.YES, pitch.one(FactKind.LIT).state)
-        val path = Facts.of(mapOf("highway" to "path", "surface" to "gravel", "lit" to "no", "incline" to "8%"), "en", monday, geometry = Geometry.LINE)
+        val path = Facts.of(mapOf("highway" to "path", "surface" to "gravel", "lit" to "no", "incline" to "8%"), "en", monday, geometry = Geometry.LINE, context = Nowhere)
         assertEquals(FactState.LIMITED, path.one(FactKind.SURFACE).state)
         assertEquals(FactState.NO, path.one(FactKind.LIT).state)
         assertEquals("8%", path.one(FactKind.INCLINE).value)
@@ -156,10 +156,15 @@ class FactsTest {
         assertEquals("Veganistisch", nl.one(FactKind.DIET).label)
         assertEquals("Rolstoeltoegankelijkheid", nl.one(FactKind.WHEELCHAIR).label)
         assertNotNull(nl.one(FactKind.WHEELCHAIR).valueLabel)
-        // a place's own country gives the holidays: Christmas closes a "PH off" bakery
-        val bakery = Place(null, LatLon(52.37, 4.88), mapOf("shop" to "bakery", "addr:country" to "NL", "opening_hours" to "Mo-Sa 07:00-18:00; PH off"))
-        assertEquals(FactState.NO, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 25, 10, 0)).one(FactKind.OPENING_HOURS).state)
-        assertEquals(FactState.YES, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 24, 10, 0)).one(FactKind.OPENING_HOURS).state)
+        // a place's own country gives the holidays (PlaceCountry, before the country around): Christmas closes a "PH off" bakery
+        val bakery = Place(null, LatLon(52.37, 4.88), mapOf("shop" to "bakery", "addr:country" to "nl ", "opening_hours" to "Mo-Sa 07:00-18:00; PH off"))
+        val country = PlaceCountry.of(bakery.tags, around = "US")
+        assertEquals("NL", country)
+        val ctx = OpeningHoursContext.forPlace(country, java.time.ZoneId.of("Europe/Amsterdam"), 52.37, 4.88)
+        assertEquals(FactState.NO, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 25, 10, 0), ctx).one(FactKind.OPENING_HOURS).state)
+        assertEquals(FactState.YES, Facts.of(bakery, "en", LocalDateTime.of(2026, 12, 24, 10, 0), ctx).one(FactKind.OPENING_HOURS).state)
+        // a country that is not a code says nothing: the one around speaks
+        assertEquals("BE", PlaceCountry.of(mapOf("addr:country" to "Nederland"), around = "be"))
     }
 
     @Test
@@ -176,13 +181,13 @@ class FactsTest {
     fun hoursSayTheDayWhenTheChangeIsNotTodayOrTomorrow() {
         val tags = mapOf("shop" to "bakery", "opening_hours" to "Mo-Fr 07:00-18:00")
         // Saturday noon: it opens on Monday, not at 07:00 tomorrow
-        assertEquals("Mon 07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value)
-        val nl = Facts.of(tags, "nl", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value!!
+        assertEquals("Mon 07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+        val nl = Facts.of(tags, "nl", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value!!
         assertTrue(nl, nl.endsWith(" 07:00") && !nl.startsWith("Mon"))
         // Sunday noon: tomorrow, so the time alone
-        assertEquals("07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 18, 12, 0)).one(FactKind.OPENING_HOURS).value)
+        assertEquals("07:00", Facts.of(tags, "en", LocalDateTime.of(2026, 10, 18, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
         // hours that do not say give their reason
-        val appt = Facts.of(mapOf("office" to "lawyer", "opening_hours" to "Mo-Fr 08:00-12:00 || \"by appointment\""), "en", monday.withHour(14))
+        val appt = Facts.of(mapOf("office" to "lawyer", "opening_hours" to "Mo-Fr 08:00-12:00 || \"by appointment\""), "en", monday.withHour(14), context = Nowhere)
         assertEquals(FactState.UNKNOWN, appt.one(FactKind.OPENING_HOURS).state)
         assertEquals("by appointment", appt.one(FactKind.OPENING_HOURS).value)
     }
@@ -191,12 +196,44 @@ class FactsTest {
     fun aChangeMoreThanAWeekAwayGivesTheDate() {
         // a weekday alone would read as the coming one: "Tue 10:00" for 1 June
         val summer = mapOf("amenity" to "ice_cream", "opening_hours" to "Jun-Aug 10:00-18:00")
-        assertEquals("1 Jun 10:00", Facts.of(summer, "en", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value)
-        val nl = Facts.of(summer, "nl", LocalDateTime.of(2026, 10, 17, 12, 0)).one(FactKind.OPENING_HOURS).value!!
+        assertEquals("1 Jun 10:00", Facts.of(summer, "en", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+        val nl = Facts.of(summer, "nl", LocalDateTime.of(2026, 10, 17, 12, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value!!
         assertTrue(nl, nl.startsWith("1 jun") && nl.endsWith(" 10:00"))
         // six days ahead is still a weekday
         val weekly = mapOf("shop" to "bakery", "opening_hours" to "Su 08:00-12:00")
-        assertEquals("Sun 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 12, 13, 0)).one(FactKind.OPENING_HOURS).value)
-        assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0)).one(FactKind.OPENING_HOURS).value)
+        assertEquals("Sun 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 12, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+        assertEquals("25 Oct 08:00", Facts.of(weekly, "en", LocalDateTime.of(2026, 10, 18, 13, 0), context = Nowhere).one(FactKind.OPENING_HOURS).value)
+    }
+
+    /**
+     * A bottle refill is named in each language Atlas bundles (the app maintainer, 18 November 2026, batch 4 B22): it
+     * was English in fourteen of the eighteen. A language tag falls back as the others do ("pt-BR", "zh-Hans", "no").
+     */
+    @Test
+    fun aRefillIsNamedInEachLanguage() {
+        fun label(lang: String) = facts("amenity" to "cafe", "bottle" to "yes", lang = lang).one(FactKind.BOTTLE_REFILL).label
+        val names = Langs.bundled.associateWith(::label)
+        for ((lang, name) in names) if (lang != "en") assertTrue("$lang: $name", name != "Bottle refill")
+        assertEquals("one name a language: $names", Langs.bundled.size, names.values.toSet().size)
+        assertEquals(names["pt"], label("pt-BR"))
+        assertEquals(names["zh-CN"], label("zh-Hans"))
+        assertEquals(names["nb"], label("no"))
+        assertEquals("Bottle refill", label("ko"))
+    }
+
+    @Test
+    fun aRefillAndTheDietQuestionSayWhatTheyAre() {
+        // the reviewer, 17 November, finding 11: a refill read "Drinkable: No", and the diet question asked "Dietary
+        // Options?" where a yes maps diet:vegetarian
+        val refill = facts("amenity" to "cafe", "drinking_water:refill" to "no").one(FactKind.BOTTLE_REFILL)
+        assertEquals(FactState.NO, refill.state)
+        assertEquals("Bottle refill", refill.label)
+        assertEquals("Fles bijvullen", facts("amenity" to "cafe", "bottle" to "yes", lang = "nl").one(FactKind.BOTTLE_REFILL).label)
+        assertEquals("ボトル給水", facts("amenity" to "cafe", "bottle" to "yes", lang = "ja").one(FactKind.BOTTLE_REFILL).label)
+        val diet = facts("amenity" to "restaurant", "name" to "Nowhere").single { !it.mapped && it.kind == FactKind.DIET }
+        assertEquals("diet:vegetarian", diet.key)
+        assertEquals("Vegetarian", diet.label)
+        // a mapped diet keeps its own names
+        assertEquals("Vegan", facts("amenity" to "restaurant", "diet:vegan" to "yes").one(FactKind.DIET).label)
     }
 }

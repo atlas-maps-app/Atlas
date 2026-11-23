@@ -130,6 +130,10 @@ class PushFramesTest {
         Composer.setTracer(null)
         compose.mainClock.autoAdvance = true
         compose.waitForIdle()
+        // the control of the counts: the push's first frames compose the screen it opens and give the stage its map,
+        // so a tracer that sees nothing, or source info written another way, fails the tests rather than passing them
+        assertTrue("the push's first frames recompose the screen: $frames", frames.sumOf { it.screen } >= 1)
+        assertTrue("the push's first frames recompose the stage: $frames", frames.sumOf { it.stage } >= 1)
 
         val out = File(shotsDir.parentFile, "frames").apply { mkdirs() }
         File(out, "push_whats_here_$name.tsv").writeText(
