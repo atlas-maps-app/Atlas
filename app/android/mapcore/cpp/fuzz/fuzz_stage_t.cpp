@@ -9,8 +9,9 @@
 // Whatever a scene holds, stage T must build it or leave it out without failing an invariant, without reading out of
 // bounds and without running without bound: no tag's value, no height and no length may end the process. The pack the
 // writer writes must open, and each tile in it decode. The walls and the sun's samples must count the same windows,
-// each window's sample where the walls number it (windows_agree). Seeds: fuzz/corpus/fuzz_stage_t (fuzz_load's seeds
-// and crash inputs, a big road's lanes and widths, and every input that crashed it).
+// each window's sample where the walls number it (windows_agree). Seeds: fuzz/corpus/fuzz_stage_t (fuzz_load's seeds,
+// the five real buildings among them, and crash inputs, a big road's lanes and widths, and every input that crashed
+// it).
 #include "base/arena.hpp"
 #include "base/assert.hpp"
 #include "fuzz/scenes.hpp"

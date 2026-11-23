@@ -9,7 +9,10 @@
 // (fuzz/scenes.hpp, which fuzz_stage_t builds the same scenes by).
 // Each scene is cut into its render tiles too (load/Cut.hpp), and the region's into a window, which must cut or refuse.
 // No tag's value may end the process. Seeds: fuzz/corpus/fuzz_load (the unit test's document, with a record of each
-// kind, and the reader's seed), and every input that crashed it.
+// kind, and the reader's seed; five real buildings the Netherlands' cleaning left a count in, each one's buildings
+// alone as OpenStreetMap maps them: the Centre Céramique's parts, which do not settle, and the four outlines whose
+// cover it cannot measure, Pontsteiger, a tower's balconies, Groeneveen's estate and Orion), and every input that
+// crashed it.
 #include "base/assert.hpp"
 #include "fuzz/scenes.hpp"
 #include "load/Amsterdam.hpp"
