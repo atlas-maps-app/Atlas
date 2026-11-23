@@ -3,6 +3,7 @@
 #include "base/assert.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/CleanAbi.h"
+#include "load/CleanLayout.h"
 #include "tiles/Grid.hpp"
 
 #include <algorithm>
@@ -16,9 +17,21 @@
 
 namespace atlas::load {
 
-// the sizes src/lib.rs's structs have on a 64-bit target (it asserts the same of them)
-static_assert(sizeof(atlas_clean_point) == 8 && sizeof(atlas_clean_footprint) == 32);
-static_assert(sizeof(atlas_clean_input) == 64 && sizeof(atlas_clean_counts) == 80 && sizeof(atlas_clean_output) == 120);
+// The interface's structs as the library lays them out (load/CleanLayout.h, which its own test writes from
+// src/lib.rs): each one's size and alignment, and each of its fields' offset by name. A field the two sides order
+// differently, or one the C side lacks, fails the build here; one the Rust side reorders fails the library's test.
+// NOLINTBEGIN(cppcoreguidelines-macro-usage): CleanLayout.h's rows, read as asserts
+#define ATLAS_CLEAN_STRUCT(type, size, align)                                                                          \
+    static_assert(sizeof(type) == (size) && alignof(type) == (align),                                                  \
+                  #type ": its size or alignment is not the library's (load/CleanLayout.h)");
+#define ATLAS_CLEAN_FIELD(type, field, offset)                                                                         \
+    static_assert(offsetof(type, field) == (offset),                                                                   \
+                  #type "." #field ": its offset is not the library's (load/CleanLayout.h)");
+ATLAS_CLEAN_STRUCTS(ATLAS_CLEAN_STRUCT)
+ATLAS_CLEAN_FIELDS(ATLAS_CLEAN_FIELD)
+#undef ATLAS_CLEAN_FIELD
+#undef ATLAS_CLEAN_STRUCT
+// NOLINTEND(cppcoreguidelines-macro-usage)
 
 namespace {
 

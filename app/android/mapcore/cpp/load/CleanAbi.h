@@ -1,7 +1,8 @@
 /* The C side of the buildings' cleaning, a Rust library (app/android/mapcore/rust/clean, its src/lib.rs the other
  * side, which these declarations must match): a window's footprints in, on OSM's grid, and out what can stand there,
  * each as one ring that carries its courtyards and pieces by seams; and for stage T, which edges of a ring are seams.
- * load/Clean.hpp is the core's way in. */
+ * load/Clean.hpp is the core's way in. The structs' layout is the library's: its test writes load/CleanLayout.h from
+ * src/lib.rs, and load/Clean.cpp holds these structs to it, size, alignment and each field's offset. */
 #ifndef ATLAS_LOAD_CLEAN_ABI_H
 #define ATLAS_LOAD_CLEAN_ABI_H
 
