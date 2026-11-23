@@ -222,7 +222,10 @@ jobs:
           # CPU), by GNU time
           [ -x /usr/bin/time ] || sudo apt-get install -y -q --no-install-recommends time
           printf 'step\tseconds\tmax_rss_kib\tcpu\n' > "$RUNNER_TEMP/measure.tsv"
-          echo "- $ID: $(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}') GiB of memory, $(df -h --output=avail "$WORK" | tail -1 | tr -d ' ') free on the work disk" >> "$GITHUB_STEP_SUMMARY"
+          # a run that publishes nothing says what it ran on; one that publishes, its summary as before
+          if [ "$PUBLISH" != true ]; then
+            echo "- $ID: $(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}') GiB of memory, $(df -h --output=avail "$WORK" | tail -1 | tr -d ' ') free on the work disk" >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Download the extract
         run: |
           set -euo pipefail
@@ -237,7 +240,7 @@ jobs:
             sleep 60
           done
           ls -l "$PBF"
-          echo "- $ID: the extract $(basename "$PBF_URL"), $(stat -c %s "$PBF") bytes" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PUBLISH" != true ]; then echo "- $ID: the extract $(basename "$PBF_URL"), $(stat -c %s "$PBF") bytes" >> "$GITHUB_STEP_SUMMARY"; fi
           if [ "$WINDOWS" = "true" ]; then
             # the polygon Geofabrik cut the extract with, beside it: <region>.poly for <region>-latest.osm.pbf
             curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$WORK/$ID.poly" "${REGION_URL%-latest.osm.pbf}.poly"
