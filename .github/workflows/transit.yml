@@ -6,13 +6,15 @@
 #   - the library without std, as an app links it;
 #   - files a little wrong and queries at the edge of every field, with the overflow checks on: no panic from data.
 #
-# When: a push or a pull request to `app` (or `main`) that changes app/android/transit or this file; by hand; and as
-# timetable.yml's first job (workflow_call), so the checks are written once and the weekly timetable is packed only
-# by a tree that passes them. About a minute on each runner.
+# When: a push or a pull request to `app` (or `main`) that changes app/android/transit, the Rust it is built with
+# (app/android/rust-toolchain.toml) or this file; by hand; and as timetable.yml's first job (workflow_call), so the
+# checks are written once and the weekly timetable is packed only by a tree that passes them. About a minute on
+# each runner.
 #
 # It is a workflow of its own, beside the five that build stage P, and touches none of them. The planner is Rust's
 # standard library and nothing else: cargo is held off the network (CARGO_NET_OFFLINE), so a crate that crept in
-# would fail here, not be fetched. Rust itself is the runner's rustup taking the toolchain rust-toolchain.toml pins.
+# would fail here, not be fetched. Rust itself is the runner's rustup taking the toolchain
+# app/android/rust-toolchain.toml pins, the core's too: the nearest pin above the planner's folder.
 #
 # No concurrency group: a run is a minute, each push has its word, and none waits for or cancels another.
 name: Transit
@@ -20,10 +22,10 @@ name: Transit
 on:
   push:
     branches: [main, app]
-    paths: ['app/android/transit/**', '.github/workflows/transit.yml']
+    paths: ['app/android/transit/**', 'app/android/rust-toolchain.toml', '.github/workflows/transit.yml']
   pull_request:
     branches: [main, app]
-    paths: ['app/android/transit/**', '.github/workflows/transit.yml']
+    paths: ['app/android/transit/**', 'app/android/rust-toolchain.toml', '.github/workflows/transit.yml']
   workflow_dispatch:
   workflow_call:
 
@@ -55,7 +57,7 @@ jobs:
       - name: Rust, as rust-toolchain.toml pins it
         run: |
           set -euo pipefail
-          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$DIR/rust-toolchain.toml")" --profile minimal --no-self-update
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' app/android/rust-toolchain.toml)" --profile minimal --no-self-update
           cd "$DIR/planner" && cargo --version && uname -m
       - name: The packer's check
         run: python3 -I "$DIR/pack/test_ttpack.py"

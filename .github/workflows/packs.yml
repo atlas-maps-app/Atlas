@@ -148,8 +148,8 @@ jobs:
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
-      - name: Rust, as mapcore/rust pins it
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "The packer's tool: the core's stage P"
@@ -395,8 +395,8 @@ jobs:
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
-      - name: Rust, as mapcore/rust pins it
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "The packer's tool: the core's stage P"

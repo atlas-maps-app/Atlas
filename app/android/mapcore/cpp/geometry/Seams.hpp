@@ -6,7 +6,6 @@
 #pragma once
 
 #include "geometry/RoofShapes.hpp"
-#include "tiles/Payload.hpp"
 
 #include <algorithm>
 #include <array>
@@ -24,18 +23,6 @@ namespace atlas::geometry {
 
 /// The same for a ring given as x, z pairs one after another.
 [[nodiscard]] std::vector<std::uint8_t> seams_xz(std::span<const double> xz);
-
-/// One piece of a building's footprint: its outer ring and its courtyards, on the grid, as the tiles hold rings (an
-/// outer ring with a positive area in the frame's metres, a courtyard the other way).
-struct RingPiece {
-    std::vector<tiles::GridPoint> outer;
-    std::vector<std::vector<tiles::GridPoint>> holes;
-};
-
-/// A building's ring as the tiles hold it, its seams cut out: its pieces and their courtyards (one piece, the ring
-/// itself, where it has no seam); nothing where it is no ring the cleaning made. For whatever draws a footprint by its
-/// rings (the roofs built from any footprint, a holes column).
-[[nodiscard]] std::optional<std::vector<RingPiece>> rings_of(const tiles::RingView& ring);
 
 /// A ring with seams, piece by piece: for each piece the ring's edges that are its own, in the ring's order (edge i
 /// runs from vertex i to i + 1), which follow each other round it. They are its outer ring's and, where it has

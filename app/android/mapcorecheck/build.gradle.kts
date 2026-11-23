@@ -143,8 +143,9 @@ abstract class CoreHostBuild @Inject constructor(private val exec: ExecOperation
 val coreHost = tasks.register<CoreHostBuild>("coreHost") {
     description = "Builds the core's host library (libatlasmap_host) for the JNI tests."
     sources.from(fileTree(mapcoreDir.resolve("cpp")) { exclude("build/**", ".cache/**") })
-    // the buildings' cleaning, a Rust library stage P links (cpp/cmake/Rust.cmake)
+    // the buildings' cleaning, a Rust library stage P links (cpp/cmake/Rust.cmake), and the Rust it is built with
     sources.from(fileTree(mapcoreDir.resolve("rust")) { exclude("**/target/**") })
+    sources.from(rootProject.layout.projectDirectory.file("rust-toolchain.toml"))
     sources.from(mapcoreDir.resolve("tools.properties"))
     sourceDir.set(mapcoreDir.resolve("cpp"))
     cmakeDir.set(layout.buildDirectory.dir("core-host"))
