@@ -413,6 +413,21 @@ jobs:
           name: measures-${{ matrix.region.id }}
           path: ${{ runner.temp }}/measures
           retention-days: 30
+      - name: The windows' water, counted
+        # gates-census alone, never landed (the countries builder's job 5): how many windows hold a large island's
+        # outline or coastline piece, as 50 of Norway's 59 uncut windows do, and a coastline way at all; and of the
+        # windows not built, those refused with "the water differs" (.github/scripts/census-water.py, kinds.py's
+        # measure). Into the run's summary; the windows' data stays on the runner.
+        if: ${{ always() && env.WINDOWS == 'true' && env.PUBLISH != 'true' }}
+        timeout-minutes: 45
+        run: |
+          set +e
+          [ -s "$WORK/out/$ID.windows.idx" ] || exit 0
+          touch "$RUNNER_TEMP/country.txt"
+          python3 -I .github/scripts/census-water.py "$RUNNER_TEMP/country.txt" "$WORK/out/$ID.windows" \
+            "$WORK/out/$ID.windows.idx" 40 2>&1 | tee "$RUNNER_TEMP/census.txt"
+          { echo "### $ID: the windows' water"; echo '```'; cat "$RUNNER_TEMP/census.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          true
 
   publish:
     needs: [plan, build]
