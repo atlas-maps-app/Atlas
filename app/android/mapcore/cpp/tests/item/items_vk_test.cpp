@@ -5,16 +5,19 @@
 // site's lower twin its panels alone) and in engine mode as the renders' towers, and the canal ring's towers and masts
 // (ATLAS_TILES_DIR), drawn through the frame builder and the world with that pass alone beside the composite, at rest
 // and moving, at 1x and 4x, at true depth and under the painter switch, against an exact CPU raster of the records the
-// twin says items_cs and roof_masts_cs write: each face's fan by its edges and its stroke's edges sample by sample
-// (items.slangh's own tests, in float, at the samples' CSS points), each segment's and circle's samples; each sample's
-// depth as the rasteriser interpolates the vertex stage's corners over the triangle it lies in (item_segment_corner's
-// quads for the strokes and segments); each sample ending with the record of the greatest depth (the first drawn where
-// two tie, as GREATER keeps it), a sample where two of different colours lie within the rasteriser's rounding of each
-// other counted apart, and a sample within 0.02 px of a shape's boundary; then the translucent records (the conductors
-// leaving the samples their path's earlier segments cover, a glow at its gradient, a light) blended over it in the
-// GPU's order at each one's opacity where its depth passes (within a level a blend: lavapipe blends in fixed point);
-// the samples averaged as the composite averages them. The twin's elements are held to the port's by L1; here its
-// records are the GPU's.
+// twin says the kinds' stages (towers_cs to woods_cs) and roof_masts_cs write: each face's fan by its edges and its
+// stroke's edges sample by sample (items.slangh's own tests, in float, at the samples' CSS points), each segment's and
+// circle's samples; each sample's depth as the rasteriser interpolates the vertex stage's corners over the triangle it
+// lies in (item_segment_corner's quads for the strokes and segments); each sample ending with the record of the
+// greatest depth (the first drawn where two tie, as GREATER keeps it), a sample where two of different colours lie
+// within the rasteriser's rounding of each other counted apart, and a sample within 0.02 px of a shape's boundary; then
+// the translucent records (the conductors leaving the samples their path's earlier segments cover, a glow at its
+// gradient, a light) blended over it in the GPU's order at each one's opacity where its depth passes (within a level a
+// blend: lavapipe blends in fixed point); the samples averaged as the composite averages them. The twin's elements are
+// held to the port's by L1; here its records are the GPU's. And each frame drawn again at its moment, once through the
+// kinds' stages and once through the stage before they were split (tests/item/items_whole.slang's items_cs, the bytes
+// the user's phone ran to alpha 38): the records the two write are the same, byte for byte, and so are their pixels
+// (the audit of 17 November, change 7).
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"
@@ -46,6 +49,8 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -53,6 +58,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace atlas;
@@ -66,6 +73,24 @@ struct PackFile {
     tiles::PackKind kind = tiles::PackKind::bundled;
     std::string path;
 };
+
+/// tests/item/items_whole.slang's items_cs, the region items' decide stage before it was split by kind
+/// (CMakeLists.txt's ATLAS_ITEMS_WHOLE); empty where it cannot be read.
+[[nodiscard]] const std::vector<std::uint32_t>& whole_stage() {
+    static const std::vector<std::uint32_t> words = [] {
+        std::vector<std::uint32_t> w;
+        std::ifstream in(ATLAS_ITEMS_WHOLE, std::ios::binary | std::ios::ate);
+        if (!in) return w;
+        const auto bytes = static_cast<std::size_t>(in.tellg());
+        w.resize(bytes / sizeof(std::uint32_t));
+        in.seekg(0);
+        in.read(reinterpret_cast<char*>(w.data()), // NOLINT: the module's words as chars
+                static_cast<std::streamsize>(w.size() * sizeof(std::uint32_t)));
+        if (!in) w.clear();
+        return w;
+    }();
+    return words;
+}
 
 struct Scene {
     std::unique_ptr<gpu::Offscreen> output;
@@ -89,6 +114,8 @@ struct Scene {
     constexpr std::array<std::string_view, 1> composite{"composite"};
     std::vector<std::unique_ptr<frame::Pass>> passes = frame::make_passes(composite);
     auto items = std::make_unique<passes::Items>();
+    // the stage before the split beside the kinds', and the records where the test reads them
+    items->set_testing({.whole = whole_stage(), .readable = true});
     s.items = items.get();
     passes.push_back(std::move(items));
     const std::array<float, 4> c{static_cast<float>((clear >> 16U) & 0xFFU) / 255.0F,
@@ -137,6 +164,58 @@ struct Scene {
     return std::move(*pixels);
 }
 
+/// One more frame at the moment `draw` settled on, through the kinds' stages or (`whole`) the stage before the split:
+/// its pixels, the records the stages wrote, the items' pass's dispatches by kind, and the GPU's time before the main
+/// pass (the frame's start to its offscreen mark: the decide stages', beside the world's), ms (0 without timestamps).
+struct Redrawn {
+    gpu::Pixels pixels;
+    passes::Items::Records records;
+    std::vector<std::pair<std::string, std::uint32_t>> dispatches;
+    double offscreen_ms = 0;
+};
+
+[[nodiscard]] std::optional<Redrawn> redraw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th,
+                                            bool whole) {
+    s.items->use_whole(whole);
+    s.builder->set_inputs(
+        {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
+    auto report = s.renderer->draw(0);
+    s.renderer->drain();
+    s.items->use_whole(false);
+    if (!report) {
+        FAIL("a frame failed: " << report.error().text());
+        return std::nullopt;
+    }
+    auto pixels = s.output->read(s.output->latest());
+    if (!pixels) {
+        FAIL("the frame could not be read: " << pixels.error().text());
+        return std::nullopt;
+    }
+    Redrawn r;
+    r.pixels = std::move(*pixels);
+    r.records = s.items->records();
+    for (const frame::PassCounters& p : s.builder->counters()) {
+        if (p.pass() != s.items->name()) continue;
+        for (const frame::KindCount& k : p.kinds()) {
+            if (k.count.dispatches > 0) r.dispatches.emplace_back(std::string(k.kind), k.count.dispatches);
+        }
+    }
+    const gpu::GpuTimes& t = s.renderer->frames().last_times();
+    if (t.valid && t.frame == report->number) r.offscreen_ms = t.offscreen_ns / 1e6;
+    return r;
+}
+
+/// "towers 1, cranes 1, ...": a frame's dispatches by kind; their number in all.
+[[nodiscard]] std::string dispatches_text(const Redrawn& r, std::uint32_t& all) {
+    std::string text;
+    all = 0;
+    for (const auto& [kind, n] : r.dispatches) {
+        text += std::format("{}{} {}", text.empty() ? "" : ", ", kind, n);
+        all += n;
+    }
+    return text;
+}
+
 using test::items::compare;
 using test::items::Compared;
 
@@ -150,6 +229,7 @@ std::optional<passes::Items::Counts> check_frames(const style::CameraState& cam,
                                                   std::size_t least, bool app = false) {
     auto session = test::open_session();
     if (!session) return std::nullopt;
+    ATLAS_REQUIRE_OR_RETURN(std::nullopt, !whole_stage().empty(), "the stage before the split: " ATLAS_ITEMS_WHOLE);
     std::optional<passes::Items::Counts> first;
     const gpu::Device& device = *session->device;
     auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
@@ -207,6 +287,32 @@ std::optional<passes::Items::Counts> check_frames(const style::CameraState& cam,
                 if (!first) first = counts;
                 CHECK_MESSAGE(r.wrong == 0, name << ": " << r.first);
                 CHECK(static_cast<double>(r.boundary + r.tied) <= 0.01 * static_cast<double>(r.pixels));
+                // the same moment again through the kinds' stages, then through the stage before the split: the same
+                // records, byte for byte, and the same pixels; a dispatch a kind with jobs where the whole stage was
+                // one
+                const auto split = redraw(s, c, th, false);
+                const auto whole = redraw(s, c, th, true);
+                ATLAS_REQUIRE_OR_RETURN(std::nullopt, split.has_value() && whole.has_value());
+                std::uint32_t split_n = 0;
+                std::uint32_t whole_n = 0;
+                const std::string split_text = dispatches_text(*split, split_n);
+                const std::string whole_text = dispatches_text(*whole, whole_n);
+                MESSAGE(name << ": the kinds' stages " << split_n << " dispatches (" << split_text << "), "
+                             << std::format("{:.3f}", split->offscreen_ms)
+                             << " ms before the main pass; the whole stage " << whole_n << " (" << whole_text << "), "
+                             << std::format("{:.3f}", whole->offscreen_ms) << " ms; "
+                             << split->records.faces.size() + split->records.parts.size() + split->records.sides.size()
+                             << " bytes of records");
+                CHECK_MESSAGE(split->records.faces == whole->records.faces, name << ": the faces' records differ");
+                CHECK_MESSAGE(split->records.parts == whole->records.parts, name << ": the parts' records differ");
+                CHECK_MESSAGE(split->records.sides == whole->records.sides, name << ": the translucent records differ");
+                CHECK_MESSAGE(split->pixels == whole->pixels, name << ": the pixels differ");
+                const passes::Items::Counts again = s.items->counts();
+                std::uint32_t kinds = again.masts > 0 ? 1U : 0U;
+                for (const std::uint32_t n : again.kinds) kinds += n > 0 ? 1U : 0U;
+                CHECK(split_n == kinds);
+                CHECK(whole_n == (again.jobs > again.masts ? 1U : 0U) + (again.masts > 0 ? 1U : 0U));
+                CHECK(split->records.faces.size() == std::size_t{again.faces} * sh::ITEM_RECORD_VECTORS * 16);
                 for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
                 s.renderer.reset();
             }

@@ -35,6 +35,11 @@ set(ATLAS_EXTRA_TEST_SOURCES "" CACHE STRING "More test sources, compiled into a
 option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's canary; never in a real build)" OFF)
 if(ATLAS_TESTS)
     enable_testing()
+    # A test's hook in one of the core's classes compiles only here, within #if defined(ATLAS_TESTS) (the Architect's
+    # review of 19 November 2026, section 3, point 4): every unit of the build sees it, since the tests link the same
+    # core objects as the library, so a class is laid out alike in all of them; Android's build and :mapcorecheck's
+    # library (ATLAS_TESTS off) have none of it.
+    add_compile_definitions(ATLAS_TESTS=1)
 endif()
 # At most ATLAS_JOBS of the build's compile, link and shader jobs at once (Ninja's pool atlas_jobs; the Vulkan-Hpp
 # units keep their own pool of two, below), for a build whose Ninja is run by a tool that gives it no -j: Gradle's NDK
@@ -309,6 +314,28 @@ if(ATLAS_TESTS)
         atlas_vulkan_objects(atlas_tests_vulkan ${_test_vulkan_sources})
         target_link_libraries(atlas_tests_vulkan PRIVATE atlas_doctest)
         target_sources(atlas_tests PRIVATE $<TARGET_OBJECTS:atlas_tests_vulkan>)
+        # items_vk_test's: the region items' decide stage before it was split by kind (tests/item/items_whole.slang),
+        # compiled as the core's modules are, but neither embedded nor budgeted: the test reads it from this file
+        # (ATLAS_ITEMS_WHOLE) and holds the kinds' stages' records to its, byte for byte.
+        set(_items_whole_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/item/items_whole.slang")
+        set(_items_whole "${CMAKE_BINARY_DIR}/tests/item/items_whole")
+        add_custom_command(
+            OUTPUT "${_items_whole}.spv"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/tests/item"
+            COMMAND "${CMAKE_COMMAND}" -E env SLANG_RUN_SPIRV_VALIDATION=1
+                    "${ATLAS_SLANGC}" "${_items_whole_source}" -target spirv -profile spirv_1_3
+                    -fvk-use-entrypoint-name -entry items_cs -stage compute -std 2026 -warnings-as-errors all
+                    -I "${CMAKE_CURRENT_SOURCE_DIR}" -I "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+                    -o "${_items_whole}.slangc.spv" -depfile "${_items_whole}.d"
+            COMMAND ${ATLAS_NOCONTRACT} capabilities "${_items_whole}.slangc.spv" "${_items_whole}.spv"
+            DEPFILE "${_items_whole}.d"
+            DEPENDS "${_items_whole_source}" "${ATLAS_SLANGC}" ${ATLAS_NOCONTRACT_DEPENDS}
+            COMMENT "slangc tests/item/items_whole.slang"
+            ${ATLAS_JOB_POOL}
+            VERBATIM)
+        add_custom_target(atlas_items_whole DEPENDS "${_items_whole}.spv")
+        add_dependencies(atlas_tests atlas_items_whole)
+        target_compile_definitions(atlas_tests_vulkan PRIVATE ATLAS_ITEMS_WHOLE="${_items_whole}.spv")
     endif()
     atlas_tidy(atlas_tests)
     # One ctest entry per test file, tests/<area>/<name>.cpp as <area>/<name>, each a process of its own, so ctest -j
