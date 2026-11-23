@@ -281,6 +281,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /** What the core's theme holds and what is on its way to it ([sendMoment]). */
     private val moments = MomentBook<SentMoment>()
 
+    /** What waits for each moment on its way to the core: the returns to show it once it came back ([ShownAgain]). */
+    private val momentBacks = HashMap<SentMoment, MutableList<() -> Unit>>()
+
+    /** The window shown again shows the core once the return's moment has been handed ([hidden]). */
+    private val shownAgain = ShownAgain { core?.core?.hiding?.show(this, shown = true) }
+
     /** The labels last handed to the core: the list (by identity), its face, the density, whether the core draws them. */
     private class SentLabels(val labels: List<MapLabel>, val face: android.graphics.Typeface?, val density: Float, val draws: Boolean)
     private var sentLabels: SentLabels? = null
@@ -547,14 +553,22 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * this map tells the core's [MapCore.hiding]: the core is hidden while none of its maps is shown, so it draws no
      * frame; the minute's tick asks for none, and following puts the camera at each fix at once with the scene's update
      * alone ([followUpdate]), so the tiles keep coming and the map is there on the return. Shown again: the moment and
-     * the windows as they are now, drawn at once. Main thread.
+     * the windows as they are now, drawn at once; the core is shown once the return's moment has been handed, or at
+     * once where none is due ([ShownAgain]), so that the frame back has the return's light. Main thread.
      */
     var hidden = false
         set(value) {
             if (field == value) return
             field = value
-            core?.core?.hiding?.show(this, shown = !value)
-            if (!value && !closed) update()
+            val c = core
+            if (value) {
+                shownAgain.hidden()
+                c?.core?.hiding?.show(this, shown = false)
+                return
+            }
+            if (closed) return
+            if (c != null) shownAgain.returned { back -> sendMoment(c, momentOf(style, state.time, state.camera.target), back) }
+            update()
         }
 
     /** Stops the frame thread without waiting for it (a frame being made stops at its next check); idempotent. */
@@ -956,12 +970,22 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at rest has not moved); a new
      * Tone or palette is the user's, so once the core has the theme the camera is published again and the map draws it
      * at once, at rest too. A moment that turned day to night or back draws the canvas again ([draw] reads
-     * [CoreMap.night] for the start's paper and its own overlays).
+     * [CoreMap.night] for the start's paper and its own overlays). [back], where given, runs on the main thread once
+     * the moment came back, taken or not, or once the one already on its way did; returns whether it waits for one
+     * (false: none is due, the core has it).
      */
-    private fun sendMoment(c: CoreMap, moment: Moment) {
-        val place = litPlace(c) ?: return
+    private fun sendMoment(c: CoreMap, moment: Moment, back: (() -> Unit)? = null): Boolean {
+        val place = litPlace(c) ?: return false
         val key = SentMoment(moment, place, MapEngine.tone, MapEngine.palette)
-        if (!moments.due(key)) return
+        if (!moments.due(key)) {
+            // the same moment on its way already: the return waits for that one
+            val waiting = momentBacks[key] ?: return false
+            back?.let(waiting::add)
+            return true
+        }
+        val backs = ArrayList<() -> Unit>()
+        back?.let(backs::add)
+        momentBacks[key] = backs
         val before = moments.sent
         val retoned = before != null && (key.tone != before.tone || key.palette != before.palette)
         moments.start(key)
@@ -970,18 +994,23 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         scope.launch(Dispatchers.Default) {
             val ok = c.moment(moment, place.zone, daylight, place.lat, place.lon, key.tone, key.palette).isEmpty()
             main.post {
-                if (core !== c || closed) return@post
-                // while the start's paper waits for the core's picture nothing else draws it again (stepCover), and
-                // at a night start its first draw came before the core had the moment: the day's paper until the fade
-                if (ok && c.night != nightBefore) canvasTick.intValue++
-                // only a moment the core took is recorded as its; one that failed goes again at the next update, and
-                // once at rest
-                if (moments.finish(key, ok)) main.postDelayed(resend, RESEND_MS)
-                if (ok && retoned) publishCamera(force = true)
-                // the look changed while this one was on its way
-                if (ok && lookChanged()) update()
+                if (momentBacks[key] === backs) momentBacks.remove(key)
+                if (core === c && !closed) {
+                    // while the start's paper waits for the core's picture nothing else draws it again (stepCover), and
+                    // at a night start its first draw came before the core had the moment: the day's paper until the fade
+                    if (ok && c.night != nightBefore) canvasTick.intValue++
+                    // only a moment the core took is recorded as its; one that failed goes again at the next update,
+                    // and once at rest
+                    if (moments.finish(key, ok)) main.postDelayed(resend, RESEND_MS)
+                    if (ok && retoned) publishCamera(force = true)
+                    // the look changed while this one was on its way
+                    if (ok && lookChanged()) update()
+                }
+                // taken or not: what waited for it goes on (a return's show)
+                backs.forEach { it() }
             }
         }
+        return true
     }
 
     /** The debug panel's core line, refreshed every second while the map moves (it asks the core: off the main thread). */
