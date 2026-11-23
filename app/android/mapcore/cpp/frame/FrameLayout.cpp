@@ -254,6 +254,12 @@ gpu::Result<void> FrameLayout::begin_frame(std::uint64_t frame, std::uint64_t fi
     drop(frame_sets_);
     drop(global_sets_);
     std::erase_if(old_rings_, [finished](const OldRing& r) { return r.last_frame <= finished; });
+#if defined(ATLAS_TESTS)
+    if (fail_begin_) {
+        fail_begin_ = false;
+        return gpu::fail(std::format("the frame's {} items, past what the ring grows to (a test's)", items));
+    }
+#endif
     if (items > items_ || kinds > kinds_) {
         if (items > most_items_) {
             return gpu::fail(std::format("the frame's {} items, past the {} the ring grows to", items, most_items_));

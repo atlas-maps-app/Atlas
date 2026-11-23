@@ -15,7 +15,8 @@
 //
 // And the soft shadows' kept mask (passes/Shadows.cpp's key_shadow_mask): the same frames drawn with the mask made
 // every frame (make_mask_always) and kept where nothing it reads moved are the same pixels, frame for frame, and a
-// frame that keeps it dispatches nothing for it.
+// frame that keeps it dispatches nothing for it; the building shadows or the soft shadows left out for a frame and
+// drawn again keep it too.
 #if !defined(__ANDROID__)
 
 #include "fx/Blur.hpp"
@@ -508,9 +509,11 @@ TEST_CASE("ground: the soft shadows' mask is made once a view and stands while n
     // after the frames to settle at rest, four frames apiece: at its camera and time again; at a later time; every
     // tile drawn fading in (its place's fade, which no step of the mask reads); the shadows' colour changed (soft_fs
     // draws the result in it, the mask is the same); their opacity changed (the blur's fade); the camera moved by a
-    // hair; moving by a hair a frame (not at rest: no snap)
+    // hair; the building shadows left out for a frame, then drawn again (no step runs while they are out, so the entry
+    // holds the result its key names); the soft shadows left out for a frame (drawn sharp), then again; moving by a
+    // hair a frame (not at rest: no snap)
     constexpr int settled = 40;
-    constexpr int phases = 7;
+    constexpr int phases = 9;
     constexpr int frames = settled + (4 * phases);
     struct Run {
         std::vector<std::uint64_t> makes;                // the masks made by the end of each frame
@@ -533,7 +536,9 @@ TEST_CASE("ground: the soft shadows' mask is made once a view and stands while n
             if (phase >= 3) in.theme.shadow = {.r = 40, .g = 30, .b = 90, .a = 255};
             if (phase >= 4) in.theme.shadow_opacity = day.shadow_opacity + 0.05;
             if (phase >= 5) in.camera.longitude += 1e-6;
-            if (phase >= 6) {
+            if (phase == 6 && (f - settled) % 4 == 0) in.camera.parts = style::camera_part::building_shadows;
+            if (phase == 7 && (f - settled) % 4 == 0) in.camera.parts = style::camera_part::shadow_blur;
+            if (phase >= 8) {
                 in.camera = test::moving(in.camera);
                 in.camera.longitude += 1e-6 * ((f - settled) % 4 + 1);
             }
@@ -606,7 +611,9 @@ TEST_CASE("ground: the soft shadows' mask is made once a view and stands while n
     CHECK(over(4, 0, 3) == 1); // their opacity: made again once, as the frame takes the new moment
     CHECK(over(5, 0, 0) == 1); // the camera moved: made again
     CHECK(over(5, 1, 3) == 0);
-    CHECK(over(6, 0, 3) == 4); // moving: made each frame
+    CHECK(over(6, 0, 3) == 0); // the building shadows out for a frame: none drawn, then the last result stands
+    CHECK(over(7, 0, 3) == 0); // the soft shadows out for a frame: drawn sharp, then the last result stands
+    CHECK(over(8, 0, 3) == 4); // moving: made each frame
     // a frame that keeps its mask dispatches nothing for it and draws no union; one that makes it, its grid and three
     // boxes (and its box where a tile casts)
     constexpr std::array<std::uint32_t, 4> none{};
@@ -619,7 +626,11 @@ TEST_CASE("ground: the soft shadows' mask is made once a view and stands while n
             CHECK_MESSAGE((s[0] <= 1 && s[1] == 1 && s[2] == 3), "frame " << f);
         }
     }
-    for (std::size_t f = settled; f < kept.soft.size(); ++f) CHECK_MESSAGE(kept.soft[f], "frame " << f);
+    // soft from the settled frames on, but in the two frames that leave them out
+    const auto out_frame = [&](std::size_t f) {
+        return f == std::size_t{settled + (4 * 6)} || f == std::size_t{settled + (4 * 7)};
+    };
+    for (std::size_t f = settled; f < kept.soft.size(); ++f) CHECK_MESSAGE(kept.soft[f] != out_frame(f), "frame " << f);
 }
 
 #endif

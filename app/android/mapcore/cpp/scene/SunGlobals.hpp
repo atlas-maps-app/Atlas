@@ -104,6 +104,14 @@ struct SunStats {
     /// tiles made whole (they were their solids alone, as no one asked for their bits), and their milliseconds.
     std::uint64_t wholes = 0;
     double wholes_ms = 0;
+    /// Every lane's scenes' tiles: each part taken from the scene before (made from the same chunk, level, cells and
+    /// kind, and for a whole tile's quay walls against the same decks near them), or made (decoded: anew, made whole,
+    /// or made again where the decks near its quay walls changed).
+    std::uint64_t parts_kept = 0;
+    std::uint64_t parts_made = 0;
+    /// Of those made, the parts taken from the scene before and made again where the decks near their quay walls
+    /// changed.
+    std::uint64_t parts_remade = 0;
     /// Every lane's tallest solids worked out (sun::scene_maxh's, a tile's kept by its chunk and level): their
     /// milliseconds, and the tiles decoded for them.
     double maxh_ms = 0;
@@ -160,6 +168,11 @@ public:
     void hold(bool held) {
         if (held_.exchange(held, std::memory_order_relaxed) && !held) released_.store(now(), std::memory_order_relaxed);
     }
+#if defined(ATLAS_TESTS)
+    /// The tests' switch: every scene built whole, no tile's part taken from the scene before (the base its kept parts
+    /// are held to).
+    void keep_parts(bool keep) noexcept { keep_parts_.store(keep, std::memory_order_relaxed); }
+#endif
     /// A lane's role this frame: the active pack's, the coarser pack's, a neighbour's.
     enum class LaneOf : std::uint8_t { active = 0, coarser = 1, neighbour = 2 };
     /// The bits, as the workers publish them, of the lane in role `lane` (the first neighbour's for a neighbour; the
@@ -237,6 +250,29 @@ private:
         std::shared_ptr<const sun::TileBits> day; ///< null until its bits come, and again from a frame without them
     };
 
+    /// A tile's part of a lane's last scene, which the next scene takes again where it would make it from the same: its
+    /// kind, key, chunk, level and cells (in the same frame and region: Parts), and for a whole tile's quay walls the
+    /// decks near them (sun::QuayMark). Shared with the scene, never copied; it goes when a scene no longer holds it.
+    struct Part {
+        enum class Kind : std::uint8_t { whole, solids, other };
+        Kind kind = Kind::whole;
+        tiles::TileKey key;
+        tiles::Sha256Digest chunk{};
+        std::uint8_t level = 0;
+        std::uint64_t live = sun::all_cells;
+        std::shared_ptr<const sun::SunTile> tile;
+        std::vector<sun::Deck> decks;             ///< its bridges, as collect_decks gave them
+        std::vector<tiles::Sha256Digest> digests; ///< each deck's digest
+        std::vector<sun::QuayMark> quays;         ///< its quay edges (a whole tile's)
+        tiles::Sha256Digest near{};               ///< the decks near them it was made against (a digest of the set)
+    };
+    /// A lane's last scene's parts, in its tiles' order, and the frame and region they were made in.
+    struct Parts {
+        std::vector<Part> tiles;
+        tiles::Frame frame;
+        sun::Region region;
+    };
+
     /// One pack's sun: its bits and worker, the render thread's view of its scene, and the builder's.
     struct Lane {
         sun::BitTiles bits;
@@ -270,6 +306,8 @@ private:
         /// to be made whole as they come resident (make_whole).
         std::vector<sun::Deck> built_decks;
         std::vector<tiles::Sha256Digest> built_chunks;
+        /// Its scene's tiles' parts (the builder's while it builds; under mutex_, as rest lets them go with the scene).
+        Parts parts;
     };
 
     /// A lane's pack this frame, and what of it the other lanes' scenes read: its level and resident tiles.
@@ -294,13 +332,15 @@ private:
     /// neighbour (not the coarser one) whose reach comes within the march's reach of a resident tile of lane `k`'s
     /// pack, at a place that pack has no tile of; none for the coarser pack's lane. Sorted by pack and tile.
     [[nodiscard]] static std::vector<Other> others_of(std::size_t k, std::span<const LaneInputs> lanes);
-    /// The scene of `b`, and its decks and own tiles' chunks (Lane::built_decks, built_chunks).
+    /// The scene of `b`, and its decks and own tiles' chunks (Lane::built_decks, built_chunks). `parts` are the last
+    /// scene's, whose tiles it takes again where it would make them from the same; then they are its own.
     [[nodiscard]] std::shared_ptr<const sun::Scene> build(const Build& b, std::vector<sun::Deck>& decks,
-                                                          std::vector<tiles::Sha256Digest>& own);
+                                                          std::vector<tiles::Sha256Digest>& own, Parts& parts);
     /// `scene`, built for `b`'s tiles as `lane` holds them, with the tiles `b` wants made whole where they are their
-    /// solids alone; null where one of them holds another chunk now (the scene is built anew).
+    /// solids alone (`parts`, the scene's, following them); null where one of them holds another chunk now (the scene
+    /// is built anew).
     [[nodiscard]] std::shared_ptr<const sun::Scene> make_whole(const sun::Scene& scene, const Build& b,
-                                                               const Lane& lane);
+                                                               const Lane& lane, Parts& parts);
     /// The sun left out (render thread): every lane let go of its pack, scene, bits and requests, its run stopped.
     void rest();
     [[nodiscard]] std::optional<double> maxh(const std::shared_ptr<const tiles::StorePack>& pack, std::uint8_t zoom,
@@ -332,6 +372,9 @@ private:
     bool fading_ = false;
     std::uint64_t prepared_ = 0; ///< the frames prepared (FirstLight::seen)
     std::atomic<bool> held_{false};
+#if defined(ATLAS_TESTS)
+    std::atomic<bool> keep_parts_{true}; // keep_parts
+#endif
     std::atomic<double> released_{-std::numeric_limits<double>::infinity()}; ///< the last hold's end
     std::size_t last_texels_ = 0;
     double others_ms_ = 0;

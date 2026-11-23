@@ -1098,12 +1098,14 @@ public:
     [[nodiscard]] const SoftShadows* soft_shadows() const noexcept;
     /// Whether the last frame drew its shadows soft (the moment blurs them).
     [[nodiscard]] bool drew_soft() const noexcept { return drew_soft_; }
+#if defined(ATLAS_TESTS)
     /// The tests' switch: the soft shadows' mask made again every frame, its last result never standing (as before its
     /// key took what it reads alone: the base its kept results are held to, tests/ground/shadows_vk_test.cpp).
     void make_mask_always(bool always) noexcept { mask_always_ = always; }
     /// The tests' look at the soft shadows' kept result: how many results the mask has made (its box, grid, union and
     /// blur run) since the pass was made; a frame whose mask is the last one's makes none, and dispatches nothing.
     [[nodiscard]] std::uint64_t mask_makes() const noexcept { return mask_made_; }
+#endif
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
@@ -1554,13 +1556,15 @@ private:
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
     bool keep_soft_ = false;
     bool drew_soft_ = false;
-    bool mask_always_ = false;
-    /// What the soft shadows' last result was made of (key_shadow_mask), whether this frame's is that one, the entry
-    /// this frame's lies in (SoftShadows::slots), and the results made.
+#if defined(ATLAS_TESTS)
+    bool mask_always_ = false;    // make_mask_always
+    std::uint64_t mask_made_ = 0; // mask_makes
+#endif
+    /// What the soft shadows' last result was made of (key_shadow_mask), whether this frame's is that one, and the
+    /// entry this frame's lies in (SoftShadows::slots).
     std::vector<std::uint32_t> mask_key_;
     bool mask_kept_ = false;
     std::uint32_t mask_entry_ = 0;
-    std::uint64_t mask_made_ = 0;
     bool only_setts_ = false;
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
@@ -1592,13 +1596,18 @@ private:
     bool keep_glow_ = false;
     bool drew_glow_ = false;
     /// What the last glow's layers and filter were made of (write_lit), and whether this frame's differ; what they
-    /// cover this frame.
+    /// cover this frame. A frame's key counts once its layers recorded (record_lit_layer takes glow_next_), not when it
+    /// was decided: a frame that decides and does not record (its descriptors did not begin: the clear alone) leaves
+    /// the last recorded key, so the next frame makes the layers again where they would have changed.
     std::vector<std::uint32_t> glow_key_;
+    std::optional<std::vector<std::uint32_t>> glow_next_; ///< none where no frame decided since the last record
     bool glow_stale_ = true;
     GlowPlan glow_plan_;
     /// What the last ripple's result was made of (key_ripple: the view's alone while the camera moves), and whether
     /// this frame's differs; what its stages cover this frame; the results made, and the keys that took the records.
+    /// As the glow's: a frame's key counts once its layer recorded (record_ripple_layer takes ripple_next_).
     std::vector<std::uint32_t> ripple_key_;
+    std::optional<std::vector<std::uint32_t>> ripple_next_;
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
     std::vector<PixelBox> ripple_boxes_; ///< each element's box in the layer this frame (plan_ripple's scratch)

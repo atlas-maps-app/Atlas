@@ -578,7 +578,10 @@ void Ground::key_shadow_mask(const std::vector<std::uint32_t>& words, const fram
         key.insert(key.end(), words.begin() + static_cast<std::ptrdiff_t>(bits),
                    words.begin() + static_cast<std::ptrdiff_t>(bits + n));
     }
-    mask_kept_ = s.result && !mask_always_ && key == mask_key_;
+    mask_kept_ = s.result && key == mask_key_;
+#if defined(ATLAS_TESTS)
+    if (mask_always_) mask_kept_ = false;
+#endif
     if (!mask_kept_) {
         // made again, into the entry the last frame did not read
         mask_key_ = std::move(key);
@@ -767,7 +770,9 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
     }
     s.last = mask_entry_;
     s.result = true;
+#if defined(ATLAS_TESTS)
     ++mask_made_;
+#endif
     drew_soft_ = true;
 }
 

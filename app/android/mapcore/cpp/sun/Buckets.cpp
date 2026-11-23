@@ -104,22 +104,38 @@ Bucket bucket_of(const style::ThemeBlock& block) noexcept {
     return bucket_of(sun_vector(az, pm::max(bucket_degrees, el)), false);
 }
 
+namespace {
+
+[[nodiscard]] std::vector<std::shared_ptr<const SunTile>> parts_of(std::vector<SunTile> tiles) {
+    std::vector<std::shared_ptr<const SunTile>> out;
+    out.reserve(tiles.size());
+    for (SunTile& t : tiles) out.push_back(std::make_shared<const SunTile>(std::move(t)));
+    return out;
+}
+
+} // namespace
+
 Scene::Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::Sha256Digest> chunks)
+    : Scene(parts_of(std::move(tiles)), scene_maxh, std::move(chunks)) {}
+
+Scene::Scene(std::vector<std::shared_ptr<const SunTile>> tiles, double scene_maxh,
+             std::vector<tiles::Sha256Digest> chunks)
     : tiles_(std::move(tiles)), chunks_(std::move(chunks)) {
     Grid::Builder b;
     base_.reserve(tiles_.size());
-    for (const SunTile& t : tiles_) {
+    for (const std::shared_ptr<const SunTile>& part : tiles_) {
+        const SunTile& t = *part;
         base_.push_back(static_cast<PrismId>(b.size()));
         for (std::uint32_t s = 0; s < t.solids.size(); ++s) b.add(t.solids.xs(s), t.solids.zs(s), t.solids.h[s]);
     }
     grid_ = std::make_shared<const Grid>(std::move(b).build(scene_maxh));
 }
 
-Scene::Scene(const Scene& from, std::vector<SunTile> tiles)
+Scene::Scene(const Scene& from, std::vector<std::shared_ptr<const SunTile>> tiles)
     : tiles_(std::move(tiles)), base_(from.base_), chunks_(from.chunks_), grid_(from.grid_) {
     ATLAS_ASSERT(tiles_.size() == from.tiles_.size(), "a scene made whole holds the same tiles");
     for (std::size_t t = 0; t < tiles_.size(); ++t) {
-        ATLAS_DEBUG_ASSERT(tiles_[t].key == from.tiles_[t].key && tiles_[t].solids.h == from.tiles_[t].solids.h,
+        ATLAS_DEBUG_ASSERT(tiles_[t]->key == from.tiles_[t]->key && tiles_[t]->solids.h == from.tiles_[t]->solids.h,
                            "a scene made whole holds the same solids");
     }
 }
@@ -133,7 +149,7 @@ std::uint64_t Scene::context(std::size_t t) const noexcept {
 
 std::optional<std::uint32_t> Scene::find(tiles::TileKey key) const noexcept {
     for (std::size_t t = 0; t < tiles_.size(); ++t) {
-        if (tiles_[t].key == key) return static_cast<std::uint32_t>(t);
+        if (tiles_[t]->key == key) return static_cast<std::uint32_t>(t);
     }
     return std::nullopt;
 }

@@ -236,6 +236,10 @@ public:
     [[nodiscard]] scene::World* world() noexcept { return world_.get(); }
     /// The frame builder, while made (tests: the last frame's state).
     [[nodiscard]] const FrameBuilder* builder() const noexcept { return builder_.get(); }
+#if defined(ATLAS_TESTS)
+    /// A test's: the frame builder, while made, to plant a failure in its next frame (FrameLayout::fail_next_begin).
+    [[nodiscard]] FrameBuilder* builder() noexcept { return builder_.get(); }
+#endif
 
     // standin::SessionMap
     [[nodiscard]] std::string make(const gpu::Device& device, const gpu::PipelineCache& cache,
