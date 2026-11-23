@@ -506,4 +506,65 @@ class HttpTest {
         assertEquals(ProviderState.NEEDS_KEY, stateFor(KeyNeed.REQUIRED, null))
         assertEquals(ProviderState.READY, stateFor(KeyNeed.OPTIONAL, null))
     }
+
+    /**
+     * A host another source lists, asked through a view stamped with its own source (MET Norway through the forecast's
+     * view), counts under the source that lists it, not the stamp: the stamp counts only a host no list names.
+     */
+    @Test
+    fun aHostAnotherSourceListsCountsAsTheListersWhateverTheViewsStamp() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            m.dispatch { MockResponse.Builder().code(200).body("ok").build() }
+            val asked = Asked()
+            val base = okhttp3.OkHttpClient.Builder().dns { name -> listOf(java.net.InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }.build()
+            val view = Http(
+                policies = emptyMap(), base = base, asked = asked,
+                listed = { host, _ -> if (host == "met.example") "met-norway" else null },
+            ).of("open-meteo")
+            assertEquals("ok", view.text("http://met.example:$port/forecast"))
+            assertEquals(1L, asked.of("met-norway").sent)
+            assertEquals(emptySet<String>(), asked.of("met-norway").hosts)
+            assertEquals("the stamp counts nothing here", 0L, asked.of("open-meteo").sent)
+            // a host no list names: the stamp's, with the host beyond its list
+            assertEquals("ok", view.text("http://other.example:$port/x"))
+            assertEquals(1L, asked.of("open-meteo").sent)
+            assertEquals(setOf("other.example"), asked.of("open-meteo").hosts)
+        }
+    }
+
+    /**
+     * A hop to a switched-off host that meets a connection already open to it is not looked up again, so the network
+     * interceptor is the one that refuses it; the refusal is counted once all the same, by the first interceptor.
+     */
+    @Test
+    fun aHopRefusedOnAConnectionAlreadyOpenIsCountedOnce() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            m.dispatch { r ->
+                if (r.headers["Host"]!!.startsWith("a.example")) MockResponse.Builder().code(302).addHeader("Location", "http://b.example:$port/b").build()
+                else MockResponse.Builder().code(200).body("b").build()
+            }
+            val looked = java.util.Collections.synchronizedList(ArrayList<String>())
+            val connects = java.util.concurrent.atomic.AtomicInteger()
+            val base = okhttp3.OkHttpClient.Builder()
+                .dns { name -> looked += name; listOf(java.net.InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }
+                .eventListener(object : okhttp3.EventListener() {
+                    override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy) { connects.incrementAndGet() }
+                })
+                .build()
+            var off = false
+            val asked = Asked()
+            val http = Http(policies = emptyMap(), base = base, asked = asked, gate = { host, _ -> if (host == "b.example" && off) "bee" else null }).of("a")
+            // on: b's connection is opened, and kept in the pool
+            assertEquals("b", http.text("http://b.example:$port/b"))
+            off = true
+            val refused = runCatching { http.text("http://a.example:$port/a") }.exceptionOrNull()
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "bee" && refused.host == "b.example")
+            assertEquals("b was looked up once, while on; the hop found its connection open", listOf("b.example", "a.example"), looked.toList())
+            assertEquals("two connections: b's, then a's; the hop opened none", 2, connects.get())
+            assertEquals(2, m.count)
+            assertEquals("counted once", 1L, asked.of("bee").refused)
+        }
+    }
 }

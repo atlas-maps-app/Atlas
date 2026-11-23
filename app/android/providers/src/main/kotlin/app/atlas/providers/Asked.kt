@@ -34,7 +34,8 @@ class Asked(private val clock: () -> Long = System::currentTimeMillis) {
 
     private val tallies = ConcurrentHashMap<String, Tally>()
 
-    private fun tally(source: String) = tallies.computeIfAbsent(source) { Tally() }
+    // a read first: computeIfAbsent locks the bin even for a key it holds on Android 12 and older (Java 8's map)
+    private fun tally(source: String) = tallies[source] ?: tallies.computeIfAbsent(source) { Tally() }
 
     /** A request was sent for [source]; [beyond] is its host where [source] does not list it, else null. */
     fun sent(source: String, beyond: String? = null) {
@@ -59,7 +60,10 @@ class Asked(private val clock: () -> Long = System::currentTimeMillis) {
     fun all(): Map<String, Count> = tallies.mapValues { it.value.count() }
 
     companion object {
-        /** The hosts beyond its list kept a source: a few instances of Panoramax's, say; a list without end would grow. */
+        /**
+         * The hosts beyond its list kept a source, about this many: a few instances of Panoramax's, say; a list without
+         * end would grow. About, as two requests at once may each add the last one: a few more at most, one a thread.
+         */
         const val MAX_HOSTS = 16
     }
 }
