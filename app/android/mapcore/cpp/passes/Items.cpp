@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <numeric>
@@ -34,11 +35,31 @@ namespace {
 [[nodiscard]] std::uint32_t bits(float v) noexcept { return std::bit_cast<std::uint32_t>(v); }
 [[nodiscard]] std::uint32_t f32_bits(double v) noexcept { return bits(static_cast<float>(v)); }
 
-/// The jobs a row of workgroups covers (items_cs's ITEM_JOB_ROW workgroups of 64).
+/// The jobs a row of workgroups covers (the decide stages' ITEM_JOB_ROW workgroups of 64).
 constexpr std::uint32_t job_row = 65535;
 
 /// The most records of each list a frame decides: the jobs beyond are left out.
 constexpr std::uint32_t max_records = 1U << 20U;
+
+/// A kind's decide stage (shaders/item/draw.slang): its name, its pipeline's and its dispatches' in the frame's
+/// counters, and its entry point, in the kinds' order.
+struct KindStage {
+    const char* name;
+    const char* entry;
+};
+constexpr std::array<KindStage, item_kind_stages> kind_stages{{{.name = "towers", .entry = "towers_cs"},
+                                                               {.name = "turbines", .entry = "turbines_cs"},
+                                                               {.name = "cranes", .entry = "cranes_cs"},
+                                                               {.name = "masts", .entry = "masts_cs"},
+                                                               {.name = "gantries", .entry = "gantries_cs"},
+                                                               {.name = "conveyors", .entry = "conveyors_cs"},
+                                                               {.name = "power lines", .entry = "power_lines_cs"},
+                                                               {.name = "coasters", .entry = "coasters_cs"},
+                                                               {.name = "woods", .entry = "woods_cs"}}};
+static_assert(shaders::ITEM_TOWER == 0 && shaders::ITEM_TURBINE == 1 && shaders::ITEM_CRANE == 2 &&
+              shaders::ITEM_MAST == 3 && shaders::ITEM_GANTRY == 4 && shaders::ITEM_CONVEYOR == 5 &&
+              shaders::ITEM_POWER == 6 && shaders::ITEM_COASTER == 7 && shaders::ITEM_WOOD == 8 &&
+              shaders::ITEM_ROOF_MAST == item_kind_stages);
 
 /// regions.py's POWER_NEAR and POWER_FAR: power lines drawn whole to 1,200 m, faded out by 2,000 m.
 constexpr double power_near = 1200.0;
@@ -515,10 +536,25 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
                                                       context.layout.global_set_layout(), *set_layout_};
     ATLAS_GPU_LET(compute_layout, gpu::make_layout(d, sets, frame::push_bytes, Stage::eCompute));
     compute_layout_ = std::move(compute_layout);
-    ATLAS_GPU_LET(decide, frame::make_compute(
-                              context, {.name = "items", .module = "item_draw", .configuration = context.configuration},
-                              *module_, "items_cs", *compute_layout_));
-    decide_ = std::move(decide);
+    for (const KindStage& k : kind_stages) {
+        ATLAS_GPU_LET(
+            stage, frame::make_compute(context,
+                                       {.name = k.name, .module = "item_draw", .configuration = context.configuration},
+                                       *module_, k.entry, *compute_layout_));
+        stages_.push_back(std::move(stage));
+    }
+#if defined(ATLAS_TESTS)
+    if (!testing_.whole.empty()) {
+        ATLAS_GPU_LET(whole_module, frame::make_module(context, "items_whole", testing_.whole));
+        whole_module_ = std::move(whole_module);
+        ATLAS_GPU_LET(whole,
+                      frame::make_compute(
+                          context,
+                          {.name = "items whole", .module = "items_whole", .configuration = context.configuration},
+                          *whole_module_, "items_cs", *compute_layout_));
+        whole_ = std::move(whole);
+    }
+#endif
     ATLAS_GPU_LET(masts,
                   frame::make_compute(
                       context, {.name = "roof masts", .module = "item_draw", .configuration = context.configuration},
@@ -579,8 +615,12 @@ void Items::release() noexcept {
     fills_fading_.clear();
     fills_pipeline_.clear();
     faces_pipeline_.clear();
+#if defined(ATLAS_TESTS)
+    whole_.clear();
+    whole_module_.clear();
+#endif
     roof_masts_.clear();
-    decide_.clear();
+    stages_.clear();
     compute_layout_.clear();
     layout_.clear();
     for (vk::raii::DescriptorSet& s : sets_) s.clear();
@@ -740,7 +780,7 @@ void Items::drawn(const frame::FrameState& state, std::vector<Drawn>& out) const
 void Items::update(const frame::FrameState& state) {
     counts_ = {};
     dithers_ = state.cover != nullptr && state.cover->dithers();
-    if (decide_ == nullptr || state.heaps == nullptr || !state.view ||
+    if (stages_.empty() || state.heaps == nullptr || !state.view ||
         state.camera.leaves_out(style::camera_part::region_items)) {
         return;
     }
@@ -755,12 +795,12 @@ void Items::update(const frame::FrameState& state) {
     const std::span<const scene::CoverTile> tiles = state.cover->upright();
     words_.clear();
     extra_words_.clear();
-    mast_words_.clear();
+    for (std::vector<std::uint32_t>& w : kind_words_) w.clear();
+    for (std::vector<std::uint32_t>& c : kind_sides_) c.clear();
     fade_words_.clear();
     std::uint32_t faces = 0;
     std::uint32_t parts = 0;
     std::uint32_t sides = 0;
-    std::vector<std::uint32_t> side_counts;
     // while a tile fades, the opaque parts' and the translucent ones' standing fades in the jobs' order
     std::vector<std::uint32_t> part_fades;
     std::vector<std::uint32_t> side_fades;
@@ -808,14 +848,11 @@ void Items::update(const frame::FrameState& state) {
                                        bits(d.choice.c),
                                        bits(d.choice.d)};
         static_assert(std::size(words) == std::size_t{4} * shaders::ITEM_JOB_VECTORS);
-        // a roof mast's job after the rest, for its own stage (its records keep their places, and it has no
-        // translucent ones)
-        if (it.kind == geometry::RegionItemKind::roof_mast) {
-            mast_words_.insert(mast_words_.end(), std::begin(words), std::end(words));
-        } else {
-            words_.insert(words_.end(), std::begin(words), std::end(words));
-            side_counts.push_back(ns);
-        }
+        // with its kind's jobs, for its kind's stage: its records keep their places (a roof mast has no translucent
+        // ones)
+        static_assert(static_cast<std::size_t>(geometry::RegionItemKind::roof_mast) == item_kind_stages);
+        kind_words_[kind].insert(kind_words_[kind].end(), std::begin(words), std::end(words));
+        if (it.kind != geometry::RegionItemKind::roof_mast) kind_sides_[kind].push_back(ns);
         // while a tile fades, its records' range of the dither (ENGINE.md's standing fades)
         if (dithers_) {
             const std::array<float, 2> range = state.cover->dither(t, me); // the items come back on: their share
@@ -830,14 +867,22 @@ void Items::update(const frame::FrameState& state) {
     }
     // the translucent ones far to near (painter's order), each job's block in its own order: the jobs went nearest
     // first
-    for (std::size_t j = 0, at = 0; at < words_.size(); ++j, at += std::size_t{4} * shaders::ITEM_JOB_VECTORS) {
-        words_[at + 13] = sides - (words_[at + 13] + side_counts[j]);
+    constexpr std::size_t job_words = std::size_t{4} * shaders::ITEM_JOB_VECTORS;
+    for (std::size_t k = 0; k < item_kind_stages; ++k) {
+        std::vector<std::uint32_t>& list = kind_words_[k];
+        for (std::size_t j = 0, at = 0; at < list.size(); ++j, at += job_words) {
+            list[at + 13] = sides - (list[at + 13] + kind_sides_[k][j]);
+        }
     }
     fade_words_.insert(fade_words_.end(), part_fades.begin(), part_fades.end());
     fade_words_.insert(fade_words_.end(), side_fades.rbegin(), side_fades.rend());
-    const auto masts = static_cast<std::uint32_t>(mast_words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
-    words_.insert(words_.end(), mast_words_.begin(), mast_words_.end());
-    const auto jobs = static_cast<std::uint32_t>(words_.size() / (std::size_t{4} * shaders::ITEM_JOB_VECTORS));
+    // the jobs kind by kind, the roof masts' last
+    std::array<std::uint32_t, item_kind_stages> kinds{};
+    for (std::size_t k = 0; k < item_kind_stages; ++k)
+        kinds[k] = static_cast<std::uint32_t>(kind_words_[k].size() / job_words);
+    const auto masts = static_cast<std::uint32_t>(kind_words_[item_kind_stages].size() / job_words);
+    for (const std::vector<std::uint32_t>& list : kind_words_) words_.insert(words_.end(), list.begin(), list.end());
+    const auto jobs = static_cast<std::uint32_t>(words_.size() / job_words);
     if (jobs == 0) return;
     if (extra_words_.empty()) extra_words_.push_back(0U);
     const ItemTones tones = item_tones(state.theme, state.block.theme, style->items, state.palette);
@@ -852,9 +897,13 @@ void Items::update(const frame::FrameState& state) {
     auto tones_made = fit(*device_, tones_[slot], sizeof tones, B::eStorageBuffer, gpu::MemoryUse::upload);
     auto extra_made = fit(*device_, extra_[slot], extra_words_.size() * sizeof(std::uint32_t), B::eStorageBuffer,
                           gpu::MemoryUse::upload);
-    auto faces_made = fit(*device_, faces_[slot], vectors(faces), B::eStorageBuffer, gpu::MemoryUse::gpu);
-    auto parts_made = fit(*device_, parts_[slot], vectors(parts), B::eStorageBuffer, gpu::MemoryUse::gpu);
-    auto sides_made = fit(*device_, sides_[slot], vectors(sides), B::eStorageBuffer, gpu::MemoryUse::gpu);
+    gpu::MemoryUse kept = gpu::MemoryUse::gpu; // the records' lists
+#if defined(ATLAS_TESTS)
+    if (testing_.readable) kept = gpu::MemoryUse::readback; // where a test reads them (records())
+#endif
+    auto faces_made = fit(*device_, faces_[slot], vectors(faces), B::eStorageBuffer, kept);
+    auto parts_made = fit(*device_, parts_[slot], vectors(parts), B::eStorageBuffer, kept);
+    auto sides_made = fit(*device_, sides_[slot], vectors(sides), B::eStorageBuffer, kept);
     auto fades_made = fit(*device_, fades_[slot], std::max<std::size_t>(fade_words_.size(), 1) * sizeof(std::uint32_t),
                           B::eStorageBuffer, gpu::MemoryUse::upload);
     for (const auto* made :
@@ -896,7 +945,7 @@ void Items::update(const frame::FrameState& state) {
         fades_[slot].flush();
     }
     slot_ = slot;
-    counts_ = {.jobs = jobs, .masts = masts, .faces = faces, .parts = parts, .sides = sides};
+    counts_ = {.jobs = jobs, .masts = masts, .faces = faces, .parts = parts, .sides = sides, .kinds = kinds};
 }
 
 void Items::record(const frame::Recording& recording, std::uint32_t phase) {
@@ -909,14 +958,14 @@ void Items::record(const frame::Recording& recording, std::uint32_t phase) {
 }
 
 void Items::record_decide(const frame::Recording& recording) {
-    if (decide_ == nullptr || counts_.jobs == 0) return;
+    if (stages_.empty() || counts_.jobs == 0) return;
     const vk::raii::CommandBuffer& cmd = recording.frame.cmd;
     const auto frame_sets = recording.layout.sets();
     const auto offsets = recording.layout.offsets(recording.frame.slot.slot);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *compute_layout_, 0, frame_sets, offsets);
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *compute_layout_, 2, *sets_[slot_], {});
-    // items_cs over the jobs before the roof masts', roof_masts_cs over theirs from there (none: not run); each job's
-    // records are its own, so nothing orders the two stages between themselves
+    // each kind's stage over its jobs (none: not run), the kinds' jobs one after another and the roof masts' last; each
+    // job's records are its own, so nothing orders the stages between themselves
     const auto run = [&](const vk::raii::Pipeline& stage, std::uint32_t count, std::uint32_t first, const char* name) {
         if (count == 0) return;
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *stage);
@@ -927,7 +976,19 @@ void Items::record_decide(const frame::Recording& recording) {
         recording.counters.dispatch(name);
     };
     const std::uint32_t rest = counts_.jobs - counts_.masts;
-    run(decide_, rest, 0, "items");
+    bool whole = false;
+#if defined(ATLAS_TESTS)
+    if (use_whole_ && whole_ != nullptr) {
+        // the tests': the stage before the split, over every kind's jobs at once (Testing::whole)
+        run(whole_, rest, 0, "items whole");
+        whole = true;
+    }
+#endif
+    std::uint32_t first = 0;
+    for (std::size_t k = 0; k < item_kind_stages && !whole; ++k) {
+        run(stages_[k], counts_.kinds[k], first, kind_stages[k].name);
+        first += counts_.kinds[k];
+    }
     run(roof_masts_, counts_.masts, rest, "roof masts");
     // the records, for the vertex and fragment stages
     using S = vk::PipelineStageFlagBits2;
@@ -937,6 +998,24 @@ void Items::record_decide(const frame::Recording& recording) {
                                                             .dst_stage = S::eVertexShader | S::eFragmentShader,
                                                             .dst_access = A::eShaderRead});
 }
+
+#if defined(ATLAS_TESTS)
+Items::Records Items::records() const {
+    Records r;
+    if (!testing_.readable || counts_.jobs == 0) return r;
+    const auto read = [](const gpu::Buffer& b, std::uint32_t n, std::vector<std::byte>& out) {
+        const std::size_t bytes = std::size_t{n} * shaders::ITEM_RECORD_VECTORS * 16;
+        b.invalidate();
+        const std::span<const std::byte> mapped = b.bytes();
+        if (mapped.size() < bytes) return;
+        out.assign(mapped.begin(), mapped.begin() + static_cast<std::ptrdiff_t>(bytes));
+    };
+    read(faces_[slot_], counts_.faces, r.faces);
+    read(parts_[slot_], counts_.parts, r.parts);
+    read(sides_[slot_], counts_.sides, r.sides);
+    return r;
+}
+#endif
 
 void Items::record_draw(const frame::Recording& recording) {
     if (faces_pipeline_ == nullptr || counts_.jobs == 0) return;

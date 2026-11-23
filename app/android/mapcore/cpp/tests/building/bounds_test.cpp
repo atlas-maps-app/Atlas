@@ -13,6 +13,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Walls.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Window.hpp"
 #include "sun/Samples.hpp"
 #include "tests/base/require.hpp"
 #include "tests/building/fixture.hpp"
@@ -375,6 +376,8 @@ TEST_CASE("buildings: levels and bays past what a building holds draw no windows
     for (const gm::WindowWall& w : g.window_walls) held += std::uint64_t{w.levels} * w.cols;
     ATLAS_REQUIRE(g.windows == held);
     CHECK(g.windows_cut == 0);
+    // the most a pack's build reckons they can be (load::most_windows), the levels no building has taken as none
+    CHECK(atlas::load::most_windows(*tile, head.frame) >= g.windows);
     for (const gm::WindowWall& w : g.window_walls) {
         const std::uint32_t record = g.edged.at(w.wall).item;
         INFO("record " << record << ", a wall of " << w.elen << " m");
@@ -410,6 +413,8 @@ TEST_CASE(
     const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &head, .level = 0, .kind = 1});
     ATLAS_REQUIRE(g.windows <= tl::building::most_tile_windows);
     CHECK(g.windows_cut == 1);
+    // a pack's build, which cannot count what stage T cuts, tells that this tile can pass the most (load::most_windows)
+    CHECK(atlas::load::most_windows(*tile, head.frame) > tl::building::most_tile_windows);
     std::size_t long_kept = 0;
     std::size_t long_cut = 0;
     for (const gm::WindowWall& w : g.window_walls) {

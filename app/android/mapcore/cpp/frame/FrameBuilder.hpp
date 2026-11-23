@@ -381,6 +381,12 @@ public:
     /// derived without an output (the twin's, which has no frames to keep even), show the inputs' at once.
     bool derive(std::uint64_t number, std::uint32_t slot, const gpu::Output* output);
 
+    /// The scene's update for the inputs' camera, with no frame (the app hidden and following its location: the world
+    /// asks for the tiles that camera wants, and its workers build them, so the return draws them at once). derive's
+    /// view as the last frame had it (its number and slot, so what the world lets go of retires at that frame's fence,
+    /// and its output's turn), the moment and every pass left as they are; nothing recorded, no pass's stage F.
+    void update_scene();
+
     /// The twin of frame `number` (D16's L1): stage F as record runs it (the world's update, set 1's globals, the
     /// selections, ground slots, ranks and the passes' updates), then every pass's phases emitted in the frame's order
     /// into `out` (cleared first), under the frame's groups (twin::Stream::root, the SVG's clip to the frame;
@@ -445,6 +451,7 @@ private:
     vk::raii::ShaderModule owner_module_{nullptr};
     FrameInputs inputs_;
     std::optional<style::ThemeBlock> shown_; ///< the moment the frames show (FrameState::theme)
+    bool scene_only_ = false;                ///< derive runs for update_scene: the moment left as it is
     std::optional<style::ThemeBlock> asked_; ///< the moment the passes are asked about (Pass::ready_for)
     std::function<void()> wake_;
     FrameState state_;

@@ -1040,10 +1040,16 @@ void World::update(const frame::FrameState& state) {
         for (const CoverTile& t : incoming_cover_.tiles()) touch(t.drawn->handle);
     }
     release_idle(seconds, state.number);
-    // a waiting switch keeps the frames coming until it is drawn (at most incoming_hold seconds), and a bias that
-    // moved until it holds
-    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) || incoming_ != nullptr ||
-                 world_fading() || governor_.changed();
+    // a switch whose wait is over is drawn by the next frame (choose); one still waiting draws none: its tiles and its
+    // stage T wake the loop as they are published, and the end of its hold is due_at's. A bias that moved keeps the
+    // frames coming until it holds.
+    animating_ = cover_.fading() || frames_.weight(seconds) < 1.0 || (sun_ && sun_->fading()) ||
+                 (incoming_ != nullptr && incoming_ready_) || world_fading() || governor_.changed();
+}
+
+std::optional<double> World::due_at() const noexcept {
+    if (incoming_ == nullptr || incoming_ready_ || incoming_since_ < 0) return std::nullopt;
+    return incoming_since_ + incoming_hold;
 }
 
 void World::make_room(std::size_t own) {

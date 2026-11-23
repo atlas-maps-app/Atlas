@@ -115,6 +115,8 @@ struct Scene {
         if (s.settled) break; // this frame drawn with every tile taken
         s.world->residency().wait_idle();
         const scene::Cover& cover = *s.world->cover();
+        // settled without waiting for the sun's shadows: no pass drawn here (the shopfronts and composite) reads the
+        // sun's bits; a pass that comes to read them settles on frame/Still.hpp's checks
         s.settled = n > 4 && cover.missing() == 0 && !cover.tiles().empty() &&
                     std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
     }

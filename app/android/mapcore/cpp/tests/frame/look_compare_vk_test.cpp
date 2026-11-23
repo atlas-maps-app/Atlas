@@ -4,6 +4,7 @@
 // frame through the session at the sunny moment, written as <out>/<name>_kit.ppm and <out>/<name>_new.ppm.
 #include "base/pymath/PyMath.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Still.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "load/Countries.hpp"
@@ -203,10 +204,11 @@ TEST_CASE("looks: the canal ring's windows in the Dutch kit and in the New looks
             const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
             int frames = 0;
             while (std::chrono::steady_clock::now() < until) {
+                frame::Still still(map);
                 const standin::Drawn d = session.draw(cam, {});
                 if (d.stale) session.remake();
                 frames += d.drawn ? 1 : 0;
-                if (map.complete() && frames > 4) break;
+                if (still.final_frame() && frames > 4) break; // frame/Still.hpp: the sun's shadows in
                 if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
             }
             MESSAGE(std::format("{}: {} frames, complete {}, pack {}", kit ? "kit" : "new", frames, map.complete(),
@@ -224,10 +226,11 @@ TEST_CASE("looks: the canal ring's windows in the Dutch kit and in the New looks
                     const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(240);
                     int n = 0;
                     while (std::chrono::steady_clock::now() < by) {
+                        frame::Still still(map);
                         const standin::Drawn s = session.draw(at, {});
                         if (s.stale) session.remake();
                         n += s.drawn ? 1 : 0;
-                        if (map.complete() && n > 4) break;
+                        if (still.final_frame() && n > 4) break; // frame/Still.hpp: the sun's shadows in
                         if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
                     }
                     // the GPU's times are an earlier frame's: three more at rest, the last one's read
@@ -297,10 +300,11 @@ TEST_CASE("looks: the canal ring zoomed out, as the app draws its bundled pack")
             const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
             int frames = 0;
             while (std::chrono::steady_clock::now() < until) {
+                frame::Still still(map);
                 const standin::Drawn s = session.draw(cam, {});
                 if (s.stale) session.remake();
                 frames += s.drawn ? 1 : 0;
-                if (map.complete() && frames > 4) break;
+                if (still.final_frame() && frames > 4) break; // frame/Still.hpp: the sun's shadows in
                 if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
             }
             MESSAGE(std::format("ring {:.0f} m: {} frames, complete {}, pack {}, tone {}", d, frames, map.complete(),
@@ -319,10 +323,11 @@ TEST_CASE("looks: the canal ring zoomed out, as the app draws its bundled pack")
                 const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(240);
                 int n = 0;
                 while (std::chrono::steady_clock::now() < by) {
+                    frame::Still still(map);
                     const standin::Drawn s = session.draw(at, {});
                     if (s.stale) session.remake();
                     n += s.drawn ? 1 : 0;
-                    if (map.complete() && n > 4) break;
+                    if (still.final_frame() && n > 4) break; // frame/Still.hpp: the sun's shadows in
                     if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
                 }
                 standin::FrameRecord r{};
@@ -448,10 +453,11 @@ TEST_CASE("looks: a pinch in from the canal ring to the street, as the app names
             const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
             int n = 0;
             while (std::chrono::steady_clock::now() < until) {
+                frame::Still still(map);
                 const standin::Drawn s = session.draw(c, {});
                 if (s.stale) session.remake();
                 n += s.drawn ? 1 : 0;
-                if (map.complete() && n > 4) break;
+                if (still.final_frame() && n > 4) break; // frame/Still.hpp: the sun's shadows in
                 if (!map.animating() && map.world() != nullptr) map.world()->residency().wait_idle();
             }
         }

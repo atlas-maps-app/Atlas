@@ -1,0 +1,9 @@
+# The Rust Atlas's crates are built with, pinned like the NDK and CMake: the core's stage P (mapcore/rust/clean, built
+# by mapcore/cpp/cmake/Rust.cmake) and the transit planner (transit/planner). rustup takes it from either crate's
+# folder, this being the nearest above both, and a build installs nothing (RUSTUP_AUTO_INSTALL=0): it is installed
+# with its Android ABIs' targets (aarch64-linux-android, x86_64-linux-android) by .github/scripts/rust.sh on CI (the
+# planner's workflows by rustup itself), by `rustup toolchain install` and `rustup target add` on a machine. The
+# targets are not listed here, so that a host build never fetches them.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"

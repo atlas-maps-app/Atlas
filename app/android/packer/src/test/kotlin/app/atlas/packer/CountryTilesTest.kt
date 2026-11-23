@@ -76,6 +76,18 @@ class CountryTilesTest {
         val said = ArrayList<String>()
         assertEquals(0, run(listOf("country", d.data.path, d.index.path, out.path, "--core", tool.path, "--id", "test", "--threads", "2", "--batch", "3"), said::add))
         assertTrue(said.joinToString("\n"), said.any { it.startsWith("test.tiles: 4 windows (2 with a tile, 2 empty") })
+        // the buildings: A's twenty houses and B's one, each in its own window's scene alone, all clean; A's of 2 and 3
+        // storeys, about 8.2 by 8.9 m, so 16 bays of 2.1 m about each, the most windows a tile of them can hold
+        val buildings = said.single { it.startsWith("  the buildings: ") }
+        assertTrue(
+            buildings,
+            buildings.startsWith(
+                "  the buildings: 21 footprints in the windows' scenes, each with the 200 m about its window (21 in the tiles), " +
+                    "0 overlapping pairs, 0 outlines uncovered, 0 unsettled, 0 unmeasured, ",
+            ),
+        )
+        assertTrue(buildings, buildings.endsWith("; at most 800 windows in a tile (14/${A.first}/${A.second}), 0 tiles that can pass the 1048576 a frame draws"))
+        assertFalse(said.joinToString("\n"), said.any { it.startsWith("the cleaning left") })
         // the two files, and nothing of the batches' left beside them
         assertEquals(listOf("test.tiles", "test.tiles.idx"), out.list()!!.sorted())
         val tiles = File(out, "test.tiles").readBytes()
@@ -284,6 +296,8 @@ class CountryTilesTest {
             setExecutable(true)
         }
         val failing = standIn("failing", "while read -r x y path; do echo \"\$x \$y failed no data in \$path\"; done < \"\$2\"\nexit 1")
+        // one of a core before its counts: each window's features, bytes and time alone
+        val uncounted = standIn("uncounted", "while read -r x y path; do echo \"\$x \$y 5 100 1\"; done < \"\$2\"")
         val silent = standIn("silent", "exit 0")
         val refusing = standIn("refusing", "exit 2")
         val out = tmp.newFolder("out")
@@ -297,6 +311,7 @@ class CountryTilesTest {
         assertTrue(all, all.startsWith("the core's tool could not build 3 of the 3 windows: "))
         for ((x, y) in listOf(A, B, C)) assertTrue(all, all.contains("14/$x/$y: no data in "))
         assertTrue(failure(silent).contains("said nothing of 14/"))
+        assertTrue(failure(uncounted).contains("not x y features bytes ms and its counts (footprints=N pairs=N "))
         assertTrue(failure(refusing).contains("failed (exit 2)"))
         // nothing left behind, the batches' folder included
         assertEquals(emptyList<String>(), out.list()!!.toList())
@@ -310,6 +325,32 @@ class CountryTilesTest {
         assertTrue(usage(d.data.path, d.index.path, out.path, "--core", failing.path, "--batch", "0").contains("--batch"))
         assertTrue(usage(d.data.path, d.index.path, out.path, "--core", failing.path, "--id", "Not An Id").contains("--id"))
         assertTrue(usage(d.data.path, d.index.path, "--core", failing.path).contains("the output folder"))
+    }
+
+    @Test
+    fun theToolsCountsOfEachWindowAreReadInTheirOrderAndSummedOverTheCountry() {
+        fun words(vararg n: Long) = CountryTiles.Buildings.NAMES.zip(n.toList()).map { (k, v) -> "$k=$v" }
+        val a = CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800), 1, 2)!!
+        val b = CountryTiles.Buildings.of(words(10, 2, 0, 1, 0, 1, 0, 0, 8, 1_100_000), 3, 4)!!
+        val c = CountryTiles.Buildings.of(words(5, 0, 0, 0, 0, 0, 0, 0, 5, 900), 5, 6)!!
+        // all ten, each named, in their order
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20), 1, 2))
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800).reversed(), 1, 2))
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800).dropLast(1) + "windows=many", 1, 2))
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800).dropLast(1) + "window=800", 1, 2))
+        // the counts summed, the most windows of a tile kept with where it is, and the tiles past what a frame draws
+        val sum = CountryTiles.Buildings() + a + b + c
+        assertEquals(CountryTiles.Buildings(45, 2, 1, 1, 0, 5, 2, 1, 33, 1_100_000, "14/3/4", 1), sum)
+        // the counts the yardstick wants 0, where they are not
+        assertEquals("uncovered 1", a.uneasy)
+        assertEquals("pairs 2, unsettled 1", b.uneasy)
+        assertNull(c.uneasy)
+        assertEquals(
+            "  the buildings: 45 footprints in the windows' scenes, each with the 200 m about its window (33 in the tiles), 2 overlapping pairs, " +
+                "1 outlines uncovered, 1 unsettled, 0 unmeasured, 5 flat roofs, 2 hidden, 1 doubles; at most 1100000 windows in a tile (14/3/4), " +
+                "1 tiles that can pass the 1048576 a frame draws",
+            CountryTiles.buildingsLine(sum),
+        )
     }
 
     /** The core's own packs of [windows], built by the tool from their answers, as the phone builds them. */

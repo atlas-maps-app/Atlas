@@ -64,11 +64,11 @@ class MapData(private val services: Services) {
 
     /** No call timeout: a region pack is megabytes, an Overpass answer can take minutes. */
     private val client: OkHttpClient by lazy {
-        services.http.client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
+        services.http(Overpass.INFO.id).client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
     }
 
     private val get = HttpGet { url ->
-        val res = client.newCall(Request.Builder().url(url).header("User-Agent", services.http.userAgent).build()).execute()
+        val res = client.newCall(Request.Builder().url(url).header("User-Agent", services.http(Overpass.INFO.id).userAgent).build()).execute()
         if (!res.isSuccessful) {
             res.close()
             throw IOException("$url answered ${res.code}")
@@ -127,12 +127,12 @@ class MapData(private val services: Services) {
 
     /** Atlas's published packs, as the windows read them: packs-latest's list, the last good copy kept. */
     private val windowCatalog: PackCatalog by lazy {
-        PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(packsIndexDir, "packs-latest.json"))
+        PackCatalog(PackCatalog.DEFAULT_URL, services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client, File(packsIndexDir, "packs-latest.json"))
     }
 
     /** The windows' data in Atlas's own packs, read on the windows' own thread. */
     private val windowPacks: WindowPacks by lazy {
-        WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client)
+        WindowPacks({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client)
     }
 
     /**
@@ -147,7 +147,7 @@ class MapData(private val services: Services) {
      * thread; each index that comes into memory told to the country question ([PackCountries.indexRead]).
      */
     private val windowTiles: WindowTiles by lazy {
-        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client, local = { _, set ->
+        WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client, local = { _, set ->
             set.tiles.sha256?.let(regionFiles::keptTiles)?.let { (tiles, index) -> WindowTiles.Local(tiles, index) }
         }, indexRead = { services.packCountries.indexRead() })
     }
@@ -225,7 +225,7 @@ class MapData(private val services: Services) {
      * each server between them.
      */
     private val overpass: OverpassClient by lazy {
-        OverpassClient(post.inTurns(services.http.limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)
+        OverpassClient(post.inTurns(services.http(Overpass.INFO.id).limiter::turn), hosts = OVERPASS_HOSTS, servers = services.overpassServers)
     }
 
     /**
@@ -429,7 +429,7 @@ class MapData(private val services: Services) {
         // a new version drops the old one's heads and chunks, unless a country is kept by its tiles: then it waits
         // beside the old one until the keeper holds its kept world whole (ENGINE.md step 11: no kept world lost offline)
         val world = WorldFetch(
-            dir, client = services.http.client,
+            dir, client = services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client,
             drop = {
                 MapEngine.worldCacheDir()?.let { cache ->
                     val why = MapCore.worldDrop(cache.path, MapEngine.worldCacheBytes)
@@ -461,7 +461,7 @@ class MapData(private val services: Services) {
      */
     private fun wireTerrain(dir: File) {
         val said: (String) -> Unit = { line -> android.util.Log.i("AtlasMap", "vk terrain: $line") }
-        val terrain = TerrainFetch(dir, client = services.http.client)
+        val terrain = TerrainFetch(dir, client = services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client)
         services.scope.launch(Dispatchers.IO) {
             services.worldFetch.await()
             val cache = MapEngine.worldCacheDir() ?: return@launch

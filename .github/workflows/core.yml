@@ -16,9 +16,9 @@
 # decides clang-tidy's word on them (tools/tidy/cached.py).
 #
 # Which job runs for which paths: the core's matrix (the core job) runs when the push or pull request changes
-# app/android/mapcore/** (the building traditions the core compiles in among them), this file or
-# .github/docker/lavapipe/** (core-changes decides, by a git diff), whatever else it changes, and on every nightly and
-# run by hand.
+# app/android/mapcore/** (the building traditions the core compiles in among them), the Rust its stage P is built with
+# (app/android/rust-toolchain.toml), this file or .github/docker/lavapipe/** (core-changes decides, by a git diff),
+# whatever else it changes, and on every nightly and run by hand.
 #
 # Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
 # (every fuzz target for up to 30 minutes, clang-tidy on every file without its cache; it checks out `app`), the MODS
@@ -32,10 +32,10 @@ name: Core
 on:
   push:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+    paths: ['app/android/mapcore/**', 'app/android/rust-toolchain.toml', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
   pull_request:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+    paths: ['app/android/mapcore/**', 'app/android/rust-toolchain.toml', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
   schedule:
     - cron: '23 2 * * *' # nightly: every fuzz target for up to 30 minutes, clang-tidy on every file
   workflow_dispatch:
@@ -122,7 +122,7 @@ jobs:
           core=true
           if [ "${{ github.event_name }}" = push ] || [ "${{ github.event_name }}" = pull_request ]; then
             if [ -n "$base" ] && [ "$base" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$base^{commit}" 2> /dev/null; then
-              if git diff --quiet "$base" HEAD -- app/android/mapcore .github/workflows/core.yml .github/docker/lavapipe; then
+              if git diff --quiet "$base" HEAD -- app/android/mapcore app/android/rust-toolchain.toml .github/workflows/core.yml .github/docker/lavapipe; then
                 core=false
               fi
               echo "changed since $base:"
@@ -294,11 +294,11 @@ jobs:
           } >> "$GITHUB_ENV"
           clang++-$LLVM --version | sed -n 1p
 
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with
-      # the Android ABIs' targets where the NDK builds
-      - name: Rust, as mapcore/rust pins it
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake), with
+      # the Android ABIs' targets where the NDK builds, and its rustfmt and clippy where the tidy job checks the Rust
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
-          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ${{ (matrix.task == 'android' || matrix.task == 'tidy-android') && 'android' || '' }}
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh" ${{ (matrix.task == 'android' || matrix.task == 'tidy-android') && 'android' || (matrix.task == 'tidy' && env.SHARD == '1') && 'lint' || '' }}
       - name: CMake ${{ env.CMAKE_VERSION }} and Ninja ${{ env.NINJA_VERSION }}
         run: |
           mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
@@ -814,6 +814,13 @@ jobs:
           rm -rf ~/.cache/atlas-tidy && mkdir -p ~/.cache && mv "$keep" ~/.cache/atlas-tidy
           echo "kept=$(find ~/.cache/atlas-tidy -type f | wc -l)" >> "$GITHUB_OUTPUT"
           exit "$status"
+      # ---- rustfmt and clippy on the core's Rust, in the tidy job's first shard beside clang-format: the format of
+      # mapcore/rust/rustfmt.toml, clippy's lints with every warning an error (each crate's [lints] refuse a panic
+      # written as one), and every place a panic can come unwritten, listed in the log and counted in the summary
+      # (.github/scripts/rust-lint.sh). It runs whatever clang-tidy found.
+      - name: rustfmt and clippy
+        if: ${{ !cancelled() && matrix.task == 'tidy' && env.SHARD == '1' }}
+        run: .github/scripts/rust-lint.sh app/android/mapcore/rust/clean
       - name: Keep the clean units' keys
         if: ${{ !cancelled() && steps.tidy.outputs.kept > 0 && env.KEEP_CACHES == 'true' }}
         uses: actions/cache/save@v6

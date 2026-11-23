@@ -13,6 +13,8 @@
 extern crate alloc;
 
 pub mod arrange;
+#[cfg(test)]
+mod bounds;
 pub mod bridge;
 pub mod clean;
 pub mod geom;
@@ -37,6 +39,8 @@ mod runtime {
         fn posix_memalign(out: *mut *mut c_void, align: usize, size: usize) -> i32;
         fn write(fd: i32, buf: *const u8, n: usize) -> isize;
         fn abort() -> !;
+        #[cfg(target_os = "android")]
+        fn android_set_abort_message(message: *const core::ffi::c_char);
     }
 
     /// The C library's allocator; posix_memalign where an alignment is past malloc's 16 bytes.
@@ -90,27 +94,118 @@ mod runtime {
 
     #[panic_handler]
     fn panic(info: &core::panic::PanicInfo) -> ! {
-        // where, without the formatting machinery: `atlas_clean: panic at <file>:<line>`
-        say(b"atlas_clean: panic at ");
-        if let Some(at) = info.location() {
-            say(at.file().as_bytes());
-            let mut digits = [0u8; 10];
-            let mut n = at.line();
-            let mut k = digits.len();
+        let mut message = [0u8; crate::PANIC_MESSAGE];
+        let n = crate::panic_message(info.location().map(|at| (at.file().as_bytes(), at.line())), &mut message);
+        say(&message[..n]);
+        say(b"\n");
+        // what a phone's crash report carries (the tombstone's abort message), as the core's fail sets it
+        #[cfg(target_os = "android")]
+        // SAFETY: a string ended by a NUL, which bionic copies
+        unsafe {
+            android_set_abort_message(message.as_ptr().cast())
+        };
+        // SAFETY: the C library's abort
+        unsafe { abort() }
+    }
+}
+
+/// The bytes a panic's message takes, its NUL with them.
+pub const PANIC_MESSAGE: usize = 256;
+
+/// What a panic says, to the standard error and on Android as the abort message a crash report carries: `atlas_clean:
+/// panic at <file>:<line>` (without a place, `atlas_clean: panic`), written into `out` with a NUL after it (the
+/// file cut short where the whole does not fit); its length without the NUL. Without the formatting machinery,
+/// which the library leaves out.
+pub fn panic_message(at: Option<(&[u8], u32)>, out: &mut [u8; PANIC_MESSAGE]) -> usize {
+    let mut digits = [0u8; 10];
+    let mut k = digits.len();
+    let mut n = 0;
+    let mut put = |bytes: &[u8], room: usize, n: &mut usize| {
+        for &b in bytes.iter().take(room.saturating_sub(*n)) {
+            out[*n] = b;
+            *n += 1;
+        }
+    };
+    let last = PANIC_MESSAGE - 1;
+    match at {
+        None => put(b"atlas_clean: panic", last, &mut n),
+        Some((file, line)) => {
+            let mut v = line;
             loop {
                 k -= 1;
-                digits[k] = b'0' + (n % 10) as u8;
-                n /= 10;
-                if n == 0 || k == 0 {
+                digits[k] = b'0' + (v % 10) as u8;
+                v /= 10;
+                if v == 0 || k == 0 {
                     break;
                 }
             }
-            say(b":");
-            say(&digits[k..]);
+            let line = &digits[k..];
+            put(b"atlas_clean: panic at ", last, &mut n);
+            // the file as much as leaves room for the line
+            put(file, last - 1 - line.len(), &mut n);
+            put(b":", last, &mut n);
+            put(line, last, &mut n);
         }
-        say(b"\n");
-        // SAFETY: the C library's abort
-        unsafe { abort() }
+    }
+    out[n] = 0;
+    n
+}
+
+/// The C library's allocator, counted on each thread, for tests that bound what an operation holds at once.
+#[cfg(test)]
+pub(crate) mod counted {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
+    std::thread_local! {
+        static NOW: Cell<isize> = const { Cell::new(0) };
+        static PEAK: Cell<isize> = const { Cell::new(0) };
+    }
+
+    fn add(bytes: isize) {
+        let _ = NOW.try_with(|now| {
+            let v = now.get() + bytes;
+            now.set(v);
+            let _ = PEAK.try_with(|peak| peak.set(peak.get().max(v)));
+        });
+    }
+
+    struct Counted;
+
+    // SAFETY: the system's allocator, each call passed on as it came
+    unsafe impl GlobalAlloc for Counted {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+            // SAFETY: passed on
+            let p = unsafe { System.alloc(l) };
+            if !p.is_null() {
+                add(l.size() as isize);
+            }
+            p
+        }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+            // SAFETY: passed on
+            unsafe { System.dealloc(p, l) };
+            add(-(l.size() as isize));
+        }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, size: usize) -> *mut u8 {
+            // SAFETY: passed on
+            let q = unsafe { System.realloc(p, l, size) };
+            if !q.is_null() {
+                add(size as isize - l.size() as isize);
+            }
+            q
+        }
+    }
+
+    #[global_allocator]
+    static COUNTED: Counted = Counted;
+
+    /// What `f` gives, and the most bytes this thread held at once while it ran, past what it held before.
+    pub fn peak<R>(f: impl FnOnce() -> R) -> (R, usize) {
+        let before = NOW.with(Cell::get);
+        PEAK.with(|p| p.set(before));
+        let r = f();
+        (r, (PEAK.with(Cell::get) - before) as usize)
     }
 }
 
@@ -360,75 +455,27 @@ pub unsafe extern "C" fn atlas_clean_seams(xz: *const f64, count: usize, out: *m
     n
 }
 
-/// A seamed ring's rings again (crate::bridge::rings): every ring's points one after another, each ring's first point
-/// (ring_count + 1 offsets), and its piece (a piece's first ring its outer, then its courtyards). The rings run as
-/// the tiles hold them: an outer ring clockwise as latitude and longitude are read, a courtyard the other way.
-#[repr(C)]
-#[derive(Debug)]
-pub struct AtlasCleanRings {
-    pub points: *const AtlasCleanPoint,
-    pub ring_first: *const usize,
-    pub piece: *const u32,
-    pub ring_count: usize,
-    pub owner: *mut c_void,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-struct OwnedRings {
-    points: Vec<AtlasCleanPoint>,
-    ring_first: Vec<usize>,
-    piece: Vec<u32>,
-}
-
-/// The rings of the closed ring of `count` points (as the tiles hold a building's) into `out`: 0 done; 1 a ring the
-/// cleaning did not make (`out` then holds nothing).
-///
-/// # Safety
-/// `ring` points to `count` points and `out` to a value to fill.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn atlas_clean_rings(ring: *const AtlasCleanPoint, count: usize, out: *mut AtlasCleanRings) -> i32 {
-    // SAFETY: the caller's contract
-    let (v, out) = unsafe { (slice(ring, count), &mut *out) };
-    *out = AtlasCleanRings {
-        points: core::ptr::null(),
-        ring_first: core::ptr::null(),
-        piece: core::ptr::null(),
-        ring_count: 0,
-        owner: core::ptr::null_mut(),
-    };
-    // counterclockwise for the walk, as the cleaning makes it; back as the tiles hold it after
-    let ccw: Vec<P> = v.iter().rev().map(|q| P::new(q.lon as i64, q.lat as i64)).collect();
-    let Some(polys) = bridge::rings(&ccw) else { return 1 };
-    let mut o = OwnedRings { points: Vec::with_capacity(v.len()), ring_first: Vec::new(), piece: Vec::new() };
-    for (k, poly) in polys.iter().enumerate() {
-        for r in core::iter::once(&poly.outer).chain(poly.holes.iter()) {
-            o.ring_first.push(o.points.len());
-            o.piece.push(k as u32);
-            o.points.extend(r.iter().rev().map(|p| AtlasCleanPoint { lat: p.y as i32, lon: p.x as i32 }));
-        }
-    }
-    o.ring_first.push(o.points.len());
-    let owned = Box::new(o);
-    *out = AtlasCleanRings {
-        points: owned.points.as_ptr(),
-        ring_first: owned.ring_first.as_ptr(),
-        piece: owned.piece.as_ptr(),
-        ring_count: owned.piece.len(),
-        owner: Box::into_raw(owned).cast(),
-    };
-    0
-}
-
-/// Frees what atlas_clean_rings made.
-///
-/// # Safety
-/// `out` is an output atlas_clean_rings filled, freed at most once.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn atlas_clean_rings_free(out: *mut AtlasCleanRings) {
-    // SAFETY: the caller's contract
-    let out = unsafe { &mut *out };
-    if !out.owner.is_null() {
-        // SAFETY: owner is the Box atlas_clean_rings leaked
-        drop(unsafe { Box::from_raw(out.owner.cast::<OwnedRings>()) });
-        out.owner = core::ptr::null_mut();
+    #[test]
+    fn a_panic_says_where_as_a_phone_shows_it() {
+        // the message a phone's crash report carries for a panic here, as the handler writes it
+        let at = core::panic::Location::caller();
+        let mut out = [0xFFu8; PANIC_MESSAGE];
+        let n = panic_message(Some((at.file().as_bytes(), at.line())), &mut out);
+        let message = std::format!("atlas_clean: panic at {}:{}", at.file(), at.line());
+        std::println!("abort message: {}", core::str::from_utf8(&out[..n]).unwrap());
+        assert_eq!(&out[..n], message.as_bytes());
+        assert_eq!(out[n], 0);
+        // a file too long for it is cut, and its line kept
+        let long = [b'x'; 400];
+        let n = panic_message(Some((&long, 4_294_967_295)), &mut out);
+        assert_eq!(n, PANIC_MESSAGE - 1);
+        assert!(out[..n].ends_with(b"xx:4294967295"));
+        assert_eq!(out[n], 0);
+        let n = panic_message(None, &mut out);
+        assert_eq!(&out[..=n], b"atlas_clean: panic\0");
     }
 }

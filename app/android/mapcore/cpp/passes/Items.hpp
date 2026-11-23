@@ -1,8 +1,8 @@
 // A region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items): one pass draws every tower
 // with a height (the app's map one standing on a roof as its roof mast), wind turbine, crane, mast, gantry, goods
-// conveyor and power line of a region as the port does, in the objects slot at true depth (shaders/item/: items_cs and
-// roof_masts_cs write their records; items_faces_vs and _fs draw the faces, items_parts_vs and _fs the opaque parts,
-// items_sides_vs and _fs the translucent ones, far to near).
+// conveyor and power line of a region as the port does, in the objects slot at true depth (shaders/item/: a stage a
+// kind writes their records, towers_cs to woods_cs and roof_masts_cs; items_faces_vs and _fs draw the faces,
+// items_parts_vs and _fs the opaque parts, items_sides_vs and _fs the translucent ones, far to near).
 //   - Stage T (build, on a worker): geometry/Items.hpp's items of the tile, ITEM_VECTORS uint4 each in the points heap;
 //     an item each, of the kind "region item" (its kind's painter slots); the pass keeps each item as stage T made it.
 //   - Stage F (update): the moment's tones (item_tones), and a job for each item the ranks draw, the nearest first,
@@ -10,9 +10,11 @@
 //     what its item's depth decides in double (item_choice: a segment's radius cut at either end in engine mode, the
 //     port's least sizes, the widths as printed, a power line's fade), its boxes' colours by their faces' normals and
 //     its parts in draw_items' order (item_extra).
-//   - Before the main pass items_cs writes each job's records, roof_masts_cs a roof mast's (their jobs the last: a
-//     stage of their own, so that items_cs stays at the bytes the user's phone ran); the objects phase draws the faces
-//     and the opaque parts, the translucent phase the rest, far to near. None in the owner mode.
+//   - Before the main pass each kind's stage writes its jobs' records: the jobs are put together kind by kind (the
+//     roof masts' last), each job keeping its records' places, and each kind with jobs this frame is dispatched over
+//     them alone (the audit of 17 November, change 7: one stage over every kind had grown to 418,600 bytes of SPIR-V,
+//     twice shaders/spirv.budget's line; each kind's is within it). The objects phase draws the faces and the opaque
+//     parts, the translucent phase the rest, far to near. None in the owner mode.
 //   - The twin (emit): every item's elements as the port's SVG has them (twin/item/ItemTwin.hpp).
 #pragma once
 
@@ -25,8 +27,10 @@
 #include "tiles/Style.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace atlas::scene {
@@ -91,6 +95,10 @@ void item_extra(const geometry::RegionItem& item, const view::Camera& camera, co
                 const shaders::Theme& th, const tiles::ItemsStyle& style, double ax, double az, double bx, double bz,
                 std::vector<std::uint32_t>& out);
 
+/// The kinds with a decide stage of their own but the roof masts (items.slangh's ITEM_TOWER to ITEM_WOOD, in that
+/// order; ITEM_ROOF_MAST's stage comes after them).
+inline constexpr std::size_t item_kind_stages = 9;
+
 /// The region items' pass.
 class Items final : public frame::Pass {
 public:
@@ -121,15 +129,39 @@ public:
     static constexpr std::int32_t sides_order = 1012;
 
     /// What the last frame drew: its jobs (the items drawn; the roof masts', the last, their own stage's), their faces,
-    /// opaque parts and translucent ones.
+    /// opaque parts and translucent ones, and the jobs of each other kind (in the kinds' order: each kind with any is
+    /// a dispatch of its stage).
     struct Counts {
         std::uint32_t jobs = 0;
         std::uint32_t masts = 0;
         std::uint32_t faces = 0;
         std::uint32_t parts = 0;
         std::uint32_t sides = 0;
+        std::array<std::uint32_t, item_kind_stages> kinds{};
     };
     [[nodiscard]] Counts counts() const noexcept { return counts_; }
+
+#if defined(ATLAS_TESTS)
+    /// The tests' (items_vk_test; only where the tests are built): `whole`, a module whose items_cs decides every
+    /// kind's jobs in one stage (tests/item/items_whole.slang, the stage before it was split by kind), made at prepare
+    /// beside the kinds' stages, which a frame runs over every job but the roof masts' in their place while use_whole
+    /// is on; and `readable`, the records' lists in memory the CPU reads (records()). Set before prepare.
+    struct Testing {
+        std::vector<std::uint32_t> whole;
+        bool readable = false;
+    };
+    void set_testing(Testing testing) { testing_ = std::move(testing); }
+    void use_whole(bool on) noexcept { use_whole_ = on; }
+    /// The tests': the records the last frame's stages wrote, the faces', the opaque parts' and the translucent ones'
+    /// as their lists hold them (Testing::readable; read once that frame has finished).
+    struct Records {
+        std::vector<std::byte> faces;
+        std::vector<std::byte> parts;
+        std::vector<std::byte> sides;
+        bool operator==(const Records&) const = default;
+    };
+    [[nodiscard]] Records records() const;
+#endif
     [[nodiscard]] std::uint16_t kind() const noexcept { return kind_; }
 
 private:
@@ -180,7 +212,7 @@ private:
     std::array<gpu::Buffer, 2> fades_;
     vk::raii::PipelineLayout layout_{nullptr};
     vk::raii::PipelineLayout compute_layout_{nullptr};
-    vk::raii::Pipeline decide_{nullptr};
+    std::vector<vk::raii::Pipeline> stages_; ///< each kind's decide stage, in the kinds' order (kind_stages)
     vk::raii::Pipeline roof_masts_{nullptr}; ///< roof_masts_cs, over the roof masts' jobs
     vk::raii::Pipeline faces_pipeline_{nullptr};
     vk::raii::Pipeline fills_pipeline_{nullptr}; ///< the faces' fans alone at true depth (ENGINE.md gain 18)
@@ -192,10 +224,19 @@ private:
     std::vector<Drawn> drawn_;
     std::vector<std::uint32_t> words_;
     std::vector<std::uint32_t> extra_words_;
-    std::vector<std::uint32_t> mast_words_; ///< the roof masts' jobs, before they join words_ as its last
+    /// each kind's jobs, the roof masts' last, before they join words_ in that order; and each other kind's jobs'
+    /// translucent records' counts
+    std::array<std::vector<std::uint32_t>, item_kind_stages + 1> kind_words_;
+    std::array<std::vector<std::uint32_t>, item_kind_stages> kind_sides_;
     std::vector<std::uint32_t> fade_words_;
     bool dithers_ = false; ///< what stands up draws dithered this frame (scene::Cover::dithers)
     std::uint32_t slot_ = 0;
+#if defined(ATLAS_TESTS)
+    vk::raii::ShaderModule whole_module_{nullptr}; ///< the tests' (Testing::whole)
+    vk::raii::Pipeline whole_{nullptr};
+    Testing testing_;
+    bool use_whole_ = false;
+#endif
 };
 
 } // namespace atlas::passes

@@ -93,6 +93,13 @@ double MapFrame::now() const noexcept {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - epoch_).count();
 }
 
+std::optional<double> MapFrame::due_in() const noexcept {
+    if (!made()) return std::nullopt;
+    const std::optional<double> at = world_->due_at(); // the world's clock is this map's (now)
+    if (!at) return std::nullopt;
+    return std::max(0.0, *at - now());
+}
+
 std::string MapFrame::open(const MapPack& pack) {
     if (!world_) return {};
     auto added = world_->store().add(pack.ref);
@@ -399,6 +406,12 @@ void MapFrame::next(const style::CameraState& camera, double seconds) {
                           .palette = &palette_,
                           .terrain = terrain_,
                           .sky_view = sky_view_});
+}
+
+void MapFrame::update_scene(const style::CameraState& camera, double seconds) {
+    if (!ready()) return;
+    next(camera, seconds);
+    builder_->update_scene();
 }
 
 void MapFrame::set_asked(std::optional<AskedBuilding> asked) {

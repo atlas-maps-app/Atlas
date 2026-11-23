@@ -1,8 +1,8 @@
 // The region items' twin (plan-vector D16's L1; ENGINE.md step 4, "Trees and things"): what the items pass draws at a
 // frame, as the port's SVG elements (render/regions.py's draw_items), into the twin's stream. It decides each drawn
-// item as items_cs does (a roof mast as roof_masts_cs), with the shader's own text (twin/item/ItemShader.hpp's
-// items.slangh) over the points heap's words, and emits in the port's order, each in the item's item (its OSM node or
-// way):
+// item as its kind's stage does (towers_cs to woods_cs, a roof mast's roof_masts_cs), with the shader's own text
+// (twin/item/ItemShader.hpp's items.slangh) over the points heap's words, and emits in the port's order, each in the
+// item's item (its OSM node or way):
 //   - a tower: each band a closed path filled with its gradient (`tw<id % 100000>_<int(y0)>`, across its box);
 //   - a roof mast (the app's map's; the stream's kind "roof mast"): its pole, a closed path filled with a tower's
 //     shaft's gradient (its tower's `tw<id % 100000>_0`); its panels' faces toward the eye, closed paths filled and

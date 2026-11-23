@@ -5,6 +5,7 @@ import app.atlas.providers.Http
 import app.atlas.providers.SwitchedOffException
 import app.atlas.providers.Wikipedia
 import app.atlas.services.SettingsKeys
+import app.atlas.testing.direct
 import app.atlas.testing.testServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -34,15 +35,45 @@ import java.util.Collections
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class SourcesGateTest {
+    /**
+     * A proxy of the JVM's, set where the tests run, would carry a switched-on request out past the test's own [Dns]: every
+     * test here runs with one set to a port nobody listens on, so a client that is not [app.atlas.testing.direct] fails.
+     */
+    private val proxyKeys = listOf("http.proxyHost", "https.proxyHost", "socksProxyHost").associateWith { it.replace("Host", "Port") }
+
+    /** Hosts the JVM would send past a proxy: emptied, so a setting from outside (`*`) cannot skip the dead proxy. */
+    private val bypassKeys = listOf("http.nonProxyHosts", "socksNonProxyHosts")
+    private val kept = HashMap<String, String?>()
+
+    @org.junit.Before
+    fun aProxyThatGoesNowhere() {
+        val port = java.net.ServerSocket(0).use { it.localPort }
+        for ((host, portKey) in proxyKeys) {
+            kept[host] = System.getProperty(host)
+            kept[portKey] = System.getProperty(portKey)
+            System.setProperty(host, "127.0.0.1")
+            System.setProperty(portKey, "$port")
+        }
+        for (k in bypassKeys) {
+            kept[k] = System.getProperty(k)
+            System.setProperty(k, "")
+        }
+    }
+
+    @org.junit.After
+    fun theProxyAsItWas() {
+        for ((k, v) in kept) if (v == null) System.clearProperty(k) else System.setProperty(k, v)
+    }
+
     /** What a client asked of the names and the sockets: nothing leaves this machine, whatever the gate does. */
-    private class Watch : EventListener() {
+    private class Watch(private val here: (String) -> Boolean = { it.endsWith(".wikipedia.org") }) : EventListener() {
         val looked: MutableList<String> = Collections.synchronizedList(ArrayList())
         val connects: MutableList<String> = Collections.synchronizedList(ArrayList())
 
-        /** Every Wikipedia host is this machine, where the mock listens; any other name is not found. */
+        /** Every name [here] holds (Wikipedia's hosts, by default) is this machine, where the mock listens; any other is not found. */
         val dns = Dns { name ->
             looked += name
-            if (name.endsWith(".wikipedia.org")) listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) else throw UnknownHostException(name)
+            if (here(name)) listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) else throw UnknownHostException(name)
         }
 
         override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) {
@@ -50,9 +81,9 @@ class SourcesGateTest {
         }
     }
 
-    /** The app's [Services.http], its gate and all, with [watch]'s names and sockets. */
+    /** The app's view of its HTTP client for Wikipedia ([Services.http]), its gate and all, with [watch]'s names and sockets, and no proxy of the JVM's. */
     private fun watched(services: Services, watch: Watch): Http =
-        Http(base = services.http.client.newBuilder().dns(watch.dns).eventListener(watch).build())
+        Http(base = services.http(Wikipedia.ID).client.newBuilder().direct().dns(watch.dns).eventListener(watch).build())
 
     private suspend fun Services.switch(off: Set<String>) {
         settings.set(SettingsKeys.PROVIDERS_OFF, off.takeIf { it.isNotEmpty() })
@@ -111,6 +142,126 @@ class SourcesGateTest {
             // another article is not read: it would be asked
             assertTrue(runCatching { wiki.article("en", "Noorderkerk") }.exceptionOrNull() is SwitchedOffException)
             assertEquals(1, server.requestCount)
+        }
+        services.close()
+    }
+
+    @Test
+    fun aNamedViewIsHeldByItsSourcesSwitchWhereNoListNamesTheHostAndAListedHostByItsOwn() = runBlocking {
+        val services = testServices()
+        MockWebServer().use { server ->
+            repeat(8) { server.enqueue(MockResponse.Builder().code(200).body("ok").build()) }
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val watch = Watch { true }
+            fun OkHttpClient.watched() = newBuilder().direct().dns(watch.dns).eventListener(watch).build()
+            fun at(host: String) = "http://$host:${server.port}/x"
+            suspend fun ask(client: OkHttpClient, host: String): Throwable? =
+                runCatching { client.newCall(okhttp3.Request.Builder().url(at(host)).build()).execute().close() }.exceptionOrNull()
+            services.switch(setOf("panoramax", "open-meteo", "atlas-packs", "overpass", "osm-chargers"))
+            // Panoramax's picture from its instance's own host, which no list names: held by Panoramax's switch
+            val refused = ask(services.http("panoramax").client.watched(), "nl.panoramax.xyz")
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "panoramax" && refused.host == "nl.panoramax.xyz")
+            // the map's long-read Overpass client, built on the overpass view as MapData builds it, at a server in no list
+            val long = services.http("overpass").client.newBuilder().cache(null).callTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(330, java.util.concurrent.TimeUnit.SECONDS).build().watched()
+            assertEquals("overpass", (ask(long, "overpass.example.net") as? SwitchedOffException)?.source)
+            // a pack's download from a host in no list (GitHub's storage under another name)
+            assertEquals("atlas-packs", (ask(services.http("atlas-packs").client.watched(), "objects.githubusercontent.com") as? SwitchedOffException)?.source)
+            // a listed host goes by its own source's switch, whatever the view is named: MET Norway through the forecast's
+            // view with Open-Meteo off, and Overpass's own host is held through any view
+            assertEquals(null, ask(services.http("open-meteo").client.watched(), "api.met.no"))
+            assertEquals("overpass", (ask(services.http("wikidata").client.watched(), "overpass-api.de") as? SwitchedOffException)?.source)
+            assertEquals("open-meteo", (ask(services.http("met-norway").client.watched(), "api.open-meteo.com") as? SwitchedOffException)?.source)
+            // a host in no list through a view of a source that is on goes, as the tests' mock servers do
+            assertEquals(null, ask(services.http("wikidata").client.watched(), "localhost"))
+            assertEquals(2, server.requestCount)
+            assertEquals("no name looked up for what was held", listOf("api.met.no", "localhost"), watch.looked.toList())
+            // switched on again, each goes
+            services.switch(emptySet())
+            for ((source, host) in listOf("panoramax" to "nl.panoramax.xyz", "atlas-packs" to "objects.githubusercontent.com")) {
+                assertEquals(null, ask(services.http(source).client.watched(), host))
+            }
+            assertEquals(null, ask(long, "overpass.example.net"))
+            assertEquals(5, server.requestCount)
+        }
+        services.close()
+    }
+
+    @Test
+    fun servicesHandsOutNamedViewsOnly() {
+        // no public member of Services gives the client without a source's name
+        val unnamed = Services::class.java.methods.filter { Http::class.java.isAssignableFrom(it.returnType) && it.parameterCount == 0 }
+        assertEquals("$unnamed", emptyList<java.lang.reflect.Method>(), unnamed)
+        val services = testServices()
+        assertEquals("overpass", services.http("overpass").source)
+        assertTrue("one view a source", services.http("overpass") === services.http("overpass"))
+        services.close()
+    }
+
+    /** Real names a listed host stands for: an exact host itself; a pattern's name and one host below it. */
+    private fun namesFor(listed: String): List<String> =
+        if (listed.startsWith("*.")) listed.removePrefix("*.").let { listOf(it, "en.$it") } else listOf(listed)
+
+    @Test
+    fun eachSwitchableSourceSwitchedOffAloneIsRefusedByItsIdThroughServicesOwnClientAndAnothersHostGoes() = runBlocking {
+        // every source with a switch of its own, the catalogue's and SourcesModel's six: a gate wired with fewer, or one
+        // that refuses whatever is asked while anything is off, fails here
+        val switchable = SourcesModel.ALL.filter { it.switchable && it.via == null }
+        val services = testServices()
+        try {
+            MockWebServer().use { server ->
+                server.dispatcher = object : mockwebserver3.Dispatcher() {
+                    override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse = MockResponse.Builder().code(200).body("ok").build()
+                }
+                server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+                val looked = Collections.synchronizedList(ArrayList<String>())
+                // through a view of a source that lists none of these hosts: the host decides
+                val client = services.http("wikidata").client.newBuilder().direct()
+                    .dns { name -> looked += name; listOf(InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }.build()
+                fun ask(host: String) = runCatching { client.newCall(okhttp3.Request.Builder().url("http://$host:${server.port}/").build()).execute().close() }.exceptionOrNull()
+                val went = ArrayList<String>()
+                for ((i, s) in switchable.withIndex()) {
+                    services.switch(setOf(s.id))
+                    for (h in s.hosts) for (name in namesFor(h)) {
+                        val refused = ask(name)
+                        assertTrue("${s.id} at $name: $refused", refused is SwitchedOffException && refused.source == s.id && refused.host == name)
+                    }
+                    // another source's host, while this one alone is off: it goes, and reaches the server
+                    val other = switchable[(i + 1) % switchable.size]
+                    val name = namesFor(other.hosts.first()).last()
+                    assertEquals("${other.id}'s $name with ${s.id} off", null, ask(name))
+                    went += name
+                }
+                assertEquals("only the hosts that went were looked up", went, looked.toList())
+                assertEquals(switchable.size, server.requestCount)
+            }
+        } finally {
+            services.close()
+        }
+    }
+
+    @Test
+    fun aRedirectToASwitchedOffSourcesHostIsRefusedAtTheHop() = runBlocking {
+        val services = testServices()
+        MockWebServer().use { server ->
+            server.dispatcher = object : mockwebserver3.Dispatcher() {
+                override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse =
+                    if (request.headers["Host"]!!.startsWith("www.wikidata.org")) MockResponse.Builder().code(302).addHeader("Location", "http://upload.wikimedia.org:${server.port}/p.jpg").build()
+                    else MockResponse.Builder().code(200).body("picture").build()
+            }
+            server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            val watch = Watch { true }
+            val client = services.http("wikidata").client.newBuilder().direct().dns(watch.dns).eventListener(watch).build()
+            fun get() = client.newCall(okhttp3.Request.Builder().url("http://www.wikidata.org:${server.port}/w").build()).execute().use { it.body.string() }
+            // Wikidata on, Commons off: the first hop goes, the hop to Commons' host is refused before it is sent
+            services.switch(setOf("commons"))
+            val refused = runCatching { get() }.exceptionOrNull()
+            assertTrue("$refused", refused is SwitchedOffException && refused.source == "commons" && refused.host == "upload.wikimedia.org")
+            assertEquals(1, server.requestCount)
+            // both on: it goes
+            services.switch(emptySet())
+            assertEquals("picture", get())
+            assertEquals(3, server.requestCount)
         }
         services.close()
     }

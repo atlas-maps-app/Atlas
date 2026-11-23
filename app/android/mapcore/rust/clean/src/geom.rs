@@ -117,11 +117,7 @@ pub fn proper_cross(a: P, b: P, c: P, d: P) -> bool {
 #[inline]
 pub fn round_div(n: i128, d: i128) -> i128 {
     let (n, d) = if d < 0 { (-n, -d) } else { (n, d) };
-    if n >= 0 {
-        (2 * n + d) / (2 * d)
-    } else {
-        -((-2 * n + d) / (2 * d))
-    }
+    if n >= 0 { (2 * n + d) / (2 * d) } else { -((-2 * n + d) / (2 * d)) }
 }
 
 /// The grid point nearest to where the segments (a, b) and (c, d) cross (they cross properly).

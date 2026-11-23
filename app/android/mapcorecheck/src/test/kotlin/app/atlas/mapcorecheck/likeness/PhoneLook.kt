@@ -242,8 +242,8 @@ internal class PhoneCore(
     private val version = LookHost.windowVersion()
     private val tiles: WindowTiles = run {
         val parsed = listText?.let { PackCatalog.parse(it).packs }
-        val catalog = PackCatalog(PackCatalog.DEFAULT_URL, cacheFile = File(work, "index/packs-latest.json"))
-        WindowTiles({ parsed ?: kotlinx.coroutines.runBlocking { catalog.packs() } }, File(work, "index"))
+        val catalog = PackCatalog(PackCatalog.DEFAULT_URL, cacheFile = File(work, "index/packs-latest.json"), client = app.atlas.mapcorecheck.tilesClient)
+        WindowTiles({ parsed ?: kotlinx.coroutines.runBlocking { catalog.packs() } }, File(work, "index"), client = app.atlas.mapcorecheck.tilesClient)
     }
 
     /** What the element packs gave: the windows built from them, for the notes. */

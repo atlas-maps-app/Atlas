@@ -13,6 +13,7 @@
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Still.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/Offscreen.hpp"
 #include "passes/Ground.hpp"
@@ -24,7 +25,6 @@
 #include "standin/Session.hpp"
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
-#include "sun/BitTiles.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/gpu/session_fixture.hpp"
 #include "tests/tiles/world_support.hpp"
@@ -365,42 +365,14 @@ private:
     return out;
 }
 
-/// The sun's work so far once its workers are idle (scene/SunGlobals.hpp): its scenes built, its scenes made whole and
-/// its buckets run. The map's picture is complete without the sun (no frame waits for it: a tile is drawn by day until
-/// its bits come, and they cross-fade in), so a frame is called still only once a frame drew its work and it did no
-/// more.
-[[nodiscard]] std::array<std::uint64_t, 3> sun_work(frame::MapFrame& map) {
-    scene::SunGlobals* sun = map.world() != nullptr ? map.world()->sun() : nullptr;
-    if (sun == nullptr) return {};
-    sun->wait_idle();
-    const scene::SunStats s = sun->stats();
-    return {s.scenes, s.wholes, s.runs};
-}
-
-/// Whether the map's last frame shows the shadows its sun has made: no tile cross-fading to its bits, and none of the
-/// active pack's tiles drawn by day while its lane holds bits for it (published after the frame took the lane's, or
-/// held back: SunGlobals::hold).
-[[nodiscard]] bool shadows_in(frame::MapFrame& map) {
-    scene::World* world = map.world();
-    scene::SunGlobals* sun = world != nullptr ? world->sun() : nullptr;
-    if (sun == nullptr || world->cover() == nullptr) return true;
-    if (sun->fading()) return false;
-    const sun::BitTiles& bits = sun->bits();
-    const std::string_view active = map.drawn_pack();
-    return std::ranges::none_of(world->cover()->with_under(), [&](const scene::CoverTile& t) {
-        return t.drawn != nullptr && t.drawn->pack == active && !t.sun.has_value() &&
-               bits.view(t.drawn->key, map.seconds()).has_value();
-    });
-}
-
-/// Draws `camera` until the map's picture is complete (its tiles resident and drawn, every fade done) and its sun's
-/// shadows are in, twice over the same tiles and the same work of the sun, and the world wants nothing more (at most
-/// `most` frames and four minutes); false where it never is.
+/// Draws `camera` until a frame is final (frame/Still.hpp: complete, the sun done with it, its shadows in) twice over
+/// the same tiles and the world wants nothing more (at most `most` frames and four minutes); false where it never is.
 [[nodiscard]] bool draw_still(standin::Session& session, frame::MapFrame& map, const style::CameraState& camera,
                               int most = std::numeric_limits<int>::max()) {
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(240);
-    std::optional<std::pair<std::vector<std::uint64_t>, std::array<std::uint64_t, 3>>> complete;
+    std::optional<std::vector<std::uint64_t>> complete;
     for (int frames = 0; frames < most && std::chrono::steady_clock::now() < until; ++frames) {
+        frame::Still still(map);
         const standin::Drawn d = session.draw(camera, {});
         if (d.stale) session.remake();
         scene::WorldTiles* tiles = map.world() != nullptr ? map.world()->world_tiles() : nullptr;
@@ -408,12 +380,11 @@ private:
         const bool world_done = f == nullptr || f->wanted == 0;
         if (map.world() != nullptr) map.world()->residency().wait_idle();
         if (tiles != nullptr) tiles->wait_idle();
-        const std::array<std::uint64_t, 3> work = sun_work(map);
-        if (!map.complete() || !world_done || !shadows_in(map)) {
+        if (!still.final_frame() || !world_done) {
             complete.reset();
             continue;
         }
-        auto drawn = std::pair{drawn_tiles(map), work};
+        std::vector<std::uint64_t> drawn = drawn_tiles(map);
         if (complete == drawn) return true;
         complete = std::move(drawn);
     }
@@ -434,16 +405,16 @@ private:
            same(shown.shadow, theme.shadow);
 }
 
-/// The frame of `camera` once the map shows the moment `theme` it was handed, its picture is complete with its sun's
-/// shadows in, and two frames in a row are the same with no work of the sun between them (the passes' work for a
-/// palette or a moment done), at most 240 frames; the last read back.
+/// The frame of `camera` once the map shows the moment `theme` it was handed, the frame is final (frame/Still.hpp) and
+/// two such frames in a row are the same (the passes' work for a palette or a moment done), at most 240 frames; the
+/// last read back.
 [[nodiscard]] gpu::Pixels settled(standin::Session& session, frame::MapFrame& map, KeptWindow& window,
                                   const style::CameraState& camera, const style::ThemeBlock& theme) {
-    std::optional<std::pair<gpu::Pixels, std::array<std::uint64_t, 3>>> last;
+    std::optional<gpu::Pixels> last;
     for (int i = 0; i < 240; ++i) {
+        frame::Still still(map);
         if (session.draw(camera, {}).stale) session.remake();
-        const std::array<std::uint64_t, 3> work = sun_work(map);
-        if (!shows(map, theme) || !map.complete() || !shadows_in(map)) {
+        if (!still.final_frame() || !shows(map, theme)) {
             last.reset();
             continue;
         }
@@ -452,11 +423,11 @@ private:
             FAIL_CHECK(pixels.error().text());
             return {};
         }
-        if (last && last->second == work && last->first.rgba == pixels->rgba) return std::move(*pixels);
-        last = std::pair{std::move(*pixels), work};
+        if (last && last->rgba == pixels->rgba) return std::move(*pixels);
+        last = std::move(*pixels);
     }
     FAIL_CHECK("the frame never settled on its moment");
-    return last ? std::move(last->first) : gpu::Pixels{};
+    return last ? std::move(*last) : gpu::Pixels{};
 }
 
 /// The pixels of `a` and `b` (the same size) any of whose channels differ by more than 8 levels.

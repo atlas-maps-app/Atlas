@@ -1,17 +1,18 @@
 // The region items' pipelines (ENGINE.md step 4, "Trees and things"; CP/passes/Items.cpp; shaders/item/items.slangh):
-// before the main pass items_cs decides each drawn item once (a roof mast roof_masts_cs, a stage of its own), a thread
-// a job, from its words in the points heap (set 1, binding 0), the frame's tones and the job's own words (set 2), into
-// its records: the faces (its towers' bands, its boxes' faces, a turbine's tower and blades), the opaque parts (a
-// turbine's blades' strokes and hub, a crane's stays, a mast's glow's core, a power line's tower) and the translucent
-// ones (a turbine's night light, a mast's glow, a power line's conductors and its tower while it fades). items_faces_vs
-// draws each face as its fan and, stroked, its edges' quads, whose fragments items_faces_fs keeps where they lie within
-// the stroke, sample by sample; at true depth the fans draw first, alone, through items_fills_fs, which keeps every
-// sample the rasteriser covers and so keeps the early depth test and a tiler's hidden-surface removal (ENGINE.md gain
-// 18), then the edges alone; items_parts_vs draws a segment or a circle as a box about it whose fragments
-// items_parts_fs keeps where they lie in it; items_sides_fs blends the translucent ones, premultiplied, a conductor's
-// segment leaving the samples its path's earlier segments cover. Every corner at its own depth, with mat's grain. While
-// a tile fades (ENGINE.md's standing fades) every record keeps the samples of its tile's standing fade (shared/
-// fade.slang): the CPU gives each its fade (item_fades) and the fans alone draw through items_fills_fading_fs.
+// before the main pass its kind's stage decides each drawn item once (towers_cs to woods_cs, and roof_masts_cs: a stage
+// a kind, below), a thread a job, from its words in the points heap (set 1, binding 0), the frame's tones and the job's
+// own words (set 2), into its records: the faces (its towers' bands, its boxes' faces, a turbine's tower and blades),
+// the opaque parts (a turbine's blades' strokes and hub, a crane's stays, a mast's glow's core, a power line's tower)
+// and the translucent ones (a turbine's night light, a mast's glow, a power line's conductors and its tower while it
+// fades). items_faces_vs draws each face as its fan and, stroked, its edges' quads, whose fragments items_faces_fs
+// keeps where they lie within the stroke, sample by sample; at true depth the fans draw first, alone, through
+// items_fills_fs, which keeps every sample the rasteriser covers and so keeps the early depth test and a tiler's
+// hidden-surface removal (ENGINE.md gain 18), then the edges alone; items_parts_vs draws a segment or a circle as a box
+// about it whose fragments items_parts_fs keeps where they lie in it; items_sides_fs blends the translucent ones,
+// premultiplied, a conductor's segment leaving the samples its path's earlier segments cover. Every corner at its own
+// depth, with mat's grain. While a tile fades (ENGINE.md's standing fades) every record keeps the samples of its tile's
+// standing fade (shared/fade.slang): the CPU gives each its fade (item_fades) and the fans alone draw through
+// items_fills_fading_fs.
 
 #include "shared/fade.slang"
 #include "shared/frame.slang"
@@ -41,8 +42,8 @@
 [[vk::binding(8, 2)]] StructuredBuffer<uint4> item_sides;
 [[vk::binding(9, 2)]] StructuredBuffer<uint> item_fades;
 
-/// The push constants: x the jobs (items_cs, roof_masts_cs) or the samples a pixel (the fragment stages); y which of a
-/// face's triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads), or roof_masts_cs's first job; w while
+/// The push constants: x the jobs (a kind's stage's) or the samples a pixel (the fragment stages); y which of a face's
+/// triangles items_faces_vs places (0 all, 1 its fan, 2 its edges' quads), or a kind's stage's first job; w while
 /// a tile fades 1 more than the first of the draw's list's fades in item_fades (the faces' 1, the parts' 1 more than
 /// the faces, the translucent ones' 1 more than the faces and the parts), else 0.
 struct ItemPush {
@@ -457,19 +458,33 @@ void power(FrameCamera c, ItemJob j, ItemWords w, float3 a, float3 b) {
     }
 }
 
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
-    uint index = (group.y * ITEM_JOB_ROW + group.x) * 64u + thread.x;
-    if (index >= push.at.x) {
-        return;
-    }
-    uint at = index * ITEM_JOB_VECTORS;
-    ItemJob j = item_job(item_jobs[at], item_jobs[at + 1u], item_jobs[at + 2u], item_jobs[at + 3u],
-                         item_jobs[at + 4u]);
-    ItemWords w = item_words(points_heap[j.item], points_heap[j.item + 1u], points_heap[j.item + 2u]);
-    uint kind = j.flags & ITEM_JOB_KIND;
-    // every record of the job's starts empty
+// ---- deciding: a stage a kind
+//
+// Each kind's jobs have a stage of their own (the audit of 17 November, change 7: one stage over every kind had grown
+// to 418,600 bytes of SPIR-V, twice shaders/spirv.budget's line): the CPU puts each kind's jobs together, kind after
+// kind and the roof masts' last, and dispatches a kind's stage over its jobs alone, push.at.x of them from job
+// push.at.y, a thread a job. Each job's records are its own wherever its job lies, so the stages write what one stage
+// over every job would (tests/item/items_vk_test.cpp holds them to tests/item/items_whole.slang's, byte for byte), and
+// a workgroup runs one kind's code.
+
+/// The thread's job among its kind's (beyond them where it is push.at.x or more).
+uint item_job_index(uint3 group, uint3 thread) {
+    return (group.y * ITEM_JOB_ROW + group.x) * 64u + thread.x;
+}
+
+/// The kind's job `index`: its words, the frame's job push.at.y + index.
+ItemJob item_job_at(uint index) {
+    uint at = (push.at.y + index) * ITEM_JOB_VECTORS;
+    return item_job(item_jobs[at], item_jobs[at + 1u], item_jobs[at + 2u], item_jobs[at + 3u], item_jobs[at + 4u]);
+}
+
+/// The job's item's words in the points heap.
+ItemWords item_words_of(ItemJob j) {
+    return item_words(points_heap[j.item], points_heap[j.item + 1u], points_heap[j.item + 2u]);
+}
+
+/// Every record of a job of `kind` starts empty.
+void item_empty(ItemJob j, ItemWords w, uint kind) {
     uint faces = item_face_count(kind, uint(w.extra));
     for (uint i = 0u; i < faces; ++i) {
         put(item_faces_out, j.faces + i, item_nothing());
@@ -480,33 +495,143 @@ void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
     for (uint i = 0u; i < item_side_count(kind); ++i) {
         put(item_sides_out, j.sides + i, item_nothing());
     }
-    FrameCamera c = frame.camera;
-    float3 foot = item_eye(j.place, w.foot);
+}
+
+/// A segment's second end at the eye (a gantry's, a conveyor's, a power line's span's, a coaster track's piece's).
+float3 item_end(ItemJob j, ItemWords w) {
     float3 end_local = {w.end.x, w.foot.y, w.end.y};
-    float3 end = item_eye(j.place, end_local);
-    if (kind == ITEM_TOWER) {
-        tower(c, j, w, foot);
-    } else if (kind == ITEM_CRANE) {
-        crane(c, j, w, foot);
-    } else if (kind == ITEM_MAST) {
-        mast(c, j, w, foot);
-    } else if (kind == ITEM_GANTRY || kind == ITEM_CONVEYOR) {
-        boxes(c, j, w, foot, end, kind);
-    } else if (kind == ITEM_TURBINE) {
-        turbine(c, j, w, foot);
-    } else if (kind == ITEM_POWER) {
-        power(c, j, w, foot, end);
-    } else if (kind == ITEM_COASTER) {
-        coaster(c, j, w, foot, end);
-    } else if (kind == ITEM_WOOD) {
-        wood(c, j, w, foot, points_heap[j.item + 3u], points_heap[j.item + 4u], points_heap[j.item + 5u],
-             points_heap[j.item + 6u]);
+    return item_eye(j.place, end_local);
+}
+
+/// The jobs of a tower with a height and its cab.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void towers_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
     }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_TOWER);
+    tower(frame.camera, j, w, item_eye(j.place, w.foot));
+}
+
+/// The jobs of a wind turbine.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void turbines_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_TURBINE);
+    turbine(frame.camera, j, w, item_eye(j.place, w.foot));
+}
+
+/// The jobs of a crane, on a quay or in a yard.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void cranes_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_CRANE);
+    crane(frame.camera, j, w, item_eye(j.place, w.foot));
+}
+
+/// The jobs of a mast.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void masts_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_MAST);
+    mast(frame.camera, j, w, item_eye(j.place, w.foot));
+}
+
+/// The jobs of a gantry.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void gantries_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_GANTRY);
+    boxes(frame.camera, j, w, item_eye(j.place, w.foot), item_end(j, w), ITEM_GANTRY);
+}
+
+/// The jobs of a goods conveyor.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void conveyors_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_CONVEYOR);
+    boxes(frame.camera, j, w, item_eye(j.place, w.foot), item_end(j, w), ITEM_CONVEYOR);
+}
+
+/// The jobs of a power line's span.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void power_lines_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_POWER);
+    power(frame.camera, j, w, item_eye(j.place, w.foot), item_end(j, w));
+}
+
+/// The jobs of a coaster track's piece.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void coasters_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_COASTER);
+    coaster(frame.camera, j, w, item_eye(j.place, w.foot), item_end(j, w));
+}
+
+/// The jobs of a wood's tree.
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void woods_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
+    uint index = item_job_index(group, thread);
+    if (index >= push.at.x) {
+        return;
+    }
+    ItemJob j = item_job_at(index);
+    ItemWords w = item_words_of(j);
+    item_empty(j, w, ITEM_WOOD);
+    wood(frame.camera, j, w, item_eye(j.place, w.foot), points_heap[j.item + 3u], points_heap[j.item + 4u],
+         points_heap[j.item + 5u], points_heap[j.item + 6u]);
 }
 
 /// The roof masts' jobs (the frame's last, push.at.x of them from job push.at.y), a thread a job, each its records as
-/// items_cs writes a job's: a stage of their own, so that items_cs stays at the bytes the user's phone ran
-/// (shaders/spirv.budget).
+/// the other kinds' stages write a job's.
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void roof_masts_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
