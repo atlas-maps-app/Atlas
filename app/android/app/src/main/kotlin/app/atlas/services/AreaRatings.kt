@@ -14,15 +14,23 @@ import java.time.Instant
  * Open ratings for the places a search finds (the user, 3 November: "Every source and everything thats possible goes
  * into search results"): Mangrove's reviews in the places' box, asked once an hour for a stretch of map, matched to
  * the places and written into each one's extras ("rating" 0..5, "rating_count", "rating_source"), which the rankings
- * and the rows read. One request for the whole list, not one a place.
+ * and the rows read. One request for the whole list, not one a place. None while not [online]; none while Mangrove is
+ * switched [off], and then one held back ([heldBack]) where one would have been asked: not where the reviews kept from
+ * within the hour hold the box.
  */
-class AreaRatings(private val mangrove: Mangrove, private val clock: Clock, private val allowed: () -> Boolean) {
+class AreaRatings(
+    private val mangrove: Mangrove,
+    private val clock: Clock,
+    private val online: () -> Boolean,
+    private val off: () -> Boolean,
+    private val heldBack: () -> Unit,
+) {
     private val kept = ArrayList<Triple<BBox, Instant, List<MangroveReview>>>()
     private val lock = Mutex()
 
     /** [places] with their ratings where reviews say one; as they are when none can be had (offline, switched off, down). */
     suspend fun rate(places: List<Place>): List<Place> {
-        if (places.isEmpty() || !allowed()) return places
+        if (places.isEmpty() || !online()) return places
         val box = BBox.of(places.map { it.location })?.buffer(MARGIN_M) ?: return places
         if (box.width > MAX_DEGREES || box.height > MAX_DEGREES) return places
         val reviews = reviewsIn(box) ?: return places
@@ -36,11 +44,19 @@ class AreaRatings(private val mangrove: Mangrove, private val clock: Clock, priv
         }
     }
 
-    /** The reviews in [box]: from a box asked within the hour that holds it, else asked now; null when they cannot be had. */
+    /**
+     * The reviews in [box]: from a box asked within the hour that holds it, else asked now; null when they cannot be had,
+     * and while Mangrove is switched off (counted as held back where it would be asked now).
+     */
     private suspend fun reviewsIn(box: BBox): List<MangroveReview>? = lock.withLock {
         val now = clock.instant()
         kept.removeAll { Duration.between(it.second, now) > KEEP }
-        kept.firstOrNull { (b, _, _) -> b.west <= box.west && b.south <= box.south && b.east >= box.east && b.north >= box.north }?.let { return it.third }
+        val known = kept.firstOrNull { (b, _, _) -> b.west <= box.west && b.south <= box.south && b.east >= box.east && b.north >= box.north }
+        if (off()) {
+            if (known == null) heldBack()
+            return null
+        }
+        known?.let { return it.third }
         val got = runCatching { mangrove.near(box) }.getOrNull() ?: return null
         kept += Triple(box, now, got)
         if (kept.size > KEPT_BOXES) kept.removeAt(0)

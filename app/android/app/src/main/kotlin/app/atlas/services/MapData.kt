@@ -125,9 +125,24 @@ class MapData(private val services: Services) {
 
     private fun online(): Boolean = !services.config.offline && services.connectivity.online.value
 
-    /** Throws where the user switched Overpass off (Settings · Data): the windows ask none of its servers then. */
+    /**
+     * Throws where the user switched Overpass off (Settings · Data): the windows ask none of its servers then, and each
+     * window or diff not asked is counted as held back ([Services.heldBack]).
+     */
     private fun overpassAllowed() {
-        if (Overpass.INFO.id in services.sourcesOff()) throw SwitchedOffException(Overpass.INFO.id, Overpass.INFO.hosts.first())
+        if (services.heldBack(Overpass.INFO.id)) throw SwitchedOffException(Overpass.INFO.id, Overpass.INFO.hosts.first())
+    }
+
+    /** A window the phone builds ([MapEngine.windowData]): its data from Overpass, of the last day where one answers. */
+    internal fun windowData(b: DoubleArray, file: File) {
+        overpassAllowed()
+        overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), file, freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
+    }
+
+    /** The changes to a window since [since] ([MapEngine.windowDiff]), from Overpass. */
+    internal fun windowDiff(b: DoubleArray, since: String, notBefore: String): ByteArray {
+        overpassAllowed()
+        return overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
     }
 
     /** Where the packs' list (packs-latest's packs.json) and their indexes are kept for offline use: in the app's files. */
@@ -293,14 +308,8 @@ class MapData(private val services: Services) {
         // the windows the phone builds (ENGINE.md step 3): their data from the same Overpass servers, from one whose data
         // is of the last day where one answers; built again after a week from the changes since. Where the user switched
         // Overpass off, none is asked (and none rested for it), and the map says so.
-        MapEngine.windowData = { b, file ->
-            overpassAllowed()
-            overpass.window(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), file, freshAfter = java.time.Instant.now().minus(java.time.Duration.ofDays(1)))
-        }
-        MapEngine.windowDiff = { b, since, notBefore ->
-            overpassAllowed()
-            overpass.windowDiff(app.atlas.geo.BBox(b[1], b[0], b[3], b[2]), since, java.time.Instant.parse(notBefore))
-        }
+        MapEngine.windowData = { b, file -> windowData(b, file) }
+        MapEngine.windowDiff = { b, since, notBefore -> windowDiff(b, since, notBefore) }
         MapEngine.overpassOff = { Overpass.INFO.id in services.sourcesOff() }
         // and before them, Atlas's own packs, built on GitHub from Geofabrik's extracts, where one holds the window
         MapEngine.windowPacks = { w, after ->

@@ -219,8 +219,8 @@ fun LayersScreen(args: Dest.Layers, nav: Navigator) {
 /** The Overpass tags of the highways within 400 m of [at], judged: null when offline or nothing came back. */
 private suspend fun streetsAround(services: app.atlas.Services, at: app.atlas.geo.LatLon): StreetCoverage? {
     if (services.config.offline || !services.connectivity.online.value) return null
-    // The Overpass source may be switched off in Data sources: then nothing is asked of it.
-    if ("overpass" in services.settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).first()) return null
+    // The Overpass source may be switched off in Data sources: then nothing is asked of it, and that is held back.
+    if (services.heldBack(app.atlas.providers.Overpass.INFO.id)) return null
     val tags = ArrayList<Map<String, String>>()
     services.overpass.stream(StreetCoverage.query(at)) { tags += it.tags }
     return StreetCoverage.of(tags)

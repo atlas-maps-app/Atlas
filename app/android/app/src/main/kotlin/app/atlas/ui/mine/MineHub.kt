@@ -165,8 +165,8 @@ class MineHub(private val services: Services) {
                 target.parentFile?.mkdirs()
                 val store = PlaceStore.open(target)
                 try {
-                    // the house numbers OpenStreetMap lacks, from OpenAddresses, unless the user switched it off
-                    val addresses = services.openAddresses.takeIf { OpenAddresses.ID !in services.sourcesOff() }
+                    // the house numbers OpenStreetMap lacks, from OpenAddresses, unless the user switched it off (then held back)
+                    val addresses = services.openAddresses.takeUnless { services.heldBack(OpenAddresses.ID) }
                     RegionImport(services.overpass, addresses = addresses).import(bbox, store, name = name) { p -> report(p.fraction.toFloat()) }
                 } finally {
                     store.close()

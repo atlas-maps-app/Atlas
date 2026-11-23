@@ -32,6 +32,8 @@ class ChargeRepository(private val services: Services) {
         var failure: String? = null
         val ready = services.chargers.filter { it.state() == ProviderState.READY && it.id !in off && "${it.id}-chargers" !in off }
         if (online) {
+            // the sources switched off are asked nothing: held back, as the gate would count them
+            for (p in services.chargers) if (p.state() == ProviderState.READY && p.id in off) services.asked.refused(p.id)
             try {
                 // each source by its deadline: the OSM chargers queue behind the app's other Overpass queries, and the
                 // screen spun while the Dutch register's answer was ready (ChargerMerge.gather)

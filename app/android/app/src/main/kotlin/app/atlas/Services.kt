@@ -201,6 +201,13 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** The sources the user switched off, by id; the first ask waits for the settings, so nothing goes out before they are read. */
     fun sourcesOff(): Set<String> = sourcesOffNow.value ?: runBlocking { settings.flow(SettingsKeys.PROVIDERS_OFF, emptySet()).first() }
 
+    /**
+     * Whether [source] is switched off, for a caller that then makes no request rather than build one the gate would
+     * refuse: where it is, the request not made is counted as held back ([asked]), once, as the gate counts one it refuses.
+     * Ask it only where the request would otherwise be made now; a switch read to draw something is [sourcesOff].
+     */
+    fun heldBack(source: String): Boolean = (source in sourcesOff()).also { off -> if (off) asked.refused(source) }
+
     private val regionVersion = MutableStateFlow(0)
 
     /** Bumped whenever offline files change, so anything built from them can rebuild. */
@@ -343,7 +350,10 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Open ratings for a search's places, from Mangrove's reviews of the area: one request for the whole list. */
     val areaRatings: app.atlas.services.AreaRatings by lazy {
-        app.atlas.services.AreaRatings(mangrove, clock) { !config.offline && connectivity.online.value && Mangrove.ID !in sourcesOff() }
+        app.atlas.services.AreaRatings(
+            mangrove, clock, online = { !config.offline && connectivity.online.value },
+            off = { Mangrove.ID in sourcesOff() }, heldBack = { asked.refused(Mangrove.ID) },
+        )
     }
 
     /** Ratings from Mangrove (open, no key) and the keyed providers the user enabled with a key. */
@@ -453,8 +463,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
     /** Charging stops for the EV planner, from every charger source that is ready and not switched off, merged. */
     val chargerSource: ChargerSource by lazy {
         ChargerSource { corridor, minKw, connectors ->
-            val off = sourcesOff()
-            val ready = chargers.filter { it.state() == ProviderState.READY && it.id !in off }
+            // one switched off is held back, and counted so, where it would have been asked
+            val ready = chargers.filter { it.state() == ProviderState.READY && !heldBack(it.id) }
             // each source by its deadline, and none failing the plan: one source's bad answer (a parse error) failed it
             val found = ChargerMerge.gather(ready, CHARGERS_ALONG_DEADLINE) { p ->
                 p.along(corridor.line, corridor.bufferMetres, ChargerFilters(minKw = minKw, connectors = connectors))
