@@ -41,10 +41,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -52,11 +56,14 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <tuple>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using namespace atlas;
@@ -3275,6 +3282,194 @@ TEST_CASE("a frame cell's levels from every distance: its windows within 4.7 km 
     (void)session->take_messages();
 }
 
+namespace {
+
+/// The coarse level's place (the case below, and the sun's kept parts over it): two windows of cell 525/336 side by
+/// side from south to north, and their cell's levels, its L13 and its L12. In the south window a tower 60 m tall and
+/// 12 m square at its middle and a house 8 m tall 30 m east of it, in the north window a house alike at its middle.
+struct LevelsPlace {
+    static constexpr std::int64_t tower = 10;
+    static constexpr std::int64_t south_house = 11;
+    static constexpr std::int64_t north_house = 12;
+    tiles::TileKey south;
+    tiles::TileKey north;
+    tiles::TileKey coarse;
+    /// Each pack by its name (its window's id after `window/`), the windows first.
+    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
+};
+
+/// The middle of place `k`: {lat, lon}.
+[[nodiscard]] std::array<double, 2> middle_of(const tiles::TileKey& k) {
+    const std::array<std::int32_t, 4> b = tiles::tile_box(k);
+    return {(b[0] + b[2]) / 2e7, (b[1] + b[3]) / 2e7};
+}
+
+/// The coarse level's place built, or why it was not.
+[[nodiscard]] std::expected<LevelsPlace, std::string> levels_place() {
+    LevelsPlace out;
+    out.south = tiles::tile_of(14, 523'000'000, 47'500'000);
+    out.north = tiles::TileKey(14, out.south.x, out.south.y - 1);
+    out.coarse = tiles::TileKey(13, out.south.x >> 1U, out.south.y >> 1U);
+    if (out.coarse != tiles::TileKey(13, out.north.x >> 1U, out.north.y >> 1U)) {
+        return std::unexpected(std::string("the two places are not of one L13"));
+    }
+    // a building `side` metres square whose middle lies `east` metres east of the middle of place `k`
+    const auto building = [](const tiles::TileKey& k, std::int64_t id, std::string_view tags, double east,
+                             double side) {
+        const auto [lat, lon] = middle_of(k);
+        const double kx = 111320.0 * pymath::cos(pymath::radians(lat));
+        const double south_lat = lat - (side / 2 / 110540.0);
+        const double west_lon = lon + ((east - (side / 2)) / kx);
+        const double dlat = side / 110540.0;
+        const double dlon = side / kx;
+        std::string geometry;
+        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
+            geometry += std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", south_lat + a,
+                                    west_lon + o);
+        }
+        return std::format(R"({{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{{}}},"geometry":[{}]}})", id, tags,
+                           geometry);
+    };
+    for (const tiles::TileKey& k : {out.south, out.north}) {
+        const std::string ways =
+            k == out.south ? building(k, LevelsPlace::tower, R"("building":"yes","height":"60")", 0.0, 12.0) + "," +
+                                 building(k, LevelsPlace::south_house, R"("building":"house","height":"8")", 30.0, 8.0)
+                           : building(k, LevelsPlace::north_house, R"("building":"house","height":"8")", 0.0, 8.0);
+        const std::string json = std::format(R"({{"version":0.6,"elements":[{}]}})", ways);
+        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
+        if (!built) return std::unexpected(built.error().what);
+        out.packs.emplace_back(std::format("14/{}/{}", k.x, k.y), std::move(built->pack));
+    }
+    std::vector<std::span<const std::byte>> windows;
+    windows.reserve(out.packs.size());
+    for (const auto& [name, pack] : out.packs) windows.emplace_back(pack);
+    auto levels = load::build_levels(windows);
+    if (!levels) return std::unexpected(levels.error().what);
+    if (levels->size() != 2) return std::unexpected(std::format("{} levels, not an L13 and an L12", levels->size()));
+    for (load::BuiltLevel& l : *levels) {
+        out.packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
+    }
+    return out;
+}
+
+/// Writes each of `packs` under `folder`, a file of its own, and adds it to the world's store as window
+/// `window/<name>`; empty, or why one was not.
+[[nodiscard]] std::string join_windows(scene::World& w, const std::filesystem::path& folder,
+                                       const std::vector<std::pair<std::string, std::vector<std::byte>>>& packs) {
+    std::error_code ignored;
+    std::filesystem::create_directories(folder, ignored);
+    for (const auto& [name, pack] : packs) {
+        std::string file = name;
+        std::ranges::replace(file, '/', '-');
+        const std::filesystem::path path = folder / (file + ".atlas");
+        std::ofstream o(path, std::ios::binary | std::ios::trunc);
+        o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
+                static_cast<std::streamsize>(pack.size()));
+        o.close();
+        if (!o) return std::format("{} not written", path.string());
+        const auto joined =
+            w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
+        if (!joined) return tiles::describe(joined.error());
+    }
+    return {};
+}
+
+/// A tile's bits as the sun's kept parts are held to a whole build's: every field of sun::TileBits but the bucket's
+/// sun, which its key stands for; the quay pieces and the mirrors' first samples by value.
+struct HeldBits {
+    using Piece =
+        std::tuple<std::uint32_t, double, double, double, double, std::uint32_t, std::uint32_t, std::uint32_t>;
+    std::vector<std::uint64_t> words;
+    std::uint32_t count = 0;
+    std::uint32_t windows_from = 0;
+    std::uint32_t crowns_from = 0;
+    bool windows = false;
+    std::uint64_t bucket = 0;
+    std::uint64_t context = 0;
+    std::vector<Piece> quays;
+    std::vector<std::uint32_t> reflections;
+    bool operator==(const HeldBits&) const = default;
+};
+
+[[nodiscard]] HeldBits held_bits(const sun::TileBits& b) {
+    HeldBits out{.words = b.words,
+                 .count = b.count,
+                 .windows_from = b.windows_from,
+                 .crowns_from = b.crowns_from,
+                 .windows = b.windows,
+                 .bucket = b.bucket,
+                 .context = b.context,
+                 .quays = {},
+                 .reflections = {}};
+    if (b.quays) {
+        for (const sun::QuayPiece& q : *b.quays) {
+            out.quays.emplace_back(q.record, q.ax, q.az, q.bx, q.bz, q.sample, q.bands, q.columns);
+        }
+    }
+    if (b.reflections) out.reflections = *b.reflections;
+    return out;
+}
+
+/// What differs between bits `a` and `b`, field by field (empty: nothing).
+[[nodiscard]] std::string held_difference(const HeldBits& a, const HeldBits& b) {
+    std::string out;
+    const auto note = [&out](bool differs, std::string_view what) {
+        if (differs) out += std::format("{}{}", out.empty() ? "" : ", ", what);
+    };
+    note(a.count != b.count, std::format("{} samples against {}", a.count, b.count));
+    std::size_t bits = 0;
+    for (std::size_t i = 0; i < std::min(a.words.size(), b.words.size()); ++i) {
+        bits += static_cast<std::size_t>(std::popcount(a.words[i] ^ b.words[i]));
+    }
+    note(a.words != b.words, std::format("{} bits other", bits));
+    note(a.windows_from != b.windows_from || a.crowns_from != b.crowns_from || a.windows != b.windows,
+         "its groups' starts");
+    note(a.bucket != b.bucket, "the bucket");
+    note(a.context != b.context, "the context");
+    note(a.quays != b.quays, std::format("{} quay pieces against {}", a.quays.size(), b.quays.size()));
+    note(a.reflections != b.reflections, "the mirrors' samples");
+    return out;
+}
+
+/// Each step's bits, by tile (its packed key).
+using HeldSteps = std::vector<std::map<std::uint64_t, HeldBits>>;
+
+/// The bits of each tile of pack `pack` resident in the world that has bits in lane `lane` of its sun, drawn or not
+/// (a stand-in ancestor has none), added to `out`.
+void add_resident_bits(scene::World& w, std::string_view pack, scene::SunGlobals::LaneOf lane, double now,
+                       std::map<std::uint64_t, HeldBits>& out) {
+    const sun::BitTiles& bits = w.sun()->bits(lane);
+    for (const std::shared_ptr<const scene::ResidentTile>& r : w.residency().resident()) {
+        if (r->pack != pack) continue;
+        const std::optional<sun::TileView> v = bits.view(r->key, now);
+        if (v && v->now) out[r->key.packed()] = held_bits(*v->now);
+    }
+}
+
+/// Holds each step of `kept` to the same step of `whole`: the same tiles with bits, and each one's bits the same; the
+/// tiles held, counted.
+std::size_t hold_steps(const HeldSteps& kept, const HeldSteps& whole) {
+    ATLAS_REQUIRE_OR_RETURN(0, kept.size() == whole.size());
+    std::size_t held = 0;
+    for (std::size_t s = 0; s < kept.size(); ++s) {
+        CAPTURE(s);
+        CHECK(!kept[s].empty());
+        CHECK(kept[s].size() == whole[s].size());
+        for (const auto& [key, bits] : whole[s]) {
+            const tiles::TileKey k = tiles::TileKey::unpack(key);
+            const auto it = kept[s].find(key);
+            CHECK_MESSAGE(it != kept[s].end(), std::format("{}/{}/{} has no bits with parts kept", k.z, k.x, k.y));
+            if (it == kept[s].end()) continue;
+            CHECK_MESSAGE(it->second == bits, std::format("{}/{}/{}'s bits differ from a whole build's: {}", k.z, k.x,
+                                                          k.y, held_difference(it->second, bits)));
+            ++held;
+        }
+    }
+    return held;
+}
+
+} // namespace
+
 TEST_CASE("a frame cell's coarse level in the sun's scene: each place's buildings from the tile that draws it, a "
           "window whose place its L13 draws out of the scene with its bits kept, and the L13's walls in a tower's "
           "shadow as the window's are") {
@@ -3291,57 +3486,13 @@ TEST_CASE("a frame cell's coarse level in the sun's scene: each place's building
     // pack, its levels kept: from 4 km the south place is drawn from the L13, the tower among its solids though no
     // window of the pack holds it, and the march reaches the tower's top (the scene's tallest solid is taken at each
     // zoom its tiles are of, the L13's too), the south house's west wall shaded.
-    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels-sun";
-    std::error_code ignored;
-    std::filesystem::create_directories(folder, ignored);
-    const tiles::TileKey south = tiles::tile_of(14, 523'000'000, 47'500'000);
-    const tiles::TileKey north(14, south.x, south.y - 1);
-    const tiles::TileKey coarse(13, south.x >> 1U, south.y >> 1U);
-    ATLAS_REQUIRE(coarse == tiles::TileKey(13, north.x >> 1U, north.y >> 1U));
-    const auto middle = [](const tiles::TileKey& k) {
-        const std::array<std::int32_t, 4> b = tiles::tile_box(k);
-        return std::array<double, 2>{(b[0] + b[2]) / 2e7, (b[1] + b[3]) / 2e7};
-    };
-    constexpr std::int64_t tower = 10;
-    constexpr std::int64_t south_house = 11;
-    constexpr std::int64_t north_house = 12;
-    // a building `side` metres square whose middle lies `east` metres east of the middle of place `k`
-    const auto building = [&middle](const tiles::TileKey& k, std::int64_t id, std::string_view tags, double east,
-                                    double side) {
-        const auto [lat, lon] = middle(k);
-        const double kx = 111320.0 * pymath::cos(pymath::radians(lat));
-        const double south_lat = lat - (side / 2 / 110540.0);
-        const double west_lon = lon + ((east - (side / 2)) / kx);
-        const double dlat = side / 110540.0;
-        const double dlon = side / kx;
-        std::string geometry;
-        for (const auto& [a, o] : {std::pair{0.0, 0.0}, {0.0, dlon}, {dlat, dlon}, {dlat, 0.0}, {0.0, 0.0}}) {
-            geometry += std::format(R"({}{{"lat":{:.7f},"lon":{:.7f}}})", geometry.empty() ? "" : ",", south_lat + a,
-                                    west_lon + o);
-        }
-        return std::format(R"({{"type":"way","id":{},"nodes":[1,2,3,4,1],"tags":{{{}}},"geometry":[{}]}})", id, tags,
-                           geometry);
-    };
-    std::vector<std::pair<std::string, std::vector<std::byte>>> packs;
-    for (const tiles::TileKey& k : {south, north}) {
-        const std::string ways = k == south
-                                     ? building(k, tower, R"("building":"yes","height":"60")", 0.0, 12.0) + "," +
-                                           building(k, south_house, R"("building":"house","height":"8")", 30.0, 8.0)
-                                     : building(k, north_house, R"("building":"house","height":"8")", 0.0, 8.0);
-        const std::string json = std::format(R"({{"version":0.6,"elements":[{}]}})", ways);
-        auto built = load::build_window(std::as_bytes(std::span(json.data(), json.size())), k, load::place_of(k));
-        ATLAS_REQUIRE(built.has_value(), built.error().what);
-        packs.emplace_back(std::format("14/{}/{}", k.x, k.y), std::move(built->pack));
-    }
-    std::vector<std::span<const std::byte>> windows;
-    windows.reserve(packs.size());
-    for (const auto& [name, pack] : packs) windows.emplace_back(pack);
-    auto levels = load::build_levels(windows);
-    ATLAS_REQUIRE(levels.has_value(), levels.error().what);
-    ATLAS_REQUIRE(levels->size() == 2); // their L13 and their L12
-    for (load::BuiltLevel& l : *levels) {
-        packs.emplace_back(std::format("{}/{}/{}", l.key.z, l.key.x, l.key.y), std::move(l.pack));
-    }
+    const auto made = levels_place();
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const tiles::TileKey south = made->south;
+    const tiles::TileKey north = made->north;
+    const tiles::TileKey coarse = made->coarse;
+    constexpr std::int64_t south_house = LevelsPlace::south_house;
+    constexpr std::int64_t north_house = LevelsPlace::north_house;
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -3355,18 +3506,9 @@ TEST_CASE("a frame cell's coarse level in the sun's scene: each place's building
                                       {.workers = 1, .sun = {.threads = 2}, .clock = [&now] { return now.load(); }});
     ATLAS_REQUIRE(world.has_value(), world.error().text());
     scene::World& w = **world;
-    for (const auto& [name, pack] : packs) {
-        std::string file = name;
-        std::ranges::replace(file, '/', '-');
-        const std::filesystem::path path = folder / (file + ".atlas");
-        std::ofstream o(path, std::ios::binary | std::ios::trunc);
-        o.write(reinterpret_cast<const char*>(pack.data()), // NOLINT: the pack's bytes as chars
-                static_cast<std::streamsize>(pack.size()));
-        o.close();
-        const auto joined =
-            w.store().add({.id = "window/" + name, .kind = tiles::PackKind::window, .path = path.string()});
-        ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
-    }
+    const std::string joined =
+        join_windows(w, std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-levels-sun", made->packs);
+    ATLAS_REQUIRE(joined.empty(), joined);
     ATLAS_REQUIRE(w.sun() != nullptr);
     const style::ThemeBlock west_sun = sun_at(270.0, 15.0);
     style::CameraState c = home();
@@ -3432,8 +3574,8 @@ TEST_CASE("a frame cell's coarse level in the sun's scene: each place's building
         }
         return std::nullopt;
     };
-    const auto [south_lat, south_lon] = middle(south);
-    const auto [north_lat, north_lon] = middle(north);
+    const auto [south_lat, south_lon] = middle_of(south);
+    const auto [north_lat, north_lon] = middle_of(north);
     const double between = (south_lat + north_lat) / 2;
     w.set_active(std::format("window/14/{}/{}", south.x, south.y));
 
@@ -3504,6 +3646,116 @@ TEST_CASE("a frame cell's coarse level in the sun's scene: each place's building
     ATLAS_REQUIRE(bits_of(coarse) != nullptr);
     CHECK_FALSE(bits_of(coarse)->bit(*left));
     MESSAGE(w.tiles_line());
+    (void)session->take_messages();
+}
+
+TEST_CASE("the sun's scenes keep each tile's part over a frame cell's levels: over the coarse level's steps (its L13 "
+          "taking every place's cells, then the north place's alone, then the south's), and the sun moved after the "
+          "last, every resident tile's bits are those of scenes built whole") {
+    // The coarse level's place and steps (the case above), run with the sun's scenes taking the last one's parts and
+    // built whole. The L13 is in the scene from 8.5 km with every place's cells, from 5.5 km at 60° of pitch with the
+    // north place's alone (the south's drawn from its window), and from 4 km once the south window is gone with the
+    // south place's alone: its chunk and its ladder level the same each time, so its part is taken where its cells are
+    // the ones it was made with alone. Then the sun moved: every tile's bits of another bucket from the scene as it
+    // was.
+    const auto made = levels_place();
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const auto [south_lat, south_lon] = middle_of(made->south);
+    const auto [north_lat, north_lon] = middle_of(made->north);
+    const double between = (south_lat + north_lat) / 2;
+    const std::string cell = tiles::Store::cell_id(tiles::TileKey(tiles::Store::cell_level,
+                                                                  made->south.x >> (14U - tiles::Store::cell_level),
+                                                                  made->south.y >> (14U - tiles::Store::cell_level)));
+    struct Run {
+        HeldSteps steps; // each step's resident tiles' bits
+        scene::SunStats stats;
+    };
+    // (filling `out`: a failed ATLAS_REQUIRE returns from the lambda)
+    const auto run = [&](bool keep, Run& out) {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        std::atomic<double> now{0};
+        auto world =
+            scene::World::create(*session->device, (*builder)->passes(),
+                                 {.workers = 1, .sun = {.threads = 2}, .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE(world.has_value(), world.error().text());
+        scene::World& w = **world;
+        const std::string joined = join_windows(
+            w, std::filesystem::path(ATLAS_TEST_SCRATCH) / (keep ? "world-levels-kept" : "world-levels-whole"),
+            made->packs);
+        ATLAS_REQUIRE(joined.empty(), joined);
+        ATLAS_REQUIRE(w.sun() != nullptr);
+        w.sun()->keep_parts(keep);
+        style::CameraState c = home();
+        c.bearing = 0.0;
+        c.flags = 0;
+        std::uint64_t n = 0;
+        const auto settle = [&](double lat, double lon, double distance, double pitch, const style::ThemeBlock& theme) {
+            c.latitude = lat;
+            c.longitude = lon;
+            c.distance = distance;
+            c.pitch = pitch;
+            (*builder)->set_inputs({.camera = c, .theme = theme, .scene = &w});
+            for (int k = 0; k < 40; ++k) {
+                ++n;
+                now = now.load() + 0.016;
+                ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+                w.update((*builder)->state());
+                w.residency().wait_idle();
+                w.sun()->wait_idle();
+            }
+            now = now.load() + 1.0;
+            ++n;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            ATLAS_REQUIRE(w.active() != nullptr);
+            CHECK(w.active()->id == cell);
+            add_resident_bits(w, cell, scene::SunGlobals::LaneOf::active, now.load(), out.steps.emplace_back());
+        };
+        const style::ThemeBlock west_sun = sun_at(270.0, 15.0);
+        w.set_active(std::format("window/14/{}/{}", made->south.x, made->south.y));
+        settle(between, south_lon, 4'000.0, 0.0, west_sun);
+        settle(between, south_lon, 8'500.0, 0.0, west_sun);
+        settle(north_lat, north_lon, 5'500.0, 60.0, west_sun);
+        CHECK(w.store().remove(std::format("window/14/{}/{}", made->south.x, made->south.y)));
+        w.set_active(std::format("window/14/{}/{}", made->north.x, made->north.y));
+        settle(between, south_lon, 4'000.0, 0.0, west_sun);
+        settle(between, south_lon, 4'000.0, 0.0, sun_at(240.0, 22.0));
+        out.stats = w.sun()->stats();
+    };
+
+    Run kept;
+    Run whole;
+    run(true, kept);
+    run(false, whole);
+    const std::size_t tiles = hold_steps(kept.steps, whole.steps);
+    // The L13 had bits in the last four steps, made from other cells in the second, third and fourth: fewer samples
+    // with the north place's alone than with every place's, and others with the south's.
+    ATLAS_REQUIRE(whole.steps.size() == 5);
+    const std::uint64_t coarse = made->coarse.packed();
+    for (std::size_t s = 1; s < whole.steps.size(); ++s) {
+        CAPTURE(s);
+        CHECK(whole.steps[s].contains(coarse));
+    }
+    if (whole.steps[1].contains(coarse) && whole.steps[2].contains(coarse) && whole.steps[3].contains(coarse)) {
+        CHECK(whole.steps[2].at(coarse).count < whole.steps[1].at(coarse).count);
+        CHECK(whole.steps[3].at(coarse).words != whole.steps[2].at(coarse).words);
+    }
+    CHECK(kept.stats.scenes > 1);
+    CHECK(kept.stats.parts_kept > 0);
+    CHECK(whole.stats.parts_kept == 0);
+    CHECK(kept.stats.failed == 0);
+    CHECK(whole.stats.failed == 0);
+    MESSAGE(std::format("{} steps, {} resident tiles' bits equal over them; kept: {} scenes, {} parts kept, {} made; "
+                        "whole: {} scenes, {} parts made",
+                        whole.steps.size(), tiles, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made,
+                        whole.stats.scenes, whole.stats.parts_made));
     (void)session->take_messages();
 }
 
@@ -4617,7 +4869,8 @@ TEST_CASE("the sun left out while a run is under way: once it is out, no bits of
 }
 
 TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: over the same steps across the canal "
-          "ring, every drawn tile's bits are those of scenes built whole, word for word, from fewer tiles decoded") {
+          "ring, then farther and nearer, every resident tile's bits are those of scenes built whole, word for word, "
+          "from fewer tiles decoded, and so they are with the sun moved after the last") {
     const std::string dir = environment("ATLAS_TILES_DIR");
     const std::filesystem::path path = std::filesystem::path(dir) / "grachten.atlas";
     if (dir.empty()) {
@@ -4630,30 +4883,37 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
-    // straight down from 300 m, northward across the canal ring in steps of 250 m: the resident tiles change, and
-    // with them the sun's scene, which takes again the parts of the tiles it held before
-    const auto above = [](double latitude) {
+    // Straight down from 300 m, northward across the canal ring in steps of 250 m: the resident tiles change, and with
+    // them the sun's scene, which takes again the parts of the tiles it held before. Then from 500 m over the last
+    // place and from 300 m again: the halo's tiles are asked at the lane's ladder level, a coarser one from 500 m (the
+    // pack's bands: 300 m is its level 1, 500 m its level 3), and their solids are the buildings' variants of that
+    // level, so a part is taken at the level it was made at alone. Then the sun moved: the scene as it was, every
+    // tile's bits of another bucket made from it.
+    const auto above = [](double latitude, double distance) {
         style::CameraState c = home();
         c.latitude = latitude;
         c.longitude = 4.8880;
         c.bearing = 0.0;
         c.pitch = 0.0;
-        c.distance = 300.0;
+        c.distance = distance;
         return c;
     };
-    constexpr int steps = 6;
-    struct Bits {
-        std::vector<std::uint64_t> words;
-        std::uint32_t count = 0;
-        std::uint32_t windows_from = 0;
-        std::uint32_t crowns_from = 0;
-        bool windows = false;
-        std::uint64_t context = 0;
-        std::size_t quays = 0;
-        bool operator==(const Bits&) const = default;
+    struct Step {
+        double latitude = 0.0;
+        double distance = 0.0;
+        style::ThemeBlock theme;
     };
+    const style::ThemeBlock afternoon = sun_at(220.0, 24.0);
+    std::vector<Step> route;
+    for (int s = 0; s < 6; ++s) {
+        route.push_back({.latitude = 52.3660 + (s * (250.0 / 111250.0)), .distance = 300.0, .theme = afternoon});
+    }
+    const double last = route.back().latitude;
+    route.push_back({.latitude = last, .distance = 500.0, .theme = afternoon});
+    route.push_back({.latitude = last, .distance = 300.0, .theme = afternoon});
+    route.push_back({.latitude = last, .distance = 300.0, .theme = sun_at(250.0, 18.0)});
     struct Run {
-        std::vector<std::map<std::uint64_t, Bits>> steps; // each step's drawn tiles' bits, by packed key
+        HeldSteps steps; // each step's resident tiles' bits
         scene::SunStats stats;
     };
     // (filling `out`: a failed ATLAS_REQUIRE returns from the lambda)
@@ -4669,38 +4929,25 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
         scene::World& w = **world;
         auto added = w.store().add({.id = "grachten", .kind = tiles::PackKind::bundled, .path = path.string()});
         ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+        ATLAS_REQUIRE(w.sun() != nullptr);
+        w.sun()->keep_parts(keep);
         std::uint64_t n = 0;
-        const auto settle = [&](const style::CameraState& camera) {
-            (*builder)->set_inputs({.camera = camera, .scene = &w});
+        const auto settle = [&](const style::CameraState& camera, const style::ThemeBlock& theme) {
+            (*builder)->set_inputs({.camera = camera, .theme = theme, .scene = &w});
             for (int i = 0; i < 20; ++i) {
                 now = static_cast<double>(++n) * 0.016;
                 ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
                 w.update((*builder)->state());
-                if (w.sun() != nullptr) w.sun()->keep_parts(keep);
                 w.residency().wait_idle();
-                if (w.sun() != nullptr) w.sun()->wait_idle();
+                w.sun()->wait_idle();
             }
             now = static_cast<double>(++n) * 0.016;
             ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
             w.update((*builder)->state());
         };
-        for (int s = 0; s < steps; ++s) {
-            settle(above(52.3660 + (s * (250.0 / 111250.0))));
-            REQUIRE(w.sun() != nullptr);
-            std::map<std::uint64_t, Bits>& got = out.steps.emplace_back();
-            for (const scene::CoverTile& t : w.cover()->tiles()) {
-                if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
-                const auto v = w.sun()->bits().view(t.key, now);
-                if (!v || !v->now) continue;
-                const sun::TileBits& b = *v->now;
-                got[t.key.packed()] = {.words = b.words,
-                                       .count = b.count,
-                                       .windows_from = b.windows_from,
-                                       .crowns_from = b.crowns_from,
-                                       .windows = b.windows,
-                                       .context = b.context,
-                                       .quays = b.quays ? b.quays->size() : 0};
-            }
+        for (const Step& step : route) {
+            settle(above(step.latitude, step.distance), step.theme);
+            add_resident_bits(w, "grachten", scene::SunGlobals::LaneOf::active, now.load(), out.steps.emplace_back());
         }
         out.stats = w.sun()->stats();
     };
@@ -4709,23 +4956,18 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
     Run whole;
     run(true, kept);
     run(false, whole);
-    REQUIRE(kept.steps.size() == whole.steps.size());
-    std::size_t tiles = 0;
-    for (std::size_t s = 0; s < kept.steps.size(); ++s) {
-        CAPTURE(s);
-        CHECK(!kept.steps[s].empty());
-        CHECK(kept.steps[s].size() == whole.steps[s].size());
-        for (const auto& [key, bits] : whole.steps[s]) {
-            const auto it = kept.steps[s].find(key);
-            const tiles::TileKey k = tiles::TileKey::unpack(key);
-            CHECK_MESSAGE(it != kept.steps[s].end(),
-                          std::format("{}/{}/{} has no bits with parts kept", k.z, k.x, k.y));
-            if (it == kept.steps[s].end()) continue;
-            CHECK_MESSAGE(it->second == bits,
-                          std::format("{}/{}/{}'s bits differ from a whole build's", k.z, k.x, k.y));
-            ++tiles;
-        }
+    const std::size_t tiles = hold_steps(kept.steps, whole.steps);
+    // the sun moved in the last step: each tile's bits there of another bucket than the step's before
+    ATLAS_REQUIRE(whole.steps.size() == route.size());
+    const std::map<std::uint64_t, HeldBits>& before = whole.steps[whole.steps.size() - 2];
+    std::size_t moved = 0;
+    for (const auto& [key, bits] : whole.steps.back()) {
+        const auto it = before.find(key);
+        if (it == before.end()) continue;
+        CHECK(it->second.bucket != bits.bucket);
+        ++moved;
     }
+    CHECK(moved > 0);
     // more than one scene, each after the first taking parts from the one before, and built whole none
     CHECK(kept.stats.scenes > 1);
     CHECK(kept.stats.parts_kept > 0);
@@ -4733,10 +4975,301 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
     CHECK(whole.stats.parts_kept == 0);
     CHECK(whole.stats.parts_remade == 0);
     MESSAGE(std::format(
-        "{} steps, {} drawn tiles' bits equal over them; kept: {} scenes, {} parts kept, {} made ({} of "
-        "them made again for the decks near their quays), {:.0f} ms; whole: {} scenes, {} parts made, "
-        "{:.0f} ms",
-        steps, tiles, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made, kept.stats.parts_remade,
-        kept.stats.scenes_ms, whole.stats.scenes, whole.stats.parts_made, whole.stats.scenes_ms));
+        "{} steps, {} resident tiles' bits equal over them, {} of another bucket in the last; kept: {} scenes, {} "
+        "parts "
+        "kept, {} made ({} of them made again for the decks near their quays), {:.0f} ms; whole: {} scenes, {} parts "
+        "made, {:.0f} ms",
+        route.size(), tiles, moved, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made,
+        kept.stats.parts_remade, kept.stats.scenes_ms, whole.stats.scenes, whole.stats.parts_made,
+        whole.stats.scenes_ms));
+    (void)session->take_messages();
+}
+
+namespace {
+
+/// A world over some of the corner's windows (tests/load/corner.hpp) for the sun's kept parts: its builder, its clock
+/// and frames, the sun's scenes keeping parts or built whole.
+struct CornerWorld {
+    std::unique_ptr<frame::FrameBuilder> builder;
+    std::unique_ptr<std::atomic<double>> now = std::make_unique<std::atomic<double>>(0.0);
+    std::unique_ptr<scene::World> world;
+    std::uint64_t n = 0;
+
+    /// Frames from `camera` under `theme` until the tiles are in and the sun has made their bits, then one to draw.
+    void settle(const style::CameraState& camera, const style::ThemeBlock& theme) {
+        builder->set_inputs({.camera = camera, .theme = theme, .scene = world.get()});
+        for (int k = 0; k < 40; ++k) {
+            ++n;
+            *now = now->load() + 0.016;
+            ATLAS_REQUIRE(builder->derive(n, 0, nullptr));
+            world->update(builder->state());
+            world->residency().wait_idle();
+            world->sun()->wait_idle();
+        }
+        *now = now->load() + 1.0;
+        ++n;
+        ATLAS_REQUIRE(builder->derive(n, 0, nullptr));
+        world->update(builder->state());
+    }
+
+    /// Each drawn pack's resident tiles' bits, the active one's and its neighbour's (one at most here), by tile.
+    [[nodiscard]] std::map<std::uint64_t, HeldBits> bits() {
+        std::map<std::uint64_t, HeldBits> out;
+        scene::World& w = *world;
+        if (w.active() != nullptr) {
+            add_resident_bits(w, w.active()->id, scene::SunGlobals::LaneOf::active, now->load(), out);
+        }
+        for (const tiles::StorePack* p : w.neighbours()) {
+            if (p != nullptr) add_resident_bits(w, p->id, scene::SunGlobals::LaneOf::neighbour, now->load(), out);
+        }
+        return out;
+    }
+};
+
+/// A corner world on `session`'s device, the sun's scenes keeping parts where `keep`; or why it was not made.
+[[nodiscard]] std::expected<CornerWorld, std::string> corner_world(const test::Session& session,
+                                                                   const gpu::PipelineCache& cache, bool keep) {
+    CornerWorld out;
+    std::vector<std::unique_ptr<frame::Pass>> passes;
+    passes.push_back(std::make_unique<BuildProbe>());
+    auto builder = frame::FrameBuilder::create(*session.device, cache, std::move(passes));
+    if (!builder) return std::unexpected(builder.error().text());
+    out.builder = std::move(*builder);
+    std::atomic<double>* now = out.now.get();
+    auto world = scene::World::create(*session.device, out.builder->passes(),
+                                      {.workers = 2, .sun = {.threads = 2}, .clock = [now] { return now->load(); }});
+    if (!world) return std::unexpected(world.error().text());
+    out.world = std::move(*world);
+    if (out.world->sun() == nullptr) return std::unexpected(std::string("the world has no sun"));
+    out.world->sun()->keep_parts(keep);
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("the sun's scenes keep a whole tile's part where the decks near its quay walls change, its chunk the same: "
+          "another cell's bridge over its canal comes into the scene and goes, the tile made again each time, its "
+          "bits those of scenes built whole") {
+    // Two of the corner's windows (tests/load/corner.hpp). In the south-east one a canal 20 m wide and 320 m long, 50 m
+    // south of the corner, its edges quay walls (a window has no natural shore), and a building south of it; in the
+    // north-east one a bridge from 60 m north of the corner to 90 m south of it across the canal (its middle point,
+    // where a line is placed, in that window) and a building. The south-east window's cell drawn alone; then the
+    // north-east's beside it, its bridge's deck among the other packs' near the canal's edges, which the south-east
+    // tile's quay walls are made against (their pieces outside every deck); then the north-east window gone. Each
+    // time the south-east tile's part is taken (its chunk, level and cells the same) and its quay walls made again.
+    const auto made = test::corner_windows(
+        std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-corner-decks",
+        [](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
+            if (window == 3) {
+                return test::made_building(id, R"("natural":"water","water":"canal")", 40.0, -70.0, 360.0, -50.0, c) +
+                       "," +
+                       test::made_building(id, R"("building":"yes","building:levels":"4")", 100.0, -120.0, 130.0, -90.0,
+                                           c);
+            }
+            if (window == 1) {
+                const std::array<std::array<double, 2>, 3> bridge{{{200.0, 60.0}, {200.0, 10.0}, {200.0, -90.0}}};
+                return test::made_way(id, R"("highway":"residential","bridge":"yes","layer":"1")", bridge, c) + "," +
+                       test::made_building(id, R"("building":"yes","building:levels":"4")", 250.0, 20.0, 280.0, 50.0,
+                                           c);
+            }
+            return {};
+        });
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    style::CameraState camera = home();
+    const std::array<double, 2> target = m.at(200.0, -40.0);
+    camera.latitude = target[0];
+    camera.longitude = target[1];
+    camera.bearing = 0.0;
+    camera.pitch = 0.0;
+    camera.distance = 400.0;
+    camera.flags = 0;
+    const style::ThemeBlock afternoon = sun_at(215.0, 20.0);
+    const tiles::TileKey canal = m.places[3];
+    struct Run {
+        HeldSteps steps;
+        scene::SunStats stats;
+    };
+    const auto run = [&](bool keep, Run& out) {
+        auto made_world = corner_world(*session, *cache, keep);
+        ATLAS_REQUIRE(made_world.has_value(), made_world.error());
+        CornerWorld& cw = *made_world;
+        scene::World& w = *cw.world;
+        const auto join = [&w, &m](std::size_t i) {
+            const auto joined = w.store().add(
+                {.id = m.windows[i].first, .kind = tiles::PackKind::window, .path = m.windows[i].second.string()});
+            ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+        };
+        join(3);
+        w.set_active(m.windows[3].first);
+        cw.settle(camera, afternoon);
+        out.steps.push_back(cw.bits());
+        join(1);
+        cw.settle(camera, afternoon);
+        CHECK(std::ranges::count(w.neighbours(), std::string_view(m.cells[1]), [](const tiles::StorePack* p) {
+                  return p != nullptr ? std::string_view(p->id) : std::string_view();
+              }) == 1);
+        out.steps.push_back(cw.bits());
+        CHECK(w.store().remove(m.windows[1].first));
+        cw.settle(camera, afternoon);
+        out.steps.push_back(cw.bits());
+        out.stats = w.sun()->stats();
+    };
+
+    Run kept;
+    Run whole;
+    run(true, kept);
+    run(false, whole);
+    const std::size_t tiles = hold_steps(kept.steps, whole.steps);
+    // The bridge's deck splits the canal's edges where it crosses them: the south-east tile's quay walls other with the
+    // north-east window beside it than without, and the tile's part was made again for it in the scenes kept.
+    ATLAS_REQUIRE(whole.steps.size() == 3);
+    for (const auto& step : whole.steps) CHECK(step.contains(canal.packed()));
+    if (whole.steps[0].contains(canal.packed()) && whole.steps[1].contains(canal.packed())) {
+        const HeldBits& alone = whole.steps[0].at(canal.packed());
+        const HeldBits& bridged = whole.steps[1].at(canal.packed());
+        CHECK(!alone.quays.empty());
+        CHECK(alone.quays != bridged.quays);
+    }
+    CHECK(kept.stats.parts_remade > 0);
+    CHECK(kept.stats.parts_kept > 0);
+    CHECK(whole.stats.parts_kept == 0);
+    CHECK(whole.stats.parts_remade == 0);
+    MESSAGE(
+        std::format("{} steps, {} resident tiles' bits equal over them; kept: {} scenes, {} parts kept, {} made, {} "
+                    "of them again for the decks near their quays; whole: {} scenes, {} parts made",
+                    whole.steps.size(), tiles, kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made,
+                    kept.stats.parts_remade, whole.stats.scenes, whole.stats.parts_made));
+    (void)session->take_messages();
+}
+
+TEST_CASE("the sun's scenes take no part made in another frame: a lane whose pack has gone keeps its parts, the next "
+          "cell's pack to come takes that lane, and the tile its last scene held, held again, is made in the new "
+          "pack's own frame, its bits those of scenes built whole") {
+    // Three of the corner's windows (tests/load/corner.hpp), each its own frame cell's and so in a frame of its own.
+    // In the south-east one a tower 60 m tall just east of the corner and 120 m south of it; in the north-east one a
+    // building just north of the corner, within the march's reach of the tower (its cell's scene holds the south-east
+    // tile's solids); in the south-west one a house 8 m tall, 24 m west of the tower, its east wall in the tower's
+    // shadow with the sun low in the east. The south-east cell active, the north-east's beside it; the north-east
+    // window gone, its lane holding no pack but its parts (a lane's parts go with its next scene); then the south-west
+    // window come, its cell's pack new to the frame taking a lane no pack drawn holds, an empty one first: that one.
+    // Its scene holds the south-east tile as the last one did, but in its own frame: made there again, the tower
+    // stands where it is and its shadow lies on the house.
+    std::int64_t house = 0;
+    const auto made = test::corner_windows(
+        std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-corner-ground",
+        [&house](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
+            if (window == 3) {
+                return test::made_building(id, R"("building":"yes","height":"60")", 8.0, -130.0, 20.0, -118.0, c);
+            }
+            if (window == 1) {
+                return test::made_building(id, R"("building":"yes","height":"10")", 8.0, 5.0, 20.0, 35.0, c);
+            }
+            if (window == 2) {
+                house = id; // made_way's id, the first it takes
+                return test::made_building(id, R"("building":"house","height":"8")", -24.0, -128.0, -16.0, -120.0, c);
+            }
+            return {};
+        });
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    ATLAS_REQUIRE(house != 0);
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    style::CameraState camera = home();
+    const std::array<double, 2> target = m.at(-2.0, -124.0);
+    camera.latitude = target[0];
+    camera.longitude = target[1];
+    camera.bearing = 0.0;
+    camera.pitch = 0.0;
+    camera.distance = 600.0;
+    camera.flags = 0;
+    const style::ThemeBlock morning = sun_at(90.0, 12.0);
+    const tiles::TileKey west = m.places[2];
+    struct Run {
+        HeldSteps steps;
+        std::size_t walls = 0;  // the house's east wall's samples, in the last step
+        std::size_t shaded = 0; // of them, those in shadow
+        scene::SunStats stats;
+    };
+    const auto run = [&](bool keep, Run& out) {
+        auto made_world = corner_world(*session, *cache, keep);
+        ATLAS_REQUIRE(made_world.has_value(), made_world.error());
+        CornerWorld& cw = *made_world;
+        scene::World& w = *cw.world;
+        const auto join = [&w, &m](std::size_t i) {
+            const auto joined = w.store().add(
+                {.id = m.windows[i].first, .kind = tiles::PackKind::window, .path = m.windows[i].second.string()});
+            ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+        };
+        join(3);
+        join(1);
+        w.set_active(m.windows[3].first);
+        cw.settle(camera, morning);
+        out.steps.push_back(cw.bits());
+        CHECK(w.store().remove(m.windows[1].first));
+        cw.settle(camera, morning);
+        out.steps.push_back(cw.bits());
+        join(2);
+        cw.settle(camera, morning);
+        out.steps.push_back(cw.bits());
+        out.stats = w.sun()->stats();
+        // the house's east wall's samples in the south-west tile as it is drawn, and whether each is lit
+        const scene::CoverTile* drawn = nullptr;
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (t.drawn->key == west) drawn = &t;
+        }
+        ATLAS_REQUIRE(drawn != nullptr);
+        const std::vector<tiles::StoreHit> hits = w.store().find(west);
+        ATLAS_REQUIRE(!hits.empty());
+        tiles::Zstd zstd;
+        tiles::TileDecoder decoder;
+        Arena arena(std::size_t{1} << 20U, Growth::grows, "the sun's same ground test");
+        std::vector<std::byte> raw;
+        const auto tile = w.store().decode(hits[0], zstd, decoder, arena, raw);
+        ATLAS_REQUIRE(tile.has_value());
+        const tiles::Layer* layer = tile->layer(tiles::LayerId::building);
+        ATLAS_REQUIRE(layer != nullptr);
+        const tiles::Pack& pack = hits[0].pack->pack;
+        const sun::SunTile st =
+            sun::make_tile(*tile, *pack.head(), sun::region_of(*pack.style()), drawn->drawn->level, {});
+        const sun::TileSamples& s = st.samples;
+        const auto it = out.steps.back().find(west.packed());
+        ATLAS_REQUIRE(it != out.steps.back().end());
+        ATLAS_REQUIRE(it->second.count == s.size());
+        for (std::uint32_t i = 0; i < s.size(); ++i) {
+            if (s.kind[i] != sun::Kind::wall || s.source[i] != sun::Source::building || s.face[i] == sun::no_face) {
+                continue;
+            }
+            if (layer->integer(tiles::building::id, s.owner[i]) != house || s.nx[s.face[i]] < 0.9) continue;
+            ++out.walls;
+            out.shaded += sun::bit(it->second.words, i) ? 0U : 1U;
+        }
+    };
+
+    Run kept;
+    Run whole;
+    run(true, kept);
+    run(false, whole);
+    const std::size_t tiles = hold_steps(kept.steps, whole.steps);
+    // the house's east wall in the tower's shadow, its scenes kept as built whole
+    CHECK(whole.walls > 0);
+    CHECK(whole.shaded == whole.walls);
+    CHECK(kept.walls == whole.walls);
+    CHECK_MESSAGE(kept.shaded == kept.walls, std::format("{} of the house's {} east wall samples lit with parts kept",
+                                                         kept.walls - kept.shaded, kept.walls));
+    CHECK(kept.stats.parts_kept > 0);
+    CHECK(kept.stats.failed == 0);
+    CHECK(whole.stats.failed == 0);
+    MESSAGE(std::format("{} steps, {} resident tiles' bits equal over them, the house's {} east wall samples in the "
+                        "tower's shadow; kept: {} scenes, {} parts kept, {} made; whole: {} scenes, {} parts made",
+                        whole.steps.size(), tiles, whole.walls, kept.stats.scenes, kept.stats.parts_kept,
+                        kept.stats.parts_made, whole.stats.scenes, whole.stats.parts_made));
     (void)session->take_messages();
 }
