@@ -1,4 +1,5 @@
-# The only names a unit test may look up: this machine's (root build.gradle.kts, "A unit test reaches no server but
-# this machine"). Any other name fails, naming itself, and is never asked of a resolver.
+# The only names a unit test may look up: this machine's (root build.gradle.kts, "A unit test looks up no name but
+# this machine's"). Any other name fails, naming itself, and is never asked of a resolver. Only loopback addresses
+# named localhost belong here (GuardTest.theHostsFileNamesThisMachineAlone).
 127.0.0.1 localhost
 ::1 localhost

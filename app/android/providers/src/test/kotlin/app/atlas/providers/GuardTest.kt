@@ -16,8 +16,9 @@ import java.net.Socket
 import java.net.UnknownHostException
 
 /**
- * The unit tests' guard (root build.gradle.kts): a test's request reaches this machine alone. A real name fails naming
+ * The unit tests' guard (root build.gradle.kts): a test looks up no name but this machine's. A real name fails naming
  * itself and is never looked up; so does a proxy's, set by the JVM's properties or by hand; a mock on this machine answers.
+ * Names only: an address written as numbers is the scan's (the app's TestAddressesTest).
  */
 class GuardTest {
     private fun guarded() {
@@ -31,6 +32,25 @@ class GuardTest {
         val e = runCatching(block).exceptionOrNull()
         assertTrue("$host is refused, not reached: $e", e is IOException)
         assertTrue("the failure names $host: ${e!!.message}", generateSequence(e) { it.cause }.any { host in (it.message ?: "") })
+    }
+
+    /**
+     * The hosts file names this machine and nothing else: every line that is not a comment is a loopback address named
+     * `localhost`. Read whether or not the guard is on (the file is the root's, `ci/test-hosts`).
+     */
+    @Test
+    fun theHostsFileNamesThisMachineAlone() {
+        val file = File(System.getProperty("jdk.net.hosts.file") ?: "../ci/test-hosts")
+        assertTrue("the hosts file at $file", file.isFile)
+        val lines = file.readLines().map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }
+        assertTrue("it names this machine", lines.isNotEmpty())
+        for (line in lines) {
+            val (address, names) = line.split(Regex("\\s+")).let { it.first() to it.drop(1) }
+            assertEquals("$line: named localhost alone", listOf("localhost"), names)
+            assertTrue("$line: written as numbers", address.all { it.isDigit() || it == '.' } || address.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' || it == ':' })
+            // a literal is read, never looked up
+            assertTrue("$line: the loopback", InetAddress.getByName(address).isLoopbackAddress)
+        }
     }
 
     @Test

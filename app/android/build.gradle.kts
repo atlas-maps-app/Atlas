@@ -75,12 +75,14 @@ subprojects {
     }
 }
 
-// A unit test reaches no server but this machine. Every name a test JVM looks up is looked up in ci/test-hosts alone,
+// A unit test looks up no name but this machine's. Every name a test JVM looks up is looked up in ci/test-hosts alone,
 // which names this machine and nothing else: a real name is never asked of a resolver, and its lookup fails naming it
 // ("Unable to resolve host nominatim.openstreetmap.org in hosts file"). A mock that names itself by the address it
 // listens on is "localhost" there, whatever this machine is called. The JVM's proxies are cleared, so no request leaves
-// by one either, and a proxy named in a test is a name like any other. -Datlas.online=true (TestSupport.assumeOnline)
-// lifts it, for the online tests alone; the app has none of it.
+// by one named in them either, and a proxy named in a test is a name like any other. It holds names, not addresses: a
+// host written as numbers is looked up nowhere and goes, so the app's TestAddressesTest fails on one outside the loopback
+// in any module's test sources. -Datlas.online=true (TestSupport.assumeOnline) lifts it, for the online tests alone;
+// so does systemProp.atlas.online=true in a gradle.properties, for every module. The app has none of it.
 val testsOnline = providers.systemProperty("atlas.online").orNull == "true"
 val testHosts = rootProject.file("ci/test-hosts")
 subprojects {
@@ -90,5 +92,19 @@ subprojects {
         systemProperty("jdk.net.hosts.file", testHosts.absolutePath)
         systemProperty("java.net.useSystemProxies", "false")
         for (p in listOf("http.proxyHost", "https.proxyHost", "ftp.proxyHost", "socksProxyHost")) systemProperty(p, "")
+    }
+}
+
+// And each test JVM is seen to have it: a test task of any module that would run without the hosts file fails before
+// it runs, naming itself, so a guard narrowed to some tasks or some modules is found on the first run.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        if (testsOnline) return@configureEach
+        // read here, at configuration: the action keeps a string, not the script (the configuration cache stores it)
+        val guard = testHosts.absolutePath
+        doFirst {
+            val hosts = (this as Test).systemProperties["jdk.net.hosts.file"]
+            check(hosts == guard) { "$path runs without the unit tests' guard (jdk.net.hosts.file is $hosts, not $guard)" }
+        }
     }
 }
