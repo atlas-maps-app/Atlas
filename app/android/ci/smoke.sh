@@ -965,19 +965,20 @@ map_phase() {
 # Hidden (ENGINE.md's audit, B1): the warm home at rest goes to the background as a phone leaves it, for HIDDEN_S seconds
 # (75: the live moment's tick of a minute falls inside), and comes back as the launcher brings it. While hidden the core
 # draws no frame: no `vk frame` line between `vk hidden: on` and `vk hidden: off`. Back, it draws at once: a frame
-# within HIDDEN_BACK_S seconds (10: lavapipe's frames take about 2 s with the water's light), the same process (no
-# second `vk first frame`). Called in the map phase, after the swipe.
+# within HIDDEN_BACK_S seconds (60: where the surface went at the stop the core makes its pipelines again first, 9 s
+# and over 10 s on the emulator), the same process (no second `vk first frame`). Called in the map phase, after the
+# swipe. The two lines themselves have 30 s each: the render thread logs them, behind whatever it is at.
 hidden_check() {
   local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-60} frames back delay firsts surface i
   adb shell input keyevent KEYCODE_HOME
-  if ! wait_line mapwarm 10 "vk hidden: on"; then
-    echo "MAP FAILED: no 'vk hidden: on' within 10 s of the home key (the core was not told the app went to the background)"
+  if ! wait_line mapwarm 30 "vk hidden: on"; then
+    echo "MAP FAILED: no 'vk hidden: on' within 30 s of the home key (the core was not told the app went to the background)"
     FAIL=1
     return
   fi
   sleep "$hidden"
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $PKG/.MainActivity > /dev/null
-  wait_line mapwarm 10 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 10 s of the return"; FAIL=1; }
+  wait_line mapwarm 30 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 30 s of the return"; FAIL=1; }
   # The first frame back: at once where the surface outlived the stop; where it did not, once the core has made its
   # pipelines again for the new one (9 s and over 10 s on the emulator, 18 November), so up to $wait s; then 2 s more.
   for i in $(seq 1 "$wait"); do
