@@ -15,6 +15,11 @@
 # core draws, `packer render-tiles`), with packs.json naming each beside its element pack.
 # A run uploads to a dated release packs-YYYYMMDD, then writes packs.json there and to the fixed release packs-latest,
 # which the app reads (PackCatalog in :tiles). A region whose build fails keeps its previous entry in packs.json.
+# A run by hand with publish "no" builds and measures alone: no release, tag or asset is made or changed, and each
+# region's packs.json entry (every file's size and SHA-256), its indexes, its steps' reports and what each step took
+# (measure.tsv: seconds, the most memory a process held, its CPU) are the run's artifact measures-<id> instead. Such a
+# run waits for no other. extract names a dated Geofabrik extract instead of the latest (Geofabrik keeps the 1st of
+# each month's and the last few days'), so two runs can build from the same data.
 name: Packs
 
 on:
@@ -30,6 +35,16 @@ on:
         type: choice
         options: [also, only, skip]
         default: also
+      publish:
+        description: "yes: upload to the dated release and update packs-latest; no: build and measure only, nothing published (the run's artifacts hold each region's list entry, indexes and reports)"
+        required: false
+        type: choice
+        options: ['yes', 'no']
+        default: 'yes'
+      extract:
+        description: "Geofabrik's extract: empty for the latest, or the date YYMMDD of one Geofabrik keeps (the 1st of each month, the last few days)"
+        required: false
+        default: ''
   # The monthly run (ENGINE.md step 11), the 2nd at 02:17 UTC, once Geofabrik's extracts of the 1st are out: the
   # regions regions.json marks monthly (the Netherlands), published as a run by hand publishes them; no render packs.
   # It is off until the user says go (21 October 2026), as it publishes those regions' packs by itself. To turn it on,
@@ -41,7 +56,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: packs
+  # runs that publish take turns; a run that publishes nothing waits for none
+  group: ${{ github.event.inputs.publish == 'no' && format('packs-dry-{0}', github.run_id) || 'packs' }}
   cancel-in-progress: false
 
 env:
@@ -80,25 +96,33 @@ jobs:
         env:
           REGIONS: ${{ github.event.inputs.regions }}
           EVENT: ${{ github.event_name }}
+          EXTRACT: ${{ github.event.inputs.extract }}
+          PUBLISH_INPUT: ${{ github.event.inputs.publish }}
         run: |
           set -euo pipefail
           FILE=app/android/packs/regions.json
+          if [ -n "${EXTRACT:-}" ] && ! [[ "$EXTRACT" =~ ^[0-9]{6}$ ]]; then echo "::error::extract '$EXTRACT' is not a date YYMMDD"; exit 1; fi
           # the monthly run: the regions marked monthly
           if [ "$EVENT" = schedule ]; then REGIONS=$(jq -r '[.regions[] | select(.monthly == true) | .id] | join(",")' "$FILE"); fi
           # shellcheck disable=SC2016 # jq's own variables, not the shell's
           WANT='($ids | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0)))'
           UNKNOWN=$(jq -r --arg ids "${REGIONS:-}" "$WANT - [.regions[].id] | join(\",\")" "$FILE")
           if [ -n "$UNKNOWN" ]; then echo "::error::Unknown regions: $UNKNOWN"; exit 1; fi
-          MATRIX=$(jq -c --arg ids "${REGIONS:-}" "$WANT as \$want
+          MATRIX=$(jq -c --arg ids "${REGIONS:-}" --arg date "${EXTRACT:-}" "$WANT as \$want
             | [.regions[] | select((\$want | length) == 0 or (.id as \$i | \$want | index(\$i) != null))
-               | {id, name, url, country: (.country // \"\"), bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false),
+               | {id, name, url, pbf: (if \$date == \"\" then .url else (.url | sub(\"-latest[.]osm[.]pbf\$\"; \"-\" + \$date + \".osm.pbf\")) end),
+                  country: (.country // \"\"), bbox: (.bbox | map(tostring) | join(\",\")), clip: (.clip // false),
                   windows: (if .windows == false then false else true end), shards: (.shards // 1),
                   atlas: ((.atlas // (if ((.bbox[2] - .bbox[0]) * (.bbox[3] - .bbox[1])) <= 0.6 then .bbox else null end)) // [] | map(tostring) | join(\",\"))}]" "$FILE")
           if [ "$(jq length <<< "$MATRIX")" -eq 0 ]; then echo "::error::No regions to build"; exit 1; fi
+          BAD=$(jq -r '[.[] | select(.pbf == .url and ($date != "")) | .id] | join(",")' --arg date "${EXTRACT:-}" <<< "$MATRIX")
+          if [ -n "$BAD" ]; then echo "::error::No dated extract for $BAD: its url does not end in -latest.osm.pbf"; exit 1; fi
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "tag=packs-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
-          jq -r '.[] | "- \(.id): \(.name) from \(.url)"' <<< "$MATRIX" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '.[] | "- \(.id): \(.name) from \(.pbf)"' <<< "$MATRIX" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${PUBLISH_INPUT:-}" = no ]; then echo "- publishing nothing: the packs' lists, indexes and reports are the run's artifacts" >> "$GITHUB_STEP_SUMMARY"; fi
       - name: Release
+        if: ${{ github.event.inputs.publish != 'no' }}
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.plan.outputs.tag }}
@@ -123,7 +147,8 @@ jobs:
     env:
       ID: ${{ matrix.region.id }}
       NAME: ${{ matrix.region.name }}
-      PBF_URL: ${{ matrix.region.url }}
+      PBF_URL: ${{ matrix.region.pbf }}
+      REGION_URL: ${{ matrix.region.url }}
       BBOX: ${{ matrix.region.bbox }}
       CLIP: ${{ matrix.region.clip }}
       COUNTRY: ${{ matrix.region.country }}
@@ -131,6 +156,7 @@ jobs:
       WINDOWS: ${{ matrix.region.windows }}
       SHARDS: ${{ matrix.region.shards }}
       TAG: ${{ needs.plan.outputs.tag }}
+      PUBLISH: ${{ github.event.inputs.publish != 'no' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
@@ -192,6 +218,11 @@ jobs:
           mkdir -p "$WORK/out"
           echo "WORK=$WORK" >> "$GITHUB_ENV"
           df -h / /mnt || true
+          # what each heavy step takes (measure.tsv: the step, its seconds, the most memory its process held in KiB, its
+          # CPU), by GNU time
+          [ -x /usr/bin/time ] || sudo apt-get install -y -q --no-install-recommends time
+          printf 'step\tseconds\tmax_rss_kib\tcpu\n' > "$RUNNER_TEMP/measure.tsv"
+          echo "- $ID: $(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}') GiB of memory, $(df -h --output=avail "$WORK" | tail -1 | tr -d ' ') free on the work disk" >> "$GITHUB_STEP_SUMMARY"
       - name: Download the extract
         run: |
           set -euo pipefail
@@ -206,9 +237,10 @@ jobs:
             sleep 60
           done
           ls -l "$PBF"
+          echo "- $ID: the extract $(basename "$PBF_URL"), $(stat -c %s "$PBF") bytes" >> "$GITHUB_STEP_SUMMARY"
           if [ "$WINDOWS" = "true" ]; then
             # the polygon Geofabrik cut the extract with, beside it: <region>.poly for <region>-latest.osm.pbf
-            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$WORK/$ID.poly" "${PBF_URL%-latest.osm.pbf}.poly"
+            curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$WORK/$ID.poly" "${REGION_URL%-latest.osm.pbf}.poly"
             head -2 "$WORK/$ID.poly"
           fi
       - name: Places
@@ -221,7 +253,8 @@ jobs:
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
           # the region's country: a place's brand is matched there where its own tags and addresses name none
           if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
-          app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}"
+          /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f 'places\t%e\t%M\t%P' \
+            app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}" | tee "$RUNNER_TEMP/places.txt"
           df -h "$WORK"
       - name: Region pack
         env:
@@ -234,7 +267,8 @@ jobs:
           fi
           ARGS=(--name "$NAME" --id "$ID" --out "$WORK/out/$ID.atlas")
           if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
-          app/android/packer/build/install/packer/bin/packer pbf "$WORK/$ID.osm.pbf" "$ATLAS_BOX" "${ARGS[@]}"
+          /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f 'region pack\t%e\t%M\t%P' \
+            app/android/packer/build/install/packer/bin/packer pbf "$WORK/$ID.osm.pbf" "$ATLAS_BOX" "${ARGS[@]}"
           app/android/packer/build/install/packer/bin/packer packinfo "$WORK/out/$ID.atlas" | tail -2
           if [ "$WINDOWS" != "true" ]; then rm -f "$WORK/$ID.osm.pbf"; fi
           df -h "$WORK"
@@ -258,14 +292,17 @@ jobs:
             : > "$RUNNER_TEMP/windows.txt"
             DIRS=()
             for i in $(seq 1 "$SHARDS"); do
-              "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/shards/$i" "${ARGS[@]}" --shard "$i/$SHARDS" | tee -a "$RUNNER_TEMP/windows.txt"
+              /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f "windows shard $i/$SHARDS\t%e\t%M\t%P" \
+                "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/shards/$i" "${ARGS[@]}" --shard "$i/$SHARDS" | tee -a "$RUNNER_TEMP/windows.txt"
               DIRS+=("$WORK/shards/$i")
               df -h "$WORK" | tail -1
             done
-            "$PACKER" windows-join "$WORK/out" "${DIRS[@]}" --id "$ID" --remove | tee -a "$RUNNER_TEMP/windows.txt"
+            /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f 'windows-join\t%e\t%M\t%P' \
+              "$PACKER" windows-join "$WORK/out" "${DIRS[@]}" --id "$ID" --remove | tee -a "$RUNNER_TEMP/windows.txt"
             { echo "- $ID: the windows' data in $SHARDS shards"; grep -E '^(shard [0-9]+ of [0-9]+: |the extract: |time: )' "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; tail -2 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
           else
-            "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
+            /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f 'windows\t%e\t%M\t%P' \
+              "$PACKER" windows "$WORK/$ID.osm.pbf" "$WORK/out" "${ARGS[@]}" | tee "$RUNNER_TEMP/windows.txt"
             { echo "- $ID: the windows' data"; tail -6 "$RUNNER_TEMP/windows.txt" | sed 's/^/  - /'; } >> "$GITHUB_STEP_SUMMARY"
           fi
           rm -f "$WORK/$ID.osm.pbf"
@@ -293,7 +330,8 @@ jobs:
           # A window the core cannot build is left out of the index, up to 50 of them, and named in a warning: the phone
           # builds it from its data, with the same core, which refuses it as this one did. On 29 October core-p8's quays
           # could not cut 4 of the Netherlands' 23,268 windows, and the run stopped there with nothing published.
-          app/android/packer/build/install/packer/bin/packer country "$WORK/out/$ID.windows" "$WORK/out/$ID.windows.idx" "$WORK/out" \
+          /usr/bin/time -a -o "$RUNNER_TEMP/measure.tsv" -f 'country\t%e\t%M\t%P' \
+            app/android/packer/build/install/packer/bin/packer country "$WORK/out/$ID.windows" "$WORK/out/$ID.windows.idx" "$WORK/out" \
             --core "$ATLAS_STAGEP" --id "$ID" --allow-failed 50 | tee "$RUNNER_TEMP/country.txt"
           { grep '^not built' "$RUNNER_TEMP/country.txt" || true; } | sed 's/^/::warning::/'
           # the buildings: the cleaning's counts summed over the windows' scenes, and the most windows a tile can hold
@@ -307,6 +345,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           df -h "$WORK"
       - name: Upload
+        if: env.PUBLISH == 'true'
         run: |
           set -euo pipefail
           # files over 2 GB (GitHub's limit for an asset) go up in parts
@@ -317,10 +356,45 @@ jobs:
           gh release upload "$TAG" "$WORK"/out/"$ID".* --clobber
           jq -r '"- \(.id): " + ([.files[] | "\(.kind) \(.bytes / 1048576 | floor) MiB"] | join(", ")) + ", OSM data of \(.osm_timestamp // "?")"' \
             "$WORK/out/$ID.pack.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: The measures
+        # a run that publishes nothing: the region's packs.json entry (each file whole, its size and SHA-256), its
+        # indexes, its steps' reports and measure.tsv, as the run's artifact; kept whatever became of the steps before
+        if: ${{ always() && env.PUBLISH != 'true' }}
+        run: |
+          set -uo pipefail
+          M="$RUNNER_TEMP/measures/$ID"
+          mkdir -p "$M"
+          if [ -d "${WORK:-}/out" ]; then
+            ls -l "$WORK/out" | tee "$M/files.txt"
+            # every file whole: the parts a publish cuts change no byte of it
+            app/android/packer/build/install/packer/bin/packer manifest "$WORK/out" \
+              "https://github.com/$GH_REPO/releases/download/$TAG" --regions app/android/packs/regions.json --split-bytes 9000000000000000000 &&
+              cp "$WORK/out/$ID.pack.json" "$M/"
+            cp "$WORK/out/$ID".*.json "$WORK/out/$ID".*.idx "$WORK"/out/"$ID".windows.shard "$M/" 2> /dev/null
+          fi
+          cp "$RUNNER_TEMP"/measure.tsv "$RUNNER_TEMP"/places.txt "$RUNNER_TEMP"/windows.txt "$RUNNER_TEMP"/country.txt "$M/" 2> /dev/null
+          df -h "${WORK:-/}" > "$M/df.txt"
+          {
+            echo "### $ID: measured"
+            if [ -s "$M/$ID.pack.json" ]; then
+              jq -r '"- " + ([.files[] | "\(.kind) \(.bytes) bytes"] | join(", ")) + ", OSM data of \(.osm_timestamp // "?")"' "$M/$ID.pack.json"
+            fi
+            echo '| step | seconds | most memory (MiB) | CPU |'
+            echo '|---|---|---|---|'
+            tail -n +2 "$RUNNER_TEMP/measure.tsv" | awk -F'\t' '{printf "| %s | %s | %d | %s |\n", $1, $2, $3 / 1024, $4}'
+          } >> "$GITHUB_STEP_SUMMARY"
+          true
+      - name: The measures' artifact
+        if: ${{ always() && env.PUBLISH != 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: measures-${{ matrix.region.id }}
+          path: ${{ runner.temp }}/measures
+          retention-days: 30
 
   publish:
     needs: [plan, build]
-    if: ${{ always() && needs.plan.result == 'success' }}
+    if: ${{ always() && needs.plan.result == 'success' && github.event.inputs.publish != 'no' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -373,7 +447,7 @@ jobs:
     # teaches the format what the region holds, this job builds it with no change here. Builds are deterministic: only
     # render packs whose bytes changed go up, then packs.json if it changed. A region that loses its render pack drops out
     # of packs.json (the app reads only what the list names); its old file stays in the release, unused.
-    if: ${{ github.event_name != 'schedule' && github.event.inputs.renders != 'skip' }}
+    if: ${{ github.event_name != 'schedule' && github.event.inputs.renders != 'skip' && github.event.inputs.publish != 'no' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
