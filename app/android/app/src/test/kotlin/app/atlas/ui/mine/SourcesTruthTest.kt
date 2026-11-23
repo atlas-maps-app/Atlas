@@ -94,6 +94,47 @@ class SourcesTruthTest {
         "afdc" to "Afdc(", "chargemap" to "Chargemap(", "transitous" to "Transitous(",
     )
 
+    /**
+     * Every view of the one client the shipped code asks for ([app.atlas.Services.http]), by its file and the source's
+     * id, as many times as it is asked for there. A view's name decides for a host no list names (Panoramax's instances)
+     * and is what the Privacy screen counts under, so a wrong id at a caller is a fault nothing else sees: a new call, or
+     * another id, fails until this table names it.
+     */
+    private val views = mapOf(
+        "app/src/main/kotlin/app/atlas/Services.kt" to listOf(
+            "overpass", "open-meteo", "photon", "nominatim", "mangrove", "openaddresses", "foursquare", "yelp", "tripadvisor",
+            "ocm", "ndw", "bnetza", "wikidata", "bathing-water", "wikipedia", "commons", "osm-notes", "osm-edits", "osm-edits",
+            "osm-edits", "brouter",
+        ),
+        "app/src/main/kotlin/app/atlas/services/MapData.kt" to listOf(
+            "overpass", "overpass", "atlas-packs", "atlas-packs", "atlas-packs", "overpass", "atlas-packs", "atlas-packs",
+        ),
+        "app/src/main/kotlin/app/atlas/ui/local/LocalHub.kt" to listOf("wikidata", "iss-orbit", "iss-orbit"),
+        "app/src/main/kotlin/app/atlas/ui/local/StreetPhotos.kt" to listOf("panoramax"),
+        "app/src/main/kotlin/app/atlas/ui/mine/ForecastScreen.kt" to listOf("open-meteo"),
+        "app/src/main/kotlin/app/atlas/ui/mine/MineHub.kt" to listOf("atlas-packs", "atlas-packs"),
+        "app/src/main/kotlin/app/atlas/ui/mine/pump/PumpScreen.kt" to listOf("tankerkoenig"),
+        "app/src/main/kotlin/app/atlas/ui/search/KeptImages.kt" to listOf("commons"),
+        "app/src/main/kotlin/app/atlas/ui/search/Reviews.kt" to listOf("mangrove", "mangrove"),
+        "app/src/main/kotlin/app/atlas/ui/shop/ShopRepository.kt" to listOf("open-prices"),
+    )
+
+    /** The id each way the shipped code writes one names, read from the classes themselves. */
+    private val viewIds: Map<String, String> = mapOf(
+        "Overpass.INFO.id" to app.atlas.providers.Overpass.INFO.id, "Weather.ID" to app.atlas.providers.Weather.ID,
+        "Photon.INFO.id" to app.atlas.providers.Photon.INFO.id, "Nominatim.INFO.id" to app.atlas.providers.Nominatim.INFO.id,
+        "Mangrove.ID" to app.atlas.providers.Mangrove.ID, "OpenAddresses.ID" to app.atlas.providers.OpenAddresses.ID,
+        "FoursquareRatings.ID" to app.atlas.providers.FoursquareRatings.ID, "YelpRatings.ID" to app.atlas.providers.YelpRatings.ID,
+        "TripAdvisorRatings.ID" to app.atlas.providers.TripAdvisorRatings.ID, "OpenChargeMap.ID" to app.atlas.providers.OpenChargeMap.ID,
+        "NdwChargers.ID" to app.atlas.providers.NdwChargers.ID, "BnetzaChargers.ID" to app.atlas.providers.BnetzaChargers.ID,
+        "Wikidata.ID" to app.atlas.providers.Wikidata.ID, "BathingWaters.ID" to app.atlas.providers.BathingWaters.ID,
+        "Wikipedia.ID" to app.atlas.providers.Wikipedia.ID, "Commons.INFO.id" to app.atlas.providers.Commons.INFO.id,
+        "OsmNotes.ID" to app.atlas.providers.OsmNotes.ID, "OsmEdits.ID" to app.atlas.providers.OsmEdits.ID,
+        "SourcesModel.ATLAS_PACKS.id" to SourcesModel.ATLAS_PACKS.id, "SourcesModel.BROUTER.id" to SourcesModel.BROUTER.id,
+        "SourcesModel.PANORAMAX.id" to SourcesModel.PANORAMAX.id, "SourcesModel.OPEN_PRICES.id" to SourcesModel.OPEN_PRICES.id,
+        "SourcesModel.ISS_ORBIT.id" to SourcesModel.ISS_ORBIT.id, "SourcesModel.TANKERKOENIG.id" to SourcesModel.TANKERKOENIG.id,
+    )
+
     private fun sources(modules: List<String>): List<File> = modules.flatMap { m ->
         File(android, "$m/src/main").walkTopDown().filter { it.isFile && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }.toList()
     }
@@ -388,6 +429,34 @@ class SourcesTruthTest {
             assertTrue("values$lang: $chargers", chargers != null && chargers != line("mine_sent_area"))
             assertTrue("values$lang: $fuel", fuel != null && "100 m" in fuel)
         }
+    }
+
+    @Test
+    fun everyViewTheShippedCodeAsksForIsNamedByItsSourcesIdAndPinned() {
+        // `http(` with any receiver, its argument up to the matching parenthesis; comment lines left out
+        val call = Regex("""(?<![\w])http\(""")
+        val found = HashMap<String, MutableList<String>>()
+        val unread = ArrayList<String>()
+        for (f in sources(listOf("app"))) {
+            val path = f.relativeTo(android).path
+            for ((i, line) in f.readLines().withIndex()) {
+                val t = line.trim()
+                if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) continue
+                for (m in call.findAll(line)) {
+                    if (line.substring(0, m.range.first).trimEnd().endsWith("fun")) continue
+                    var depth = 1
+                    var j = m.range.last + 1
+                    while (j < line.length && depth > 0) { if (line[j] == '(') depth++ else if (line[j] == ')') depth--; j++ }
+                    val arg = line.substring(m.range.last + 1, j - 1).trim().removePrefix("app.atlas.providers.").removePrefix("app.atlas.ui.mine.")
+                    val id = viewIds[arg]
+                    if (id == null) unread += "$path:${i + 1} http($arg)" else found.getOrPut(path) { ArrayList() } += id
+                }
+            }
+        }
+        assertTrue("views asked for by a name this test does not read, or by none: $unread", unread.isEmpty())
+        val ids = SourcesModel.ALL.map { it.id }.toSet()
+        assertEquals("ids in no list", emptyList<String>(), found.values.flatten().filter { it !in ids })
+        assertEquals("the views each file asks for", views.mapValues { it.value.sorted() }.toSortedMap(), found.mapValues { it.value.sorted() }.toSortedMap())
     }
 
     @Test

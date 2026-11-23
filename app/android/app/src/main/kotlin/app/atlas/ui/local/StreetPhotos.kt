@@ -45,13 +45,16 @@ interface StreetPhotoSource {
     suspend fun near(at: LatLon): StreetPhotoImage?
 }
 
-/** Panoramax's public API, asked for the nearest picture within 40 m. */
-class PanoramaxSource(private val services: Services) : StreetPhotoSource {
+/**
+ * Panoramax's public API, asked for the nearest picture within 40 m through Panoramax's view, which holds the picture's
+ * instance to Panoramax's switch. [search] is the search's address ([StreetPhotos.searchUrl]; a test's mock).
+ */
+class PanoramaxSource(private val services: Services, private val search: (LatLon) -> String = StreetPhotos::searchUrl) : StreetPhotoSource {
     override suspend fun near(at: LatLon): StreetPhotoImage? = withContext(Dispatchers.IO) {
         if (!services.local.online()) return@withContext null
         try {
             val http = services.http(app.atlas.ui.mine.SourcesModel.PANORAMAX.id)
-            val photo = StreetPhotos.parse(http.text(StreetPhotos.searchUrl(at))) ?: return@withContext null
+            val photo = StreetPhotos.parse(http.text(search(at))) ?: return@withContext null
             // the photo from the instance that keeps it (nl.panoramax.xyz, for one), asked as Atlas asks every server: no
             // list names the instance's host, so Panoramax's view is what holds it to Panoramax's switch
             val bytes = http.execute(http.request(photo.imageUrl).header("Accept", "image/*").build()).requireOk().body
