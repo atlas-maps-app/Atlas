@@ -291,6 +291,22 @@ struct QuayMark {
 /// Every quay edge's mark of a tile's start, in its order.
 [[nodiscard]] std::vector<QuayMark> quay_marks(const TileStart& start);
 
+/// A deck's digest: its points' counts and points, its reach, its kind and its box, every byte of each (two decks of
+/// one digest are the same deck to a quay wall).
+[[nodiscard]] tiles::Sha256Digest deck_digest(const Deck& deck);
+/// What a whole tile's quay walls are made against: the set of `decks` near any of its quay edges `quays` (deck_near),
+/// their digests (`digests`: deck_digest's of `decks`, in their order) sorted, made unique and hashed. A tile's quay
+/// walls are the same over any list of decks with the same set, in any order and with any repeat (QuayMark): the sun's
+/// scenes keep a whole tile's part while the set's digest stays (scene::SunGlobals). The decks are first kept to the
+/// edges' box widened by their longest edge and a metre, which every near deck meets (the metre for the widening's
+/// rounding); a NaN mark is near no deck, as in finish_tile.
+[[nodiscard]] tiles::Sha256Digest near_digest(std::span<const QuayMark> quays, std::span<const Deck> decks,
+                                              std::span<const tiles::Sha256Digest> digests);
+/// Whether a tile's part made in `frame` with `region` is what a scene made in `f` with `r` would make of the same tile
+/// (start_tile and solids_of read their pack's head for its frame alone; the region is the six values a part reads).
+[[nodiscard]] bool same_ground(const tiles::Frame& frame, const Region& region, const tiles::Frame& f,
+                               const Region& r) noexcept;
+
 /// A tile's solids alone at ladder `level`, in `frame`'s metres, as make_tile makes them (those of records outside
 /// `live` left out): a tile of a scene whose bits no one asks for (the halo's around the resident tiles, SunGlobals),
 /// whose solids the grid holds and which needs no samples.

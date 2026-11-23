@@ -262,9 +262,9 @@ private:
         std::uint64_t live = sun::all_cells;
         std::shared_ptr<const sun::SunTile> tile;
         std::vector<sun::Deck> decks;             ///< its bridges, as collect_decks gave them
-        std::vector<tiles::Sha256Digest> digests; ///< each deck's digest
+        std::vector<tiles::Sha256Digest> digests; ///< each deck's digest (sun::deck_digest)
         std::vector<sun::QuayMark> quays;         ///< its quay edges (a whole tile's)
-        tiles::Sha256Digest near{};               ///< the decks near them it was made against (a digest of the set)
+        tiles::Sha256Digest near{};               ///< the decks near them it was made against (sun::near_digest)
     };
     /// A lane's last scene's parts, in its tiles' order, and the frame and region they were made in.
     struct Parts {

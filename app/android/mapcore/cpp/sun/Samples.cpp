@@ -1103,6 +1103,58 @@ std::vector<QuayMark> quay_marks(const TileStart& start) {
     return out;
 }
 
+tiles::Sha256Digest deck_digest(const Deck& deck) {
+    tiles::Sha256 h;
+    const std::array<std::uint64_t, 2> sizes{deck.x.size(), deck.z.size()};
+    h.update(std::as_bytes(std::span(sizes)));
+    h.update(std::as_bytes(std::span(deck.x)));
+    h.update(std::as_bytes(std::span(deck.z)));
+    h.update(std::as_bytes(std::span(&deck.hw, 1)));
+    const std::array<std::byte, 1> road{static_cast<std::byte>(deck.road ? 1 : 0)};
+    h.update(road);
+    h.update(std::as_bytes(std::span(deck.box)));
+    return h.finish();
+}
+
+tiles::Sha256Digest near_digest(std::span<const QuayMark> quays, std::span<const Deck> decks,
+                                std::span<const tiles::Sha256Digest> digests) {
+    double x0 = std::numeric_limits<double>::infinity();
+    double x1 = -x0;
+    double z0 = x0;
+    double z1 = -x0;
+    double most = 0.0;
+    for (const QuayMark& q : quays) {
+        if (std::isnan(q.mx) || std::isnan(q.mz) || std::isnan(q.el)) continue; // near no deck
+        x0 = std::min(x0, q.mx);
+        x1 = std::max(x1, q.mx);
+        z0 = std::min(z0, q.mz);
+        z1 = std::max(z1, q.mz);
+        most = std::max(most, q.el);
+    }
+    std::vector<tiles::Sha256Digest> hits;
+    const double w = most + 1.0;
+    for (std::size_t d = 0; d < decks.size(); ++d) {
+        const auto& bb = decks[d].box;
+        const bool meets = bb[0] <= x1 + w && bb[1] >= x0 - w && bb[2] <= z1 + w && bb[3] >= z0 - w;
+        if (!meets) continue;
+        if (std::ranges::any_of(quays, [&](const QuayMark& q) { return deck_near(q, decks[d]); })) {
+            hits.push_back(digests[d]);
+        }
+    }
+    std::ranges::sort(hits);
+    const auto [first, last] = std::ranges::unique(hits);
+    hits.erase(first, last);
+    tiles::Sha256 h;
+    for (const tiles::Sha256Digest& d : hits) h.update(d);
+    return h.finish();
+}
+
+bool same_ground(const tiles::Frame& frame, const Region& region, const tiles::Frame& f, const Region& r) noexcept {
+    return frame.lat0 == f.lat0 && frame.lon0 == f.lon0 && frame.kx == f.kx && frame.kz == f.kz &&
+           region.water_y == r.water_y && region.paris == r.paris && region.tone == r.tone &&
+           region.no_shadows == r.no_shadows && region.kit_eaves == r.kit_eaves && region.kit_band == r.kit_band;
+}
+
 namespace {
 
 /// Whether (x, z) lies under a bridge's deck (waterLayer's underDeck).

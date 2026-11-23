@@ -238,3 +238,148 @@ TEST_CASE("sun: the region's values are the pack's style's") {
     CHECK(!r.tone);
     CHECK(r.no_shadows);
 }
+
+namespace {
+
+/// A bridge road's deck from (x0, z0) to (x1, z1) in metres, reaching `hw` from its centreline, its box widened by the
+/// road's width `rw` (as collect_decks makes one).
+Deck road_deck(double x0, double z0, double x1, double z1, double hw, double rw) {
+    Deck d;
+    d.road = true;
+    d.hw = hw;
+    d.x = {x0, x1};
+    d.z = {z0, z1};
+    d.box = {std::min(x0, x1) - rw, std::max(x0, x1) + rw, std::min(z0, z1) - rw, std::max(z0, z1) + rw};
+    return d;
+}
+
+/// near_digest over `decks` with their own digests (deck_digest's, in their order), as a scene hands them in.
+tl::Sha256Digest near_of(std::span<const QuayMark> quays, std::span<const Deck> decks) {
+    std::vector<tl::Sha256Digest> digests;
+    digests.reserve(decks.size());
+    for (const Deck& d : decks) digests.push_back(deck_digest(d));
+    return near_digest(quays, decks, digests);
+}
+
+} // namespace
+
+TEST_CASE("sun: the decks a whole tile's quay walls are kept on: a near deck changed in any of its fields changes "
+          "their digest, and a deck near or no longer; a far deck changed, gone or more, the decks in another order "
+          "or one of them twice do not") {
+    // two quay edges: 40 m from (0, 0) east to (40, 0), and 30 m from (100, 0) south to (100, 30)
+    const std::array<QuayMark, 2> quays{quay_mark(0.0, 0.0, 40.0, 0.0), quay_mark(100.0, 0.0, 100.0, 30.0)};
+    // near the first: a bridge road across it (its deck holds a stretch of the edge), and one 25 m off it, within the
+    // edge's length of its middle, holding none of it; near the second alone: an area deck beside it; far: 600 m off
+    const Deck across = road_deck(20.0, -10.0, 20.0, 10.0, 4.8, 8.0);
+    const Deck beside = road_deck(15.0, 25.0, 30.0, 45.0, 4.8, 8.0);
+    Deck area;
+    area.road = false;
+    area.x = {104.0, 112.0, 112.0, 104.0, 104.0};
+    area.z = {10.0, 10.0, 20.0, 20.0, 10.0};
+    area.box = {104.0, 112.0, 10.0, 20.0};
+    const Deck far = road_deck(600.0, 600.0, 620.0, 600.0, 4.8, 8.0);
+    REQUIRE(deck_near(quays[0], across));
+    REQUIRE(deck_near(quays[0], beside));
+    REQUIRE_FALSE(deck_near(quays[1], beside));
+    REQUIRE(deck_near(quays[1], area));
+    REQUIRE_FALSE(deck_near(quays[0], area));
+    REQUIRE_FALSE(deck_near(quays[0], far));
+    REQUIRE_FALSE(deck_near(quays[1], far));
+    const std::vector<Deck> decks{across, beside, area, far};
+    const tl::Sha256Digest base = near_of(quays, decks);
+
+    // every field of each near deck in turn: another deck, so another set
+    struct Change {
+        const char* what;
+        void (*change)(Deck&);
+    };
+    const std::array<Change, 11> changes{{
+        {.what = "a point's x", .change = [](Deck& d) { d.x[1] += 0.5; }},
+        {.what = "a point's z", .change = [](Deck& d) { d.z[0] -= 0.5; }},
+        {.what = "a point more",
+         .change =
+             [](Deck& d) {
+                 d.x.push_back(d.x.back());
+                 d.z.push_back(d.z.back() + 1.0);
+             }},
+        {.what = "an x moved to the z's",
+         .change =
+             [](Deck& d) {
+                 d.z.insert(d.z.begin(), d.x.back());
+                 d.x.pop_back();
+             }},
+        {.what = "its reach", .change = [](Deck& d) { d.hw += 0.25; }},
+        {.what = "its kind", .change = [](Deck& d) { d.road = !d.road; }},
+        {.what = "its box's west", .change = [](Deck& d) { d.box[0] -= 0.5; }},
+        {.what = "its box's east", .change = [](Deck& d) { d.box[1] += 0.5; }},
+        {.what = "its box's south", .change = [](Deck& d) { d.box[2] -= 0.5; }},
+        {.what = "its box's north", .change = [](Deck& d) { d.box[3] += 0.5; }},
+        {.what = "a point's x by one ulp", .change = [](Deck& d) { d.x[0] = std::nextafter(d.x[0], 1e9); }},
+    }};
+    for (const Change& c : changes) {
+        CAPTURE(c.what);
+        for (const std::size_t near : {std::size_t{0}, std::size_t{1}, std::size_t{2}}) {
+            CAPTURE(near);
+            std::vector<Deck> other = decks;
+            c.change(other[near]);
+            CHECK(deck_digest(other[near]) != deck_digest(decks[near]));
+            CHECK(near_of(quays, other) != base);
+        }
+        // the far deck changed alike: the same set
+        std::vector<Deck> other = decks;
+        c.change(other[3]);
+        CHECK(deck_digest(other[3]) != deck_digest(decks[3]));
+        CHECK(near_of(quays, other) == base);
+    }
+    // a near deck gone, or one more near either edge: another set
+    CHECK(near_of(quays, std::vector<Deck>{across, area, far}) != base);
+    CHECK(near_of(quays, std::vector<Deck>{across, beside, far}) != base);
+    std::vector<Deck> more = decks;
+    more.push_back(road_deck(90.0, 15.0, 95.0, 15.0, 4.8, 8.0));
+    REQUIRE(deck_near(quays[1], more.back()));
+    CHECK(near_of(quays, more) != base);
+    // the same set: the far deck gone, another far one, the decks the other way round, a near one twice
+    CHECK(near_of(quays, std::vector<Deck>{across, beside, area}) == base);
+    std::vector<Deck> farther = decks;
+    farther.push_back(road_deck(-900.0, 40.0, -880.0, 40.0, 4.8, 8.0));
+    CHECK(near_of(quays, farther) == base);
+    const std::vector<Deck> reversed(decks.rbegin(), decks.rend());
+    CHECK(near_of(quays, reversed) == base);
+    std::vector<Deck> twice = decks;
+    twice.push_back(across);
+    CHECK(near_of(quays, twice) == base);
+    // no quay edge, or one of no length at the far deck's corner: no deck near, the empty set's digest
+    const tl::Sha256Digest none = near_of({}, decks);
+    CHECK(none != base);
+    CHECK(near_of(std::array<QuayMark, 1>{quay_mark(0.0, 0.0, 40.0, 0.0)}, std::vector<Deck>{far}) == none);
+    const QuayMark nan{.mx = std::nan(""), .mz = 0.0, .el = 40.0};
+    CHECK(near_of(std::array<QuayMark, 1>{nan}, decks) == none);
+}
+
+TEST_CASE("sun: a part is made on the same ground where its frame's four values and its region's six are the same") {
+    const tl::Frame frame{.lat0 = 52.3666, .lon0 = 4.8833, .kx = 67'960.25, .kz = 111'250.0};
+    const Region region{.water_y = -1.5, .tone = true, .kit_eaves = 0.6};
+    CHECK(same_ground(frame, region, frame, region));
+    const std::array<void (*)(tl::Frame&), 4> frames{
+        [](tl::Frame& f) { f.lat0 += 1e-4; }, [](tl::Frame& f) { f.lon0 -= 1e-4; }, [](tl::Frame& f) { f.kx += 0.5; },
+        [](tl::Frame& f) { f.kz -= 0.5; }};
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        CAPTURE(i);
+        tl::Frame f = frame;
+        frames.at(i)(f);
+        CHECK_FALSE(same_ground(frame, region, f, region));
+        CHECK_FALSE(same_ground(f, region, frame, region));
+    }
+    const std::array<void (*)(Region&), 7> regions{
+        [](Region& r) { r.water_y = -2.0; },  [](Region& r) { r.paris = true; },
+        [](Region& r) { r.tone = false; },    [](Region& r) { r.no_shadows = true; },
+        [](Region& r) { r.kit_eaves = 0.7; }, [](Region& r) { r.kit_eaves.reset(); },
+        [](Region& r) { r.kit_band = 3.2; }};
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        CAPTURE(i);
+        Region r = region;
+        regions.at(i)(r);
+        CHECK_FALSE(same_ground(frame, region, frame, r));
+        CHECK_FALSE(same_ground(frame, r, frame, region));
+    }
+}
