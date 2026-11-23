@@ -96,16 +96,20 @@ class LayeredPlaceFinder(
             }
         }
         var shown = packed
+        // every place shown, by key, for a failure's answer
+        val seen = LinkedHashMap<String, Place>()
+        packed?.value?.forEach { seen[it.key] = it }
         val answer = beside(centre, radiusM, filter, limit, show = { w ->
             val before = shown
             if (before == null || w.partial != before.partial || w.value.map { it.key } != before.value.map { it.key }) emit(NearbyPlaces(w.value, PlaceOrigin.PACK))
             shown = w
+            w.value.forEach { seen[it.key] = it }
         }, ask = ask) ?: return@flow
         emit(
             answer.fold(
                 { found -> NearbyPlaces(nearest(found, centre, limit), PlaceOrigin.ONLINE) },
                 // An answer that does not parse (a captive portal's page, a broken proxy) is a failure to report too.
-                { e -> failed(centre, radiusM, filter, limit, why(e)) },
+                { e -> failed(centre, radiusM, filter, limit, why(e), seen.values.toList().takeIf { it.isNotEmpty() }?.let { NearbyPlaces(it, PlaceOrigin.PACK) }) },
             ),
         )
     }.flowOn(Dispatchers.Default)
@@ -150,18 +154,29 @@ class LayeredPlaceFinder(
             // the windows of the circle the phone keeps no data for, asked of Atlas's packs once for every kind (the app
             // maintainer, 18 November 2026, batch 4 B14: each of the wheel's eleven waited again, up to 10 s): waited for
             // where they can make the circle whole, else beside Overpass's one query, and where it fails for what is left
-            // of the wait (batch 5 A1)
-            val answer = beside(centre, radiusM, TagFilter.Or(lacking.values.toList()), limit, ask = query)
+            // of the wait (batch 5 A1); what they brought, every kind's, is kept for a failure's answer: the wheel
+            // shows nothing till it answers, so it is what it had (the app maintainer, 19 November 2026, batch 6 A3:
+            // another lookup could let the windows go before Overpass failed, where 38ddafa1 waited for them and kept
+            // them)
+            var landed: List<Place> = emptyList()
+            val answer = beside(centre, radiusM, TagFilter.Or(lacking.values.toList()), Int.MAX_VALUE, show = { landed = it.value }, ask = query)
             for ((id, filter) in lacking) {
                 val got = if (answer != null && id in ask) {
                     answer.fold(
                         { all -> NearbyPlaces(nearest(all.filter { filter.matches(it.tags) }, centre, limit), PlaceOrigin.ONLINE) },
-                        // where Overpass fails, the part the phone has by now stays, with what went wrong
-                        { e -> failed(centre, radiusM, filter, limit, why(e), out[id]) },
+                        // where Overpass fails, the part the phone has by now stays, with what the windows brought and
+                        // what went wrong
+                        { e ->
+                            val came = landed.filter { filter.matches(it.tags) }
+                            failed(centre, radiusM, filter, limit, why(e), if (came.isEmpty()) out[id] else NearbyPlaces(out[id]?.places.orEmpty() + came, PlaceOrigin.PACK))
+                        },
                     )
                 } else {
-                    // not asked: what the phone holds once the windows came
-                    inPacks(centre, radiusM, filter, limit)?.let { NearbyPlaces(it.value, PlaceOrigin.PACK) }
+                    // not asked: what the phone holds once the windows came, with what they brought (a pack that does
+                    // not read holds nothing there: the app maintainer, 19 November 2026, batch 6 A5)
+                    val now = inPacks(centre, radiusM, filter, limit)
+                    val came = landed.filter { filter.matches(it.tags) }
+                    if (now == null && came.isEmpty()) null else NearbyPlaces(nearest(now?.value.orEmpty() + came, centre, limit), PlaceOrigin.PACK)
                 }
                 if (got != null) out[id] = got
             }
@@ -171,12 +186,18 @@ class LayeredPlaceFinder(
     /**
      * Where Overpass failed with [why]: what the map's packs and windows on the phone hold by now ([inPacks]), with the
      * windows the packs were asked for that came meanwhile (the app maintainer, 18 November 2026: the answer was empty
-     * where it had held them), else what was [had], else none.
+     * where it had held them), and every place [had] (shown, or brought by the windows), each once, now's copy first,
+     * nearest first, at most [limit] (19 November 2026, batch 6 A3: what they held by now could be fewer than were
+     * shown, where another lookup had let the windows go meanwhile); else what was [had], else none.
      */
-    private fun failed(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int, why: String, had: NearbyPlaces? = null): NearbyPlaces =
-        inPacks(centre, radiusM, filter, limit)?.takeIf { it.value.isNotEmpty() }?.let { NearbyPlaces(it.value, PlaceOrigin.PACK, why) }
-            ?: had?.copy(error = why)
-            ?: NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, why)
+    private fun failed(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int, why: String, had: NearbyPlaces? = null): NearbyPlaces {
+        val all = nearest(inPacks(centre, radiusM, filter, limit)?.value.orEmpty() + had?.places.orEmpty(), centre, limit)
+        return when {
+            all.isNotEmpty() -> NearbyPlaces(all, PlaceOrigin.PACK, why)
+            had != null -> had.copy(error = why)
+            else -> NearbyPlaces(emptyList(), PlaceOrigin.ONLINE, why)
+        }
+    }
 
     /** What a region's store holds of [category] within [radiusM] of [centre]; null where it holds none, or there is none. */
     private fun inStore(category: Category, centre: LatLon, radiusM: Double): List<Place>? {

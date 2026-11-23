@@ -121,10 +121,11 @@ class BranchesTest {
     }
 
     /**
-     * The site most of the branches that link one link is the brand's, two at least and none other as often, though
-     * fewer than half link it (the app maintainer, 18 November 2026, batch 5 A9: hema.nl three times beside seven pages
-     * of one link each gave none, where 38ddafa1 gave hema.nl); the country's domain beats it as the brand's own name,
-     * which is read: a shopping centre's name under two domains is not the brand's.
+     * The site most of the branches that link one link is the brand's, two at least and none other as often, where its
+     * label is the brand's own name though fewer than half link it (the app maintainer, 18 November 2026, batch 5 A9:
+     * hema.nl three times beside seven pages of one link each gave none, where 38ddafa1 gave hema.nl; batch 6 A8); the
+     * country's domain beats it as the brand's own name, which is read: a shopping centre's name under two domains is
+     * not the brand's.
      */
     @Test
     fun theSiteMostBranchesLinkIsTheBrands() {
@@ -143,6 +144,38 @@ class BranchesTest {
         assertEquals("https://www.hunkemoller.com", BrandSite.of(centre, "NL", "Hunkemöller"))
         // the brand's own name under the country's domain, once among many
         assertEquals("https://www.hema.nl", BrandSite.of(site("https://www.hema.nl/winkels/kalverstraat") + centres, "NL", "HEMA"))
+    }
+
+    /**
+     * The site most branches link is the brand's where at least half of those that link a site link it, or where its
+     * label is the brand's own name (the app maintainer, 19 November 2026, batch 6 A8): two of five Pizzaroma branches
+     * on just-eat.co.uk made the delivery platform the brand's site, where 38ddafa1 gave none and the place's page
+     * showed Wikidata's. The country's domain of the brand's own name still comes first, however few link it.
+     */
+    @Test
+    fun aSiteFewerThanHalfLinkIsTheBrandsOnlyByItsName() {
+        fun site(vararg urls: String) = urls.map { mapOf("website" to it) }
+        val five = site(
+            "https://www.just-eat.co.uk/restaurants-pizzaroma-leeds/menu",
+            "https://www.just-eat.co.uk/restaurants-pizzaroma-york/menu",
+            "https://www.pizzaromaleeds.co.uk/",
+            "https://pizzaroma-hull.co.uk",
+            "https://www.romapizzasheffield.com/",
+        )
+        assertNull(BrandSite.of(five, "GB", "Pizzaroma"))
+        assertNull(BrandSite.of(five, null, "Pizzaroma"))
+        // neighbours: HEMA's three beside seven centres' pages, in the Netherlands and, by its name, where no country
+        // is known; hunkemoller.com forty times beside a centre's two; a tie
+        val centres = site(*(1..7).map { "https://www.centrum$it.nl/winkels/hema" }.toTypedArray())
+        val hema = site("https://www.hema.nl/winkels/kalverstraat", "https://www.hema.nl/winkels/damrak", "https://www.hema.nl/winkels/haarlem")
+        assertEquals("https://www.hema.nl", BrandSite.of(hema + centres, "NL", "HEMA"))
+        val hemaCom = site("https://www.hema.com/nl-nl/winkels/1", "https://www.hema.com/nl-nl/winkels/2", "https://www.hema.com/nl-nl/winkels/3")
+        assertEquals("https://www.hema.com", BrandSite.of(hemaCom + centres, null, "HEMA"))
+        val forty = site("https://www.kalvertoren.nl/winkels/hunkemoller", "https://www.kalvertoren.nl/winkels/hunkemoller-2") +
+            site(*(1..40).map { "https://www.hunkemoller.com/nl/store/$it" }.toTypedArray())
+        assertEquals("https://www.hunkemoller.com", BrandSite.of(forty, "NL", "Hunkemöller"))
+        val tie = site("https://www.just-eat.co.uk/a", "https://www.just-eat.co.uk/b", "https://www.deliveroo.co.uk/a", "https://www.deliveroo.co.uk/b")
+        assertNull(BrandSite.of(tie, "GB", "Pizzaroma"))
     }
 
     @Test

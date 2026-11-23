@@ -12,13 +12,19 @@ import app.atlas.render.data.Countries
 import app.atlas.search.MemoryPlaces
 import app.atlas.search.PlaceStore
 import app.atlas.services.PackCountries
+import app.atlas.services.RegionLayer
 import app.atlas.testing.TempFiles
 import app.atlas.testing.testServices
+import app.atlas.tiles.PackCatalog
+import app.atlas.ui.mine.MineFixtures
+import app.atlas.ui.mine.offline.LayerRecord
 import app.atlas.ui.mine.offline.RegionFiles
 import app.atlas.ui.mine.offline.RegionMeta
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -29,6 +35,7 @@ import java.io.File
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Collections
+import java.util.Locale
 
 /**
  * Near a border the country is the pack's that holds the point, before the boxes' (the app maintainer, 18 November 2026,
@@ -47,6 +54,9 @@ class PackCountryTest {
     private val terneuzen = LatLon(51.3353, 3.8278)
     private val towns = listOf(maastricht, eindhoven, venlo, terneuzen)
     private val antwerp = LatLon(51.2194, 4.4025)
+    private val munich = LatLon(48.1374, 11.5755)
+    private val arlon = LatLon(49.6833, 5.8167)
+    private val amsterdam = LatLon(52.3728, 4.8936)
 
     /** Sluis, in Zeelandic Flanders: with it the Dutch store's box reaches Antwerp, as the real one's does, with none of its places there. */
     private val sluis = LatLon(51.3086, 3.3861)
@@ -79,16 +89,33 @@ class PackCountryTest {
 
     private val kept = MapEngine.countries to MapEngine.countryHolds
 
+    /** The phone's locale as the test found it: a test that sets another has it put back. */
+    private var phone: Locale = Locale.getDefault()
+
     @Before
     fun noTiles() {
         MapEngine.countries = emptyList()
         MapEngine.countryHolds = null
+        phone = Locale.getDefault()
     }
 
     @After
     fun tilesAsTheyWere() {
         MapEngine.countries = kept.first
         MapEngine.countryHolds = kept.second
+        Locale.setDefault(phone)
+    }
+
+    /** A phone whose language and region are [tag]'s, as its settings make it. */
+    private fun onPhone(tag: String) = Locale.setDefault(Locale.forLanguageTag(tag))
+
+    /** Runs the main thread's queue until [done], at most 20 s. */
+    private fun until(done: () -> Boolean) {
+        val end = System.currentTimeMillis() + 20_000
+        while (!done() && System.currentTimeMillis() < end) {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(50))
+            Thread.sleep(20)
+        }
     }
 
     private fun dutchHolidays(at: LatLon, hours: app.atlas.places.OpeningHoursContext) {
@@ -192,6 +219,35 @@ class PackCountryTest {
     }
 
     /**
+     * The country question as MapData wires it (the app maintainer, 19 November 2026, batch 6 B9: no test ran its
+     * wiring, so the question's hook wired back to the camera's, which has a tiles' index read or downloaded, passed
+     * every test): with a core of its own and no index in memory, the question has none read, by the hook or through
+     * [HereContext], at the towns or Antwerp; the camera's hook, wired beside it, has the Netherlands' read once.
+     */
+    @Test
+    fun theCountryQuestionAsMapDataWiresItHasNoIndexRead() {
+        val root = TempFiles.dir("atlas-border")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        val read = Collections.synchronizedList(ArrayList<String>())
+        s.mapData.coreVersion = { "core-test" }
+        s.mapData.readIndex = { id, _ -> read += id }
+        s.mapData.wireCountries()
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        val tiles = s.packCountries.tiles!!
+        for (t in towns + antwerp) assertNull("$t", tiles.level("netherlands", t.lat, t.lon))
+        for (t in towns + antwerp) {
+            HereContext.region(s, t)
+            HereContext.regionNow(s, t)
+        }
+        assertEquals("the country question had a tiles' index read", emptyList<String>(), read)
+        // the camera's hook has it read, once a minute at most
+        for (t in towns) assertNull("$t", MapEngine.countryHolds!!.at(MapEngine.countries.first(), t.lat, t.lon))
+        assertEquals(listOf("netherlands"), read)
+        s.close()
+    }
+
+    /**
      * How finely two countries' tiles' indexes list a point by these towns: the Netherlands' window at Maastricht and its
      * L12 tile over Lanaken and Kanne, Belgium's window at Lanaken and its L12 tile over Maastricht and Kanne; nothing
      * elsewhere; null for a country in [unread], whose index is not in memory.
@@ -240,6 +296,247 @@ class PackCountryTest {
             unread = setOf("belgium")
             assertEquals("$ids", "NL", HereContext.region(s, maastricht).country)
             assertEquals("$ids", "BE", HereContext.region(s, lanaken).country)
+        }
+        s.close()
+    }
+
+    /**
+     * A region whose pack is named at the end of its download says its pack's country from the next ask, in the same
+     * run (the app maintainer, 19 November 2026, batch 6 A1): its file named no pack while its places were attached
+     * and asked, as its routing and voices still came, and what was kept for its store then (no pack) and for the
+     * kilometres asked meanwhile (no country) was kept for the run: a typed search's hits asked each cell again, and
+     * Maastricht read the box's Belgium till the app was killed. ff1d7649 read the file at each ask. Both are let go
+     * once the file is written again, by its time and length.
+     */
+    @Test
+    fun aRegionWhosePackIsNamedAtTheEndOfItsDownloadSaysItsCountryInTheSameRun() {
+        // a phone whose country's box holds none of these towns, so that the phone's country says nothing here
+        Locale.setDefault(Locale.US)
+        val root = TempFiles.dir("atlas-written")
+        val dirs = Dirs(root, File(root, "cache"))
+        // seven places naming no country: no other store by these towns holds seven, and what the regions said is kept
+        // for the whole JVM by their count
+        val store = PlaceStore.open(File(dirs.places.apply { mkdirs() }, "netherlands.db"))
+        val near = listOf(maastricht, maastricht, maastricht, venlo, venlo, eindhoven, eindhoven)
+        store.importPlaces(
+            near.mapIndexed { i, at ->
+                Place(OsmId.parse("n${9_700 + i}")!!, LatLon(at.lat + 0.001 * (i % 3), at.lon - 0.001 * (i % 2)), mapOf("shop" to "bakery", "name" to "Bakker $i"))
+            },
+            regionName = "Netherlands",
+        )
+        File(dirs.regions.apply { mkdirs() }, "packs-latest.json").writeText(published)
+        val s = testServices(root = root, stores = listOf(store))
+        s.mine.useDeps(MineFixtures.packDeps(s, s.clock.instant()))
+        // begun as a download begins it, in the box of the Netherlands' pack: its file names no pack yet
+        s.mine.engine.begin("netherlands", "Netherlands", BBox(3.3, 50.75, 7.2, 53.5), setOf(RegionLayer.PLACES))
+        // its places in, recorded as their install records them: the store is attached, and asked, from here on
+        s.mine.files.edit("netherlands") { it.copy(layers = it.layers + (RegionLayer.PLACES to LayerRecord("pack", 1L, 0L, "p"))) }
+        assertNull(s.packCountries.ofStore(store))
+        assertEquals("the box's, no pack named yet", "BE", HereContext.region(s, maastricht).country)
+        // the rest come: its pack written as resume writes it at its end, every layer it wants being in
+        runBlocking { s.mine.engine.resume("netherlands") }
+        assertEquals("netherlands", s.mine.files.get("netherlands")?.packId)
+        // the next asks, in the same run
+        assertEquals("NL", s.packCountries.ofStore(store))
+        val hit = store.inBox(BBox.around(maastricht, 500.0), 5).first()
+        assertEquals("a typed search's hit", "NL", HereContext.regionOf(s, hit))
+        assertEquals("the kilometre asked before", "NL", HereContext.region(s, maastricht).country)
+        assertEquals("NL", HereContext.regionNow(s, maastricht).country)
+        dutchHolidays(maastricht, HereContext.hours(s, maastricht, ZoneId.of("Europe/Amsterdam")))
+        assertEquals("a kilometre asked for the first time", "NL", HereContext.region(s, venlo).country)
+        s.close()
+        store.close()
+    }
+
+    /**
+     * Its neighbour, as before (batch 5 A6): a region of no pack whose file is not written again is read once. Its time
+     * and length say it is the same file, so one changed under them, as no writer of a region's file changes it, is not
+     * read again.
+     */
+    @Test
+    fun aRegionOfNoPackWhoseFileIsNotWrittenAgainIsReadOnce() {
+        val root = TempFiles.dir("atlas-once")
+        val dirs = Dirs(root, File(root, "cache"))
+        val store = PlaceStore.open(File(dirs.places.apply { mkdirs() }, "custom.db"))
+        store.importPlaces(listOf(Place(OsmId.parse("n9721")!!, maastricht, mapOf("shop" to "bakery"))), regionName = "Custom")
+        val files = RegionFiles(dirs.regions, dirs.places, dirs.segments)
+        // a region of no pack, its file's time a whole second
+        val first = RegionMeta("custom", "Custom" + "x".repeat(21), box, 0L, 0L)
+        files.save(first)
+        val copy = File(dirs.regions, "packs-latest.json").apply { writeText(published) }
+        val countries = PackCountries(files, listOf(copy))
+        val at = 1_700_000_000_000L
+        assertTrue(files.meta("custom").setLastModified(at))
+        assertNull(countries.ofStore(store))
+        // the same time and length, the file naming a pack (its name 21 characters shorter)
+        val named = RegionMeta("custom", "Custom", box, 0L, 0L, packId = "netherlands")
+        assertEquals(first.toJson().length, named.toJson().length)
+        files.meta("custom").apply {
+            writeText(named.toJson())
+            assertTrue(setLastModified(at))
+        }
+        assertNull("its file was read again", countries.ofStore(store))
+        store.close()
+    }
+
+    /**
+     * Where neither a region nor an index in memory says, the phone's country says where its box holds the point,
+     * before the smallest box (the app maintainer, 19 November 2026, batch 6 A2): the smallest box put Maastricht,
+     * Eindhoven and Terneuzen in Belgium on a Dutch phone at each cold start, till the camera had read the Netherlands'
+     * index, and for good where it had not been over them that run; 38ddafa1 read the phone's country. So too with the
+     * Netherlands published and its index not read yet.
+     */
+    @Test
+    fun aDutchPhoneReadsTheDutchTownsInBelgiumsBoxDutch() {
+        onPhone("nl-NL")
+        val root = TempFiles.dir("atlas-phone")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        val dutch = listOf(maastricht, eindhoven, terneuzen)
+        for (t in dutch) {
+            assertEquals("$t", "BE", Countries.of(t))
+            assertEquals("$t", "NL", HereContext.region(s, t).country)
+            assertEquals("$t", "NL", HereContext.regionNow(s, t).country)
+            dutchHolidays(t, HereContext.hours(s, t, ZoneId.of("Europe/Amsterdam")))
+        }
+        // the Netherlands published, its index not in memory: nothing says the towns are not the phone's country's
+        s.packCountries.learn(PackCatalog.parse(published).packs)
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        s.packCountries.tiles = PackCountries.Tiles { _, _, _ -> null }
+        for (t in dutch) {
+            assertEquals("$t", "NL", HereContext.region(s, t).country)
+            assertEquals("$t", "NL", HereContext.regionNow(s, t).country)
+        }
+        s.close()
+    }
+
+    /** The same on a German phone in Munich, which the smallest box put in Austria (no calendar there). */
+    @Test
+    fun aGermanPhoneReadsMunichGerman() {
+        onPhone("de-DE")
+        val s = testServices()
+        assertEquals("AT", Countries.of(munich))
+        assertEquals("DE", HereContext.region(s, munich).country)
+        assertEquals("DE", HereContext.regionNow(s, munich).country)
+        val hours = HereContext.hours(s, munich, ZoneId.of("Europe/Berlin"))
+        assertEquals("DE", hours.country)
+        assertEquals("German Unity Day", true, hours.publicHolidays?.isHoliday(LocalDate.of(2027, 10, 3)))
+        s.close()
+    }
+
+    /**
+     * The same on a Belgian phone in Arlon, which the smallest box put in Luxembourg: its address number first, as
+     * Luxembourg writes them, where 38ddafa1 wrote it street first, and no calendar.
+     */
+    @Test
+    fun aBelgianPhoneReadsArlonBelgianItsAddressStreetFirst() {
+        onPhone("nl-BE")
+        val s = testServices()
+        assertEquals("LU", Countries.of(arlon))
+        val bakery = Place(
+            OsmId.parse("n9731")!!, arlon,
+            mapOf("shop" to "bakery", "name" to "Boulangerie", "addr:street" to "Grand-Rue", "addr:housenumber" to "12", "addr:postcode" to "6700", "addr:city" to "Arlon"),
+        )
+        val local = HereContext.localeOf(s, bakery, arlon, ZoneId.of("Europe/Brussels"))
+        assertEquals("BE", local.country)
+        assertEquals("as the rows write it", "Grand-Rue 12, 6700 Arlon", addressOf(bakery, local.country))
+        assertEquals("Belgium's National Day", true, local.hours(arlon).publicHolidays?.isHoliday(LocalDate.of(2027, 7, 21)))
+        s.close()
+    }
+
+    /**
+     * The places around read in the phone's country too, where the regions name none: Munich's, which name their state
+     * and not their country, Bavaria's, and its Epiphany (the smallest box read them in Austria, and no state).
+     */
+    @Test
+    fun aGermanPhoneReadsThePlacesAroundMunichInBavaria() {
+        onPhone("de-DE")
+        // three places of no pack naming their state alone: no other store by Munich holds three
+        val around = MemoryPlaces(
+            (1..3).map { i -> Place(OsmId.parse("n${9_740 + i}")!!, LatLon(munich.lat + 0.001 * i, munich.lon), mapOf("shop" to "bakery", "addr:state" to "Bayern")) },
+            country = null,
+        )
+        val s = testServices(stores = listOf(around))
+        assertEquals(HereRegion("DE", "DE-BY"), HereContext.region(s, munich))
+        assertEquals("Epiphany", true, HereContext.hours(s, munich, ZoneId.of("Europe/Berlin")).publicHolidays?.isHoliday(LocalDate.of(2027, 1, 6)))
+        s.close()
+    }
+
+    /**
+     * Its neighbours, as before: the phone's country is not taken where its index in memory lists nothing (Antwerp on a
+     * Dutch phone), the tiles say first (Maastricht on a Belgian phone), nor where its box does not hold the point
+     * (Amsterdam on a French phone), and a phone that names no country reads the boxes.
+     */
+    @Test
+    fun thePhonesCountryGivesWayToItsIndexAndToItsBox() {
+        val root = TempFiles.dir("atlas-phone")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        s.packCountries.learn(PackCatalog.parse(published).packs)
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        // the Netherlands' index in memory: the Dutch towns' windows are listed, Antwerp's are not
+        s.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            if (id == "netherlands" && towns.any { Geo.distance(it, LatLon(lat, lon)) < 5_000.0 }) 14 else 0
+        }
+        onPhone("nl-NL")
+        assertEquals("BE", HereContext.region(s, antwerp).country)
+        assertEquals("BE", HereContext.regionNow(s, antwerp).country)
+        onPhone("nl-BE")
+        assertEquals("NL", HereContext.region(s, maastricht).country)
+        assertEquals("NL", HereContext.regionNow(s, maastricht).country)
+        s.close()
+        val bare = testServices()
+        onPhone("fr-FR")
+        assertEquals("NL", HereContext.region(bare, amsterdam).country)
+        assertEquals("NL", HereContext.regionNow(bare, amsterdam).country)
+        for (tag in listOf("nl", "und")) {
+            onPhone(tag)
+            for (t in towns + antwerp) {
+                assertEquals("$tag $t", Countries.of(t), HereContext.region(bare, t).country)
+                assertEquals("$tag $t", Countries.of(t), HereContext.regionNow(bare, t).country)
+                assertEquals("$tag $t", Countries.of(t), HereContext.hours(bare, t, ZoneId.of("Europe/Amsterdam")).country)
+            }
+        }
+        bare.close()
+    }
+
+    /**
+     * The sheet reads the country again once a published country's tiles' index came into memory (the app maintainer,
+     * 19 November 2026, batch 6 B15, the rest of A2): at Antwerp on a Dutch phone, the Netherlands published and its
+     * index not read yet, the moment reads the phone's country, as nothing says Antwerp is not its; once the camera or
+     * a window has read the index, which lists nothing there, Belgium, where it kept the Netherlands till it moved.
+     */
+    @Test
+    fun theSheetReadsTheCountryAgainOnceAnIndexCame() {
+        onPhone("nl-NL")
+        val root = TempFiles.dir("atlas-index")
+        File(root, "engine/windows/index/packs-latest.json").apply { parentFile?.mkdirs() }.writeText(published)
+        val s = testServices(root = root)
+        s.packCountries.learn(PackCatalog.parse(published).packs)
+        MapEngine.countries = listOf(CountryTiles("netherlands", "Netherlands", box, levels = true))
+        val came = java.util.concurrent.atomic.AtomicBoolean(false)
+        val done = java.util.concurrent.CountDownLatch(1)
+        // the index not in memory, then in memory and listing nothing at Antwerp; once it is, the sheet's own ask of
+        // the regions off the main thread waits till the test is done, so only the index's coming changes the moment
+        s.packCountries.tiles = PackCountries.Tiles { _, _, _ ->
+            if (!came.get()) null
+            else {
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) done.await(20, java.util.concurrent.TimeUnit.SECONDS)
+                0
+            }
+        }
+        try {
+            runBlocking { s.settings.edit { it[app.atlas.services.SettingsKeys.SEARCH_MODE] = app.atlas.search.TravelMode.BIKE.name } }
+            val m = SearchSheetModel(s, antwerp, "en")
+            // the settings read: the moment made again with them, before the index comes
+            until { m.state.value.prefs.mode == app.atlas.search.TravelMode.BIKE }
+            assertEquals("NL", m.state.value.moment.hours.country)
+            came.set(true)
+            s.packCountries.indexRead()
+            until { m.state.value.moment.hours.country == "BE" }
+            assertEquals("BE", m.state.value.moment.hours.country)
+        } finally {
+            done.countDown()
         }
         s.close()
     }

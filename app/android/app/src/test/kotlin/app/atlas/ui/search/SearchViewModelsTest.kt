@@ -264,6 +264,32 @@ class SearchViewModelsTest {
         assertNull(own.state.value.brandSite)
     }
 
+    /**
+     * The page asks the brand's site by the brand's name (the app maintainer, 19 November 2026, batch 6 B9: asked
+     * without it, it passed every test, as the branches above link the brand's own site most): three branches link
+     * their shopping centre's pages, two the brand's own Dutch site, whose name it is, so the brand's site is that one
+     * (batch 4 B24).
+     */
+    @Test
+    fun aBranchWithoutAWebsiteLinksItsBrandsOwnSiteBeforeACentres() {
+        fun starbucks(n: Long, dLat: Double, site: String?) = app.atlas.model.Place(
+            OsmId.parse("n$n"),
+            app.atlas.geo.LatLon(Services.WESTERKERK.lat + dLat, Services.WESTERKERK.lon + 0.01),
+            mapOf("amenity" to "cafe", "name" to "Starbucks", "brand" to "Starbucks", "brand:wikidata" to "Q37158") + listOfNotNull(site?.let { "website" to it }),
+        )
+        val branches = listOf(
+            starbucks(9011, 0.004, "https://www.starbucks.nl/store/2001"),
+            starbucks(9012, -0.006, "https://www.starbucks.nl/store/2002"),
+            starbucks(9013, 0.002, "https://www.kalvertoren.nl/winkels/starbucks"),
+            starbucks(9014, -0.002, "https://www.kalvertoren.nl/winkels/starbucks-2"),
+            starbucks(9015, 0.003, "https://www.kalvertoren.nl/winkels/starbucks-3"),
+            starbucks(9016, 0.001, null),
+        )
+        val bare = PlaceViewModel(testServices(stores = listOf(MemoryPlaces(branches, country = null))), null, "n9016", null, null, "en")
+        until { bare.state.value.brandSite != null }
+        assertEquals("https://www.starbucks.nl", bare.state.value.brandSite)
+    }
+
     @Test
     fun aPlaceOnlyFromALinkStaysHonest() {
         val vm = PlaceViewModel(testServices(), null, "n123", app.atlas.geo.LatLon(52.37, 4.88), "Somewhere", "en")

@@ -144,12 +144,12 @@ class MapData(private val services: Services) {
 
     /**
      * The countries' tiles in Atlas's own packs (their indexes kept beside the windows' data's), read on the windows' own
-     * thread.
+     * thread; each index that comes into memory told to the country question ([PackCountries.indexRead]).
      */
     private val windowTiles: WindowTiles by lazy {
         WindowTiles({ runBlocking { windowCatalog.packs() } }, packsIndexDir, services.http.client, local = { _, set ->
             set.tiles.sha256?.let(regionFiles::keptTiles)?.let { (tiles, index) -> WindowTiles.Local(tiles, index) }
-        })
+        }, indexRead = { services.packCountries.indexRead() })
     }
 
     /** When each country's tiles' index was last asked for ([countryHolds]), by its id, ms of the uptime clock. */
@@ -164,13 +164,30 @@ class MapData(private val services: Services) {
      * memory allocates nothing.
      */
     private fun countryHolds(id: String, lat: Double, lon: Double): Boolean? {
-        val version = MapEngine.windowVersion() ?: return null
+        val version = coreVersion() ?: return null
         windowTiles.holds(id, version, lat, lon)?.let { return it }
         if (services.ciRun && !services.worldFetch.isCompleted) return null
         val now = android.os.SystemClock.uptimeMillis()
         val asked = indexAsked[id]
         if (asked != null && now - asked < COUNTRIES_RETRY_MS) return null
         indexAsked[id] = now
+        readIndex(id, version)
+        return null
+    }
+
+    /**
+     * This core's window version (MapCore.Window.version, as the map's engine has it): null where the phone's core
+     * builds no tiles of its own, and in a JVM test, which loads no core. The two country hooks read it here
+     * ([wireCountries]), so that a test wires them with a version of its own (the app maintainer, 19 November 2026,
+     * batch 6 B9).
+     */
+    internal var coreVersion: () -> String? = { MapEngine.windowVersion() }
+
+    /**
+     * Has country [id]'s tiles' index of core version [version] read in the background, and the maps drawn again once
+     * it is: the camera's hook's alone ([countryHolds]). A test gives its own, which reads nothing.
+     */
+    internal var readIndex: (id: String, version: String) -> Unit = { id, version ->
         services.scope.launch(Dispatchers.IO) {
             try {
                 val tiles = windowTiles.index(id, version) ?: return@launch
@@ -180,7 +197,22 @@ class MapData(private val services: Services) {
                 android.util.Log.w("AtlasMap", "vk windows: the tiles' index of $id did not come: ${e.message}")
             }
         }
-        return null
+    }
+
+    /**
+     * The two hooks that read the countries' tiles' indexes ([wire]'s). The camera's ([MapEngine.countryHolds]): which
+     * places within a country's box its tiles hold, as their index lists them, so that beyond its border (Antwerp and
+     * Aachen in the Netherlands' box) no country's levels are and the world draws under the cover; it has an index read
+     * where it is not in memory. And the country question's ([PackCountries.tiles], HereContext's), from the indexes in
+     * memory alone: it never has one read or fetched (the app maintainer, 18 November 2026, batch 5 A3). Internal so
+     * that a test wires them as [wire] does (19 November 2026, batch 6 B9: none did, so the country question's wired
+     * back to the camera's passed every test).
+     */
+    internal fun wireCountries() {
+        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
+        services.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
+            coreVersion()?.let { windowTiles.level(id, it, lat, lon) }
+        }
     }
 
     /** The offline regions' files, read here for a country's tiles kept whole (the Maps board's download of a country). */
@@ -319,14 +351,9 @@ class MapData(private val services: Services) {
                 delay(COUNTRIES_RETRY_MS)
             }
         }
-        // which places within a country's box its tiles hold, as their index lists them: beyond its border (Antwerp and
-        // Aachen in the Netherlands' box) no country's levels are, and the world draws under the cover
-        MapEngine.countryHolds = MapEngine.CountryHolds { c, lat, lon -> countryHolds(c.id, lat, lon) }
-        // and the country question's (HereContext), from the indexes in memory alone: it never has one read or fetched,
-        // which the camera above does (the app maintainer, 18 November 2026, batch 5 A3)
-        services.packCountries.tiles = PackCountries.Tiles { id, lat, lon ->
-            MapEngine.windowVersion()?.let { windowTiles.level(id, it, lat, lon) }
-        }
+        // which places within a country's box its tiles hold, for the camera, and for the country question from the
+        // indexes in memory alone
+        wireCountries()
         MapEngine.windowsAllowed = { !services.ciRun }
         // the world beyond the countries' reach (ENGINE.md step 6): world.json from world-latest at most once a day, the
         // index and the globe of its release at the first start and each new version (a new one drops the old one and

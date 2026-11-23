@@ -80,6 +80,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
@@ -367,6 +368,20 @@ class SearchSheetModel(
     private var askedHits: List<Hit> = emptyList()
     private var askJob: Job? = null
 
+    /**
+     * The sheet's readings under way, by name: "pool" (the grid's places), "quests", "node" (a kind's), "rank", "also"
+     * (what else sells), "further" (the kind further), "walk", "region", "sites" (the bathing waters) and "ask" (typed
+     * words); one cancelled is under way until its body has returned. For a test that reads the sheet once its work is
+     * done, or all of it but what the test holds back (the app maintainer, 19 November 2026, batch 6 B9: it waited for
+     * a quiet tenth of a second). Not counted: the collectors that run for the sheet's life, what the user sends or
+     * keeps, and the kinds of a list opened from a kind ([openEvery]). The main thread.
+     */
+    internal val busy: Set<String>
+        get() = mapOf(
+            "pool" to poolJob, "quests" to questsJob, "node" to nodeJob, "rank" to rankJob, "also" to alsoJob,
+            "further" to furtherJob, "walk" to walkJob, "region" to regionJob, "sites" to sitesJob, "ask" to askJob,
+        ).filterValues { it != null && !it.isCompleted }.keys
+
     /** The circle typed words asked for ("within 500 m"): it does not widen. */
     private var fixedRadius: Double? = null
 
@@ -395,6 +410,10 @@ class SearchSheetModel(
                 if (s.inside && (p.mode != s.prefs.mode || rejoined)) reload() else if (s.inside) rerank()
             }
         }
+        // a published country's tiles' index came into memory (the camera's, a window's): the country near a border may
+        // read otherwise now, so the moment is made again as when the sky changed (the app maintainer, 19 November
+        // 2026, batch 6 B15: at Antwerp on a Dutch phone it read the Netherlands till the next move)
+        viewModelScope.launch { services.packCountries.indexesRead.drop(1).collect { skyChanged() } }
     }
 
     /** The search opened here, or the searcher moved: the grid's places are read, again once it is [POOL_MOVE_M] away. */

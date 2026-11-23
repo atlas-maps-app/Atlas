@@ -395,22 +395,27 @@ class WindowLookupsTest {
      * Sources, a 429, every server resting, a captive portal), the answer holds the windows the packs were asked for:
      * they are waited for, at most for what is left of the wait (the app maintainer, 18 November 2026, batch 5 A1: it
      * answered before they came, with none of them, where 38ddafa1 waited for the nine nearest first). The places'
-     * lookups, the category row and the Where wheel, the shop screens; the eat screens in `EatWindowsTest`.
+     * lookups, the category row and the Where wheel, the shop screens; the eat screens in `EatWindowsTest`. Each
+     * lookup's windows wait for its 504 (19 November 2026, batch 6 B9: they came 300 ms after they were asked, so a 504
+     * slower than that never reached the failure's arm); [whereOverpassFailsTheAnswerWaits] runs the arm in its own
+     * order.
      */
     @Test
     fun whereOverpassFailsAtOnceTheAnswerHoldsTheWindowsThePacksSend() = runBlocking {
+        val sent = java.util.concurrent.atomic.AtomicReference(CountDownLatch(1))
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 asked.incrementAndGet()
-                return MockResponse.Builder().code(504).body("busy").build()
+                return MockResponse.Builder().code(504).body("busy").build().also { sent.get().countDown() }
             }
         }
         server.start()
         val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
-        // each window comes 300 ms after it is asked, three at a time: after Overpass's 504
+        // each window comes once the lookup's 504 is sent, and 300 ms on, three at a time
         fun fresh(): LocalData {
+            val failed = CountDownLatch(1).also { sent.set(it) }
             val dir = tmp.newFolder()
-            val windows = WindowPlaces({ dir }, packed = { x, y -> Thread.sleep(300); cafeAt(x, y) })
+            val windows = WindowPlaces({ dir }, packed = { x, y -> failed.await(20, TimeUnit.SECONDS); Thread.sleep(300); cafeAt(x, y) })
             return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 5_000L)
         }
 
@@ -439,10 +444,81 @@ class WindowLookupsTest {
     }
 
     /**
+     * The failure's arm in its own order (the app maintainer, 19 November 2026, batch 6 B9): the windows the packs were
+     * asked for come only once [LocalData.beside] knows its answer failed, however long that takes; it waits for them
+     * before it answers, so the phone's part read after the answer holds them, and shows nothing meanwhile.
+     */
+    @Test
+    fun whereOverpassFailsTheAnswerWaits() = runBlocking {
+        val known = CountDownLatch(1)
+        val dir = tmp.newFolder()
+        val windows = WindowPlaces({ dir }, packed = { x, y -> known.await(20, TimeUnit.SECONDS); Thread.sleep(200); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 30_000L)
+        val shown = ArrayList<Set<String>>()
+        val got = local.beside(
+            off, 2_000.0, cafe, show = { a -> shown += a.value.mapNotNull { it.name() }.toSet() },
+            failed = { a: String -> known.countDown(); a == "HTTP 504" }, ask = { "HTTP 504" },
+        )
+        assertEquals("HTTP 504", got)
+        val held = windows.held(BBox.around(off, 2_000.0), off)?.places.orEmpty().mapNotNull { it.name() }.toSet()
+        assertTrue("the phone holds after the answer: $held", held.containsAll(nearOff))
+        assertEquals("shown before the failure", emptyList<Set<String>>(), shown)
+    }
+
+    /**
+     * A failure's answer holds what the phone holds after it, with what was shown, not what it held before the windows
+     * came (the app maintainer, 19 November 2026, batch 6 B9: the phone's part from before the windows passed every
+     * test, as none showed a part before a failure whose windows came after it): [off]'s own window is on the phone and
+     * shown at once, the others come once the 504 is sent, and 300 ms on.
+     */
+    @Test
+    fun aFailureAfterAPartWasShownHoldsTheWindowsThatCameAfterIt() = runBlocking {
+        val sent = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(504).body("busy").build().also { sent.countDown() }
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val dir = tmp.newFolder("part")
+        File(dir, "${tile.z}-${tile.x}-${tile.y}.json.gz").writeBytes(cafeAt(tile.x, tile.y))
+        val windows = WindowPlaces({ dir }, packed = { x, y -> sent.await(20, TimeUnit.SECONDS); Thread.sleep(300); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 30_000L)
+        val answers = local.placesAsFound(off, 2_000.0, cafe).toList()
+        assertEquals("the phone's part at once", setOf("${tile.x}/${tile.y}"), answers.first().value.mapNotNull { it.name() }.toSet())
+        assertNotNull(answers.last().error)
+        assertEquals(nearOff, answers.last().value.mapNotNull { it.name() }.toSet())
+        assertEquals(1, asked.get())
+    }
+
+    /**
+     * A good answer is not held for the windows (the app maintainer, 19 November 2026, batch 6 B9: one that waited for
+     * them, up to the whole wait, passed every test): Overpass answers at once, and the windows the packs were asked
+     * for come only once the test is over.
+     */
+    @Test
+    fun aGoodAnswerIsNotHeldForTheWindows() = runBlocking {
+        val over = CountDownLatch(1)
+        val dir = tmp.newFolder()
+        val windows = WindowPlaces({ dir }, packed = { x, y -> over.await(40, TimeUnit.SECONDS); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 30_000L)
+        try {
+            val got = kotlinx.coroutines.withTimeoutOrNull(10_000L) { local.beside(off, 2_000.0, cafe, failed = { a: String -> a != "fine" }, ask = { "fine" }) }
+            assertEquals("the good answer, at once", "fine", got)
+        } finally {
+            over.countDown()
+        }
+    }
+
+    /**
      * Where Overpass is slow (up to about 40 s a server), the packs' part of a circle they cannot make whole shows as
      * soon as the windows they were asked for have come, within the wait, not when Overpass answers (the app
      * maintainer, 18 November 2026, batch 5 A1: 38ddafa1 showed it after one to three seconds, and asked Overpass
-     * after). The places' lookups, the category row, the shop screens; the eat screens in `EatWindowsTest`.
+     * after). The places' lookups, the category row, the shop screens; the eat screens in `EatWindowsTest`. The wait is
+     * 30 s, the bound 5 s (19 November 2026, batch 6 B9: a wait of 3 s within a bound of 3.5 s passed a lookup that
+     * waited out the whole wait).
      */
     @Test
     fun whereOverpassIsSlowThePacksPartComesWithinTheWait() = runBlocking {
@@ -459,24 +535,24 @@ class WindowLookupsTest {
         fun fresh(): LocalData {
             val dir = tmp.newFolder()
             val windows = WindowPlaces({ dir }, packed = { x, y -> Thread.sleep(100); cafeAt(x, y) })
-            return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 3_000L)
+            return LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null }, windowWaitMs = 30_000L)
         }
 
         val places = untilTheWindowsShow(gate, fresh().placesAsFound(off, 2_000.0, cafe)) { a -> a.value.mapNotNull { it.name() }.toSet() }
         assertNotNull("the places' lookup did not show the windows before Overpass answered", places)
-        assertTrue("the places' lookup showed the windows after $places ms", places!! < 3_500)
+        assertTrue("the places' lookup showed the windows after $places ms", places!! < 5_000)
 
         var local = fresh()
         val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
         val row = untilTheWindowsShow(gate, finder.nearby("eat", off, 2_000.0, 20)) { a -> a.places.mapNotNull { it.name() }.toSet() }
         assertNotNull("the category row did not show the windows before Overpass answered", row)
-        assertTrue("the category row showed the windows after $row ms", row!! < 3_500)
+        assertTrue("the category row showed the windows after $row ms", row!! < 5_000)
 
         local = fresh()
         val shops = app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
         val shop = untilTheWindowsShow(gate, shops.around("cafes", cafe, off, 2_000.0)) { a -> a.places.mapNotNull { it.name() }.toSet() }
         assertNotNull("the shop screen did not show the windows before Overpass answered", shop)
-        assertTrue("the shop screen showed the windows after $shop ms", shop!! < 3_500)
+        assertTrue("the shop screen showed the windows after $shop ms", shop!! < 5_000)
         assertEquals(3, asked.get())
     }
 
@@ -608,6 +684,277 @@ class WindowLookupsTest {
         assertTrue("the wheel waited $took ms for four kinds", took < 2_500)
         assertTrue("the wheel waited for the windows: $took ms", took >= 1_000)
     }
+
+    /**
+     * Where Overpass fails, the answer holds every place shown before it, though another lookup let its windows go
+     * meanwhile (the app maintainer, 19 November 2026, batch 6 A3): the read after the failure held only the window the
+     * phone keeps, where 38ddafa1 kept what it had shown. The places' lookup here; the category row, the wheel and the
+     * shop screens below, the eat screens in `EatWindowsTest`.
+     */
+    @Test
+    fun aFailureHoldsWhatWasShownThoughAnotherLookupLetItsWindowsGo() {
+        val (error, names) = afterAnotherLookup { local, _, report ->
+            local.placesAsFound(off, 2_000.0, cafe).collect { report(it.error, it.value.mapNotNull { p -> p.name() }.toSet()) }
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    @Test
+    fun theCategoryRowsFailureHoldsWhatWasShown() {
+        val (error, names) = afterAnotherLookup { local, op, report ->
+            LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true }).nearby("eat", off, 2_000.0, 20)
+                .collect { report(it.error, it.places.mapNotNull { p -> p.name() }.toSet()) }
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    /** The wheel shows nothing till it answers: what the windows brought is what it had (38ddafa1 waited for them). */
+    @Test
+    fun theWheelsFailureHoldsWhatTheWindowsBrought() {
+        val (error, names) = afterAnotherLookup(byAnswer = false) { local, op, report ->
+            val got = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true }).nearbyMany(listOf("eat"), off, 2_000.0, 20).getValue("eat")
+            report(got.error, got.places.mapNotNull { it.name() }.toSet())
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    @Test
+    fun theShopScreensFailureHoldsWhatWasShown() {
+        val (error, names) = afterAnotherLookup { local, op, report ->
+            app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+                .around("cafes-shown", cafe, off, 2_000.0).collect { report(it.error, it.places.mapNotNull { p -> p.name() }.toSet()) }
+        }
+        assertNotNull(error)
+        assertEquals(nearOff, names)
+    }
+
+    /**
+     * Batch 6 A3's scene: a lookup 2 km around [off], whose windows came from Atlas's packs while Overpass waits;
+     * then a second lookup far west that holds eighteen windows (the nine the phone keeps around its middle, nine from
+     * the packs) and looks last, so at the first's close the trim takes the first's; then Overpass fails for the
+     * first. The phone keeps [off]'s own window, so what it holds after is never none. [lookup] runs the first and
+     * gives each answer to its `report` as the error and the names; where [byAnswer] the second begins once an answer
+     * held [nearOff], else (the wheel, which shows nothing) once Overpass was asked, the phone holds the first's ten
+     * windows, and a little more, for the first's own look at them. The last answer.
+     */
+    private fun afterAnotherLookup(byAnswer: Boolean = true, lookup: suspend (LocalData, Overpass, (String?, Set<String>) -> Unit) -> Unit): Pair<String?, Set<String>> = runBlocking {
+        val release = CountDownLatch(1)
+        val requested = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                requested.countDown()
+                release.await(20, TimeUnit.SECONDS)
+                return MockResponse.Builder().code(504).body("busy").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val far = TileId(WindowPlaces.LEVEL, tile.x - 6, tile.y)
+        val dir = tmp.newFolder("shown")
+        File(dir, "${tile.z}-${tile.x}-${tile.y}.json.gz").writeBytes(cafeAt(tile.x, tile.y))
+        for (dx in -1..1) for (dy in -1..1) File(dir, "${WindowPlaces.LEVEL}-${far.x + dx}-${far.y + dy}.json.gz").writeBytes(cafeAt(far.x + dx, far.y + dy))
+        val windows = WindowPlaces({ dir }, packed = { x, y -> cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val shown = CountDownLatch(1)
+        val answers = java.util.Collections.synchronizedList(ArrayList<Pair<String?, Set<String>>>())
+        val first = launch(Dispatchers.IO) {
+            lookup(local, op) { error, names ->
+                answers += error to names
+                if (names == nearOff) shown.countDown()
+            }
+        }
+        if (byAnswer) assertTrue("the first lookup's windows showed", shown.await(10, TimeUnit.SECONDS))
+        else {
+            assertTrue("Overpass was asked", requested.await(10, TimeUnit.SECONDS))
+            assertEquals("the first lookup's windows came", 10, heldIn(windows, BBox.around(off, 2_000.0), off, 10))
+            Thread.sleep(200)
+        }
+        val farBox = BBox.around(far.bbox.center, 3_000.0)
+        val held = windows.fetched(farBox, far.bbox.center, 10_000L, waitForPart = true)
+        assertEquals("the second lookup holds eighteen windows", 18, held?.places?.size)
+        // the second's the last look before Overpass answers: its middle and its windows are the ones held
+        windows.held(farBox, far.bbox.center)
+        release.countDown()
+        first.join()
+        assertEquals("Overpass was asked once", 1, asked.get())
+        answers.last()
+    }
+
+    /**
+     * A lookup cancelled as it starts leaves nothing waited for (the app maintainer, 19 November 2026, batch 6 A4): the
+     * windows it had asked the packs for stayed waited for, for ever, as `withContext` dropped the fetch it made, so
+     * every later lookup's windows went in their place. Here the lookup is cancelled while it reads the regions, on
+     * the dispatcher the category row runs on; then a lookup east, one farther east, and the first east again: its
+     * windows are still held, so the packs are not asked for them again.
+     */
+    @Test
+    fun aLookupCancelledAsItStartsLeavesNothingWaitedFor() = runBlocking {
+        val gated = java.util.concurrent.atomic.AtomicBoolean(true)
+        val entered = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val sent = AtomicInteger()
+        val empty = tmp.newFolder("cancelled")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
+        val local = LocalData(
+            stores = {
+                if (gated.get()) {
+                    entered.countDown()
+                    release.await(20, TimeUnit.SECONDS)
+                }
+                null
+            },
+            packs = { null },
+            isOnline = { true },
+            windowPlaces = windows,
+            countryAt = { null },
+        )
+        val lookup = launch(Dispatchers.Default) {
+            local.beside<Result<List<app.atlas.model.Place>>>(here, 1_000.0, cafe, failed = { it.isFailure }, ask = null)
+        }
+        assertTrue("the lookup reads the regions", entered.await(10, TimeUnit.SECONDS))
+        lookup.cancel()
+        gated.set(false)
+        release.countDown()
+        lookup.join()
+        // the cancelled lookup's nine windows come all the same
+        assertEquals(9, heldIn(windows, nine(tile), here, 9))
+        val east = TileId(WindowPlaces.LEVEL, tile.x + 10, tile.y)
+        val farther = TileId(WindowPlaces.LEVEL, tile.x + 20, tile.y)
+        assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+        assertEquals(9, windows.fetched(nine(farther), farther.bbox.center, 10_000L)?.places?.size)
+        val before = sent.get()
+        assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+        assertEquals("the windows east asked of the packs again", 0, sent.get() - before)
+    }
+
+    /**
+     * A lookup's windows are let go once they came, though Overpass is still to answer (the app maintainer, 19 November
+     * 2026, batch 6 B15): they stayed waited for until it answered, up to 40 s a server, so the lookups meanwhile had
+     * their windows go in theirs. Here the first lookup's windows have come and shown while Overpass waits; then a
+     * lookup east, one farther east, and the first east again: its windows are still held, so the packs are not asked
+     * for them again.
+     */
+    @Test
+    fun aLookupsWindowsGoOnceTheyCameThoughOverpassWaits() = runBlocking {
+        val sent = AtomicInteger()
+        val empty = tmp.newFolder("answering")
+        val windows = WindowPlaces({ empty }, packed = { x, y -> sent.incrementAndGet(); cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { null }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val shown = CountDownLatch(1)
+        val answer = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        // twelve windows meet 2 km around [off] and nine are asked of the packs: Overpass is asked beside them
+        val lookup = launch(Dispatchers.IO) {
+            local.beside<Boolean>(off, 2_000.0, cafe, show = { if (it.value.map { p -> p.name() }.toSet() == nearOff) shown.countDown() }, failed = { !it }, ask = { answer.await() })
+        }
+        val again = try {
+            assertTrue("the first lookup's windows showed", shown.await(10, TimeUnit.SECONDS))
+            val east = TileId(WindowPlaces.LEVEL, tile.x + 10, tile.y)
+            val farther = TileId(WindowPlaces.LEVEL, tile.x + 20, tile.y)
+            assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+            assertEquals(9, windows.fetched(nine(farther), farther.bbox.center, 10_000L)?.places?.size)
+            val before = sent.get()
+            assertEquals(9, windows.fetched(nine(east), east.bbox.center, 10_000L)?.places?.size)
+            sent.get() - before
+        } finally {
+            answer.complete(true)
+        }
+        lookup.join()
+        assertEquals("the windows east asked of the packs again", 0, again)
+    }
+
+    /**
+     * A pack that does not read (cut short, or its disk failing) holds nothing, and Overpass is asked for the circle
+     * (the app maintainer, 19 November 2026, batch 6 A5): it threw through the windows step, so the category row's and
+     * the shop screens' lookups threw, and the wheel showed no kind, where 38ddafa1 asked Overpass. The pack holds
+     * [here] but not 300 m around it; no window comes from the packs.
+     */
+    @Test
+    fun aPackThatDoesNotReadLeavesTheCircleToOverpass() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val dir = tmp.newFolder("cut")
+        val local = LocalData(stores = { null }, packs = { cutShort(here) }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val all = setOf("Café de Vliet", "Café de Overkant", "Café Ver Weg")
+
+        val row = runCatching { finder.nearby("eat", here, 300.0, 20).toList().last() }
+        assertTrue("the row: ${row.exceptionOrNull()}", row.isSuccess)
+        assertEquals(PlaceOrigin.ONLINE, row.getOrThrow().source)
+        assertEquals(all, row.getOrThrow().places.map { it.name() }.toSet())
+
+        val wheel = runCatching { finder.nearbyMany(listOf("eat"), here, 300.0, 20).getValue("eat") }
+        assertTrue("the wheel: ${wheel.exceptionOrNull()}", wheel.isSuccess)
+        assertEquals(PlaceOrigin.ONLINE, wheel.getOrThrow().source)
+        assertEquals(all, wheel.getOrThrow().places.map { it.name() }.toSet())
+
+        val shop = runCatching {
+            app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+                .around("cafes-cut", cafe, here, 300.0).toList().last()
+        }
+        assertTrue("the shop screens: ${shop.exceptionOrNull()}", shop.isSuccess)
+        assertEquals(PlaceOrigin.ONLINE, shop.getOrThrow().origin)
+        assertEquals(listOf("Café de Vliet"), shop.getOrThrow().places.map { it.name() })
+        assertEquals(3, asked.get())
+    }
+
+    /**
+     * Beside [aPackThatDoesNotReadLeavesTheCircleToOverpass]: where the windows from the packs make the circle whole,
+     * the pack that does not read holds nothing and the windows answer, Overpass not asked; the wheel's kind holds them
+     * too, though the read after them fails again (batch 6 A5; 38ddafa1 asked Overpass there).
+     */
+    @Test
+    fun aPackThatDoesNotReadUnderWindowsThatMakeTheCircleWhole() = runBlocking {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body(OVERPASS_FAR).build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val dir = tmp.newFolder("cut-whole")
+        val windows = WindowPlaces({ dir }, packed = { x, y -> cafeAt(x, y) })
+        val local = LocalData(stores = { null }, packs = { cutShort(here) }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val finder = LayeredPlaceFinder(local = { local }, overpass = { op }, online = { true })
+        val window = listOf("${tile.x}/${tile.y}")
+
+        val row = runCatching { finder.nearby("eat", here, 300.0, 20).toList().last() }
+        assertTrue("the row: ${row.exceptionOrNull()}", row.isSuccess)
+        assertEquals(window, row.getOrThrow().places.map { it.name() })
+
+        val wheel = runCatching { finder.nearbyMany(listOf("eat"), here, 300.0, 20)["eat"] }
+        assertTrue("the wheel: ${wheel.exceptionOrNull()}", wheel.isSuccess)
+        assertEquals(window, wheel.getOrThrow()?.places?.map { it.name() })
+
+        val shop = runCatching {
+            app.atlas.ui.shop.ShopFinder(store = { app.atlas.search.Regions() }, local = { local }, overpass = { op }, online = { true })
+                .around("cafes-cut-whole", cafe, here, 300.0).toList().last()
+        }
+        assertTrue("the shop screens: ${shop.exceptionOrNull()}", shop.isSuccess)
+        assertEquals(window, shop.getOrThrow().places.map { it.name() })
+        assertEquals("Overpass asked", 0, asked.get())
+    }
+
+    /** A pack whose box holds the [m] metres around [at] and whose every read fails, as a pack cut short does. */
+    private fun cutShort(at: LatLon, m: Double = 200.0) = PackFeatures(
+        listOf(
+            object : app.atlas.render.data.ElementBoxes {
+                override val coverage = BBox.around(at, m)
+
+                override fun query(box: BBox): List<OsmElement> = throw java.io.EOFException("the pack was cut short")
+            },
+        ),
+    )
 
     /** Waits at most 5 s until [windows] holds [n] windows meeting [box] (one café each), and gives how many it holds. */
     private fun heldIn(windows: WindowPlaces, box: BBox, centre: LatLon, n: Int): Int {

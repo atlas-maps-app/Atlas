@@ -117,6 +117,25 @@ class StoreBrandsTest {
     }
 
     /**
+     * By `brand` the entry whose own name it is counts before one that lists it as a match name (the app maintainer, 19
+     * November 2026, batch 6 B12): `brand=Starbucks` found Starbucks and Stars Coffee, whose match names hold
+     * "starbucks", and credited neither, so in Japan, which Starbucks' entry leaves to its Japanese one, a café named
+     * only "Starbucks" was no chain's, as in the other nineteen countries the entry leaves out.
+     */
+    @Test
+    fun aBrandsOwnEntryTradesWhereTheStoresPlacesNameIt() {
+        val tokyo = LatLon(35.6812, 139.7671)
+        val near = LatLon(tokyo.lat + 0.002, tokyo.lon)
+        val cafe = mapOf("amenity" to "cafe", "name" to "Starbucks")
+        val tagged = place(tokyo, cafe + ("brand" to "Starbucks"))
+        val named = place(near, cafe)
+        store(street(tokyo, "JP") + tagged + named).use { s ->
+            assertEquals("starbucks-795f60", s.get(tagged.id!!)!!.brand)
+            assertEquals("starbucks-795f60", s.get(named.id!!)!!.brand)
+        }
+    }
+
+    /**
      * What the store's own places bring back or change over the fixtures written as one store, as a pack is: the
      * places whose chain in the store is not the one their tags give in the Netherlands, a chain whose list leaves the
      * Netherlands out matched by name alone. Printed for the report, by name; Hope, Pastini, MOS and Black, which their

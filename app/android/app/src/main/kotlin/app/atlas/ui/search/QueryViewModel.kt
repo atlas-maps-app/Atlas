@@ -137,15 +137,20 @@ class QueryViewModel(
             return
         }
         val q = QueryEdit.withDistances(parsed, distances)
+        // the phone's answer, and where it found nothing whether it holds any region at all, both off the main thread:
+        // a store's count waits on its lock while it is filed anew (the app maintainer, 19 November 2026, batch 6 B10)
         val result = withContext(Dispatchers.Default) {
-            runCatching { OfflineEvaluator(services.placeStores).run(q, context()) }
+            runCatching {
+                val r = OfflineEvaluator(services.placeStores).run(q, context())
+                r to (r.hits.isEmpty() && services.placeStores.size == 0)
+            }
         }
-        result.onSuccess { r ->
+        result.onSuccess { (r, none) ->
             // Nothing on the phone (no region here) but a connection: Overpass, once the typing has rested a second
             // ([ONLINE_PAUSE_MS]), still looking meanwhile. The phone's own answer comes at each pause of [DEBOUNCE_MS],
             // and until 30 October so did a query to Overpass, one a word typed (the user, 30 October: "are all sources
             // reliable and respond fast?").
-            val ask = r.hits.isEmpty() && services.placeStores.size == 0 && online()
+            val ask = none && online()
             mutable.update { it.copy(result = r, online = false, circles = circlesOf(r.hits), running = ask, error = null) }
             if (ask) {
                 delay(ONLINE_PAUSE_MS - DEBOUNCE_MS)

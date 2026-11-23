@@ -102,8 +102,12 @@ internal class ShopFinder(
         // whole, else beside Overpass, asked at once (the app maintainer, 18 November 2026, batch 5 A1)
         var whole = false
         var loading = true
+        // every place shown, by key, for a failure's answer
+        val seen = LinkedHashMap<String, Place>()
+        sketch.forEach { seen[it.key] = it }
         val answer = beside(filter, centre, radiusM, limit, show = { w ->
             sketch = w.value
+            w.value.forEach { seen[it.key] = it }
             whole = !w.partial
             loading = w.partial && ask != null
             emit(AreaPlaces(sketch, PlaceOrigin.PACK, loading = loading))
@@ -115,7 +119,7 @@ internal class ShopFinder(
         }
         val result = answer.fold(
             { found -> AreaPlaces(nearest(found, centre, radiusM, limit), PlaceOrigin.ONLINE) },
-            { e -> failed(sketch, filter, centre, radiusM, limit, e.message ?: if (e is IOException) "offline" else e.toString()) },
+            { e -> failed(seen.values.toList(), filter, centre, radiusM, limit, e.message ?: if (e is IOException) "offline" else e.toString()) },
         )
         if (result.error == null) remember(cacheKey, result)
         emit(result)
@@ -155,11 +159,13 @@ internal class ShopFinder(
 
     /**
      * Where Overpass failed with [why]: what the packs and windows on the phone hold by now, with the windows the packs
-     * were asked for that came meanwhile (the app maintainer, 18 November 2026: the answer kept only [sketch], from
-     * before they came), else [sketch].
+     * were asked for that came meanwhile (the app maintainer, 18 November 2026: the answer kept only the sketch, from
+     * before they came), and every place [shown], each once, now's copy first, nearest first, at most [limit] (19
+     * November 2026, batch 6 A3: what they held by now could be fewer than were shown, where another lookup had let the
+     * windows go meanwhile).
      */
-    private fun failed(sketch: List<Place>, filter: TagFilter, centre: LatLon, radiusM: Double, limit: Int, why: String) =
-        AreaPlaces(inPacks(filter, centre, radiusM, limit)?.value?.takeIf { it.isNotEmpty() } ?: sketch, PlaceOrigin.PACK, error = why)
+    private fun failed(shown: List<Place>, filter: TagFilter, centre: LatLon, radiusM: Double, limit: Int, why: String) =
+        AreaPlaces(nearest(inPacks(filter, centre, radiusM, limit)?.value.orEmpty() + shown, centre, radiusM, limit), PlaceOrigin.PACK, error = why)
 
     private fun remember(key: String, value: AreaPlaces) = synchronized(kept) { kept[key] = Kept(nowMillis(), value) }
 

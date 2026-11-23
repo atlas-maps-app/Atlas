@@ -106,6 +106,83 @@ class EatWindowsTest {
     }
 
     /**
+     * Where Overpass fails, the answer holds every place shown before it, though another lookup let the windows go
+     * meanwhile (the app maintainer, 19 November 2026, batch 6 A3): the circle's windows came and showed, a lookup far
+     * west held eighteen, and at the close the trim took the circle's; the read after the failure held only the window
+     * the phone keeps, where 38ddafa1 kept what it had shown.
+     */
+    @Test
+    fun aFailureHoldsWhatWasShownThoughAnotherLookupLetTheWindowsGo() {
+        val release = CountDownLatch(1)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                release.await(20, TimeUnit.SECONDS)
+                return MockResponse.Builder().code(504).body("busy").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val far = TileId(WindowPlaces.LEVEL, tile.x - 6, tile.y)
+        val dir = tmp.newFolder()
+        java.io.File(dir, "${WindowPlaces.LEVEL}-${tile.x}-${tile.y - 1}.json.gz").writeBytes(cafeAt(tile.x, tile.y - 1))
+        for (dx in -1..1) for (dy in -1..1) java.io.File(dir, "${WindowPlaces.LEVEL}-${far.x + dx}-${far.y + dy}.json.gz").writeBytes(cafeAt(far.x + dx, far.y + dy))
+        val windows = WindowPlaces({ dir }, packed = { x, y -> if (x >= border) null else cafeAt(x, y) })
+        val past = TileId(WindowPlaces.LEVEL, border + 1, tile.y).bbox.center
+        runBlocking { windows.fetched(BBox.around(past, 1_000.0), past, 10_000L) }
+        val local = LocalData(stores = { null }, packs = { null }, overpass = { op }, isOnline = { true }, windowPlaces = windows, countryAt = { null })
+        val flow = EatRepository(testServices(), localData = { local }, overpass = { op }, isOnline = { true }).area(centre)
+        val started = System.nanoTime()
+        while (flow.value.places.map { it.name }.toSet() != west && System.nanoTime() - started < 10_000_000_000L) Thread.sleep(20)
+        assertEquals("the circle's windows showed", west, flow.value.places.map { it.name }.toSet())
+        val farBox = BBox.around(far.bbox.center, 3_000.0)
+        val held = runBlocking { windows.fetched(farBox, far.bbox.center, 10_000L, waitForPart = true) }
+        assertEquals("the lookup far west holds eighteen windows", 18, held?.places?.size)
+        windows.held(farBox, far.bbox.center)
+        release.countDown()
+        val area = runBlocking { withTimeout(30_000) { flow.first { !it.loading } } }
+        assertNotNull(area.error)
+        assertEquals(west, area.places.map { it.name }.toSet())
+        assertEquals(1, asked.get())
+    }
+
+    /**
+     * A pack that does not read (cut short, or its disk failing) holds nothing, and Overpass is asked for the circle
+     * (the app maintainer, 19 November 2026, batch 6 A5): it threw through the windows step, so the eat screens showed
+     * its error and Overpass was not asked, where 38ddafa1 asked it. The pack holds [centre] but not the circle; no
+     * window comes from the packs.
+     */
+    @Test
+    fun aPackThatDoesNotReadLeavesTheCircleToOverpass() {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                asked.incrementAndGet()
+                val cafe = """{"type":"node","id":7,"lat":${centre.lat},"lon":${centre.lon},"tags":{"amenity":"cafe","name":"Café aan de Grens"}}"""
+                return MockResponse.Builder().code(200).addHeader("Content-Type", "application/json").body("""{"version":0.6,"elements":[$cafe]}""").build()
+            }
+        }
+        server.start()
+        val op = Overpass(Http(), listOf(server.url("/api/interpreter").toString()))
+        val cut = app.atlas.render.data.PackFeatures(
+            listOf(
+                object : app.atlas.render.data.ElementBoxes {
+                    override val coverage = BBox.around(centre, 200.0)
+
+                    override fun query(box: BBox): List<app.atlas.render.data.OsmElement> = throw java.io.EOFException("the pack was cut short")
+                },
+            ),
+        )
+        val dir = tmp.newFolder()
+        val local = LocalData(stores = { null }, packs = { cut }, overpass = { op }, isOnline = { true }, windowPlaces = WindowPlaces({ dir }), countryAt = { null })
+        val repo = EatRepository(testServices(), localData = { local }, overpass = { op }, isOnline = { true })
+        val area = runBlocking { withTimeout(30_000) { repo.area(centre).first { !it.loading } } }
+        assertEquals("no error", null, area.error)
+        assertEquals(PlaceOrigin.ONLINE, area.origin)
+        assertEquals(listOf("Café aan de Grens"), area.places.map { it.name })
+        assertEquals(1, asked.get())
+    }
+
+    /**
      * The eat screens' state with a phone that holds no region and keeps no window: the windows come from the packs,
      * each after [slow], none past the border; a lookup before found those past it in no pack.
      */

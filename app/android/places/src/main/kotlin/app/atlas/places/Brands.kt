@@ -202,13 +202,18 @@ object Brands {
      * The entries [tags] name by `brand:wikidata`, that item's alone, or by `brand` where one entry alone bears the name
      * for a place of its kind, not by the name alone: the chain a place says it is of (the app maintainer, 18 November
      * 2026, batch 5 B10: `brand=Coop` named each of the eleven chains called Coop, so in a Belgian store a supermarket
-     * named only "Coop" became Coop Italia's).
+     * named only "Coop" became Coop Italia's). By `brand`, an entry whose own name or brand it is comes before those
+     * that list it as a match name only (19 November 2026, batch 6 B12: `brand=Starbucks` named Starbucks and Stars
+     * Coffee, whose match names hold "starbucks", and so neither); several of that own name, none.
      */
     fun named(tags: Map<String, String>): List<Brand> {
         val qid = tags["brand:wikidata"]?.trim()?.takeIf { it.isNotEmpty() }
         if (qid != null) return data.byWikidata[qid].orEmpty()
-        if (tags["brand"].isNullOrBlank()) return emptyList()
-        return candidates(tags)?.takeIf { !it.byName }?.brands?.takeIf { it.size == 1 }.orEmpty()
+        val brand = tags["brand"]?.takeIf { it.isNotBlank() } ?: return emptyList()
+        val list = candidates(tags)?.takeIf { !it.byName }?.brands ?: return emptyList()
+        val k = key(brand)
+        val own = list.filter { key(it.name) == k || key(it.brand) == k }
+        return own.ifEmpty { list }.takeIf { it.size == 1 }.orEmpty()
     }
 
     /** The entries a place's tags fit, and whether by its name alone. */

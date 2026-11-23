@@ -129,7 +129,9 @@ class FindReviewTest {
      * Moncton on Toronto's clock, St John's on Halifax's, Manaus, Cuiabá and Porto Velho on São Paulo's, Rio Branco two
      * hours off, Tijuana and Mexicali on Mexico City's, Nashville and Birmingham on New York's, Kaliningrad on Moscow's,
      * Broken Hill on Sydney's and Easter Island on Santiago's. None reads further off than on 38ddafa1, in January or in
-     * July; a country of one clock keeps it (Madrid, Lisbon, Shanghai), and the islands theirs.
+     * July; a country of one clock keeps it (Madrid, Lisbon, Shanghai), and the islands theirs. With Santiago, Ambon
+     * and Sorong (19 November 2026, batch 6 B9: Santiago on Easter Island's clock, and Indonesia by the table's cuts,
+     * Ambon and Sorong on Makassar's, passed every test).
      */
     @Test
     fun aFarPlaceIsReadNoFurtherOffThanBefore() {
@@ -158,6 +160,9 @@ class FindReviewTest {
             Triple("Europe/Kaliningrad", "RU", LatLon(54.7104, 20.4522)),
             Triple("Australia/Broken_Hill", "AU", LatLon(-31.9539, 141.4539)),
             Triple("Pacific/Easter", "CL", LatLon(-27.15, -109.4333)),
+            Triple("America/Santiago", "CL", LatLon(-33.4489, -70.6693)),
+            Triple("Asia/Jayapura", "ID", LatLon(-3.6954, 128.1814)),
+            Triple("Asia/Jayapura", "ID", LatLon(-0.8762, 131.2558)),
             Triple("Europe/Madrid", "ES", LatLon(40.4168, -3.7038)),
             Triple("Europe/Lisbon", "PT", LatLon(41.1496, -8.6110)),
             Triple("Asia/Shanghai", "CN", LatLon(30.6586, 104.0647)),
@@ -181,6 +186,95 @@ class FindReviewTest {
         val tijuana = Place(OsmId(OsmType.NODE, 9_300L), LatLon(32.5149, -117.0382), mapOf("name" to "X", "addr:country" to "MX"))
         val seen = HereContext.localeOf(s, tijuana, LatLon(34.0522, -118.2437), ZoneId.of("America/Los_Angeles")).zone
         for (i in listOf(jan, jul)) assertEquals("$i", ZoneId.of("America/Tijuana").rules.getOffset(i), seen.rules.getOffset(i))
+    }
+
+    /**
+     * Where a country's zones tie at the standard offset nearest the sun's hour, the table's for the point comes before
+     * the alphabet's first (the app maintainer, 19 November 2026, batch 6 B13): Toronto, Montréal and Ottawa read
+     * Atikokan's clock, which keeps no summer time (an hour off in July, on 38ddafa1 too), and Honolulu Adak's, which
+     * does. Where the table's is not among them, the first as before: Halifax and Moncton keep Blanc-Sablon's, as the
+     * table cuts Canada at 60° W (the far list above).
+     */
+    @Test
+    fun whereZonesTieTheTablesComesFirst() {
+        val jul = java.time.Instant.parse("2026-07-15T12:00:00Z")
+        val toronto = ZoneId.of("America/Toronto")
+        assertEquals(toronto, PlaceZone.guess("CA", LatLon(43.6532, -79.3832), jul))
+        assertEquals(toronto, PlaceZone.guess("CA", LatLon(45.5019, -73.5674), jul))
+        assertEquals(toronto, PlaceZone.guess("CA", LatLon(45.4215, -75.6972), jul))
+        assertEquals(ZoneId.of("Pacific/Honolulu"), PlaceZone.guess("US", LatLon(21.3069, -157.8583), jul))
+        // as a place's page reads it, far from the phone
+        val s = testServices()
+        val montreal = Place(OsmId(OsmType.NODE, 9_310L), LatLon(45.5019, -73.5674), mapOf("name" to "X", "addr:country" to "CA"))
+        assertEquals(toronto, HereContext.localeOf(s, montreal, LatLon(52.37, 4.89), ZoneId.of("Europe/Amsterdam")).zone)
+    }
+
+    /**
+     * Near the phone over a border, a place in a country of several clocks reads one of its country's zones like the
+     * phone's (the app maintainer, 19 November 2026, batch 6 A6): Windsor from Detroit read Edmonton's clock, Detroit
+     * from Windsor Chicago's, Toronto from Buffalo and Montréal from Burlington Atikokan's (no summer time), Nuevo
+     * Laredo from Laredo Ciudad Juárez's, Foz do Iguaçu from Puerto Iguazú Boa Vista's, Smolensk from Orsha
+     * Kaliningrad's; 38ddafa1 took the phone's zone within 300 km whatever the country. A country the table answers
+     * keeps its own (Vigo from Porto Madrid's, though the Canaries keep Lisbon's offsets); Kaliningrad from Gdańsk in
+     * January its own, as no zone of Russia's keeps Poland's offset then; beyond 300 km nothing changes (A8's places
+     * from Amsterdam). The regions name the phone's country, as the boxes alone put Windsor in the United States and
+     * Laredo in Mexico.
+     */
+    @Test
+    fun aPlaceOverABorderNearThePhoneReadsAZoneOfItsCountryLikeThePhones() {
+        val jan = java.time.Instant.parse("2026-01-15T17:00:00Z")
+        val jul = java.time.Instant.parse("2026-07-15T16:00:00Z")
+        var n = 9_400L
+        var size = 2
+        // a place at [at] in [country], from a phone at [phone] on [phoneZone] whose regions say [phoneCountry], the
+        // app's clock at [now]; each store a place larger than the last, as what the regions said is kept by their
+        // count
+        fun zoneOf(at: LatLon, country: String, phone: LatLon, phoneZone: String, phoneCountry: String, now: java.time.Instant): ZoneId {
+            val here = (1..size++).map { i ->
+                Place(OsmId(OsmType.NODE, n++), LatLon(phone.lat + i * 0.0005, phone.lon), mapOf("name" to "Here $i", "amenity" to "cafe", "addr:country" to phoneCountry))
+            }
+            val s = testServices(clock = java.time.Clock.fixed(now, ZoneId.of(phoneZone)), stores = listOf(app.atlas.search.MemoryPlaces(here, country = null)))
+            try {
+                assertEquals("the phone's country", phoneCountry, HereContext.country(s, phone))
+                val place = Place(OsmId(OsmType.NODE, n++), at, mapOf("name" to "X", "addr:country" to country))
+                return HereContext.localeOf(s, place, phone, ZoneId.of(phoneZone)).zone
+            } finally {
+                s.close()
+            }
+        }
+        fun reads(right: String, seen: ZoneId, at: java.time.Instant) = assertEquals("$right at $at", ZoneId.of(right).rules.getOffset(at), seen.rules.getOffset(at))
+        val detroit = LatLon(42.3314, -83.0458)
+        val windsor = LatLon(42.3149, -83.0364)
+        for (i in listOf(jan, jul)) {
+            reads("America/Toronto", zoneOf(windsor, "CA", detroit, "America/Detroit", "US", i), i)
+            reads("America/Detroit", zoneOf(detroit, "US", windsor, "America/Toronto", "CA", i), i)
+            reads("America/Toronto", zoneOf(LatLon(43.6532, -79.3832), "CA", LatLon(42.8864, -78.8784), "America/New_York", "US", i), i)
+            reads("America/Toronto", zoneOf(LatLon(45.5019, -73.5674), "CA", LatLon(44.4759, -73.2121), "America/New_York", "US", i), i)
+            reads("America/Matamoros", zoneOf(LatLon(27.4763, -99.5164), "MX", LatLon(27.5306, -99.4803), "America/Chicago", "US", i), i)
+            reads("America/Sao_Paulo", zoneOf(LatLon(-25.5469, -54.5882), "BR", LatLon(-25.5972, -54.5786), "America/Argentina/Cordoba", "AR", i), i)
+            reads("Europe/Moscow", zoneOf(LatLon(54.7826, 32.0453), "RU", LatLon(54.5081, 30.4172), "Europe/Minsk", "BY", i), i)
+        }
+        // neighbours, as before: a country the table answers keeps its own; Kaliningrad its own from Gdańsk in January
+        val porto = LatLon(41.1496, -8.6110)
+        val vigo = LatLon(42.2406, -8.7207)
+        assertEquals(ZoneId.of("Europe/Madrid"), zoneOf(vigo, "ES", porto, "Europe/Lisbon", "PT", jan))
+        assertEquals(ZoneId.of("Europe/Lisbon"), zoneOf(porto, "PT", vigo, "Europe/Madrid", "ES", jan))
+        reads("Europe/Kaliningrad", zoneOf(LatLon(54.7104, 20.4522), "RU", LatLon(54.3520, 18.6466), "Europe/Warsaw", "PL", jan), jan)
+        // beyond 300 km nothing changes: A8's places, from Amsterdam, read as the guess reads them
+        val s = testServices()
+        val amsterdam = LatLon(52.37, 4.89)
+        val far = listOf(
+            "CA" to LatLon(44.6488, -63.5752), "CA" to LatLon(46.0878, -64.7782), "CA" to LatLon(47.5615, -52.7126),
+            "BR" to LatLon(-3.1190, -60.0217), "BR" to LatLon(-15.6014, -56.0979), "BR" to LatLon(-8.7612, -63.9004),
+            "BR" to LatLon(-9.9754, -67.8249), "MX" to LatLon(32.5149, -117.0382), "MX" to LatLon(32.6245, -115.4523),
+            "US" to LatLon(36.1627, -86.7816), "US" to LatLon(33.5186, -86.8104), "RU" to LatLon(54.7104, 20.4522),
+            "AU" to LatLon(-31.9539, 141.4539), "CL" to LatLon(-27.15, -109.4333),
+        )
+        for ((country, at) in far) {
+            val place = Place(OsmId(OsmType.NODE, n++), at, mapOf("name" to "X", "addr:country" to country))
+            assertEquals("$country $at", PlaceZone.guess(country, at), HereContext.localeOf(s, place, amsterdam, ZoneId.of("Europe/Amsterdam")).zone)
+        }
+        s.close()
     }
 
     @Test

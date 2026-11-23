@@ -196,9 +196,11 @@ internal class TimeSpan(val from: TimePoint, val to: TimePoint?, val openEnd: Bo
     fun resolve(date: LocalDate, sun: SunClock): Pair<Int, Int>? {
         val a = from.resolve(date, sun) ?: return null
         if (to == null) {
-            // a start the sun does not make that day, one that never comes (`sunset+` in polar day), never opens (the app
-            // maintainer, 18 November 2026, batch 4 B19: it opened at midnight)
-            if (a >= 1440 && from.missed(date, sun)) return null
+            // a start the sun does not make that day never opens: one that never comes (`sunset+` in polar day; the app
+            // maintainer, 18 November 2026, batch 4 B19: it opened at midnight), and a sunset or a dusk that does not
+            // happen, with or without its `+` (`sunset+` in polar night, its evening read as midnight and open to six;
+            // 19 November 2026, batch 6 A7)
+            if (from.missed(date, sun) && (a >= 1440 || from.event == SunEvent.SUNSET || from.event == SunEvent.DUSK)) return null
             // a start by sunrise or dawn is a morning's whatever its minute: to midnight, and all day where the sun does
             // not set or the light does not go, its rising at midnight (the app maintainer, 18 November 2026, batch 5 A7:
             // before 04:00, Stockholm's June, it closed at six as a written early start does)
