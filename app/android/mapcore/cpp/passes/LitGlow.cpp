@@ -189,7 +189,7 @@ void Ground::write_lit(std::vector<std::uint32_t>& words, const frame::FrameStat
     const GroundFrame& f = frame_;
     const GlowLayer* s = pipelines_->glow.get();
     if (f.lit_runs.empty() || s == nullptr) {
-        glow_key_.clear();
+        glow_next_.emplace();
         return;
     }
     // the runs' points (CSS px, as the SVG's parser reads them), a point that repeats the last dropped as the strokes'
@@ -292,7 +292,7 @@ void Ground::write_lit(std::vector<std::uint32_t>& words, const frame::FrameStat
         for (const std::int32_t v : {b.x0, b.y0, b.x1, b.y1}) key.push_back(static_cast<std::uint32_t>(v));
     }
     glow_stale_ = key != glow_key_;
-    glow_key_ = std::move(key);
+    glow_next_ = std::move(key); // the frame's, once its layers record (record_lit_layer)
 }
 
 gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines& p) const {
@@ -496,6 +496,9 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
 }
 
 void Ground::record_lit_layer(const frame::Recording& r) {
+    // the key this frame's layers stand for, now that its frame records (write_lit compares the next one with it)
+    if (glow_next_) glow_key_ = std::move(*glow_next_);
+    glow_next_.reset();
     const bool drew = drew_glow_;
     drew_glow_ = false;
     const Words& w = *words_;

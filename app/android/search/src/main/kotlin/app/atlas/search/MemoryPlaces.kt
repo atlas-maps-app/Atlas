@@ -9,9 +9,10 @@ import app.atlas.places.Categories
 
 /**
  * Places held in memory as a [PlaceSource]: an online answer, or a provider's list, searched with the same evaluator
- * as the offline stores. Boxes go in an R-tree; tags, categories and brands in hash indexes.
+ * as the offline stores. Boxes go in an R-tree; tags, categories and brands in hash indexes. Their brands are those of
+ * [country], the country of the map where they are, unless a place names its own ([PlaceRecord.of]).
  */
-class MemoryPlaces(places: Collection<Place>) : PlaceSource {
+class MemoryPlaces(places: Collection<Place>, country: String?) : PlaceSource {
     private val records: List<PlaceRecord>
     private val byKey = HashMap<String, Int>()
     private val tagIndex = HashMap<String, MutableList<Int>>()
@@ -21,7 +22,7 @@ class MemoryPlaces(places: Collection<Place>) : PlaceSource {
     init {
         val seen = LinkedHashMap<String, Place>()
         for (p in places) if (p.tags.isNotEmpty()) seen[p.key] = p
-        records = seen.values.map { PlaceRecord.of(it) }
+        records = seen.values.map { PlaceRecord.of(it, country) }
         for ((i, r) in records.withIndex()) {
             byKey[r.place.key] = i
             for ((k, v) in r.tags) {

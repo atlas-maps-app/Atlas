@@ -89,6 +89,12 @@ CORE = {
 # and sport"): a water park is a day out, a pool lanes to swim. A market is the groceries' and the shops' (the owner,
 # 6 November: "What about markets?"): its stalls sell clothes and flowers as well as cheese. Nodes of the search's
 # category tree: "cat:" a category, "preset:" a preset under one, "shelf:" a group or a family.
+# A category named ("cat:post") holds places of other kinds too, by their tags ("tags:" a rule, as a category's): a shop
+# that takes the post or dispenses medicine is a shop of its kind first (the reviewer, 17 November, finding 11) and
+# behind Post's or Health's door as well (the app maintainer, 18 November, batch 4 A6: a kiosk that takes parcels and a
+# chemist's pharmacy counter had left Post and Health altogether), as no kind is theirs alone. The category and its
+# shelf hold it, list it, count it and read it from the store and online; it keeps its own kind, colour and pin, and no
+# kind of the category's row is its. The crafts stay out of Offices: a craft bakery is no studio.
 ALSO = {
     'shops': ('preset:amenity/marketplace',),
     # the other fuels: gas bottles, firewood and heating oil from their shops, a boat's from the marina's pump ("what other
@@ -98,6 +104,8 @@ ALSO = {
     'stay': ('cat:camping',),
     'fun': ('cat:climbing', 'preset:leisure/ice_rink', 'cat:swim', 'shelf:sport'),
     'sport': ('cat:swim',),
+    'cat:post': ('tags:shop and post_office and post_office!=no',),
+    'cat:health': ('tags:shop and healthcare and healthcare!=no',),
 }
 
 # The kinds that end a shelf's or a category's row (the owner, 6 November: "Sort by popularity or what belongs in what
@@ -205,11 +213,14 @@ CATEGORIES = [
     # property, is drawn: atlas-blue_shield)
     ('heritage', 'heritage', 'culture', 'maki-landmark', 'boundary=protected_area',
      ('Protected heritage', 'Beschermd erfgoed', 'Geschütztes Erbe', 'Patrimoine protégé'), None),
-    ('health', 'c15', 'health', 'maki-hospital', 'amenity~^(hospital|clinic|doctors|dentist|pharmacy)$ or healthcare',
+    # a shop whose other tags say it also sees to health, takes the post or is a craft's workshop is a shop of its kind
+    # first: rules are asked in order, and these come before the shops (the reviewer, 17 November, finding 11: a
+    # convenience store that takes parcels was Post, a shoemaker's shoe shop an office)
+    ('health', 'c15', 'health', 'maki-hospital', 'amenity~^(hospital|clinic|doctors|dentist|pharmacy)$ or (healthcare and !shop)',
      ('Health', 'Gezondheid', 'Gesundheit', 'Santé'), 'amenity/hospital'),
     ('money', 'c16', 'service', 'maki-bank', 'amenity~^(bank|atm|bureau_de_change|money_transfer)$',
      ('Banks & ATMs', 'Banken & geldautomaten', 'Banken & Geldautomaten', 'Banques & distributeurs'), 'amenity/bank'),
-    ('post', 'c17', 'service', 'maki-post', 'amenity~^(post_office|parcel_locker|post_box)$ or post_office',
+    ('post', 'c17', 'service', 'maki-post', 'amenity~^(post_office|parcel_locker|post_box)$ or (post_office and !shop)',
      ('Post & parcels', 'Post & pakketten', 'Post & Pakete', 'Poste & colis'), 'amenity/post_office'),
     ('laundry', 'c18', 'service', 'maki-laundry', 'shop~^(laundry|dry_cleaning)$',
      ('Laundry', 'Wasserette', 'Wäscherei', 'Laverie'), 'shop/laundry'),
@@ -275,7 +286,7 @@ CATEGORIES = [
     ('boating', None, 'water', 'maki-harbor',
      'leisure~^(marina|slipway)$ or amenity~^(boat_rental|boat_sharing)$ or waterway~^(fuel|boatyard|dock|sanitary_dump_station)$ or shop=boat',
      ('Boats & marinas', 'Boten & jachthavens', 'Boote & Häfen', 'Bateaux & ports'), 'leisure/marina'),
-    ('offices', 'c44', 'service', 'temaki-briefcase', 'office or craft',
+    ('offices', 'c44', 'service', 'temaki-briefcase', '(office or craft) and !shop',
      ('Offices & studios', 'Kantoren & ateliers', 'Büros & Werkstätten', 'Bureaux & ateliers'), 'office'),
     ('rentals', 'c45', 'transport', 'maki-bicycle-share',
      'amenity~^(bicycle_rental|taxi|car_sharing|car_rental|kick-scooter_rental|motorcycle_rental)$',

@@ -5,6 +5,7 @@ import app.atlas.places.OpenState
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
+import app.atlas.places.statedSpans
 import java.time.DayOfWeek
 import java.time.ZonedDateTime
 
@@ -26,7 +27,11 @@ data class KindCount(val label: String, val symbol: String, val count: Int)
  */
 data class HoursAnswer(val days: List<DaySpread>, val byHour: List<Int>, val known: Int, val unknown: Int, val places: List<PlaceWeek>)
 
-/** One day of an [HoursAnswer], in minutes after midnight (a close after midnight is past 1440); null when none open. */
+/**
+ * One day of an [HoursAnswer], in minutes after midnight (a close after midnight is past 1440); null when none open.
+ * The closes are those the hours state: an open end counts its stated end ("16:00-02:00+": 2:00), and one with none
+ * (`17:00+`) none, so [latest] and [closesMiddle] are null where no place open that day states when it closes.
+ */
 data class DaySpread(val day: DayOfWeek, val open: Int, val earliest: Int?, val latest: Int?, val opensMiddle: Int?, val closesMiddle: Int?)
 
 /** One place's week, Monday to Sunday; [inferred] when the hours are its brand's, not its own. */
@@ -82,7 +87,7 @@ object Overview {
         val days = DayOfWeek.entries.map { day ->
             val spans = places.map { p -> p.week[day.ordinal].filter { it.state == OpenState.OPEN } }.filter { it.isNotEmpty() }
             val opens = spans.map { s -> s.minOf { it.start } }.sorted()
-            val closes = spans.map { s -> s.maxOf { it.end } }.sorted()
+            val closes = spans.mapNotNull { s -> statedSpans(s).last().end }.sorted()
             DaySpread(day, spans.size, opens.firstOrNull(), closes.lastOrNull(), opens.getOrNull(opens.size / 2), closes.getOrNull(closes.size / 2))
         }
         val todays = places.map { p -> p.week[today.dayOfWeek.ordinal].filter { it.state == OpenState.OPEN } }

@@ -429,7 +429,7 @@ void roofs(const tl::Tile& tile, const tl::Frame& frame, TileRegionItems& out) {
         const tl::Layer* layer = tile.layer(id);
         if (layer == nullptr) continue;
         for (std::uint32_t i = 0; i < layer->count; ++i) {
-            if (id == tl::LayerId::building && layer->boolean(tl::building::hidden, i).value_or(false)) continue;
+            if (layer->boolean(tl::building::hidden, i).value_or(false)) continue;
             const tl::RingView r = layer->ring(tl::building::ring, i);
             if (r.size() < 3) continue;
             // its bounds from the grid's first (most of a tile's solids stand far from its towers): x grows with the

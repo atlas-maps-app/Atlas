@@ -7,6 +7,7 @@ import app.atlas.places.PlaceFamily
 import app.atlas.places.Symbols
 import app.atlas.search.Regions
 import app.atlas.testing.Fixtures
+import app.atlas.testing.Nowhere
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -34,8 +35,8 @@ class HomeHighlightsTest {
      */
     @Test
     fun aKindOfPlaceWearsItsFamilysColour() {
-        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday)
-        val markers = HomeHighlights.markers(h)
+        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday, hours = Nowhere)
+        val markers = HomeHighlights.markers(h, country = null)
         fun argb(c: Int) = c.toLong() and 0xFFFFFFFFL
         for ((hl, m) in h.zip(markers)) {
             val want = hl.kind.colour ?: argb(Symbols.colourFor(hl.place.tags))
@@ -49,7 +50,7 @@ class HomeHighlightsTest {
 
     @Test
     fun theWestermarktsHighlightsAreRealPlaces() {
-        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday)
+        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday, hours = Nowhere)
         assertEquals(listOf("Westerkerk"), names(h, HighlightKind.SIGHT))
         // The nearest museum open now (until 22:00), next door to the Westerkerk.
         assertEquals(listOf("Anne Frank Huis"), names(h, HighlightKind.MUSEUM))
@@ -67,7 +68,7 @@ class HomeHighlightsTest {
     @Test
     fun closedPlacesStepAside() {
         // At 7:00 the museums and Bagels & Beans are shut: the landmark, the stop and the chargers stay.
-        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday.withHour(7))
+        val h = HomeHighlights.pick(Fixtures.amsStore, westermarkt, thursday.withHour(7), hours = Nowhere)
         assertTrue(names(h, HighlightKind.MUSEUM).isEmpty())
         assertTrue(names(h, HighlightKind.BRANCH).isEmpty())
         assertEquals(listOf("Westerkerk"), names(h, HighlightKind.SIGHT))
@@ -79,11 +80,11 @@ class HomeHighlightsTest {
         val near = Place(null, app.atlas.geo.LatLon(52.37480, 4.88420), mapOf("name" to "Near", "amenity" to "restaurant"))
         val far = Place(null, app.atlas.geo.LatLon(52.37600, 4.88700), mapOf("name" to "Far", "amenity" to "restaurant"))
         val away = Place(null, app.atlas.geo.LatLon(52.40000, 4.90000), mapOf("name" to "Away", "amenity" to "restaurant"))
-        val h = HomeHighlights.pick(Regions(), westermarkt, thursday, saved = listOf(far, away, near))
+        val h = HomeHighlights.pick(Regions(), westermarkt, thursday, saved = listOf(far, away, near), hours = Nowhere)
         assertEquals(listOf("Near", "Far"), names(h, HighlightKind.SAVED))
         assertTrue(h[0].value!!.endsWith("′"))
         assertNull(h[1].value)
-        val m = HomeHighlights.markers(h)
+        val m = HomeHighlights.markers(h, country = null)
         assertEquals(MarkerStyle.PIN, m[0].style)
         assertEquals("Near", m[0].label)
         assertEquals("ui-check", m[0].badge)
@@ -91,6 +92,6 @@ class HomeHighlightsTest {
 
     @Test
     fun anEmptyPhoneHasNoHighlights() {
-        assertTrue(HomeHighlights.pick(Regions(), westermarkt, thursday).isEmpty())
+        assertTrue(HomeHighlights.pick(Regions(), westermarkt, thursday, hours = Nowhere).isEmpty())
     }
 }

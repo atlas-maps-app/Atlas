@@ -15,6 +15,7 @@ import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.places.Symbols
+import app.atlas.places.WeekDay
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.TextStyle
@@ -173,7 +174,7 @@ data class KnownHours(val hours: OpeningHours, val from: HoursFrom) {
 class HoursBook(branches: Collection<PlaceRecord>) {
     private class Read(val hours: OpeningHours?)
     private class Guess(val hours: InferredHours?)
-    private class Week(val days: List<Pair<Int, Int>?>?)
+    private class Week(val days: List<WeekDay?>?)
 
     private val all: Collection<PlaceRecord> = branches
     private val parsed = ConcurrentHashMap<String, Read>()
@@ -246,7 +247,7 @@ class HoursBook(branches: Collection<PlaceRecord>) {
         return BrandHours.fromWeeks(nearest.mapNotNull { (_, h) -> weekOf(h) })
     }
 
-    private fun weekOf(h: OpeningHours): List<Pair<Int, Int>?>? = weeks.getOrPut(h.raw) { Week(BrandHours.weekOf(h)) }.days
+    private fun weekOf(h: OpeningHours): List<WeekDay?>? = weeks.getOrPut(h.raw) { Week(BrandHours.weekOf(h)) }.days
 
     companion object {
         val EMPTY = HoursBook(emptyList())
@@ -282,7 +283,8 @@ data class FacetContext(
     val now: LocalDateTime,
     val lang: String = "en",
     val hours: HoursBook = HoursBook.EMPTY,
-    val opening: OpeningHoursContext = OpeningHoursContext.Default,
+    /** Holidays and the sun, for opening hours: those of where the places are. */
+    val opening: OpeningHoursContext,
     /** A time the searcher asked about ("open Saturday 14:00"), offered as a value of the hours' facet. */
     val at: LocalDateTime? = null,
 )

@@ -34,7 +34,7 @@ class PlaceFinderOnlineTest {
     fun stop() = server.close()
 
     private fun finder() = LayeredPlaceFinder(
-        local = { LocalData(stores = { null }, packs = { pack }) },
+        local = { LocalData(stores = { null }, packs = { pack }, countryAt = { null }) },
         overpass = { Overpass(Http(), endpoints = listOf(server.url("/api/interpreter").toString())) },
         online = { true },
     )

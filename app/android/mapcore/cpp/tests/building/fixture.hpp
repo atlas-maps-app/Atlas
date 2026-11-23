@@ -108,6 +108,50 @@ inline constexpr std::int32_t w0 = 48'840'000;  // 4.884° E
 /// The tile's features: its buildings, its part and its trees.
 inline constexpr std::uint32_t tile_features = 10;
 
+/// One building's ring of two pieces, as stage P joins them (load/Clean.hpp): a 30 × 30 m block round a 10 × 10 m
+/// courtyard (points 0 to 8: its south-west corner, the seam to the courtyard's and round it, the seam back, its
+/// north-west and north-east corners), a seam from that corner to a 10 × 20 m house 10 m east of the block (points 9
+/// to 12, clockwise on the map from its north-west corner) and back (13, 14), and the block's south-east corner.
+/// Edges 0 and 5 join the courtyard to its block; 8 and 13 join the two pieces. The house's walls are edges 9 to 12,
+/// the short ones (9 north, 11 south) across its ridge.
+[[nodiscard]] inline Ring pieces_ring() {
+    const std::int32_t cs = s0 + 900;
+    const std::int32_t cw = w0 + 1470;
+    const std::int32_t hw = w0 + 5880;
+    return {.lat = {s0, cs, cs, cs + 900, cs + 900, cs, s0, s0 + 2700, s0 + 2700, s0 + 1800, s0 + 1800, s0, s0,
+                    s0 + 1800, s0 + 2700, s0},
+            .lon = {w0, cw, cw + 1470, cw + 1470, cw, cw, w0, w0, w0 + 4410, hw, hw + 1470, hw + 1470, hw, hw,
+                    w0 + 4410, w0 + 4410},
+            .keep = {}};
+}
+
+/// The tile of that one building (way 400): 15 m tall under a roof of `roof`'s shape, 5 m high, in the red tiles' slot.
+[[nodiscard]] inline TileBytes pieces_tile(std::string_view roof = "gabled") {
+    namespace tl = atlas::tiles;
+    namespace col = atlas::test::columns;
+    TileBytes t;
+    LayerBytes b;
+    b.id = static_cast<std::uint8_t>(tl::LayerId::building);
+    b.cells = {0};
+    b.columns = {
+        {"index", tl::Codec::delta, col::delta({0})},
+        {"id", tl::Codec::delta, col::delta({400})},
+        {"ring", tl::Codec::geom, col::geom({pieces_ring()})},
+        {"h", tl::Codec::centi, col::centi({15.0})},
+        {"min", tl::Codec::centi, col::centi({0.0})},
+        {"roof_h", tl::Codec::centi, col::centi({5.0})},
+        {"levels", tl::Codec::nvarz, col::nvarz({4})},
+        {"roof", tl::Codec::str, col::str(t, {roof})},
+        {"wall_rgb", tl::Codec::varu, col::varu({0x8E5A46})},
+        {"roof_rgb", tl::Codec::varu, col::varu({0x9E5038})},
+        {"flags", tl::Codec::varu, col::varu({0})},
+        {"roof_slot", tl::Codec::varu, col::varu({80})},
+        {"tag:building", tl::Codec::str, col::str(t, {"apartments"})},
+    };
+    t.layers = {b};
+    return t;
+}
+
 /// A pair of buildings the renders melt (the same tile): a long low wing, an L whose front bar (40 × 10 m, 20 m high)
 /// runs across in front of a tower (10 × 10 m, 60 m high, 10 m behind the bar) and whose arm runs 100 m north, so its
 /// sort point (the footprint's centroid at half its height) lies farther north than the tower's. Seen from the south,

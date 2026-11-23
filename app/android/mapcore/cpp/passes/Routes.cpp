@@ -345,9 +345,11 @@ void Routes::update(const frame::FrameState& state) {
                 if (shown_[k] == 0) continue;
                 if (draws_.size() >= max_draws) return;
                 const Piece& p = pieces_[k];
-                // a piece meets the one drawn before it, or after it, where its run goes on into it
+                // a piece meets the one drawn before it, or after it, where its run goes on into it; the last draw that
+                // fits meets none after it (route.slang reads the next draw where it meets it, and none is written)
                 const bool prev = p.joined && k > 0 && shown_[k - 1] != 0;
-                const bool next = k + 1 < pieces_.size() && pieces_[k + 1].joined && shown_[k + 1] != 0;
+                const bool next = draws_.size() + 1 < max_draws && k + 1 < pieces_.size() && pieces_[k + 1].joined &&
+                                  shown_[k + 1] != 0;
                 if (bent) {
                     const double hw = std::max(h * p.across, least);
                     draws_.push_back({.a = on_view_at(p.ax, p.az, p.sa),

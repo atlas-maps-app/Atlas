@@ -12,6 +12,11 @@
 // paths' (one print step at most), the grid it worked out to fx::blur_grid's from that box, its mask to the twin's
 // paths rastered on that grid (sample for sample, as above), its blur of that mask to fx::square_blur_cpu's and the
 // fade bit for bit, and the frame to the result drawn back as soft_fs draws it.
+//
+// And the soft shadows' kept mask (passes/Shadows.cpp's key_shadow_mask): the same frames drawn with the mask made
+// every frame (make_mask_always) and kept where nothing it reads moved are the same pixels, frame for frame, and a
+// frame that keeps it dispatches nothing for it; the building shadows or the soft shadows left out for a frame and
+// drawn again keep it too.
 #if !defined(__ANDROID__)
 
 #include "fx/Blur.hpp"
@@ -28,9 +33,11 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <limits>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -229,7 +236,8 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
     set.sun_vector = {0.0, -1.0, 0.0};
     set.sun_elevation = -5.0;
     // the frame with the sun up: the twin's paths, and the soft shadows' grid, mask and blurred mask as the GPU left
-    // them in the last frame's slot, and in the other slot, the frame before it (at rest, the same frame)
+    // them in the last frame's entry, and in the other entry, the frame before it's (at rest, the same frame; each
+    // frame makes its mask here, none standing: make_mask_always)
     std::vector<std::vector<std::array<float, 2>>> paths;
     layouts::ground_ground::ShadowGrid grid{};
     using GridBytes = std::array<std::uint8_t, sizeof grid>;
@@ -258,7 +266,7 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
             const passes::SoftShadows* s = g.soft_shadows();
             REQUIRE(s != nullptr);
             REQUIRE(s->kept);
-            CHECK(s->last == state.slot);
+            CHECK(s->result);
             extent = s->extent;
             stride = s->stride;
             const auto look = [&](const passes::SoftShadowSlot& t, GridBytes& g_out, std::vector<std::uint8_t>& m_out,
@@ -282,6 +290,7 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
         40,
         [](passes::Ground& g) {
             g.keep_soft_shadows(true);
+            g.make_mask_always(true);
             no_walls(g);
         },
         frame::Mode::full);
@@ -291,7 +300,7 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
     REQUIRE(soft);
     REQUIRE(paths.size() > 100);
-    // each frame slot its own grid, mask and blur, and the last two frames, at rest, the same in both
+    // each entry its own grid, mask and blur, and the last two frames', at rest, the same in both
     MESSAGE("a frame slot's soft shadows at " << a->pixels.width << " x " << a->pixels.height << ": " << slot_bytes
                                               << " bytes (the " << extent.width << " x " << extent.height
                                               << " mask, the grid, the blur's two buffers); the 4x samples, one "
@@ -480,6 +489,148 @@ TEST_CASE("ground: the soft shadows are the port's grid, its three boxes and its
                           << " off by more than two levels, the worst by " << worst);
     CHECK(told > (std::size_t{a->pixels.width} * a->pixels.height) / 5);
     CHECK(wrong <= told / 20000);
+}
+
+TEST_CASE("ground: the soft shadows' mask is made once a view and stands while nothing it reads moves, its frames "
+          "the frames made every frame") {
+    const std::string dir = test::environment("ATLAS_TILES_DIR");
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the shadows are not drawn over the bundled packs here");
+        return;
+    }
+    auto session = test::open_session();
+    if (!session) return;
+    // a degree off the home's view: the ladder snaps a camera within 1 m and 0.05° of it onto the view's own, where a
+    // hair's move would leave nothing the mask reads moved
+    style::CameraState home = test::home_camera();
+    home.bearing += 1.0;
+    const style::ThemeBlock day = test::sunny();
+    REQUIRE(day.shadow_blur > 0.0);
+    // after the frames to settle at rest, four frames apiece: at its camera and time again; at a later time; every
+    // tile drawn fading in (its place's fade, which no step of the mask reads); the shadows' colour changed (soft_fs
+    // draws the result in it, the mask is the same); their opacity changed (the blur's fade); the camera moved by a
+    // hair; the building shadows left out for a frame, then drawn again (no step runs while they are out, so the entry
+    // holds the result its key names); the soft shadows left out for a frame (drawn sharp), then again; moving by a
+    // hair a frame (not at rest: no snap)
+    constexpr int settled = 40;
+    constexpr int phases = 9;
+    constexpr int frames = settled + (4 * phases);
+    struct Run {
+        std::vector<std::uint64_t> makes;                // the masks made by the end of each frame
+        std::vector<bool> soft;                          // whether it drew its shadows soft
+        std::vector<std::uint64_t> hashes;               // its pixels' (gpu::hash_of)
+        std::vector<std::array<std::uint32_t, 4>> steps; // the box's, the grid's and the blur's dispatches, the union's
+                                                         // draws
+        std::optional<test::GroundDraw> last;
+    };
+    const auto run = [&](bool always) {
+        Run out;
+        passes::Ground* ground = nullptr;
+        const auto each = [&](int f, frame::FrameInputs& in) {
+            if (f < settled) return;
+            const int phase = (f - settled) / 4;
+            in.camera = home;
+            in.theme = day;
+            if (phase >= 1) in.seconds = 1.0;
+            ground->fade_every(phase == 2 ? std::optional<float>(0.5F) : std::nullopt);
+            if (phase >= 3) in.theme.shadow = {.r = 40, .g = 30, .b = 90, .a = 255};
+            if (phase >= 4) in.theme.shadow_opacity = day.shadow_opacity + 0.05;
+            if (phase >= 5) in.camera.longitude += 1e-6;
+            if (phase == 6 && (f - settled) % 4 == 0) in.camera.parts = style::camera_part::building_shadows;
+            if (phase == 7 && (f - settled) % 4 == 0) in.camera.parts = style::camera_part::shadow_blur;
+            if (phase >= 8) {
+                in.camera = test::moving(in.camera);
+                in.camera.longitude += 1e-6 * ((f - settled) % 4 + 1);
+            }
+        };
+        const auto drawn = [&](int /*f*/, const gpu::Pixels& px, const frame::FrameBuilder& builder) {
+            out.makes.push_back(ground->mask_makes());
+            out.soft.push_back(ground->drew_soft());
+            out.hashes.push_back(gpu::hash_of(px));
+            std::array<std::uint32_t, 4> steps{};
+            for (const frame::PassCounters& p : builder.counters()) {
+                for (const frame::KindCount& k : p.kinds()) {
+                    if (k.kind == "shadow box") steps[0] += k.count.dispatches;
+                    if (k.kind == "shadow grid") steps[1] += k.count.dispatches;
+                    if (k.kind == "shadow blur") steps[2] += k.count.dispatches;
+                    if (k.kind == "shadow mask") steps[3] += k.count.draws;
+                }
+            }
+            out.steps.push_back(steps);
+        };
+        out.last = test::draw_ground(
+            *session, home, day, dir, "amsterdam", {}, frames,
+            [&](passes::Ground& g) {
+                ground = &g;
+                g.make_mask_always(always);
+                no_walls(g);
+            },
+            frame::Mode::full, nullptr, {}, {.steps = 0}, false, each, false, drawn);
+        return out;
+    };
+    const Run kept = run(false);
+    const Run made = run(true);
+    ATLAS_REQUIRE(kept.last.has_value() && made.last.has_value(), "the home was not drawn both ways");
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    REQUIRE(kept.makes.size() == frames);
+    REQUIRE(made.makes.size() == frames);
+    REQUIRE_MESSAGE(kept.soft[settled - 1], "the frame drew its shadows sharp (the moment does not blur them?)");
+
+    // the same frames both ways, every one
+    std::size_t differ = 0;
+    int first = -1;
+    for (int f = 0; f < frames; ++f) {
+        const auto i = static_cast<std::size_t>(f);
+        if (kept.soft[i] != made.soft[i] || kept.hashes[i] != made.hashes[i]) {
+            ++differ;
+            if (first < 0) first = f;
+        }
+    }
+    CHECK_MESSAGE(differ == 0, differ << " frames differ between the kept mask and the mask made every frame, the "
+                                         "first "
+                                      << first);
+    CHECK(kept.last->pixels.rgba == made.last->pixels.rgba);
+
+    // made: a mask each frame that draws them soft
+    const auto made_in = [](const Run& r, std::size_t f) { return r.makes[f] - (f > 0 ? r.makes[f - 1] : 0U); };
+    for (std::size_t f = 0; f < made.makes.size(); ++f) {
+        CHECK_MESSAGE(made_in(made, f) == (made.soft[f] ? 1U : 0U), "frame " << f);
+    }
+    // kept: once a view, and again where something it reads moved
+    const auto over = [&](std::size_t phase, std::size_t from, std::size_t to) {
+        const std::size_t start = std::size_t{settled} + (4 * phase);
+        return kept.makes[start + to] - kept.makes[start + from - 1];
+    };
+    MESSAGE("the masks made: " << kept.makes.back() << " of " << frames << " frames where they stand, "
+                               << made.makes.back() << " made every frame; " << kept.makes[settled - 1] << " over the "
+                               << settled << " frames to settle");
+    CHECK(over(0, 0, 3) == 0); // the same camera and time: the last result stands
+    CHECK(over(1, 0, 3) == 0); // a later time: nothing the mask reads moves with it
+    CHECK(over(2, 0, 3) == 0); // every tile fading in: no step reads a fade
+    CHECK(over(3, 0, 3) == 0); // the shadows' colour: soft_fs's, not the mask's
+    CHECK(over(4, 0, 3) == 1); // their opacity: made again once, as the frame takes the new moment
+    CHECK(over(5, 0, 0) == 1); // the camera moved: made again
+    CHECK(over(5, 1, 3) == 0);
+    CHECK(over(6, 0, 3) == 0); // the building shadows out for a frame: none drawn, then the last result stands
+    CHECK(over(7, 0, 3) == 0); // the soft shadows out for a frame: drawn sharp, then the last result stands
+    CHECK(over(8, 0, 3) == 4); // moving: made each frame
+    // a frame that keeps its mask dispatches nothing for it and draws no union; one that makes it, its grid and three
+    // boxes (and its box where a tile casts)
+    constexpr std::array<std::uint32_t, 4> none{};
+    for (std::size_t f = 0; f < kept.makes.size(); ++f) {
+        const std::array<std::uint32_t, 4>& s = kept.steps[f];
+        if (made_in(kept, f) == 0) {
+            CHECK_MESSAGE(s == none,
+                          "frame " << f << " kept its mask and dispatched " << s[0] << " " << s[1] << " " << s[2]);
+        } else {
+            CHECK_MESSAGE((s[0] <= 1 && s[1] == 1 && s[2] == 3), "frame " << f);
+        }
+    }
+    // soft from the settled frames on, but in the two frames that leave them out
+    const auto out_frame = [&](std::size_t f) {
+        return f == std::size_t{settled + (4 * 6)} || f == std::size_t{settled + (4 * 7)};
+    };
+    for (std::size_t f = settled; f < kept.soft.size(); ++f) CHECK_MESSAGE(kept.soft[f] != out_frame(f), "frame " << f);
 }
 
 #endif

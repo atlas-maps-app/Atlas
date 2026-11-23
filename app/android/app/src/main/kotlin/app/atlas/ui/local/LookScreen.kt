@@ -72,11 +72,13 @@ import app.atlas.nav.Dest
 import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.places.Localise
+import app.atlas.places.OpeningHoursContext
 import app.atlas.ui.kit.SerifFamily
 import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.go.CompassHeadings
+import app.atlas.ui.kit.rememberHoursAt
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -159,7 +161,7 @@ fun LookScreen(args: Dest.Look, nav: Navigator) {
                     a, at, heading, photo.takeIf { tab == LookTab.PHOTO },
                     onTurn = { deg -> turned = Geo.normalize((turned ?: sensor ?: 0.0) + deg) },
                 )
-                Marks(marks, now, tab == LookTab.SCENE)
+                Marks(marks, now, rememberHoursAt(at), tab == LookTab.SCENE)
                 Header(heading, onBack = { nav.back() })
                 Bottom(
                     modifier = Modifier.align(Alignment.BottomCenter),
@@ -274,7 +276,7 @@ private fun photoView(img: StreetPhotoImage, heading: Double): ImageBitmap {
 
 /** The places in view as small white labels, pinned over where they stand, pushed up where two would overlap. */
 @Composable
-private fun Marks(marks: List<LookScene.Mark>, now: LocalDateTime, show: Boolean) {
+private fun Marks(marks: List<LookScene.Mark>, now: LocalDateTime, hours: OpeningHoursContext, show: Boolean) {
     if (!show) return
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val w = maxWidth.value
@@ -288,12 +290,14 @@ private fun Marks(marks: List<LookScene.Mark>, now: LocalDateTime, show: Boolean
             // Keep clear of the labels already put down.
             while (placed.any { (l, t) -> abs(l - left) < 130f && abs(t - top) < 52f } && top < 460f) top += 54f
             placed += left to top
-            val s = LookScene.status(m.hours, now)
+            val s = LookScene.status(m.hours, now, hours)
+            val at = s?.second
             val (text, colour) = when {
                 s == null -> null to Soft
-                s.first && java.time.Duration.between(now, s.second).toMinutes() <= 60 -> stringResource(R.string.look_closes, time.format(s.second)) to Color(0xFF8A5A00)
-                s.first -> stringResource(R.string.look_open_until, time.format(s.second)) to Color(0xFF12663A)
-                else -> stringResource(R.string.look_opens, time.format(s.second)) to Soft
+                at == null -> stringResource(R.string.kit_open) to Color(0xFF12663A)
+                s.first && java.time.Duration.between(now, at).toMinutes() <= 60 -> stringResource(R.string.look_closes, time.format(at)) to Color(0xFF8A5A00)
+                s.first -> stringResource(R.string.look_open_until, time.format(at)) to Color(0xFF12663A)
+                else -> stringResource(R.string.look_opens, time.format(at)) to Soft
             }
             val desc = if (text != null) stringResource(R.string.look_mark_desc, m.name, text) else m.name
             // The board's label: 6 by 10 px in, radius 12, white at 94 per cent, its shadow; name and hours 1 px apart.

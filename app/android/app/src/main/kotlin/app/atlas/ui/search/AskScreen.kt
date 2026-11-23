@@ -84,7 +84,10 @@ import kotlinx.coroutines.withContext
 import java.time.ZonedDateTime
 import java.util.Locale
 
-/** What Ask shows: the sentence, how it was read, the plan, how long reading and planning took, and the refinements on. */
+/**
+ * What Ask shows: the sentence, how it was read, the plan, how long reading and planning took, the refinements on, and
+ * whether the phone holds no region at all ([noRegion]).
+ */
 data class AskState(
     val text: String = "",
     val parsed: ParsedQuery? = null,
@@ -93,6 +96,11 @@ data class AskState(
     val refine: Set<Refine> = emptySet(),
     val running: Boolean = false,
     val error: String? = null,
+    /**
+     * No region on the phone to plan in: counted with the plan, off the main thread, where the screen counted it, since
+     * a store's count waits on its lock while it is filed anew (the app maintainer, 19 November 2026, batch 6 B10).
+     */
+    val noRegion: Boolean = false,
 )
 
 /**
@@ -133,15 +141,19 @@ class AskViewModel(private val services: Services, initial: String, private val 
                 val r = withContext(Dispatchers.Default) {
                     val now = ZonedDateTime.now(services.clock)
                     val from = here()
-                    val parsed = QueryParser.parse(s.text, lang, now)
                     val hours = HereContext.hours(services, from, now.zone)
+                    // a brand's name is the brand of the country here (the reviewer, 17 November, finding 9)
+                    val parsed = QueryParser.parse(s.text, lang, now, hours.country)
                     val evaluator = OfflineEvaluator(services.placeStores)
                     val plan = if (parsed.steps.isEmpty()) null else AskPlanner.plan(parsed, from, now.toLocalDateTime(), hours, s.refine) { q, at ->
                         evaluator.run(q, EvalContext(location = at, now = now, lang = lang, limit = 20, hours = hours))
                     }
-                    parsed to plan
+                    // whether the phone holds no region to plan in, counted off the main thread ([AskState.noRegion])
+                    Triple(parsed, plan, plan != null && services.placeStores.size == 0)
                 }
-                mutable.update { it.copy(parsed = r.first, plan = r.second, micros = (System.nanoTime() - started) / 1000, running = false, error = null) }
+                mutable.update {
+                    it.copy(parsed = r.first, plan = r.second, noRegion = r.third, micros = (System.nanoTime() - started) / 1000, running = false, error = null)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -200,7 +212,7 @@ fun AskScreen(args: Dest.Ask, nav: Navigator) {
                 state.error != null -> StateMessage("ui-alert-triangle", stringResource(R.string.query_failed), part, text = state.error, tint = Color(0xFFC8322A))
                 state.parsed == null -> BoardLine(stringResource(R.string.kit_loading), boardText(12f, 400, 15.5f), SOFT, part)
                 state.plan == null -> StateMessage("ui-help", stringResource(R.string.query_not_read), part, text = stringResource(R.string.ask_not_read), tint = Color(0xFF8A5A00))
-                services.placeStores.size == 0 -> StateMessage(
+                state.noRegion -> StateMessage(
                     "ui-cloud-off", stringResource(R.string.search_no_regions), part, text = stringResource(R.string.ask_no_region), tint = Color(0xFF2E5BFF),
                     action = { app.atlas.ui.kit.Chip(stringResource(R.string.search_download), symbol = "ui-download", onClick = { nav.go(Dest.RegionPicker(here.lat, here.lon)) }) },
                 )

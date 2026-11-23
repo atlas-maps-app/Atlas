@@ -266,7 +266,7 @@ class OutlinesTest {
         // every region's store is asked; places held in memory keep none
         assertNotNull(Regions(listOf(PlaceStore.inMemory(), store)).outline(id))
         assertNull(Regions(listOf(PlaceStore.inMemory())).outline(id))
-        assertNull(MemoryPlaces(listOf(vondelpark)).outline(id))
+        assertNull(MemoryPlaces(listOf(vondelpark), country = null).outline(id))
 
         // the place again (a national park kept from Overpass, say) keeps its outline; an outline again replaces it
         store.writer().use { w ->

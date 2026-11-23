@@ -43,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.Locale
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -541,6 +542,20 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     private var closed = false
 
+    /**
+     * The app's window hidden ([AtlasMap]'s lifecycle: ON_STOP) or shown again (ON_START; ENGINE.md's audit, B1): while
+     * hidden the core draws no frame ([MapCore.setHidden]), the minute's tick asks for none, and following puts the
+     * camera at each fix at once with the scene's update alone ([followUpdate]), so the tiles keep coming and the map
+     * is there on the return. Shown again: the moment and the windows as they are now, drawn at once. Main thread.
+     */
+    var hidden = false
+        set(value) {
+            if (field == value) return
+            field = value
+            core?.core?.setHidden(value)
+            if (!value && !closed) update()
+        }
+
     /** Stops the frame thread without waiting for it (a frame being made stops at its next check); idempotent. */
     private fun close() {
         if (closed) return
@@ -588,6 +603,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         old?.let(::closeCore)
         val c = CoreMap(mapCore, packs, texture, coreChanged)
         core = c
+        if (hidden) mapCore.setHidden(true)
         canvasTick.intValue++
         place = MapPlace.DRAWN
         startRevision = -1L
@@ -649,8 +665,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         chrome?.let { if (it.coreDraws != coreSeen) it.coreDraws = coreSeen }
     }
 
-    /** The core's map goes off if [c] drew it (off the main thread: it waits for the core's render thread). */
+    /**
+     * The core's map goes off if [c] drew it (off the main thread: it waits for the core's render thread); a core this
+     * map hid draws again for whoever draws with it next.
+     */
     private fun closeCore(c: CoreMap) {
+        if (hidden) c.core.setHidden(false)
         Thread({ runCatching { c.close() } }, "atlas-core-map-off").apply { isDaemon = true }.start()
     }
 
@@ -715,7 +735,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * The start's paper over the core ([CoreMap.cover]), stepped each frame from the core's first complete picture until
-     * it has faded out; nothing covers the core's picture after.
+     * it has faded out; nothing covers the core's picture after. Until that picture, and while a fade waits for the
+     * picture to be complete again, the paper is not drawn again: the core's frames say when it is ([coreChanged]).
      */
     private fun stepCover() {
         val c = core ?: return
@@ -724,8 +745,11 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             while (core === c) {
                 withFrameNanos { }
                 frameTick.intValue++
+                if (coverReady(c)) c.cover.faded++ else c.cover.waited++
                 if (!advanceCover(c)) break
             }
+            // a fade waiting for the picture again: the core's next complete one steps it on
+            if (core === c && !c.cover.started) return@launch
             // the core's picture shows alone: the puck goes to the core with the camera, and the status says so
             publishCamera(force = true)
             noteFrame()
@@ -733,14 +757,22 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         }
     }
 
+    /** Whether the core's picture is complete for the first camera published once the packs were known. */
+    private fun coverReady(c: CoreMap) = startRevision >= 0 && c.complete && c.completeRevision >= startRevision
+
     /** One step of the start's paper; true while it still covers the core. */
     private fun advanceCover(c: CoreMap): Boolean {
         if (c.cover.started) return false
-        val coreReady = startRevision >= 0 && c.complete && c.completeRevision >= startRevision
         val before = c.cover.canvas
-        val due = c.cover.update(SystemClock.uptimeMillis(), coreReady)
+        val due = c.cover.update(SystemClock.uptimeMillis(), coverReady(c))
         if (c.cover.canvas != before) canvasTick.intValue++
-        if (c.cover.started) Log.i(MapEngine.TAG, "vk cover gone: the core draws ${drawnPack()?.id ?: "its own cover"} alone")
+        if (c.cover.started) {
+            Log.i(
+                MapEngine.TAG,
+                "vk cover gone: the core draws ${drawnPack()?.id ?: "its own cover"} alone; the paper drawn again for " +
+                    "${c.cover.waited} frames while it waited for the core's picture, ${c.cover.faded} of its fade",
+            )
+        }
         noteFrame()
         noteChrome()
         return due
@@ -920,7 +952,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * or its clock did ([litPlace]), or the user's Tone or palette (MapEngine.tone, MapEngine.palette). A moment's own
      * step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at rest has not moved); a new
      * Tone or palette is the user's, so once the core has the theme the camera is published again and the map draws it
-     * at once, at rest too.
+     * at once, at rest too. A moment that turned day to night or back draws the canvas again ([draw] reads
+     * [CoreMap.night] for the start's paper and its own overlays).
      */
     private fun sendMoment(c: CoreMap, moment: Moment) {
         val place = litPlace(c) ?: return
@@ -930,10 +963,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val retoned = before != null && (key.tone != before.tone || key.palette != before.palette)
         moments.start(key)
         val daylight = MapEngine.DAYLIGHT
+        val nightBefore = c.night
         scope.launch(Dispatchers.Default) {
             val ok = c.moment(moment, place.zone, daylight, place.lat, place.lon, key.tone, key.palette).isEmpty()
             main.post {
                 if (core !== c || closed) return@post
+                // while the start's paper waits for the core's picture nothing else draws it again (stepCover), and
+                // at a night start its first draw came before the core had the moment: the day's paper until the fade
+                if (ok && c.night != nightBefore) canvasTick.intValue++
                 // only a moment the core took is recorded as its; one that failed goes again at the next update, and
                 // once at rest
                 if (moments.finish(key, ok)) main.postDelayed(resend, RESEND_MS)
@@ -1448,6 +1485,21 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             Follow.NONE -> return
         }
         val v = viewport()
+        // Hidden, no frame shows a glide (and Compose's frames wait for the window): the camera at the fix at once, and
+        // the core's scene updated for it without a frame, so its tiles come while the phone moves.
+        if (hidden) {
+            stopAnimation()
+            write(target, byUser = false)
+            core?.core?.updateScene()
+            return
+        }
+        // A fix that moves nothing on the screen by a pixel is no glide of 0.9 s (ENGINE.md's audit, B6): the camera
+        // there at once, in one frame.
+        if (!v.isEmpty && underAPixel(cur, target, v)) {
+            stopAnimation()
+            write(target, byUser = false)
+            return
+        }
         val far = v.isEmpty || Geo.distance(cur.target, loc.at) > 3 * CameraOps.metresPerDp(cur) * max(v.width, v.height) / density
         if (far) {
             flyTo(target, FOLLOW_FLY_MS, byUser = false)
@@ -1455,6 +1507,18 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             val start = cur
             animate(FOLLOW_GLIDE_MS, byUser = false) { t -> CameraOps.lerp(start, target, 1 - (1 - t) * (1 - t)) }
         }
+    }
+
+    /**
+     * Whether the camera's move from [a] to [b] moves no point of the view [v] by a pixel: the same zoom and pitch, and
+     * the target's move with the turn at the view's corners under half a pixel at the target (half: the nearest ground
+     * of a pitched view moves up to about twice as far as the target).
+     */
+    private fun underAPixel(a: CameraPosition, b: CameraPosition, v: Viewport): Boolean {
+        if (a.zoom != b.zoom || a.pitch != b.pitch) return false
+        val moved = Geo.distance(a.target, b.target) / CameraOps.metresPerDp(a) * density
+        val turned = abs(CameraOps.turn(a.bearing, b.bearing)) * PI / 180.0 * hypot(v.width / 2.0, v.height / 2.0)
+        return moved + turned < 0.5
     }
 
     private fun setLookAhead(on: Boolean) {

@@ -58,6 +58,17 @@ object PublicHolidays {
     /** Countries with rules, as ISO 3166-1 alpha-2 codes. */
     val countries: Set<String> = setOf("NL", "DE", "FR", "BE", "GB", "US")
 
+    /** Alsace-Moselle's departments and the European Collectivity of Alsace: Good Friday and St Stephen's Day too. */
+    private val ALSACE_MOSELLE = setOf("FR-57", "FR-67", "FR-68", "FR-6AE")
+
+    /**
+     * The ISO 3166-2 subdivisions that keep days their country's others do not, which [forCountry] tells apart:
+     * Germany's states, Alsace-Moselle, Scotland and Northern Ireland.
+     */
+    val subdivisions: Set<String> =
+        listOf("BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH").map { "DE-$it" }.toSet() +
+            ALSACE_MOSELLE + setOf("GB-SCT", "GB-NIR")
+
     private val cache = ConcurrentHashMap<String, List<Holiday>>()
 
     /** The calendar for [country] (and an ISO 3166-2 [subdivision] such as "DE-BY" or "GB-SCT"), or null if unknown. */
@@ -147,7 +158,7 @@ object PublicHolidays {
                 add(day(11, 1), "All Saints' Day", "Toussaint")
                 add(day(11, 11), "Armistice Day", "Armistice 1918")
                 add(day(12, 25), "Christmas Day", "Noël")
-                if (sub in setOf("FR-57", "FR-67", "FR-68", "FR-6AE")) {
+                if (sub in ALSACE_MOSELLE) {
                     add(easter.minusDays(2), "Good Friday", "Vendredi saint")
                     add(day(12, 26), "St. Stephen's Day", "Saint-Étienne")
                 }

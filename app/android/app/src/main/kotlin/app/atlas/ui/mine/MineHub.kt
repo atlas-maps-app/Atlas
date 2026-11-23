@@ -60,7 +60,7 @@ class MineHub(private val services: Services) {
      */
     val packs: PackLists by lazy {
         PackLists(
-            PackCatalog(PackCatalog.DEFAULT_URL, services.http.client, File(services.dirs.regions, "packs-latest.json")),
+            PackCatalog(PackCatalog.DEFAULT_URL, services.http(SourcesModel.ATLAS_PACKS.id).client, File(services.dirs.regions, "packs-latest.json")),
             offline = services.config.offline,
         )
     }
@@ -159,7 +159,7 @@ class MineHub(private val services: Services) {
 
     private fun deps() = RegionDeps(
         packs = { packs.all() },
-        packDownloader = PackDownloader(services.http.client),
+        packDownloader = PackDownloader(services.http(SourcesModel.ATLAS_PACKS.id).client),
         importPlaces = { bbox, name, target, report ->
             withContext(Dispatchers.IO) {
                 target.parentFile?.mkdirs()

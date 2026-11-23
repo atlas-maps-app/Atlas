@@ -60,7 +60,7 @@ class ReviewBatteryTest {
         val out = StringBuilder()
         PlaceStore.open(db).use { store ->
             val engine = SearchEngine(store)
-            val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr")
+            val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr", hours = Nowhere)
             out.append("size ${store.size}\n")
             val box = BBox.around(LatLon(49.6116, 6.1319), 300.0)
             out.append("inBox300 ${store.inBox(box).size}\n")
@@ -116,7 +116,7 @@ class ReviewProfileTest {
         val out = StringBuilder()
         PlaceStore.open(db).use { store ->
             val engine = SearchEngine(store)
-            val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr")
+            val here = SearchContext(location = LatLon(49.6116, 6.1319), lang = "fr", hours = Nowhere)
             for (q in qs) {
                 runBlocking { engine.search(q, here) }
                 val counts = HashMap<String, Int>()

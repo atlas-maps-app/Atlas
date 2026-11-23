@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.atlas.geo.LatLon
 import app.atlas.model.Place
+import app.atlas.places.OpeningHoursContext
 import app.atlas.ui.kit.PlaceSummary
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.openLine
@@ -88,11 +89,11 @@ internal class CardLook(
  */
 @Composable
 internal fun PlaceCard(
-    found: Found, here: LatLon, facts: List<String>, now: LocalDateTime, look: CardLook, tile: @Composable (dim: Boolean) -> Unit,
+    found: Found, here: LatLon, facts: List<String>, now: LocalDateTime, hours: OpeningHoursContext, look: CardLook, tile: @Composable (dim: Boolean) -> Unit,
     modifier: Modifier = Modifier, dim: Boolean = false, caution: Boolean = false, onClick: (() -> Unit)? = null,
 ) {
     val lang = remember { Locale.getDefault().language }
-    val s = PlaceSummary.of(found.place, here, lang, now)
+    val s = PlaceSummary.of(found.place, here, lang, now, hours)
     val open = openLine(s, now)
     Row(
         modifier.fillMaxWidth().heightIn(min = look.minHeight.dp).boardBox(if (dim) look.dimBg else look.bg, corners(look.radius), if (dim) look.dimShadows else look.shadows)

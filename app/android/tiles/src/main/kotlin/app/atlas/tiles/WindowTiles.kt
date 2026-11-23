@@ -43,6 +43,13 @@ class WindowTiles(
     clock: () -> Long = System::currentTimeMillis,
     /** A country's tiles of a set kept whole on the phone ([Local]), or null where the phone keeps none of them. */
     private val local: (Pack, TileSet) -> Local? = { _, _ -> null },
+    /**
+     * Told the pack's id as each of its tiles' indexes comes into memory, whether [index] or [window] read it, under
+     * the indexes' lock, so it must not block: what [level] answers for that pack changes then (the app maintainer, 19
+     * November 2026, batch 6 B15: the country question reads it near a border, and the screens that read the country
+     * read it again).
+     */
+    private val indexRead: (String) -> Unit = {},
 ) {
     /** A set of a country's tiles on the phone: its [tiles] and their [index], as packs.json publishes them. */
     class Local(val tiles: File, val index: File)
@@ -119,19 +126,28 @@ class WindowTiles(
      * little: the Netherlands' holds Antwerp and Aachen, which its tiles do not. Null where the pack's index of that
      * version is not read yet ([index] reads it). Never blocks and allocates nothing: the map asks at each camera.
      */
-    fun holds(id: String, version: String, lat: Double, lon: Double): Boolean? {
+    fun holds(id: String, version: String, lat: Double, lon: Double): Boolean? = level(id, version, lat, lon)?.let { it > 0 }
+
+    /**
+     * How finely pack [id]'s tiles of core version [version] hold the place at [lat], [lon], as [holds] reads them: [LEVEL]
+     * where the index lists the place's window, a frame cell's level (13, else 12) where it lists only that level's tile
+     * over the place, 0 where it lists neither; null where the pack's index of that version is not read yet. Where two
+     * countries' tiles hold a place, the finer says whose it is: a level's tile spans a border (Maastricht's L12 holds
+     * Lanaken). From memory: never blocks, reads nothing and allocates nothing.
+     */
+    fun level(id: String, version: String, lat: Double, lon: Double): Int? {
         val index = known[id] ?: return null
         if (index.level != LEVEL || index.version != version) return null
         val n = 1 shl LEVEL
         val la = lat.coerceIn(-MAX_LAT, MAX_LAT) * PI / 180.0
         val x = floor((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n - 1)
         val y = floor((1.0 - ln(tan(la) + 1.0 / cos(la)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
-        if (index.lists(LEVEL, x, y)) return true
+        if (index.lists(LEVEL, x, y)) return LEVEL
         for (i in 0 until TilesIndex.LEVELS.size) {
             val z = TilesIndex.LEVELS[i]
-            if (index.lists(z, x shr (LEVEL - z), y shr (LEVEL - z))) return true
+            if (index.lists(z, x shr (LEVEL - z), y shr (LEVEL - z))) return z
         }
-        return false
+        return 0
     }
 
     /**
@@ -188,6 +204,7 @@ class WindowTiles(
         if (read.tilesBytes != tiles) throw IOException("pack ${pack.id}: its tiles' index is of ${read.tilesBytes} bytes of tiles, its tiles are $tiles")
         indexes[pack.id] = sha to read
         known = known + (pack.id to read)
+        indexRead(pack.id)
         return read
     }
 

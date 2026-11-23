@@ -12,6 +12,8 @@ import app.atlas.places.OpeningHours
 import app.atlas.places.OpeningHoursContext
 import app.atlas.places.Presets
 import app.atlas.services.PlaceOrigin
+import app.atlas.ui.search.HereContext
+import app.atlas.ui.search.PlaceLocale
 import app.atlas.ui.kit.WalkTime
 import java.time.DayOfWeek
 import java.time.Duration
@@ -41,13 +43,16 @@ internal enum class Open {
  * A shop, errand or amenity as the shop screens read it: its name, how far it is from the centre of the area, its
  * brand, and its opening hours parsed once on first use. Everything else is read from [tags] when asked.
  */
-internal class ShopPlace(val place: Place, val name: String, val distanceM: Double) {
+internal class ShopPlace(val place: Place, val name: String, val distanceM: Double, private val country: String?) {
     val tags: Map<String, String> get() = place.tags
     val key: String get() = place.key
     val location: LatLon get() = place.location
 
-    /** The chain it belongs to, from `brand:wikidata`, the brand tag or the name; null for an independent. */
-    val brand: Brand? by lazy { Brands.forTags(place.tags) }
+    /**
+     * The chain it belongs to, from `brand:wikidata`, the brand tag or the name, as it trades in the country of the map
+     * here ([Brands.forTags]); null for an independent.
+     */
+    val brand: Brand? by lazy { Brands.forTags(place.tags, country) }
 
     /** True when no chain claims it (no `brand` tag and no brand matched). */
     val independent: Boolean get() = tags["brand"] == null && tags["brand:wikidata"] == null && brand == null
@@ -140,10 +145,10 @@ internal class ShopPlace(val place: Place, val name: String, val distanceM: Doub
         val CARD_KEYS = listOf("cards", "credit_cards", "debit_cards", "contactless", "maestro", "visa", "mastercard", "american_express", "v_pay", "girocard")
         private const val METRES_PER_DEGREE = 111_320.0
 
-        /** Wraps [place] measured from [centre]; null when it has no name to show. */
-        fun of(place: Place, centre: LatLon, lang: String?, nameless: Boolean = false): ShopPlace? {
+        /** Wraps [place] measured from [centre], in [country], the country of the map there; null when it has no name to show. */
+        fun of(place: Place, centre: LatLon, lang: String?, country: String?, nameless: Boolean = false): ShopPlace? {
             val name = Localise.name(place.tags, lang) ?: Presets.match(place.tags)?.fullName(lang)?.takeIf { nameless } ?: return null
-            return ShopPlace(place, name, Geo.distance(centre, place.location))
+            return ShopPlace(place, name, Geo.distance(centre, place.location), country)
         }
     }
 }
@@ -158,15 +163,15 @@ internal class ShopArea(
     val places: List<ShopPlace>,
     val origin: PlaceOrigin?,
     val loading: Boolean,
+    /** The area's country and clock, read the one way ([HereContext.localeAt]): never the phone's language. */
+    val local: PlaceLocale,
     val error: String? = null,
-    zone: ZoneId = ZoneId.systemDefault(),
 ) {
-    /** The country most places give in `addr:country`: its holidays apply to opening hours. */
-    val country: String? = places.mapNotNull { it.tags["addr:country"]?.trim()?.uppercase()?.takeIf { c -> c.length == 2 } }
-        .groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
+    /** The country here: its holidays apply to opening hours. */
+    val country: String? get() = local.country
 
     /** Holidays of [country] and the real sun here, for every opening-hours question about this area. */
-    val hours: OpeningHoursContext = OpeningHoursContext.forPlace(country, zone, centre.lat, centre.lon)
+    val hours: OpeningHoursContext = local.hours(centre)
 
     val waiting: Boolean get() = places.isEmpty() && loading
 
@@ -184,7 +189,12 @@ internal class ShopArea(
     data class Count(val value: Int, val open: Boolean)
 
     companion object {
-        fun empty(centre: LatLon, radiusM: Double = DEFAULT_RADIUS_M) = ShopArea(centre, radiusM, emptyList(), null, loading = true)
+        /**
+         * An area with no places yet, as a screen shows it while asking: it reads no hours, so it knows no country (no
+         * holidays) and keeps the phone's [zone].
+         */
+        fun empty(centre: LatLon, radiusM: Double = DEFAULT_RADIUS_M, loading: Boolean = true, zone: ZoneId = ZoneId.systemDefault()) =
+            ShopArea(centre, radiusM, emptyList(), null, loading, PlaceLocale(null, zone))
 
         /** How far the shop screens look: about a quarter of an hour on foot. */
         const val DEFAULT_RADIUS_M = 1_200.0

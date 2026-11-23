@@ -91,12 +91,15 @@ internal class CoreMap(
     val source = MapCameraSource(
         { _, done, revision ->
             val was = complete
+            val before = completeRevision
             complete = done
             if (done) {
                 completeRevision = revision
                 if (firstCompleteAt < 0) firstCompleteAt = SystemClock.uptimeMillis()
             }
-            if (done != was) main.post(onChange)
+            // the start's paper waits for a complete picture of the camera published once the packs were known: while
+            // it is up, a newer complete picture is news to it, though the last was complete too
+            if (done != was || (done && revision != before && !cover.started)) main.post(onChange)
             names.framePresented()
         },
         onOff = { reason ->

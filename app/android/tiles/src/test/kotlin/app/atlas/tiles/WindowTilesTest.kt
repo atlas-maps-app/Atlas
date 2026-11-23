@@ -325,6 +325,53 @@ class WindowTilesTest {
     }
 
     @Test
+    fun theIndexSaysHowFinelyItsTilesHoldAPlace() {
+        val list = listOf(publish("levelled", country(levels = listOf(Triple(13, 4207, 2693), Triple(12, 2103, 1346))), date))
+        val tiles = WindowTiles({ list }, dir)
+        val (lat, lon) = middle(westerkerk.first, westerkerk.second)
+        // nothing is known before the index is read, and asking reads nothing
+        assertNull(tiles.level("levelled", version, lat, lon))
+        assertEquals(0, gh.storageRequests.size)
+        tiles.index("levelled", version)
+        // its window
+        assertEquals(WindowTiles.LEVEL, tiles.level("levelled", version, lat, lon))
+        // no window listed, under the L13 tile 4207/2693
+        assertEquals(13, middle(8414, 5386).let { (a, o) -> tiles.level("levelled", version, a, o) })
+        // no window and no L13 tile listed (4206/2692), under the L12 tile 2103/1346
+        assertEquals(12, middle(8412, 5384).let { (a, o) -> tiles.level("levelled", version, a, o) })
+        assertEquals(true, middle(8412, 5384).let { (a, o) -> tiles.holds("levelled", version, a, o) })
+        // beyond them all
+        assertEquals(0, middle(8420, 5390).let { (a, o) -> tiles.level("levelled", version, a, o) })
+        assertEquals(false, middle(8420, 5390).let { (a, o) -> tiles.holds("levelled", version, a, o) })
+        // another core's index says nothing, and asking read nothing more
+        assertNull(tiles.level("levelled", "core-p0 s0", lat, lon))
+        assertEquals(1, gh.storageRequests.size)
+    }
+
+    /**
+     * Each index that comes into memory is told, by its pack, once (the app maintainer, 19 November 2026, batch 6 B15):
+     * the country question reads them near a border, so the screens that read the country read it again. Whether
+     * [WindowTiles.index] read it or a window did, and not again from memory.
+     */
+    @Test
+    fun eachIndexThatComesIntoMemoryIsToldOnce() {
+        val list = listOf(publish("netherlands", country(), date))
+        val told = java.util.Collections.synchronizedList(ArrayList<String>())
+        val tiles = WindowTiles({ list }, dir, indexRead = { told += it })
+        val (lat, lon) = middle(westerkerk.first, westerkerk.second)
+        assertNull(tiles.level("netherlands", version, lat, lon))
+        assertEquals(emptyList<String>(), told)
+        tiles.index("netherlands", version)
+        assertEquals(listOf("netherlands"), told)
+        tiles.index("netherlands", version)
+        tiles.window(14, westerkerk.first, westerkerk.second, version)
+        assertEquals("from memory, told nothing more", listOf("netherlands"), told)
+        val byWindow = java.util.Collections.synchronizedList(ArrayList<String>())
+        WindowTiles({ list }, tempDir("towindow"), indexRead = { byWindow += it }).window(14, westerkerk.first, westerkerk.second, version)
+        assertEquals("a window read it", listOf("netherlands"), byWindow)
+    }
+
+    @Test
     fun aWindowNoCountryHoldsGetsNoAnswer() {
         val list = listOf(publish("netherlands", country(), date))
         val tiles = WindowTiles({ list }, dir)

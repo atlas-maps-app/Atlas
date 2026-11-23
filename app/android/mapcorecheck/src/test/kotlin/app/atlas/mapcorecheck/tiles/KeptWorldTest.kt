@@ -181,7 +181,7 @@ class KeptWorldTest {
         val said = Collections.synchronizedList(ArrayList<String>())
         var countries = emptySet<String>()
         var adopted = 0
-        val fetch = WorldFetch(world, server.url + "world-latest/", now = { clock }, drop = { error("no world is replaced without its keep here") }, hold = { countries.isNotEmpty() })
+        val fetch = WorldFetch(world, server.url + "world-latest/", now = { clock }, drop = { error("no world is replaced without its keep here") }, hold = { countries.isNotEmpty() }, client = app.atlas.mapcorecheck.tilesClient)
         val keeper = WorldKeeper(fetch, cache, budget = { BUDGET }, said = { said += it }, adopted = { adopted++ })
         assertTrue(fetch.start())
         assertEquals(v1.keepBytes, keeper.bytes(NL))
@@ -226,7 +226,7 @@ class KeptWorldTest {
         val before = server.requests.size
         assertTrue(keeper.keep(countries).whole)
         assertEquals(before, server.requests.size)
-        val restarted = WorldFetch(world, server.url + "world-latest/", now = { clock }, hold = { true })
+        val restarted = WorldFetch(world, server.url + "world-latest/", now = { clock }, hold = { true }, client = app.atlas.mapcorecheck.tilesClient)
         assertTrue(restarted.start())
         assertTrue(WorldKeeper(restarted, cache, budget = { BUDGET }).keep(countries).whole)
         server.down = false
@@ -298,7 +298,7 @@ class KeptWorldTest {
         val world = File(root, "phone/world")
         val cache = File(root, "phone/cache2").apply { mkdirs() }
         var adopted = 0
-        val fetch = WorldFetch(world, server.url + "world-latest/", now = { clock }, hold = { true })
+        val fetch = WorldFetch(world, server.url + "world-latest/", now = { clock }, hold = { true }, client = app.atlas.mapcorecheck.tilesClient)
         val keeper = WorldKeeper(fetch, cache, budget = { BUDGET }, adopted = { adopted++ })
         assertTrue(fetch.start())
         assertTrue(keeper.keep(setOf(NL)).whole)

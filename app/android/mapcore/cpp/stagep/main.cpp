@@ -38,8 +38,13 @@
 // (load::build_window with load::place_of: the window's frame cell's frame, its country's looks, the answer's SHA-256
 // its source), each into <out-dir>/14-<x>-<y>.atlas, on [threads] threads (the machine's cores by default). A country's
 // pack is its windows built so (`packer country`). Once all are built, a line on stdout a window in the list's order:
-// `x y <features> <bytes> <ms>`, or `x y failed <why>`. The exit code: 0 every window built; 1 any failed; 2 a usage
-// error.
+// `x y <features> <bytes> <ms> <name>=<count>...`, or `x y failed <why>`. The counts are those of the buildings of the
+// scene the window's tile was cut from (load::BuiltWindow's), the window's own and those in the margin about it:
+// `footprints` (its buildings and parts), then load::BuildingCounts' `pairs` (overlapping_pairs), `uncovered`
+// (uncovered_outlines), `unsettled`, `unmeasured`, `flat` (flat_roofs), `hidden` and `doubles`; then of its tile alone
+// (load::buildings_of), `buildings` (its buildings and parts) and `windows`, the most windows stage T's walls can give
+// them (load::most_windows), which can pass the most a tile holds (tiles::building::most_tile_windows) only where stage
+// T cuts some. The exit code: 0 every window built; 1 any failed; 2 a usage error.
 //
 //   atlas_stagep levels <list> <out-dir> [threads]
 //
@@ -460,7 +465,18 @@ struct ListedWindow {
                 continue;
             }
             const double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
-            w.line = std::format("{} {} {} {:.0f}", name, built->features, built->pack.size(), ms);
+            const auto held = load::buildings_of(built->pack);
+            if (!held) {
+                w.line = std::format("{} failed {}", name, held.error().what);
+                continue;
+            }
+            const load::BuildingCounts& c = built->counts;
+            w.line =
+                std::format("{} {} {} {:.0f} footprints={} pairs={} uncovered={} unsettled={} unmeasured={} flat={} "
+                            "hidden={} doubles={} buildings={} windows={}",
+                            name, built->features, built->pack.size(), ms, built->footprints, c.overlapping_pairs,
+                            c.uncovered_outlines, c.unsettled, c.unmeasured, c.flat_roofs, c.hidden, c.doubles,
+                            held->records, held->most_windows);
             w.built = true;
         }
     };

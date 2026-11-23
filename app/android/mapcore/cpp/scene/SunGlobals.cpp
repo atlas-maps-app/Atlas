@@ -15,7 +15,13 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <span>
 #include <tuple>
+#include <unordered_map>
+#include <vector>
 
 #if defined(__ANDROID__)
 #include <pthread.h>
@@ -266,6 +272,7 @@ void SunGlobals::rest() {
         for (Lane& l : lanes_) {
             l.next.reset();
             l.scene.reset();
+            l.parts = {}; // its tiles' parts go with its scene
         }
     }
     for (Lane& l : lanes_) {
@@ -449,13 +456,19 @@ void SunGlobals::work(const std::stop_token& stop) {
             std::vector<sun::Deck> decks;
             std::vector<tiles::Sha256Digest> chunks;
             bool made_whole = false;
+            Parts parts; // the last scene's tiles' parts, taken again where this one holds them, then this one's
+            {
+                const std::scoped_lock lock(mutex_);
+                parts = std::move(lane->parts);
+                lane->parts = {};
+            }
             {
                 const trace::Section traced("atlas sun scene");
                 if (same) {
-                    scene = make_whole(*scene, b, *lane);
+                    scene = make_whole(*scene, b, *lane, parts);
                     made_whole = scene != nullptr;
                 }
-                if (!made_whole) scene = build(b, decks, chunks);
+                if (!made_whole) scene = build(b, decks, chunks, parts);
             }
             const double ms = ms_since(started);
             const std::scoped_lock lock(mutex_);
@@ -488,6 +501,7 @@ void SunGlobals::work(const std::stop_token& stop) {
                 lane->built = b.tiles;
                 lane->built_others = b.others;
                 lane->built_pack = b.pack->id;
+                lane->parts = scene ? std::move(parts) : Parts{};
                 if (!made_whole) {
                     lane->built_decks = std::move(decks);
                     lane->built_chunks = std::move(chunks);
@@ -554,8 +568,72 @@ std::optional<double> SunGlobals::maxh(const std::shared_ptr<const tiles::StoreP
     return *h;
 }
 
+namespace {
+
+/// A deck's digest: its points, reach, kind and box, every byte (the decks near a tile's quay walls, as a set).
+[[nodiscard]] tiles::Sha256Digest deck_digest(const sun::Deck& d) {
+    tiles::Sha256 h;
+    const std::array<std::uint64_t, 2> sizes{d.x.size(), d.z.size()};
+    h.update(std::as_bytes(std::span(sizes)));
+    h.update(std::as_bytes(std::span(d.x)));
+    h.update(std::as_bytes(std::span(d.z)));
+    h.update(std::as_bytes(std::span(&d.hw, 1)));
+    const std::array<std::byte, 1> road{static_cast<std::byte>(d.road ? 1 : 0)};
+    h.update(road);
+    h.update(std::as_bytes(std::span(d.box)));
+    return h.finish();
+}
+
+/// What a whole tile's quay walls were made against: the set of the scene's decks near any of its quay edges
+/// (sun::deck_near), their digests sorted, hashed. Its walls are the same over any decks with the same set
+/// (sun::QuayMark). The decks are first kept to the edges' box widened by their longest edge and a metre, which every
+/// near deck meets (the metre for the rounding of the widening).
+[[nodiscard]] tiles::Sha256Digest near_of(std::span<const sun::QuayMark> quays, std::span<const sun::Deck> decks,
+                                          std::span<const tiles::Sha256Digest> digests) {
+    double x0 = std::numeric_limits<double>::infinity();
+    double x1 = -x0;
+    double z0 = x0;
+    double z1 = -x0;
+    double most = 0.0;
+    for (const sun::QuayMark& q : quays) {
+        if (std::isnan(q.mx) || std::isnan(q.mz) || std::isnan(q.el)) continue; // near no deck
+        x0 = std::min(x0, q.mx);
+        x1 = std::max(x1, q.mx);
+        z0 = std::min(z0, q.mz);
+        z1 = std::max(z1, q.mz);
+        most = std::max(most, q.el);
+    }
+    std::vector<tiles::Sha256Digest> hits;
+    const double w = most + 1.0;
+    for (std::size_t d = 0; d < decks.size(); ++d) {
+        const auto& bb = decks[d].box;
+        const bool meets = bb[0] <= x1 + w && bb[1] >= x0 - w && bb[2] <= z1 + w && bb[3] >= z0 - w;
+        if (!meets) continue;
+        if (std::ranges::any_of(quays, [&](const sun::QuayMark& q) { return sun::deck_near(q, decks[d]); })) {
+            hits.push_back(digests[d]);
+        }
+    }
+    std::ranges::sort(hits);
+    const auto [first, last] = std::ranges::unique(hits);
+    hits.erase(first, last);
+    tiles::Sha256 h;
+    for (const tiles::Sha256Digest& d : hits) h.update(d);
+    return h.finish();
+}
+
+/// Whether parts made in `frame` with `region` are what a scene made in `f` with `r` would make (start_tile reads
+/// its pack's head for its frame alone).
+[[nodiscard]] bool same_ground(const tiles::Frame& frame, const sun::Region& region, const tiles::Frame& f,
+                               const sun::Region& r) noexcept {
+    return frame.lat0 == f.lat0 && frame.lon0 == f.lon0 && frame.kx == f.kx && frame.kz == f.kz &&
+           region.water_y == r.water_y && region.paris == r.paris && region.tone == r.tone &&
+           region.no_shadows == r.no_shadows && region.kit_eaves == r.kit_eaves && region.kit_band == r.kit_band;
+}
+
+} // namespace
+
 std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<sun::Deck>& decks,
-                                                    std::vector<tiles::Sha256Digest>& own) {
+                                                    std::vector<tiles::Sha256Digest>& own, Parts& parts) {
     const tiles::Pack& p = b.pack->pack;
     const tiles::RenderHead* head = p.head();
     const tiles::Style* style = p.style();
@@ -565,54 +643,81 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
     tiles::TileDecoder decoder;
     Arena arena(std::size_t{4} << 20U, Growth::grows, "the sun's scene");
     std::vector<std::byte> raw;
-    auto decode = [&](tiles::TileKey key) -> std::optional<tiles::Tile> {
-        const tiles::ChunkRef* chunk = p.chunks().find(key);
+    auto decode_from = [&](const std::shared_ptr<const tiles::StorePack>& pack, tiles::TileKey key,
+                           const tiles::ChunkRef* chunk) -> std::optional<tiles::Tile> {
         if (chunk == nullptr) return std::nullopt;
         arena.reset();
-        auto tile = store_.decode({.pack = b.pack, .chunk = chunk}, zstd, decoder, arena, raw);
+        auto tile = store_.decode({.pack = pack, .chunk = chunk}, zstd, decoder, arena, raw);
         if (!tile) {
-            log::warn("vk sun: {}/{}/{} of {}: {}", key.z, key.x, key.y, b.pack->id, tiles::describe(tile.error()));
+            log::warn("vk sun: {}/{}/{} of {}: {}", key.z, key.x, key.y, pack->id, tiles::describe(tile.error()));
             return std::nullopt;
         }
         return *tile;
     };
-    // An other pack's tile (Other), decoded from its own pack: its points are grid points, which this pack's frame
-    // places (a frame cell's edge lies between the two).
-    auto decode_other = [&](const Other& o) -> std::optional<tiles::Tile> {
-        const tiles::ChunkRef* chunk = o.pack->pack.chunks().find(o.key);
-        if (chunk == nullptr) return std::nullopt;
-        arena.reset();
-        auto tile = store_.decode({.pack = o.pack, .chunk = chunk}, zstd, decoder, arena, raw);
-        if (!tile) {
-            log::warn("vk sun: {}/{}/{} of {}: {}", o.key.z, o.key.x, o.key.y, o.pack->id,
-                      tiles::describe(tile.error()));
-            return std::nullopt;
+    // The last scene's parts, each tile's to take again where it was made from the same (its kind, key, chunk, level
+    // and cells, in the same frame and region; a whole tile's quay walls checked against the decks once they are all
+    // known, below), never copied: the new scene shares it. What this scene does not take goes with the last.
+    bool keep = true;
+#if defined(ATLAS_TESTS)
+    keep = keep_parts_.load(std::memory_order_relaxed);
+#endif
+    Parts last = std::move(parts);
+    parts = {};
+    if (!keep || !same_ground(last.frame, last.region, head->frame, region)) last.tiles.clear();
+    parts.frame = head->frame;
+    parts.region = region;
+    std::unordered_map<std::uint64_t, std::vector<std::size_t>> by_key;
+    for (std::size_t i = 0; i < last.tiles.size(); ++i) by_key[last.tiles[i].key.packed()].push_back(i);
+    const auto take = [&](Part::Kind kind, tiles::TileKey key, const tiles::Sha256Digest& chunk, std::uint8_t level,
+                          std::uint64_t live) -> Part* {
+        const auto it = by_key.find(key.packed());
+        if (it == by_key.end()) return nullptr;
+        for (const std::size_t i : it->second) {
+            Part& k = last.tiles[i];
+            if (k.tile && k.kind == kind && k.chunk == chunk && k.level == level && k.live == live) return &k;
         }
-        return *tile;
+        return nullptr;
     };
-    // Each tile decoded once: its bridges (the quays' decks, every tile's before any quay wall is made: the pack's own
-    // tiles', then the other packs'), and with them the rest of its part of the scene (sun::start_tile), or its solids
-    // alone where no one asks for its bits (the halo's: ask makes the wanted tiles' bits alone); then once every deck
-    // is known, the quay walls of the pack's own tiles made whole (sun::finish_tile).
+    std::uint64_t kept = 0;
+    std::uint64_t made = 0;
+    std::uint64_t remade = 0;
+    // Each tile decoded once where its part is not taken: its bridges (the quays' decks, every tile's before any quay
+    // wall is made: the pack's own tiles', then the other packs'), and with them the rest of its part of the scene
+    // (sun::start_tile), or its solids alone where no one asks for its bits (the halo's: ask makes the wanted tiles'
+    // bits alone); then once every deck is known, the quay walls of the pack's own tiles made whole (sun::finish_tile).
     decks.clear();
     own.clear();
-    std::vector<sun::SunTile> made;
-    made.reserve(b.tiles.size() + b.others.size());
+    std::vector<Part>& got = parts.tiles;
+    got.reserve(b.tiles.size() + b.others.size());
     std::vector<std::optional<sun::TileStart>> starts(b.tiles.size());
     std::vector<std::pair<std::uint8_t, std::uint8_t>> levels; // each zoom and ladder level its tiles are made at
     for (std::size_t i = 0; i < b.tiles.size(); ++i) {
         const Asked& t = b.tiles[i];
         const tiles::TileKey key = tiles::TileKey::unpack(t.key);
-        const auto tile = decode(key);
-        if (!tile) return nullptr;
-        sun::collect_decks(*tile, *head, t.level, decks);
-        if (std::ranges::find(b.wanted, key) != b.wanted.end()) {
-            starts[i] = sun::start_tile(*tile, *head, region, t.level, t.live);
-            made.emplace_back();
+        const tiles::ChunkRef* chunk = p.chunks().find(key);
+        if (chunk == nullptr) return nullptr;
+        const bool wanted = std::ranges::find(b.wanted, key) != b.wanted.end();
+        const Part::Kind kind = wanted ? Part::Kind::whole : Part::Kind::solids;
+        if (Part* k = take(kind, key, chunk->sha256, t.level, t.live)) {
+            got.push_back(std::move(*k)); // its tile left empty, so it is taken once
+            ++kept;
         } else {
-            made.push_back(sun::solids_tile(*tile, head->frame, t.level, t.live));
+            const auto tile = decode_from(b.pack, key, chunk);
+            if (!tile) return nullptr;
+            Part n{.kind = kind, .key = key, .chunk = chunk->sha256, .level = t.level, .live = t.live};
+            sun::collect_decks(*tile, *head, t.level, n.decks);
+            if (wanted) {
+                sun::TileStart start = sun::start_tile(*tile, *head, region, t.level, t.live);
+                n.quays = sun::quay_marks(start);
+                starts[i] = std::move(start);
+            } else {
+                n.tile = std::make_shared<const sun::SunTile>(sun::solids_tile(*tile, head->frame, t.level, t.live));
+            }
+            for (const sun::Deck& d : n.decks) n.digests.push_back(deck_digest(d));
+            got.push_back(std::move(n));
+            ++made;
         }
-        own.push_back(p.chunks().find(key)->sha256);
+        own.push_back(chunk->sha256);
         const std::pair<std::uint8_t, std::uint8_t> at{key.z, t.level};
         if (std::ranges::find(levels, at) == levels.end()) levels.push_back(at);
     }
@@ -621,20 +726,58 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
     std::vector<tiles::Sha256Digest> chunks = own;
     std::vector<const Other*> held;
     for (const Other& o : b.others) {
-        const auto tile = decode_other(o);
-        if (!tile) continue;
-        sun::collect_decks(*tile, head->frame, o.level, decks);
-        sun::SunTile t;
-        t.key = o.key;
-        t.level = o.level;
-        t.solids = sun::solids_of(*tile, head->frame, o.level).solids;
-        made.push_back(std::move(t));
+        if (Part* k = take(Part::Kind::other, o.key, o.chunk, o.level, sun::all_cells)) {
+            got.push_back(std::move(*k));
+            ++kept;
+        } else {
+            const auto tile = decode_from(o.pack, o.key, o.pack->pack.chunks().find(o.key));
+            if (!tile) continue;
+            Part n{.kind = Part::Kind::other, .key = o.key, .chunk = o.chunk, .level = o.level};
+            sun::collect_decks(*tile, head->frame, o.level, n.decks);
+            sun::SunTile t;
+            t.key = o.key;
+            t.level = o.level;
+            t.solids = sun::solids_of(*tile, head->frame, o.level).solids;
+            n.tile = std::make_shared<const sun::SunTile>(std::move(t));
+            for (const sun::Deck& d : n.decks) n.digests.push_back(deck_digest(d));
+            got.push_back(std::move(n));
+            ++made;
+        }
         chunks.push_back(o.chunk);
         held.push_back(&o);
     }
+    // The scene's decks, every tile's in the scene's order (as a whole build collects them), and their digests.
+    std::vector<tiles::Sha256Digest> digests;
+    for (const Part& part : got) {
+        decks.insert(decks.end(), part.decks.begin(), part.decks.end());
+        digests.insert(digests.end(), part.digests.begin(), part.digests.end());
+    }
     for (std::size_t i = 0; i < b.tiles.size(); ++i) {
-        std::optional<sun::TileStart>& start = starts[i];
-        if (start.has_value()) made[i] = sun::finish_tile(std::move(*start), region, decks);
+        Part& part = got[i];
+        if (std::optional<sun::TileStart>& start = starts[i]; start.has_value()) {
+            part.tile = std::make_shared<const sun::SunTile>(sun::finish_tile(std::move(*start), region, decks));
+            part.near = near_of(part.quays, decks, digests);
+            continue;
+        }
+        if (part.kind != Part::Kind::whole || part.quays.empty()) continue;
+        // taken: its quay walls hold where the decks near them are the ones they were made against; else it is made
+        // again from its chunk, as a whole build makes it
+        const tiles::Sha256Digest near = near_of(part.quays, decks, digests);
+        if (near == part.near) continue;
+        const auto tile = decode_from(b.pack, part.key, p.chunks().find(part.key));
+        if (!tile) return nullptr;
+        part.tile =
+            std::make_shared<const sun::SunTile>(sun::make_tile(*tile, *head, region, part.level, decks, part.live));
+        part.near = near;
+        --kept;
+        ++made;
+        ++remade;
+    }
+    {
+        const std::scoped_lock lock(mutex_);
+        stats_.parts_kept += kept;
+        stats_.parts_made += made;
+        stats_.parts_remade += remade;
     }
     // The march ends at the scene's tallest solid, as the port's Index takes it: of every level the scene holds, at
     // each zoom it holds tiles of. A frame cell's L13 holds its places' records as stage P derived them from all the
@@ -647,8 +790,8 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         if (!h) return nullptr;
         tallest = pymath::max(tallest, *h);
     }
-    for (std::size_t t = b.tiles.size(); t < made.size(); ++t) {
-        for (const double h : made[t].solids.h) tallest = pymath::max(tallest, h);
+    for (std::size_t t = b.tiles.size(); t < got.size(); ++t) {
+        for (const double h : got[t].tile->solids.h) tallest = pymath::max(tallest, h);
     }
     // What each of the pack's tiles is made against (sun::Scene::context, the disk cache's key): its chunk and the
     // cells it takes, and every other tile of the scene within the march's reach of it with its level and cells, its
@@ -661,7 +804,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         std::uint64_t live = sun::all_cells;
     };
     std::vector<Near> all;
-    all.reserve(made.size());
+    all.reserve(got.size());
     for (const Asked& t : b.tiles) {
         const tiles::ChunkRef* c = p.chunks().find(tiles::TileKey::unpack(t.key));
         all.push_back({.reach = c->reach.box, .chunk = c->sha256, .level = t.level, .live = t.live});
@@ -701,10 +844,14 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         }
         chunks[i] = h.finish();
     }
-    return std::make_shared<const sun::Scene>(std::move(made), tallest, std::move(chunks));
+    std::vector<std::shared_ptr<const sun::SunTile>> tiles;
+    tiles.reserve(got.size());
+    for (const Part& part : got) tiles.push_back(part.tile);
+    return std::make_shared<const sun::Scene>(std::move(tiles), tallest, std::move(chunks));
 }
 
-std::shared_ptr<const sun::Scene> SunGlobals::make_whole(const sun::Scene& scene, const Build& b, const Lane& lane) {
+std::shared_ptr<const sun::Scene> SunGlobals::make_whole(const sun::Scene& scene, const Build& b, const Lane& lane,
+                                                         Parts& parts) {
     const tiles::Pack& p = b.pack->pack;
     const tiles::RenderHead* head = p.head();
     const tiles::Style* style = p.style();
@@ -714,10 +861,18 @@ std::shared_ptr<const sun::Scene> SunGlobals::make_whole(const sun::Scene& scene
     tiles::TileDecoder decoder;
     Arena arena(std::size_t{4} << 20U, Growth::grows, "the sun's scene");
     std::vector<std::byte> raw;
-    std::vector<sun::SunTile> tiles(scene.tiles().begin(), scene.tiles().end());
+    // the scene's parts, shared; the lane's kept parts follow the tiles made whole, where they are the scene's
+    std::vector<std::shared_ptr<const sun::SunTile>> tiles;
+    tiles.reserve(scene.tiles().size());
+    for (std::size_t t = 0; t < scene.tiles().size(); ++t) tiles.push_back(scene.part(t));
+    if (parts.tiles.size() != tiles.size()) parts.tiles.clear();
+    std::vector<tiles::Sha256Digest> digests;
+    for (const Part& part : parts.tiles) digests.insert(digests.end(), part.digests.begin(), part.digests.end());
+    if (digests.size() != lane.built_decks.size()) parts.tiles.clear();
+    std::uint64_t made = 0;
     for (std::size_t i = 0; i < b.tiles.size(); ++i) {
         const tiles::TileKey key = tiles::TileKey::unpack(b.tiles[i].key);
-        if (tiles[i].whole || std::ranges::find(b.wanted, key) == b.wanted.end()) continue;
+        if (tiles[i]->whole || std::ranges::find(b.wanted, key) == b.wanted.end()) continue;
         // made as it would have been in the scene's build: from the chunk it was built from, with the scene's decks
         const tiles::ChunkRef* chunk = p.chunks().find(key);
         if (chunk == nullptr || chunk->sha256 != lane.built_chunks[i]) return nullptr;
@@ -727,7 +882,21 @@ std::shared_ptr<const sun::Scene> SunGlobals::make_whole(const sun::Scene& scene
             log::warn("vk sun: {}/{}/{} of {}: {}", key.z, key.x, key.y, b.pack->id, tiles::describe(tile.error()));
             return nullptr;
         }
-        tiles[i] = sun::make_tile(*tile, *head, region, b.tiles[i].level, lane.built_decks, b.tiles[i].live);
+        sun::TileStart start = sun::start_tile(*tile, *head, region, b.tiles[i].level, b.tiles[i].live);
+        std::vector<sun::QuayMark> quays = sun::quay_marks(start);
+        tiles[i] = std::make_shared<const sun::SunTile>(sun::finish_tile(std::move(start), region, lane.built_decks));
+        ++made;
+        if (!parts.tiles.empty()) {
+            Part& part = parts.tiles[i];
+            part.kind = Part::Kind::whole;
+            part.tile = tiles[i];
+            part.near = near_of(quays, lane.built_decks, digests);
+            part.quays = std::move(quays);
+        }
+    }
+    {
+        const std::scoped_lock lock(mutex_);
+        stats_.parts_made += made;
     }
     return std::make_shared<const sun::Scene>(scene, std::move(tiles));
 }

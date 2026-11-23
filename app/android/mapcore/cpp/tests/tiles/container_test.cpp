@@ -12,14 +12,17 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -494,6 +497,32 @@ TEST_CASE("tiles: rhead and style refuse what they must") {
     SUBCASE("a byte left over") {
         head.push_back(std::byte{0});
         CHECK(read_head(head).error().fault == Fault::left_over);
+    }
+    SUBCASE("a frame off the Earth, or of none or NaN metres a degree") {
+        // its four doubles after the two levels: lat0, lon0, kx, kz
+        constexpr std::size_t frame = 4 + 2 + 1 + 1 + 2;
+        const auto put = [&head](std::size_t k, double v) {
+            const auto bits = std::bit_cast<std::uint64_t>(v);
+            for (std::size_t i = 0; i < 8; ++i) head[frame + (8 * k) + i] = std::byte((bits >> (8 * i)) & 0xFFU);
+        };
+        const std::vector<std::byte> good = head;
+        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+        constexpr double inf = std::numeric_limits<double>::infinity();
+        for (const auto& [k, v] : std::to_array<std::pair<std::size_t, double>>(
+                 {{0, nan}, {0, 91.0}, {1, -181.0}, {1, inf}, {2, nan}, {2, -1.0}, {2, 1e300}, {3, inf}, {3, 3e5}})) {
+            head = good;
+            put(k, v);
+            INFO("double " << k << " = " << v);
+            const auto read = read_head(head);
+            REQUIRE_FALSE(read.has_value());
+            CHECK(read.error().fault == Fault::bad_value);
+        }
+        // the poles' and the antimeridian's frames, and one of no metres a degree (a test's), are read
+        for (const auto& [k, v] : std::to_array<std::pair<std::size_t, double>>({{0, 90.0}, {1, -180.0}, {2, 0.0}})) {
+            head = good;
+            put(k, v);
+            CHECK(read_head(head).has_value());
+        }
     }
     SUBCASE("after the bands, a window's data's box or nothing") {
         CHECK(!read_head(head)->data);

@@ -7,6 +7,7 @@ import app.atlas.model.OsmId
 import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.nav.Dest
+import app.atlas.testing.Nowhere
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -96,15 +97,19 @@ class LookPeaksTest {
     @Test
     fun aPlaceSaysWhenItClosesOrOpens() {
         val at = LocalDateTime.of(2026, 10, 13, 18, 0)
-        val open = LookScene.status("Mo-Su 09:00-18:30", at)!!
+        val open = LookScene.status("Mo-Su 09:00-18:30", at, context = Nowhere)!!
         assertTrue(open.first)
         assertEquals(LocalDateTime.of(2026, 10, 13, 18, 30), open.second)
-        val closed = LookScene.status("Mo-Su 09:00-17:00", at)!!
+        val closed = LookScene.status("Mo-Su 09:00-17:00", at, context = Nowhere)!!
         assertEquals(false, closed.first)
         assertEquals(LocalDateTime.of(2026, 10, 14, 9, 0), closed.second)
-        assertNull(LookScene.status("24/7", at))
-        assertNull(LookScene.status(null, at))
-        assertNull(LookScene.status("by appointment", at))
+        assertNull(LookScene.status("24/7", at, context = Nowhere))
+        assertNull(LookScene.status(null, at, context = Nowhere))
+        assertNull(LookScene.status("by appointment", at, context = Nowhere))
+        // an open end states no closing time: open, and no time ("open"), in its stated hours and in the night after
+        assertEquals(true to null, LookScene.status("Mo-Su 17:00-02:00+", at, context = Nowhere))
+        assertEquals(true to null, LookScene.status("Mo-Su 17:00-02:00+", LocalDateTime.of(2026, 10, 14, 3, 0), context = Nowhere))
+        assertEquals(true to null, LookScene.status("Mo-Su 17:00+", at, context = Nowhere))
     }
 
     @Test

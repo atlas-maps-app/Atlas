@@ -10,7 +10,7 @@ import org.junit.Test
 class BrandsTest {
     @Test
     fun byWikidataFirst() {
-        val ah = Brands.forTags(mapOf("brand:wikidata" to "Q1653985", "shop" to "supermarket"))!!
+        val ah = Brands.forTags(mapOf("brand:wikidata" to "Q1653985", "shop" to "supermarket"), null)!!
         assertEquals("Albert Heijn", ah.name)
         assertEquals(mapOf("shop" to "supermarket"), ah.keyTags)
         assertEquals(0xFF00A0E2.toInt(), ah.colour)
@@ -31,13 +31,13 @@ class BrandsTest {
         assertEquals(0xFFFFD500.toInt(), Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "supermarket"), "nl")!!.colour)
         assertNull(Brands.forTags(mapOf("brand" to "Jumbo", "shop" to "toys"), "gr")!!.colour)
         // the name alone needs the exact main tag
-        assertEquals("Q38076", Brands.forTags(mapOf("name" to "McDonald's", "amenity" to "fast_food"))!!.wikidata)
-        assertNull(Brands.forTags(mapOf("name" to "McDonald's", "amenity" to "bench")))
-        assertEquals("Q38076", Brands.forTags(mapOf("brand" to "Mcdonalds", "amenity" to "fast_food"))!!.wikidata)
-        assertNull(Brands.forTags(mapOf("brand" to "No Such Chain Anywhere", "shop" to "bakery")))
+        assertEquals("Q38076", Brands.forTags(mapOf("name" to "McDonald's", "amenity" to "fast_food"), null)!!.wikidata)
+        assertNull(Brands.forTags(mapOf("name" to "McDonald's", "amenity" to "bench"), null))
+        assertEquals("Q38076", Brands.forTags(mapOf("brand" to "Mcdonalds", "amenity" to "fast_food"), null)!!.wikidata)
+        assertNull(Brands.forTags(mapOf("brand" to "No Such Chain Anywhere", "shop" to "bakery"), null))
         // the same name with another Wikidata item is another company
-        assertNull(Brands.forTags(mapOf("brand" to "Jumbo", "brand:wikidata" to "Q999999999", "shop" to "supermarket")))
-        assertNull(Brands.forTags(emptyMap()))
+        assertNull(Brands.forTags(mapOf("brand" to "Jumbo", "brand:wikidata" to "Q999999999", "shop" to "supermarket"), null))
+        assertNull(Brands.forTags(emptyMap(), null))
         assertEquals("mcdonalds", Brands.key("McDonald's"))
         assertEquals("gallandgall", Brands.key("Gall & Gall"))
         assertEquals("simonlevelt", Brands.key("Simon Lévelt"))
@@ -45,7 +45,7 @@ class BrandsTest {
 
     @Test
     fun aBrandsTagsForANewBranch() {
-        val b = Brands.forTags(mapOf("brand:wikidata" to "Q37158"))!!
+        val b = Brands.forTags(mapOf("brand:wikidata" to "Q37158"), null)!!
         val t = b.tags
         assertEquals("Starbucks", t["brand"])
         assertEquals("Starbucks", t["name"])
@@ -114,5 +114,23 @@ class BrandsTest {
         assertEquals("women;men;children", shoes.otherTags["shoes"])
         assertEquals("women;men;children", shoes.tags["shoes"])
         assertEquals("burger;pizza;seafood", Brands.byId("3brasseurs-17e7d6")!!.tags["cuisine"])
+    }
+
+    /**
+     * By `brand` the entry whose own name or brand it is comes before one that lists it as a match name only (the app
+     * maintainer, 19 November 2026, batch 6 B12): Stars Coffee, the Russian chain, lists "starbucks" and "старбакс"
+     * among its match names, so `brand=Starbucks` named two entries and credited neither. Several of that own name
+     * still name none; a match name alone, one entry's, names that entry as before.
+     */
+    @Test
+    fun byBrandAnEntrysOwnNameComesBeforeAMatchName() {
+        fun named(vararg tags: Pair<String, String>) = Brands.named(tags.toMap()).map { it.id }
+        assertEquals(listOf("starbucks-795f60"), named("amenity" to "cafe", "brand" to "Starbucks"))
+        // the Serbian entry's brand
+        assertEquals(listOf("starbucks-95edc3"), named("amenity" to "cafe", "brand" to "Старбакс"))
+        assertEquals(listOf("starscoffee-1c12ef"), named("amenity" to "cafe", "brand" to "Stars Coffee"))
+        // eight chains' own name, and three more by their match names: none
+        assertEquals(emptyList<String>(), named("shop" to "supermarket", "brand" to "Coop"))
+        assertEquals(listOf("starbucks-795f60"), named("amenity" to "cafe", "brand" to "Starbucks Canada"))
     }
 }

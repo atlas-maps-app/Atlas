@@ -67,6 +67,7 @@
 #include "passes/OpenHours.hpp"
 #include "scene/Heaps.hpp"
 #include "style/Palette.hpp"
+#include "tiles/layers/Buildings.hpp"
 #include "twin/building/BuildingTile.hpp"
 #include "twin/building/BuildingTwin.hpp"
 
@@ -237,8 +238,8 @@ public:
     /// Whether the windows are drawn (the pass made their pipelines: not in the owner mode).
     [[nodiscard]] bool windows() const noexcept { return windows_ != nullptr; }
     /// The most windows a frame decides (64 bytes a record, 160 more nearer than 160 m): the jobs beyond are left out,
-    /// once logged.
-    static constexpr std::uint32_t max_windows = 1U << 20U;
+    /// once logged. A tile holds no more (stage T's bound, geometry/Walls.cpp and sun/Samples.cpp alike).
+    static constexpr std::uint32_t max_windows = tiles::building::most_tile_windows;
     /// The most church windows a frame draws (416 bytes a record; the jobs' church words hold 16 bits of them): the
     /// walls beyond go without, once logged.
     static constexpr std::uint32_t max_churches = 0xFFFFU;

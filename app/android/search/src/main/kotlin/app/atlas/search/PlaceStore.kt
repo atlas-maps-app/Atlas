@@ -465,8 +465,11 @@ class PlaceStore private constructor(val file: File?, private val conn: SQLiteCo
      * A writer for this store: add elements or places, then [StoreWriter.finish] to work out the streets, statistics
      * and vocabulary. Adding an element again replaces it, so importing the same data twice leaves one copy.
      * [langs] are the languages whose preset and category names the text index answers to besides the names themselves.
+     * [country] is the country the store is of, when its region is one country's: its brands are matched there wherever
+     * its own places name none around them.
      */
-    fun writer(langs: List<String> = DEFAULT_LANGS, regionName: String? = null): StoreWriter = StoreWriter(this, langs, regionName)
+    fun writer(langs: List<String> = DEFAULT_LANGS, regionName: String? = null, country: String? = null): StoreWriter =
+        StoreWriter(this, langs, regionName, country)
 
     /** Streams an Overpass JSON file into the store (see [OverpassImport]); returns what it did. */
     fun importOverpass(file: File, langs: List<String> = DEFAULT_LANGS, regionName: String? = null): ImportStats =

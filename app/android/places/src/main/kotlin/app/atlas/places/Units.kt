@@ -1,5 +1,7 @@
 package app.atlas.places
 
+import app.atlas.num.Digits
+
 /** A measured tag value in its dimension's base unit: metres, tonnes, kilowatts, km/h, volts, amperes, kWh, money. */
 data class Measure(val value: Double, val dimension: Dimension)
 
@@ -41,11 +43,11 @@ object Units {
         put("eur euro euros € usd dollar dollars $ gbp pound pounds £ chf", Dimension.MONEY, 1.0)
     }
 
-    private val plain = Regex("""^\s*([-+]?(?:\d+(?:[.,]\d+)?|[.,]\d+))\s*([a-zA-Z/'"€$£]*)\s*$""")
+    private val plain = Regex("""^\s*([-+]?(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+))\s*([a-zA-Z/'"€$£]*)\s*$""")
 
     /** An amount with its currency first: "€2.50", "EUR 2", "$5". */
-    private val money = Regex("""^\s*(€|\$|£|EUR|USD|GBP|CHF)\s*(\d+(?:[.,]\d{1,2})?)\s*$""", RegexOption.IGNORE_CASE)
-    private val feetInches = Regex("""^\s*(\d+(?:\.\d+)?)\s*'\s*(\d+(?:\.\d+)?)\s*"\s*$""")
+    private val money = Regex("""^\s*(€|\$|£|EUR|USD|GBP|CHF)\s*([0-9]+(?:[.,][0-9]{1,2})?)\s*$""", RegexOption.IGNORE_CASE)
+    private val feetInches = Regex("""^\s*([0-9]+(?:\.[0-9]+)?)\s*'\s*([0-9]+(?:\.[0-9]+)?)\s*"\s*$""")
 
     /** True when [word] names a unit Atlas reads ("m", "kW", "mph"…), in any case. */
     fun isUnit(word: String): Boolean = word.lowercase() in units
@@ -53,8 +55,13 @@ object Units {
     /** The dimension a unit name belongs to, or null if unknown. */
     fun dimensionOf(unit: String): Dimension? = units[unit.lowercase()]?.dimension
 
-    /** Parses one value; a bare number gets [Dimension.NONE]. Null when the text is not a quantity. */
-    fun parse(text: String): Measure? {
+    /**
+     * Parses one value; a bare number gets [Dimension.NONE]. Null when the text is not a quantity. Any script's digits
+     * are read as theirs ("١٢'٦\"", "٥٫٥ m"): on Android `\d` took them and `toDouble` threw (the reviewer, 17
+     * November, finding 12).
+     */
+    fun parse(raw: String): Measure? {
+        val text = Digits.ascii(raw)
         feetInches.matchEntire(text)?.let { m ->
             return Measure(m.groupValues[1].toDouble() * 0.3048 + m.groupValues[2].toDouble() * 0.0254, Dimension.LENGTH)
         }

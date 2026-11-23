@@ -34,7 +34,7 @@ internal class AddressBook(private val store: PlaceStore) {
 
     /** What every address point is: its preset and symbol, worked out once. */
     private val template: PlaceRecord by lazy {
-        PlaceRecord.of(Place(null, LatLon(0.0, 0.0), mapOf("addr:street" to "Main Street", Addresses.HOUSENUMBER to "1")))
+        PlaceRecord.of(Place(null, LatLon(0.0, 0.0), mapOf("addr:street" to "Main Street", Addresses.HOUSENUMBER to "1")), country = null)
     }
 
     /** Per source of the store's OpenAddresses points ([AddressCredits]), what its points carry: its credit and licence. */

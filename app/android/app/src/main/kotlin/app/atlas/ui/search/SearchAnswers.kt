@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -149,7 +150,9 @@ private fun Tally(k: KindCount) {
 internal fun HoursCard(h: HoursAnswer, now: LocalDateTime, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val c = indexColors()
     val shape = RoundedCornerShape(24.dp)
-    val days = h.days.filter { it.earliest != null && it.latest != null }
+    // every day one opens, one none of them states the close of (`18:00+`) too (the app maintainer, 18 November 2026,
+    // batch 4 B10: where all were so the card said none say their hours, and such a day lost its bar)
+    val days = h.days.filter { it.earliest != null }
     Column(
         modifier
             .fillMaxWidth()
@@ -162,16 +165,19 @@ internal fun HoursCard(h: HoursAnswer, now: LocalDateTime, modifier: Modifier = 
         if (days.isEmpty()) {
             Text(stringResource(R.string.find_hours_none), style = INDEX_META, color = c.soft)
         } else {
-            // the axis: from the hour the first opens on any day to the hour after the last closes
+            // the axis: from the hour the first opens on any day to the hour after the last closes; a day none of them
+            // states the close of reaches NO_END past when most open, at least
             val from = days.minOf { it.earliest!! } / 60 * 60
-            val to = ((days.maxOf { it.latest!! } + 59) / 60 * 60).coerceAtLeast(from + 60)
+            val last = days.maxOf { d -> d.latest ?: ((d.opensMiddle ?: d.earliest!!) + NO_END) }
+            val to = ((last + 59) / 60 * 60).coerceAtLeast(from + 60)
             val lines = remember(h.days) { WeekLine.of(h.days) }
             val usual = remember(lines) { WeekLine.usual(lines) }
             // how many are open says something only where some days not all of them are
             val counts = h.days.any { it.open in 1 until h.known }
             val closed = stringResource(R.string.kit_closed)
             val labels = lines.map { it.label(Locale.getDefault()) }
-            val hours = lines.map { l -> l.opens?.let { o -> "${hm(o)}–${hm(l.closes!!)}" } ?: closed }
+            // where no place open those days states when it closes (`17:00+`): "17:00+"
+            val hours = lines.map { l -> l.opens?.let { o -> l.closes?.let { "${hm(o)}–${hm(it)}" } ?: "${hm(o)}+" } ?: closed }
             // the columns as wide as their widest words, so the bars line up
             val measurer = rememberTextMeasurer()
             val density = LocalDensity.current
@@ -266,6 +272,11 @@ private fun WeekBar(l: WeekLine, usual: WeekLine?, label: String, hours: String,
                 val o = d.opensMiddle
                 val cl = d.closesMiddle
                 if (o != null && cl != null && cl > o) drawRoundRect(most, Offset(x(o), 0f), Size(x(cl) - x(o), size.height), r)
+            } else if (e != null) {
+                // none of them states when it closes (`18:00+`): from when they open on to the axis' end, fading, no end
+                val o = d.opensMiddle ?: e
+                drawRoundRect(Brush.horizontalGradient(listOf(spread, spread.copy(alpha = 0f)), x(e), size.width), Offset(x(e), 0f), Size(size.width - x(e), size.height), r)
+                drawRoundRect(Brush.horizontalGradient(listOf(most, most.copy(alpha = 0f)), x(o), size.width), Offset(x(o), 0f), Size(size.width - x(o), size.height), r)
             }
             if (today) {
                 val m = now.hour * 60 + now.minute
@@ -276,10 +287,15 @@ private fun WeekBar(l: WeekLine, usual: WeekLine?, label: String, hours: String,
         val o = l.opens
         val cl = l.closes
         Text(
-            if (o == null || cl == null) AnnotatedString(hours) else buildAnnotatedString {
+            if (o == null) AnnotatedString(hours) else buildAnnotatedString {
                 withStyle(SpanStyle(color = if (o == other?.opens) c.faint else c.ink)) { append(hm(o)) }
-                append("–")
-                withStyle(SpanStyle(color = if (cl == other?.closes) c.faint else c.ink)) { append(hm(cl)) }
+                if (cl == null) {
+                    // "18:00+": its "+" faded where the usual line states no close either
+                    withStyle(SpanStyle(color = if (other != null && other.closes == null) c.faint else c.ink)) { append("+") }
+                } else {
+                    append("–")
+                    withStyle(SpanStyle(color = if (cl == other?.closes) c.faint else c.ink)) { append(hm(cl)) }
+                }
             },
             Modifier.width(hoursWidth), style = WEEK_HOURS, color = c.faint, maxLines = 1, textAlign = TextAlign.End,
         )
@@ -312,9 +328,8 @@ private fun Ticks(from: Int, to: Int, start: Dp, end: Dp) {
 /** Today in words: when most are open, when the first opens and the last closes. */
 @Composable
 private fun todayWords(t: DaySpread): String {
-    val e = t.earliest
-    val l = t.latest
-    if (e == null || l == null) return stringResource(R.string.find_hours_today_none)
+    val e = t.earliest ?: return stringResource(R.string.find_hours_today_none)
+    val l = t.latest ?: return stringResource(R.string.find_hours_today_from, hm(t.opensMiddle ?: e))
     val o = t.opensMiddle ?: e
     val cl = t.closesMiddle ?: l
     return stringResource(R.string.find_hours_today, hm(o), hm(cl), hm(e), hm(l))
@@ -410,6 +425,9 @@ private val WEEK_HOURS = indexFigure(12.5f, 600)
 
 /** A week line the usual one's but for its days: its bar this faded. */
 private const val SAME_ALPHA = 0.45f
+
+/** How far past when most open the axis reaches at least on a day none of them states the close of: its bar fades out. */
+private const val NO_END = 3 * 60
 
 /** At most this many kinds a count names, places it is told by, and other places a fact's answer names. */
 private const val KINDS = 6

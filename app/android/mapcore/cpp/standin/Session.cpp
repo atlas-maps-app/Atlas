@@ -648,6 +648,15 @@ Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
     return d;
 }
 
+bool Session::update_scene(const style::CameraState& camera) {
+    // after the map's first frame (its renderer made), so that the scene's releases retire at a frame that went out
+    if (closed_ || mode_ != 2 || map_ == nullptr || !map_->ready() || renderer_ == nullptr || lost_ >= 3) return false;
+    const std::int64_t start = now_ns();
+    if (epoch_ns_ == 0) epoch_ns_ = start;
+    map_->update_scene(camera, static_cast<double>(start - epoch_ns_) / 1e9);
+    return true;
+}
+
 void Session::note_not_drawing() {
     std::string why = not_drawing_why();
     const std::scoped_lock lock(records_mutex_);
@@ -703,10 +712,17 @@ Drawn Session::draw_frame(const style::CameraState& camera, const FrameTimes& ti
     if (!report || report->status == gpu::Acquired::lost) {
         if (!report && report.error().code != vk::Result::eErrorDeviceLost) {
             log::error("a frame failed: {}", report.error().text());
-            const std::scoped_lock lock(records_mutex_);
-            ++failed_frames_;
-            failed_why_ = report.error().text();
-            return d;
+            {
+                const std::scoped_lock lock(records_mutex_);
+                ++failed_frames_;
+                failed_why_ = report.error().text();
+            }
+            // Recorded and never submitted (gpu::Renderer::unsubmitted): what the frame's recording moved on is not
+            // what the GPU holds (the passes' kept results, the layouts they track, the uploads they let go of, the
+            // output's image and its semaphore), and only what a lost device's path makes again agrees with it again.
+            if (!renderer_->unsubmitted()) return d;
+            log::error("vk frame {} was recorded and not submitted: made again as after a lost device",
+                       renderer_->frame_count());
         }
         device_lost();
         d.rebuilt = true;
@@ -1040,9 +1056,11 @@ std::string Session::facts() {
 void Session::save_cache() {
     // Only when pipelines were made through it since its last write: a trim (each level from TRIM_MEMORY_UI_HIDDEN on
     // arrives as the system makes ready to kill cached processes), the close and the session's first 120 frames
-    // mostly find nothing new, and then write nothing and leave no marker. Never while VK bench's colour stage is open:
-    // nothing of it goes into this cache (its pipelines go through the stage's own), and a crash in the write is the
-    // cache stage's to own.
+    // mostly find nothing new, and then write nothing and leave no marker. Where pipelines were made, the save reads
+    // the driver's data behind the cache stage's marker (a driver call) and writes the file only where that is not
+    // what the file holds: a launch whose pipelines all came from the file writes none. Never while VK bench's colour
+    // stage is open: nothing of it goes into this cache (its pipelines go through the stage's own), and a crash in the
+    // write is the cache stage's to own.
     if (!started_.cache || !started_.cache->changed() || colour_open() || closed_) return;
     behind(gpu::Stage::cache, [&] {
         auto saved = started_.cache->save();

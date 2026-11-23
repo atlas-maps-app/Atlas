@@ -374,7 +374,14 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (cam.width_px == 0 || cam.height_px == 0 || cam.width_dp == 0 || cam.height_dp == 0) return false;
     // the moment: a frame drawn into an output waits for every pass's work ahead for a new one (Pass::ready_for); the
     // twin's, which draws nothing, takes the inputs' at once
-    state_.theme = take_moment(output == nullptr);
+    // update_scene's view keeps the moment shown (and the one the passes are asked about) for the next frame drawn
+    const bool scene_only = output == nullptr && scene_only_;
+    if (!scene_only)
+        state_.theme = take_moment(output == nullptr);
+    else if (shown_)
+        state_.theme = *shown_;
+    else
+        state_.theme = inputs_.theme;
     state_.number = number;
     state_.seconds = inputs_.seconds;
     state_.camera = cam;
@@ -403,7 +410,8 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
-                              .quarter_turns = output != nullptr ? quarter_turns_of(output->transform()) : 0};
+                              .quarter_turns = output != nullptr ? quarter_turns_of(output->transform())
+                                                                 : (scene_only ? quarter_turns_ : 0)};
     // The engine camera: through the active pack's ladder (ViewLadder.place's cfg), else the camera state alone.
     view::LayerSettings settings;
     view::CameraSpec spec;
@@ -680,18 +688,28 @@ void FrameBuilder::stage_f() {
     }
 }
 
+namespace {
+
+/// A frame of the clear alone (`clear`), its marks in their order: one with no size yet, or whose descriptors did not
+/// begin.
+void clear_alone(const gpu::FrameContext& frame, const std::array<float, 4>& clear) {
+    frame.frames.mark(frame.slot, gpu::Mark::offscreen);
+    frame.pass.begin(frame.cmd, frame.sync, frame.image, clear);
+    if (frame.pass.composite()) frame.pass.next(frame.cmd, frame.sync);
+    frame.pass.end(frame.cmd, frame.sync, frame.image);
+    frame.frames.mark(frame.slot, gpu::Mark::main);
+    frame.frames.mark(frame.slot, gpu::Mark::after);
+}
+
+} // namespace
+
 void FrameBuilder::record(const gpu::FrameContext& frame) {
     const auto started = clock::now();
     for (PassCounters& c : counters_) c.clear();
     const std::uint32_t slot = frame.slot.slot;
     if (!derive(frame.number, slot, &frame.output)) {
-        // No frame size yet: the clear alone, so the frame still goes out (the marks in their order).
-        frame.frames.mark(frame.slot, gpu::Mark::offscreen);
-        frame.pass.begin(frame.cmd, frame.sync, frame.image, options_.clear);
-        if (frame.pass.composite()) frame.pass.next(frame.cmd, frame.sync);
-        frame.pass.end(frame.cmd, frame.sync, frame.image);
-        frame.frames.mark(frame.slot, gpu::Mark::main);
-        frame.frames.mark(frame.slot, gpu::Mark::after);
+        // No frame size yet: the clear alone, so the frame still goes out.
+        clear_alone(frame, options_.clear);
         return;
     }
     {
@@ -704,7 +722,18 @@ void FrameBuilder::record(const gpu::FrameContext& frame) {
     const std::uint64_t finished = frame.number >= gpu::Frames::in_flight ? frame.number - gpu::Frames::in_flight : 0;
     const auto rows = state_.items != nullptr ? static_cast<std::uint32_t>(state_.items->rows()) : 0U;
     if (auto begun = layout_->begin_frame(frame.number, finished, rows, Selectors::max_kinds); !begun) {
+        // The ring did not grow to the frame's items, or a set of the frame's was not written: the slice may be the
+        // old one, smaller than the rank table, and the sets not the frame's. Nothing of set 0 is written or bound,
+        // no pass records; what set 1's providers upload and change for the frames after is recorded, then the clear
+        // alone, so the frame still goes out. The next frame begins again.
         log::error("vk frame {}: the frame's descriptors: {}", frame.number, begun.error().text());
+        stage_f_ms_ = ms_since(started);
+        layout_->record_setup(frame.cmd, frame.sync);
+        if (scene != nullptr) {
+            for (GlobalProvider* g : scene->globals()) g->record(frame);
+        }
+        clear_alone(frame, options_.clear);
+        return;
     }
     write_ring(slot);
     stage_f_ms_ = ms_since(started);
@@ -763,6 +792,17 @@ void FrameBuilder::owner_map(std::span<const std::uint8_t> rgba, std::span<std::
                                  (std::uint32_t{rgba[(4 * i) + 2]} << 16U);
         out[i] = id == 0 ? 0 : owner_of(id - 1);
     }
+}
+
+void FrameBuilder::update_scene() {
+    FrameScene* scene = inputs_.scene;
+    if (scene == nullptr) return;
+    scene_only_ = true;
+    const bool derived = derive(state_.number, state_.slot, nullptr);
+    scene_only_ = false;
+    if (!derived) return;
+    const trace::Section traced("atlas scene update");
+    scene->update(state_);
 }
 
 void FrameBuilder::emit(twin::Stream& out, std::uint64_t number) {

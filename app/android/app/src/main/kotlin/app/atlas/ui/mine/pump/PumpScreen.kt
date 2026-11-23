@@ -63,6 +63,7 @@ import app.atlas.ui.search.BrandLogo
 import app.atlas.ui.mine.MineState
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
+import app.atlas.ui.kit.rememberCountryAt
 import app.atlas.ui.kit.rememberHere
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.drawText
@@ -129,7 +130,7 @@ fun PumpScreen(args: Dest.Pump, nav: Navigator) {
         }
         val places = found?.places.orEmpty()
         failure = found?.error
-        val tk = Tankerkoenig(services.http, services.keys)
+        val tk = Tankerkoenig(services.http(app.atlas.ui.mine.SourcesModel.TANKERKOENIG.id), services.keys)
         val prices = if (tk.ready && Tankerkoenig.inGermany(centre) && !services.config.offline && services.connectivity.online.value) {
             withContext(Dispatchers.IO) { runCatching { tk.near(centre) }.getOrElse { failure = it.message; emptyList() } }
         } else emptyList()
@@ -282,7 +283,10 @@ private fun GradeButton(f: Fuel, on: Boolean, available: Boolean, modifier: Modi
 private fun StationRow(s: Station, grade: Fuel, all: List<Station>, litres: Double, units: Units, best: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
     val price = s.price(grade)
-    val brand = remember(s.place) { Brands.forTags(s.place.tags) }
+    // the chain of the country there: an Aral named only so is Aral's in Germany (the app maintainer, 18 November 2026,
+    // batch 4 D)
+    val country = rememberCountryAt(s.place.location)
+    val brand = remember(s.place, country) { Brands.forTags(s.place.tags, country) }
     val saving = PumpModel.saving(s, all, grade, litres)
     // the board's row: 76 high, radius 22, 12 px in; the best white and ringed in red, the rest at 70 %; the dark price box
     // (92 × 44, radius 10) with its amber VT323 figures, 12 px on the name (16, 800) and its tag, the street (12) and what

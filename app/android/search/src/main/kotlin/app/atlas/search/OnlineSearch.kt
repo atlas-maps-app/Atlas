@@ -16,7 +16,7 @@ class OnlineSearch(private val overpass: Overpass) {
     suspend fun run(query: Query, area: OverpassArea, ctx: EvalContext): OnlineAnswer {
         val ql = OverpassCompiler.compile(query, area, ctx.location)
         val places = overpass.places(ql)
-        val result = OfflineEvaluator(MemoryPlaces(places)).run(bound(query, areaQuery(area)), ctx)
+        val result = OfflineEvaluator(MemoryPlaces(places, ctx.hours.country)).run(bound(query, areaQuery(area)), ctx)
         return OnlineAnswer(ql, places, result)
     }
 

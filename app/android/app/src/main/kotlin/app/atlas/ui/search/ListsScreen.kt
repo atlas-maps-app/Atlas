@@ -66,7 +66,9 @@ import app.atlas.nav.Navigator
 import app.atlas.places.OpeningHours
 import app.atlas.ui.kit.Atlas
 import app.atlas.ui.kit.PrimaryButton
+import app.atlas.ui.kit.appClock
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberLocaleOf
 import app.atlas.ui.kit.rememberNow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -254,9 +256,15 @@ private fun added(list: SavedList, today: LocalDate, zone: ZoneId): String {
  */
 @Composable
 private fun SavedRow(n: Int, saved: SavedPlace, colour: Long, here: LatLon, lang: String, now: java.time.LocalDateTime, onClick: () -> Unit) {
-    val services = LocalServices.current
-    val ctx = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
-    val line = remember(saved, now) { PlaceLine.of(saved.place, here, lang, now, open = OpeningHours.parseOrNull(saved.place.tags["opening_hours"])?.status(now, ctx)) }
+    // where the place is: its country's holidays and chains, on its own clock (the app maintainer, 18 November 2026,
+    // batch 4 B18: the phone's, so a saved café in Munich was open on Epiphany)
+    val where = rememberLocaleOf(saved.place)
+    val zone = appClock().zone
+    val line = remember(saved, now, where, zone) {
+        val local = where.fromPhone(now, zone)
+        val open = OpeningHours.parseOrNull(saved.place.tags["opening_hours"])?.status(local, where.hours(saved.place.location))
+        PlaceLine.of(saved.place, here, lang, local, open = open, country = where.country)
+    }
     val status = statusWords(line)
     Row(
         Modifier.fillMaxWidth().height(46.dp).boardBox(0xFFF4EDE2, round(14f)).clickable(role = Role.Button, onClick = onClick)
@@ -307,7 +315,7 @@ private fun ListActions(list: SavedList, modifier: Modifier) {
             val at = services.clock.instant()
             services.scope.launch(Dispatchers.IO) {
                 runCatching {
-                    val text = if (ext == "gpx") SavedExport.gpx(title, places, at, lang) else SavedExport.geoJson(title, places)
+                    val text = if (ext == "gpx") SavedExport.gpx(title, places, at, lang) { HereContext.country(services, it) } else SavedExport.geoJson(title, places)
                     context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
                 }
             }

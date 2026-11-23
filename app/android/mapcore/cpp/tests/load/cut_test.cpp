@@ -1,10 +1,11 @@
-// The living map's scene cut into render tiles (load/Cut.hpp) against the packer's: the Westerkerk's raw.json (the
-// repository's data/ams/raw.json, which loads to the scene the bundled pack was made from: AmsterdamParityTest) loaded
-// and cut by the core, each tile written (tiles/TileWriter.hpp), and every tile of the bundled render pack
-// (ATLAS_TILES_DIR) must be the core's, byte for byte. A tile that differs is decoded on both sides, and the first line
-// of the canonical dumps that differs is named. Where ATLAS_REGIONS_DIR names the renderer's data/regions, the canal
-// ring's raw.json is loaded as a region (whole, and at each tolerance its pack's views and bands load it at, for the
-// variants) and cut, and every tile of its render pack must be the core's too.
+// The living map's scene cut into render tiles (load/Cut.hpp), beside the packer's: the Westerkerk's raw.json (the
+// repository's data/ams/raw.json, from which the bundled pack was made) loaded and cut by the core, each tile written
+// (tiles/TileWriter.hpp). Since 16 Nov 2026 (core-p14) the core's buildings are its own, cleaned (load/Clean.hpp), and
+// no longer the port's, so the core cuts every tile the bundled render pack (ATLAS_TILES_DIR, the port's) holds, the
+// same bytes each time, with nothing that cannot be there, and its head and style are still the packer's. Where
+// ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json is loaded as a region (whole, and at
+// each tolerance its pack's views and bands load it at, for the variants) and cut, and every tile of its render pack
+// is cut too, with nothing that cannot be there.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/Amsterdam.hpp"
@@ -40,8 +41,8 @@
 #include <memory>
 #include <optional>
 #include <set>
-#include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -50,30 +51,35 @@ namespace {
 namespace load = atlas::load;
 namespace tl = atlas::tiles;
 
-/// The first line where two texts differ, both sides, cut to 400 characters each.
-std::string first_difference(const std::string& core, const std::string& packer) {
-    std::istringstream a(core);
-    std::istringstream b(packer);
-    std::string la;
-    std::string lb;
-    for (std::size_t line = 1;; ++line) {
-        const bool ha = static_cast<bool>(std::getline(a, la));
-        const bool hb = static_cast<bool>(std::getline(b, lb));
-        if (!ha && !hb) return "no line differs";
-        if (!ha || !hb || la != lb) {
-            return "line " + std::to_string(line) + "\n  core:   " + (ha ? la.substr(0, 400) : "(none)") +
-                   "\n  packer: " + (hb ? lb.substr(0, 400) : "(none)");
-        }
-    }
-}
-
-/// How many of the pack's tiles the core's `cut` matches byte for byte (each other one failed, the first few with the
-/// first line of the canonical dumps that differs), and the bytes the core wrote.
+/// How many of the pack's tiles the core's `cut` holds (each one it lacks failed) and how many of those it cut
+/// otherwise (the port cut the pack: the buildings differ, for the record), and the bytes the core wrote.
 struct Compared {
     std::size_t tiles = 0;
-    std::size_t wrong = 0;
+    std::size_t missing = 0;
+    std::size_t differ = 0;
     std::size_t bytes = 0;
+    std::vector<tl::LayerLines> layers; ///< how the pack's tiles and the core's compare, layer by layer
 };
+
+/// The layers the buildings' cleaning touches: the buildings and parts themselves and their variants, and what stage P
+/// derives from their rings: the things on their walls (a door's and a shopfront's wall), and the quays they line.
+constexpr std::array<std::string_view, 5> touched_layers = {"building", "part", "variant", "thing", "quay"};
+
+/// Holds every layer the buildings' cleaning does not touch to the port's, line for line (until cut 2 makes the test
+/// packs with the core), and says how the touched ones moved.
+void check_layers(const Compared& c, std::string_view what) {
+    std::string moved;
+    for (const tl::LayerLines& l : c.layers) {
+        if (std::ranges::find(touched_layers, l.layer) != touched_layers.end()) {
+            moved += std::format(" {} {}/{}", l.layer, l.differ, l.lines);
+            continue;
+        }
+        CHECK_MESSAGE(l.differ == 0, what, ": layer ", l.layer,
+                      ", which the buildings' cleaning does not touch: ", l.differ, " of ", l.lines,
+                      " lines are not the port's");
+    }
+    MESSAGE(what, ": lines not the port's, of the layers the cleaning touches:", moved);
+}
 
 Compared compare_with_pack(const std::string& path, const std::vector<tl::TileFill>& cut) {
     Compared out;
@@ -93,25 +99,36 @@ Compared compare_with_pack(const std::string& path, const std::vector<tl::TileFi
         ATLAS_REQUIRE_OR_RETURN(out, theirs.has_value(), tl::describe(theirs.error()));
         const auto it = mine.find(chunk.tile.packed());
         if (it == mine.end()) {
-            ++out.wrong;
+            ++out.missing;
             FAIL_CHECK("tile ", int{chunk.tile.z}, "/", chunk.tile.x, "/", chunk.tile.y, ": the core cut no such tile");
             continue;
         }
         const auto written = tl::encode_tile(*it->second);
         ATLAS_REQUIRE_OR_RETURN(out, written.has_value(), tl::describe(written.error()));
         out.bytes += written->size();
-        if (*written == raw) continue;
-        if (out.wrong++ >= 4) continue;
-        const std::string packer = tl::canonical_dump(*theirs);
+        if (*written == raw) {
+            tl::compare_layers(*theirs, *theirs, out.layers); // the same tile: its lines counted, none differing
+            continue;
+        }
+        ++out.differ;
         tl::TileDecoder again;
         atlas::Arena arena2(8U << 20U, atlas::Growth::grows, "cut test, the core's tile");
         const auto ours = again.decode(*written, arena2);
         ATLAS_REQUIRE_OR_RETURN(out, ours.has_value(), tl::describe(ours.error()));
-        FAIL_CHECK("tile ", int{chunk.tile.z}, "/", chunk.tile.x, "/", chunk.tile.y, ": ", written->size(),
-                   " bytes for the packer's ", raw.size(), "; the dumps differ at ",
-                   first_difference(tl::canonical_dump(*ours), packer));
+        tl::compare_layers(*ours, *theirs, out.layers);
     }
     return out;
+}
+
+/// Whether two cuts are the same tiles, byte for byte.
+bool same_tiles(const std::vector<tl::TileFill>& a, const std::vector<tl::TileFill>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const auto x = tl::encode_tile(a[i]);
+        const auto y = tl::encode_tile(b[i]);
+        if (!x || !y || *x != *y) return false;
+    }
+    return true;
 }
 
 /// The Westerkerk's raw.json, its document and scene (they view the text), and the core's tiles of it.
@@ -149,7 +166,8 @@ std::unique_ptr<Westerkerk> westerkerk() {
 
 } // namespace
 
-TEST_CASE("load: the Westerkerk's tiles cut from its raw.json are the packer's, byte for byte (ATLAS_TILES_DIR)") {
+TEST_CASE("load: the Westerkerk's tiles cut from its raw.json: the bundled pack's tiles, the same each time, with "
+          "nothing that cannot be there (ATLAS_TILES_DIR)") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the bundled pack is not compared here");
@@ -157,53 +175,30 @@ TEST_CASE("load: the Westerkerk's tiles cut from its raw.json are the packer's, 
     }
     const auto w = westerkerk();
     ATLAS_REQUIRE(w != nullptr);
+    const std::optional<load::Scene>& scene = w->scene;
+    ATLAS_REQUIRE(scene.has_value());
     const std::vector<tl::TileFill>& cut = w->tiles;
-    std::unordered_map<std::uint64_t, const tl::TileFill*> mine;
-    for (const tl::TileFill& t : cut) mine[tl::TileKey(t.level(), t.x(), t.y()).packed()] = &t;
-
-    auto pack = atlas::test::open_pack(dir + "/amsterdam.atlas");
-    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
-    tl::Zstd zstd;
-    tl::TileDecoder decoder;
-    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut test");
-    std::vector<std::byte> raw;
-    std::vector<std::byte> scratch;
-    std::size_t tiles = 0;
-    std::size_t wrong = 0;
-    std::size_t bytes = 0;
-    for (const tl::ChunkRef& chunk : pack->chunks().chunks()) {
-        ++tiles;
-        arena.reset();
-        auto theirs = pack->decode(chunk, zstd, decoder, arena, raw, scratch);
-        ATLAS_REQUIRE(theirs.has_value(), tl::describe(theirs.error()));
-        const auto it = mine.find(chunk.tile.packed());
-        if (it == mine.end()) {
-            ++wrong;
-            FAIL_CHECK("tile ", int{chunk.tile.z}, "/", chunk.tile.x, "/", chunk.tile.y, ": the core cut no such tile");
-            continue;
-        }
-        const auto written = tl::encode_tile(*it->second);
-        ATLAS_REQUIRE(written.has_value(), tl::describe(written.error()));
-        bytes += written->size();
-        if (*written == raw) continue;
-        if (wrong++ >= 3) continue;
-        const std::string packer = tl::canonical_dump(*theirs);
-        tl::TileDecoder again;
-        atlas::Arena arena2(8U << 20U, atlas::Growth::grows, "cut test, the core's tile");
-        const auto ours = again.decode(*written, arena2);
-        ATLAS_REQUIRE(ours.has_value(), tl::describe(ours.error()));
-        FAIL_CHECK("tile ", int{chunk.tile.z}, "/", chunk.tile.x, "/", chunk.tile.y, ": ", written->size(),
-                   " bytes for the packer's ", raw.size(), "; the dumps differ at ",
-                   first_difference(tl::canonical_dump(*ours), packer));
-    }
-    MESSAGE("the Westerkerk: ", cut.size(), " tiles cut (", bytes, " bytes) for the pack's ", tiles, "; ", wrong,
-            " not the packer's; read and loaded in ", w->load_ms, " ms, cut in ", w->cut_ms, " ms");
-    CHECK(cut.size() == tiles);
-    CHECK(wrong == 0);
+    const load::BuildingCounts& counts = scene->counts;
+    CHECK(counts.overlapping_pairs == 0);
+    CHECK(counts.uncovered_outlines == 0);
+    CHECK(counts.unsettled == 0);
+    CHECK(counts.unmeasured == 0);
+    const auto again = westerkerk();
+    ATLAS_REQUIRE(again != nullptr);
+    CHECK(same_tiles(cut, again->tiles));
+    const Compared c = compare_with_pack(dir + "/amsterdam.atlas", cut);
+    MESSAGE("the Westerkerk: ", cut.size(), " tiles cut (", c.bytes, " bytes) for the pack's ", c.tiles, ", ", c.differ,
+            " cut otherwise than the port; ", counts.covered, " outlines drawn less their parts, ", counts.hidden,
+            " covered whole, ", counts.clipped, " footprints clipped, ", counts.underground, " below the ground, ",
+            counts.flat_roofs, " pitched roofs drawn flat; read and loaded in ", w->load_ms, " ms, cut in ", w->cut_ms,
+            " ms");
+    CHECK(cut.size() == c.tiles);
+    CHECK(c.missing == 0);
+    check_layers(c, "the Westerkerk");
 }
 
-TEST_CASE(
-    "load: the Westerkerk's pack written from its raw.json, with the core's own head and style, is the packer's") {
+TEST_CASE("load: the Westerkerk's pack written from its raw.json, with the core's own head and style, has the "
+          "packer's tiles, head and style") {
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the bundled pack is not compared here");
@@ -268,22 +263,17 @@ TEST_CASE(
     CHECK(theirs_style == *style);
     const auto verified = mine->verify();
     CHECK_MESSAGE(verified.has_value(), (verified ? std::string() : tl::describe(verified.error())));
-    // the packer's chunks in the packer's order: each tile's hash, size, feature count and reach
+    // the packer's tiles in the packer's order (their bytes the core's own: its buildings cleaned)
     const std::span<const tl::ChunkRef> ours = mine->chunks().chunks();
     const std::span<const tl::ChunkRef> theirs = pack->chunks().chunks();
     ATLAS_REQUIRE(ours.size() == theirs.size());
-    for (std::size_t i = 0; i < ours.size(); ++i) {
-        CHECK(ours[i].tile == theirs[i].tile);
-        CHECK(ours[i].sha256 == theirs[i].sha256);
-        CHECK(ours[i].raw == theirs[i].raw);
-        CHECK(ours[i].count == theirs[i].count);
-        CHECK(ours[i].reach == theirs[i].reach);
-    }
+    for (std::size_t i = 0; i < ours.size(); ++i) CHECK(ours[i].tile == theirs[i].tile);
     MESSAGE("the Westerkerk's pack from its raw.json: ", bytes->size(), " bytes, ", ours.size(),
             " tiles (the packer's: ", pack->source().size(), " bytes)");
 }
 
-TEST_CASE("load: the canal ring's tiles cut from its raw.json are the packer's (ATLAS_REGIONS_DIR, ATLAS_TILES_DIR)") {
+TEST_CASE("load: the canal ring's tiles cut from its raw.json: the pack's tiles, with nothing that cannot be there "
+          "(ATLAS_REGIONS_DIR, ATLAS_TILES_DIR)") {
     const std::string regions = atlas::test::environment("ATLAS_REGIONS_DIR");
     const std::string dir = atlas::test::environment("ATLAS_TILES_DIR");
     if (regions.empty() || dir.empty()) {
@@ -348,11 +338,17 @@ TEST_CASE("load: the canal ring's tiles cut from its raw.json are the packer's (
     CHECK(made["variant"] > 0);
     CHECK(made["item"] > 0);
     const auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
-    MESSAGE("the canal ring: ", cut->size(), " tiles cut (", c.bytes, " bytes) for the pack's ", c.tiles, "; ", c.wrong,
-            " not the packer's; loaded at ", levels.size() + 1, " tolerances in ", ms(t0, t1), " ms, cut in ",
+    const load::BuildingCounts& counts = base->counts;
+    MESSAGE("the canal ring: ", cut->size(), " tiles cut (", c.bytes, " bytes) for the pack's ", c.tiles, ", ",
+            c.differ, " cut otherwise than the port; ", counts.overlapping_pairs, " pairs overlapping, ",
+            counts.uncovered_outlines, " outlines uncovered, ", counts.flat_roofs,
+            " pitched roofs drawn flat; loaded at ", levels.size() + 1, " tolerances in ", ms(t0, t1), " ms, cut in ",
             ms(t1, t2), " ms");
     CHECK(cut->size() == c.tiles);
-    CHECK(c.wrong == 0);
+    CHECK(c.missing == 0);
+    CHECK(counts.overlapping_pairs == 0);
+    CHECK(counts.uncovered_outlines == 0);
+    check_layers(c, "the canal ring");
 }
 
 namespace {

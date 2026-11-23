@@ -25,8 +25,9 @@ import java.nio.ByteOrder
  * scalars and the tradition. [SceneToTiles.pack] writes them into its pack. The core also refuses what the tiles
  * cannot carry yet, as the port's scene would.
  *
- * The core's tiles are the port's byte for byte (the core's cut_test and CutParityTest, tile by tile), and so are its
- * heads and styles (pack_style_test); mapcorecheck's StagePPackerTest holds whole packs.
+ * The core's tiles are its own since 16 Nov 2026 (core-p14: the buildings that can be there), no longer the port's
+ * byte for byte (the core's cut_test and mapcorecheck's CutValidityTest hold them to their own rules); its heads and
+ * styles are still the port's (pack_style_test), and mapcorecheck's StagePPackerTest holds whole packs.
  */
 object CoreTiles {
     /** The tool's exit code where the region holds what the tiles cannot carry yet (the packer's render_gap). */

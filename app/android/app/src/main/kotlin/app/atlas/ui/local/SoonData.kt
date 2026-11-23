@@ -6,6 +6,7 @@ import app.atlas.model.Place
 import app.atlas.providers.Forecast
 import app.atlas.ui.local.astro.PlanetNight
 import app.atlas.ui.local.astro.Tonight
+import app.atlas.ui.search.HereContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -81,7 +82,9 @@ internal suspend fun loadSoon(
     }
     val saved = runCatching { services.saved.lists.value.flatMap { l -> l.places.map { it.place } }.distinctBy { it.key } }.getOrDefault(emptyList())
     val planets = runCatching { Tonight.planets(now, here.lat, here.lon, zone, NAKED_EYE) }.getOrDefault(emptyList())
-    val inputs = MomentInputs(now, zone, here, forecast.await(), saved, markets.await(), outlook.await().nextVisible, planets)
+    val inputs = MomentInputs(now, zone, here, forecast.await(), saved, markets.await(), outlook.await().nextVisible, planets) { p ->
+        HereContext.localeOf(services, p, here, zone)
+    }
     SoonSnapshot(forecast.await(), outlook.await(), planets, Moments.build(inputs), saved, markets.await(), noForecast = forecast.await() == null)
 }
 

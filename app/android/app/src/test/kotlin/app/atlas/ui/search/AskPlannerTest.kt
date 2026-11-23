@@ -37,7 +37,7 @@ class AskPlannerTest {
 
     private fun hit(id: Long, at: LatLon, vararg tags: Pair<String, String>): Hit {
         val p = Place(OsmId.parse("n$id"), at, mapOf(*tags), source = "osm")
-        return Hit(PlaceRecord.of(p), 1.0, 1.0, null, null)
+        return Hit(PlaceRecord.of(p, country = null), 1.0, 1.0, null, null)
     }
 
     private fun result(vararg hits: Hit) = QueryResult(hits.toList(), hits.size, hits.size, 0)

@@ -36,6 +36,7 @@ import app.atlas.services.LocationQuality
 import app.atlas.services.SavedCamera
 import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.CurrentWeather
+import app.atlas.ui.search.HereContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -173,7 +174,7 @@ class HomeViewModel(
         val anchor = you ?: target
         val saved = lists.flatMap { l -> l.places.map { it.place } }.distinctBy { it.key }
         withContext(Dispatchers.IO) {
-            runCatching { HomeHighlights.pick(services.placeStores, anchor, now.atZone(zone).toLocalDateTime(), saved) }.getOrDefault(emptyList())
+            runCatching { HomeHighlights.pick(services.placeStores, anchor, now.atZone(zone).toLocalDateTime(), HereContext.hours(services, anchor, zone), saved) }.getOrDefault(emptyList())
         }
     }.distinctUntilChanged().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

@@ -108,6 +108,16 @@ inline constexpr std::uint64_t flag_kit_cornice = 4096;  // trad['cornice']
 inline constexpr std::uint64_t flag_kit_hoist = 8192;    // trad['hoist']: a hoist beam under each gable
 inline constexpr std::uint64_t flag_kit_chimney = 16384; // trad['chimney']: the kit's chimney stacks
 inline constexpr std::uint64_t flag_kit_crenel = 32768;  // trad['crenel']: a tower's crenellations
+
+/// Stage T's bounds on a building's windows, the same where its walls are built (geometry/Walls.cpp) as where their sun
+/// samples are (sun/Samples.cpp), whose places must agree (a window's sample is found by its place in the tile's window
+/// group), for a pack stage P did not write: the storeys a building's levels can be (load/Amsterdam.hpp's max_levels;
+/// levels outside 1 to these read as unmapped), the bays a wall's record holds (a wall past them has no windows), and
+/// the windows a tile holds, the most a frame draws (passes/Walls.hpp's max_windows; a wall that would take its tile
+/// past them has none).
+inline constexpr std::int64_t most_levels = 200;
+inline constexpr int most_window_cols = 0xFFFF;
+inline constexpr std::uint32_t most_tile_windows = 1U << 20U;
 } // namespace building
 
 /// Buildings and parts whose loaded values differ at another tolerance of the ladder: each holds every attribute of

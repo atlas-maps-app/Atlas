@@ -12,7 +12,7 @@ import org.junit.Test
 /** The Find board: things to buy, and the kinds of shop that sell them. */
 class GoodsTest {
     private val engine by lazy { SearchEngine(Fixtures.store) }
-    private val ctx = SearchContext(location = Fixtures.westerkerk, now = Fixtures.saturday)
+    private val ctx = SearchContext(location = Fixtures.westerkerk, now = Fixtures.saturday, hours = Nowhere)
 
     private fun search(text: String, lang: String = "en") = runBlocking { engine.search(text, ctx.copy(lang = lang)) }
 
