@@ -219,6 +219,8 @@ jobs:
           # the house numbers OpenStreetMap lacks, from OpenAddresses' public tiles (a fill that fails keeps the pack as it is)
           ARGS=(--name "$NAME" --addresses "$BBOX")
           if [ "$CLIP" = "true" ]; then ARGS+=(--bbox "$BBOX"); fi
+          # the region's country: a place's brand is matched there where its own tags and addresses name none
+          if [ -n "$COUNTRY" ]; then ARGS+=(--country "$COUNTRY"); fi
           app/android/packer/build/install/packer/bin/packer places "$WORK/$ID.osm.pbf" "$WORK/out/$ID.places.db" "${ARGS[@]}"
           df -h "$WORK"
       - name: Region pack

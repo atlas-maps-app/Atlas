@@ -65,6 +65,7 @@ import app.atlas.ui.kit.StateMessage
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.rememberSheetState
 import app.atlas.ui.kit.markOf
+import app.atlas.ui.kit.rememberCountryAt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -132,12 +133,13 @@ private fun PlaceView(
     val lists by services.saved.lists.collectAsStateWithLifecycle()
     val saved = remember(lists, place.key) { lists.any { l -> l.places.any { it.place.key == place.key } } }
     var saveTo by remember { mutableStateOf(false) }
-    val (symbol, colour) = remember(place) { markOf(place) }
+    val country = rememberCountryAt(place.location)
+    val (symbol, colour) = remember(place, country) { markOf(place, country) }
     // the map on screen, which goes to the place in its own look (over the Map home's, the home brings it out itself)
     val over = rememberOverMap(place.location)
     val map = if (ownMap) over else null
     val scope = rememberCoroutineScope()
-    val shareText = shareTextOf(place, lang)
+    val shareText = shareTextOf(place, lang, country)
     val shareLabel = stringResource(R.string.place_share)
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -243,12 +245,15 @@ private fun PlaceView(
     }
 }
 
-/** What sharing a place hands on: its name and address, a geo: link and its OpenStreetMap link. */
+/**
+ * What sharing a place hands on: its name and address (as [country], the country of the map there, writes it, where the
+ * place names none of its own), a geo: link and its OpenStreetMap link.
+ */
 @Composable
-private fun shareTextOf(place: Place, lang: String): String = remember(place, lang) {
+private fun shareTextOf(place: Place, lang: String, country: String?): String = remember(place, lang, country) {
     listOfNotNull(
         app.atlas.places.Localise.name(place.tags, lang),
-        addressOf(place),
+        addressOf(place, country),
         CoordinateFormat.geoUri(place.location) + place.name()?.let { "?q=" + java.net.URLEncoder.encode("${CoordinateFormat.decimal(place.location).replace(" ", "")}($it)", Charsets.UTF_8) }.orEmpty(),
         place.id?.url,
     ).joinToString("\n")

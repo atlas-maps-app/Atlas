@@ -177,7 +177,7 @@ internal fun KindList(
     val labels: (String) -> String = { key -> Facets.label(key, lang) }
     // a wish no yes or no answers (a colour, a year) is told on the place's page
     val row = RowWays(
-        lang, now, s.prefs.mode, purpose.layout, onPlace, onExplain, node = node.id, answered = s.answered, asked = find::answeredBefore, label = labels, kept = kept,
+        lang, now, s.moment.hours.country, s.prefs.mode, purpose.layout, onPlace, onExplain, node = node.id, answered = s.answered, asked = find::answeredBefore, label = labels, kept = kept,
         onUnknown = { h, key -> if (Quests.yesNo(key)) asking = Unknown(h, key, labels(key)) else onPlace(h.record.place) },
         chain = chain?.let { brandName(it.brand) },
         // the park's own page, you where the phone is (the park kept for it, so it opens at once)
@@ -206,7 +206,7 @@ internal fun KindList(
         LazyColumn(Modifier.fillMaxWidth().weight(1f).testTag(KIND_LIST_TAG), state = list, contentPadding = PaddingValues(bottom = room)) {
             s.asked?.takeIf { chain == null }?.let { asked -> item(key = "head") { AskedHead(asked, s, results, find, nav, lang, onBack) } }
             chain?.let { ch ->
-                item(key = "brand") { BrandDetails(ch.brand, wiki, results, hours, week, now, lang) { week = !week } }
+                item(key = "brand") { BrandDetails(ch.brand, wiki, results, hours, week, now, lang, s.moment.hours.country) { week = !week } }
                 if (week) hours?.let { h -> item(key = "week") { HoursCard(h, now, Modifier.padding(start = 12.dp, end = 12.dp, top = 10.dp)) } }
             }
             (s.asked as? Asked.Words)?.let { w ->
@@ -261,7 +261,7 @@ internal fun KindList(
                 // the nearest is the point (a toilet, a cash machine): the way to it leads, the rest after
                 purpose.layout == Layout.NEAREST && results.items.firstOrNull() is ResultItem.One -> {
                     val lead = (results.items.first() as ResultItem.One).hit
-                    item(key = "lead") { LeadCard(lead, s.prefs.mode, lang, now, nav, onPlace, onExplain) }
+                    item(key = "lead") { LeadCard(lead, s.prefs.mode, lang, now, s.moment.hours.country, nav, onPlace, onExplain) }
                     rows(results.items.drop(1), row, "rest")
                 }
                 else -> rows(results.items, row, "all")
@@ -286,6 +286,8 @@ internal fun KindList(
 internal class RowWays(
     val lang: String,
     val now: LocalDateTime,
+    /** The country of the map where the search is, which the brands on the rows are matched in. */
+    val country: String?,
     val mode: TravelMode,
     val layout: Layout,
     val onPlace: (Place) -> Unit,
@@ -323,7 +325,7 @@ internal class RowWays(
 
     /** These ways for the rows of a deck of the [kind]'s places: none says the kind again, each named as [names] has it. */
     fun within(kind: String, names: Map<String, String>) =
-        RowWays(lang, now, mode, layout, onPlace, onExplain, kind, answered, asked, label, onUnknown, kept, chain, names)
+        RowWays(lang, now, country, mode, layout, onPlace, onExplain, kind, answered, asked, label, onUnknown, kept, chain, names)
 }
 
 /** The places kept in [lists], by key: the colour of the first list each is kept in. */
@@ -838,10 +840,10 @@ private fun PartHead(part: Part, aim: Intent?) {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LeadCard(h: ResultHit, mode: TravelMode, lang: String, now: LocalDateTime, nav: Navigator, onPlace: (Place) -> Unit, onExplain: (Explained) -> Unit) {
+private fun LeadCard(h: ResultHit, mode: TravelMode, lang: String, now: LocalDateTime, country: String?, nav: Navigator, onPlace: (Place) -> Unit, onExplain: (Explained) -> Unit) {
     val c = indexColors()
     val p = h.record.place
-    val line = remember(h, now) { PlaceLine.of(p, null, lang, now, h.open, h.record.name(lang), h.metres) }
+    val line = remember(h, now, country) { PlaceLine.of(p, null, lang, now, h.open, country, h.record.name(lang), h.metres) }
     val arrival = arrivalWords(h.open, h.minutes, now)
     val tone = arrival?.second ?: if (h.open == null) Tone.UNKNOWN else line.tone
     val words = (arrival?.first ?: openWords(line))?.let { if (!h.hoursConfirmed) "≈ $it" else it }
@@ -866,7 +868,7 @@ private fun LeadCard(h: ResultHit, mode: TravelMode, lang: String, now: LocalDat
         PanelKicker(nearest, Modifier.clearAndSetSemantics { text = AnnotatedString(nearest) })
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             CompositionLocalProvider(LocalGround provides c.panel) {
-                remember(p) { signOf(p) }?.let { SignTile(it, tone, size = 48.dp) } ?: KindTile(line.summary.symbol, line.summary.colour, tone, size = 48.dp)
+                remember(p, country) { signOf(p, country) }?.let { SignTile(it, tone, size = 48.dp) } ?: KindTile(line.summary.symbol, line.summary.colour, tone, size = 48.dp)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(name, style = INDEX_NAME, color = c.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)

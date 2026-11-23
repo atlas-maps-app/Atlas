@@ -1,6 +1,7 @@
 package app.atlas.ui.search
 
 import app.atlas.geo.CoordinateFormat
+import app.atlas.geo.LatLon
 import app.atlas.model.Place
 import app.atlas.places.Localise
 import kotlinx.serialization.json.JsonArray
@@ -14,8 +15,11 @@ import java.util.Locale
 
 /** A list of places written for other apps: GPX waypoints, GeoJSON points, or plain text with links. */
 object SavedExport {
-    /** GPX 1.1 with one waypoint per place: its name, its kind and its OpenStreetMap link. */
-    fun gpx(title: String, places: List<Place>, at: Instant, lang: String? = null): String = buildString {
+    /**
+     * GPX 1.1 with one waypoint per place: its name, its address as its country writes it (its own `addr:country`,
+     * else [countryAt] its point) and its OpenStreetMap link.
+     */
+    fun gpx(title: String, places: List<Place>, at: Instant, lang: String?, countryAt: (LatLon) -> String?): String = buildString {
         append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
         append("<gpx version=\"1.1\" creator=\"Atlas\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n")
         append("  <metadata>\n    <name>").append(xml(title)).append("</name>\n")
@@ -23,7 +27,7 @@ object SavedExport {
         for (p in places) {
             append("  <wpt lat=\"").append(coord(p.location.lat)).append("\" lon=\"").append(coord(p.location.lon)).append("\">\n")
             append("    <name>").append(xml(nameOf(p, lang))).append("</name>\n")
-            Localise.address(p.tags)?.let { append("    <desc>").append(xml(it)).append("</desc>\n") }
+            Localise.address(p.tags, countryAt(p.location))?.let { append("    <desc>").append(xml(it)).append("</desc>\n") }
             p.id?.let { append("    <link href=\"").append(xml(it.url)).append("\"><text>OpenStreetMap</text></link>\n") }
             append("  </wpt>\n")
         }

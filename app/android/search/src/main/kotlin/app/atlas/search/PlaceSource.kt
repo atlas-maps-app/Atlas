@@ -4,6 +4,7 @@ import app.atlas.geo.BBox
 import app.atlas.geo.Geo
 import app.atlas.geo.LatLon
 import app.atlas.model.OsmId
+import app.atlas.places.OpeningHoursContext
 import app.atlas.places.TagFilter
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -53,9 +54,12 @@ interface PlaceSource {
     }
 }
 
-/** Places whose tags pass [filter], inside [box] (anywhere when null): looked up through the narrowest index, then checked. */
+/**
+ * Places whose tags pass [filter], inside [box] (anywhere when null): looked up through the narrowest index, then checked.
+ * Tags alone: no hours are read.
+ */
 fun PlaceSource.byFilter(filter: TagFilter, box: BBox? = null): List<PlaceRecord> =
-    OfflineEvaluator(this).matches(Query.Tags(filter), EvalContext(), box ?: bounds)
+    OfflineEvaluator(this).matches(Query.Tags(filter), EvalContext(hours = OpeningHoursContext.Default), box ?: bounds)
 
 /**
  * Whether the source holds the place [p]: its box holds it, and a place of its own lies within [COVER_REACH_M] of it (the

@@ -37,5 +37,5 @@ object Fixtures {
     }
 
     fun context(now: ZonedDateTime = saturday, lang: String = "en") =
-        EvalContext(location = westerkerk, now = now, lang = lang)
+        EvalContext(location = westerkerk, now = now, lang = lang, hours = Nowhere)
 }

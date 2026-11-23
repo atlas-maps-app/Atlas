@@ -86,6 +86,9 @@ class CarteFramesTest {
 
         println("La Carte scrolled $STEPS lines: the screen recomposed $screen times, the chapter in view changed $changes times; $steps")
         assertTrue("the menu has chapters to pass: $steps", changes >= 2)
+        // the control of the count: a change of chapter recomposes the screen, which reads it, so a tracer that sees
+        // nothing, or source info written another way, fails the test rather than passing it
+        assertTrue("a change of chapter recomposes the screen: $steps", screen >= 1)
         assertTrue("the screen recomposed $screen times for $changes changes of chapter: $steps", screen <= changes)
     }
 

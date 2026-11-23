@@ -20,7 +20,7 @@ import java.time.DayOfWeek
 
 class SearchEngineTest {
     private val engine by lazy { SearchEngine(Fixtures.store) }
-    private val ctx = SearchContext(location = Fixtures.westerkerk, lang = "en", now = Fixtures.saturday)
+    private val ctx = SearchContext(location = Fixtures.westerkerk, lang = "en", now = Fixtures.saturday, hours = Nowhere)
 
     private fun search(text: String, c: SearchContext = ctx) = runBlocking { engine.search(text, c) }
 
@@ -345,5 +345,5 @@ class SearchEngineTest {
     }
 
     private fun closingSaturday(raw: String): Int? = OpeningHours.parseOrNull(raw)
-        ?.weekTable(Fixtures.saturday.toLocalDate())?.get(DayOfWeek.SATURDAY.ordinal)?.filter { it.state == OpenState.OPEN }?.maxOfOrNull { it.end }
+        ?.weekTable(Fixtures.saturday.toLocalDate(), context = Nowhere)?.get(DayOfWeek.SATURDAY.ordinal)?.filter { it.state == OpenState.OPEN }?.maxOfOrNull { it.end }
 }

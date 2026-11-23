@@ -165,7 +165,7 @@ class SearchViewModelsTest {
             s, "", { Services.WESTERKERK }, "en", connected = { true },
             askOnline = { q, _, ctx ->
                 asked += android.os.SystemClock.uptimeMillis()
-                OnlineAnswer("", emptyList(), OfflineEvaluator(MemoryPlaces(emptyList())).run(q, ctx))
+                OnlineAnswer("", emptyList(), OfflineEvaluator(MemoryPlaces(emptyList(), country = null)).run(q, ctx))
             },
         )
         until { !vm.state.value.running }
@@ -193,7 +193,7 @@ class SearchViewModelsTest {
             s, "", { Services.WESTERKERK }, "en", connected = { up },
             askOnline = { q, _, ctx ->
                 asked += android.os.SystemClock.uptimeMillis()
-                OnlineAnswer("", emptyList(), OfflineEvaluator(MemoryPlaces(emptyList())).run(q, ctx))
+                OnlineAnswer("", emptyList(), OfflineEvaluator(MemoryPlaces(emptyList(), country = null)).run(q, ctx))
             },
         )
         until { !vm.state.value.running }
@@ -253,7 +253,7 @@ class SearchViewModelsTest {
             mapOf("amenity" to "cafe", "name" to "Starbucks", "brand" to "Starbucks", "brand:wikidata" to "Q37158") + listOfNotNull(site?.let { "website" to it }),
         )
         // two branches link their own pages on the brand's Dutch site, one links none
-        val stores = listOf(MemoryPlaces(listOf(starbucks(9001, 0.004, "https://www.starbucks.nl/store/1001"), starbucks(9002, -0.006, "https://www.starbucks.nl/store/1002"), starbucks(9003, 0.001, null))))
+        val stores = listOf(MemoryPlaces(listOf(starbucks(9001, 0.004, "https://www.starbucks.nl/store/1001"), starbucks(9002, -0.006, "https://www.starbucks.nl/store/1002"), starbucks(9003, 0.001, null)), country = null))
         val bare = PlaceViewModel(testServices(stores = stores), null, "n9003", null, null, "en")
         until { bare.state.value.brandSite != null }
         assertEquals("https://www.starbucks.nl", bare.state.value.brandSite)

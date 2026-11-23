@@ -10,12 +10,19 @@ import java.util.Locale
 data class InferredHours(val hours: OpeningHours, val from: Int, val agreement: Double)
 
 /**
+ * A day of a branch's plain week ([BrandHours.weekOf]): its first opening and last closing, minutes from its midnight
+ * (a closing past midnight past 1440), and whether its hours give that closing an open end ("16:00-02:00+").
+ */
+data class WeekDay(val opens: Int, val closes: Int, val openEnd: Boolean = false)
+
+/**
  * A brand's hours from its branches (the user, 3 November: "Brand opening times are missing at many locations, but
  * they are often the same to other locations around them. There can be a median calculated and non confirmed opening
  * times attributed, where applicable"). For each day of the week a branch opens at its day's first opening and closes
  * at its last closing, a lunch break left out; the day is closed when most branches close it, else it opens at the
- * median of their openings and closes at the median of their closings. The median taken is the lower one, so every
- * time said is a time some branch keeps. Holidays and dated rules are left out, as a door plaque leaves them out.
+ * median of their openings and closes at the median of their closings, with an open end ("22:00+") when most of them
+ * give theirs one. The median taken is the lower one, so every time said is a time some branch keeps. Holidays and
+ * dated rules are left out, as a door plaque leaves them out.
  */
 object BrandHours {
     /** Fewer of a kind's places around with readable weekly hours than this say nothing of the others ([fromWeeks]). */
@@ -36,11 +43,12 @@ object BrandHours {
      * The same from weeks already read ([weekOf]): for places whose hours are read once and asked of many times, the
      * places of a kind around each of several others; fewer than [min] say nothing.
      */
-    fun fromWeeks(weeks: List<List<Pair<Int, Int>?>>, min: Int = MIN_BRANCHES): InferredHours? {
+    fun fromWeeks(weeks: List<List<WeekDay?>>, min: Int = MIN_BRANCHES): InferredHours? {
         if (weeks.size < min) return null
         val days = (0 until 7).map { d ->
             val open = weeks.mapNotNull { it[d] }
-            if (open.size * 2 <= weeks.size) null else lowerMedian(open.map { it.first }) to lowerMedian(open.map { it.second })
+            if (open.size * 2 <= weeks.size) null
+            else WeekDay(lowerMedian(open.map { it.opens }), lowerMedian(open.map { it.closes }), open.count { it.openEnd } * 2 > open.size)
         }
         if (days.all { it == null }) return null
         val raw = format(days)
@@ -49,23 +57,29 @@ object BrandHours {
     }
 
     /**
-     * Each day's first opening and last closing from Monday, minutes from its midnight (a closing past midnight past
-     * 1440), null for a day closed; null for hours open on no day of a plain week.
+     * Each day from Monday ([WeekDay]), null for a day closed; null for hours open on no day of a plain week. The
+     * closings are those the hours state: an open end its stated end and the open end ("16:00-02:00+": 2:00, open
+     * end), never the guess of how long it lasts; hours whose last stretch of a day states none (`17:00+`) say nothing
+     * of a week (null).
      */
-    fun weekOf(h: OpeningHours): List<Pair<Int, Int>?>? {
-        if (h.isAlwaysOpen) return List(7) { 0 to 1440 }
-        val table = h.weekTable()
+    fun weekOf(h: OpeningHours): List<WeekDay?>? {
+        if (h.isAlwaysOpen) return List(7) { WeekDay(0, 1440) }
+        // a plain week, as a door plaque shows it: no date, so no holidays, and the sun's fixed hours
+        val table = h.weekTable(weekOf = null, context = OpeningHoursContext.Default)
         val out = table.map { spans ->
-            val open = spans.filter { it.state == OpenState.OPEN }
-            if (open.isEmpty()) null else open.minOf { it.start } to open.maxOf { it.end }
+            val open = statedSpans(spans.filter { it.state == OpenState.OPEN })
+            if (open.isEmpty()) null else WeekDay(open.minOf { it.start }, open.last().end ?: return null, open.last().openEnd)
         }
         return out.takeIf { days -> days.any { it != null } }
     }
 
     private fun lowerMedian(values: List<Int>): Int = values.sorted()[(values.size - 1) / 2]
 
-    /** "Mo-Fr 08:00-22:00; Sa 09:00-22:00; Su 10:00-20:00": days with the same hours joined, closed days left out. */
-    internal fun format(days: List<Pair<Int, Int>?>): String {
+    /**
+     * "Mo-Fr 08:00-22:00; Sa 09:00-22:00+; Su 10:00-20:00": days with the same hours joined, closed days left out, an
+     * open end after its stated closing.
+     */
+    internal fun format(days: List<WeekDay?>): String {
         val parts = ArrayList<String>()
         var d = 0
         while (d < 7) {
@@ -74,7 +88,7 @@ object BrandHours {
             while (e + 1 < 7 && days[e + 1] == span) e++
             if (span != null) {
                 val range = if (e == d) DAYS[d] else "${DAYS[d]}-${DAYS[e]}"
-                parts += "$range ${clock(span.first)}-${clock(if (span.second > 1440) span.second - 1440 else span.second)}"
+                parts += "$range ${clock(span.opens)}-${clock(if (span.closes > 1440) span.closes - 1440 else span.closes)}" + if (span.openEnd) "+" else ""
             }
             d = e + 1
         }
@@ -91,19 +105,31 @@ object BrandHours {
  * A brand's own website for a branch that maps none (the user, 3 November: "Some locations have them, usually a
  * specific parameter for the location. If there is no website mapped the brands website without that parameter can
  * be displayed instead"), from the tags of the brand's other branches: a `brand:website` mapped on them, else the
- * site their own websites share, the page of one branch left out. The country's own site comes first
- * ("starbucks.nl" in the Netherlands, where branches link .nl, .com and .co.uk pages); else most of the branches
- * with a website must share one, two at least. Social pages and booking sites say nothing about the brand.
+ * site their own websites share, the page of one branch left out. The site of [country], the branches' country, comes
+ * first where it is the brand's own [name] under the country's domain ("starbucks.nl" in the Netherlands, where
+ * branches link .nl, .com and .co.uk pages; ".uk" Britain's), however few link it: a shopping centre's pages under the
+ * country's domain are not the brand's (the reviewer, 17 November, finding 11; the app maintainer, 18 November 2026,
+ * batch 4 B24: two branches on one centre's beat forty on the brand's .com). Else the site most of the branches that
+ * link one link, two at least and no other as often, though fewer than half link it (the app maintainer, 18 November
+ * 2026, batch 5 A9: hema.nl, three times beside seven pages of one link each, was no site; and the name was read from
+ * the domains alone, so a centre's name under two of them was the brand's). Social pages and booking sites say nothing
+ * about the brand.
  */
 object BrandSite {
-    fun of(branches: List<Map<String, String>>, country: String? = null): String? {
+    fun of(branches: List<Map<String, String>>, country: String?, name: String?): String? {
         branches.mapNotNull { t -> t["brand:website"]?.let(::origin)?.takeIf { it.domain !in ELSEWHERE } }
             .groupingBy { it }.eachCount().maxByOrNull { it.value }?.let { return it.key.origin }
         val sites = branches.mapNotNull { mapped(it)?.let(::origin) }.filter { it.domain !in ELSEWHERE }
         if (sites.isEmpty()) return null
         val byDomain = sites.groupBy { it.domain }
-        val local = country?.lowercase()?.let { c -> byDomain.keys.filter { it.endsWith(".$c") }.maxByOrNull { byDomain.getValue(it).size } }
-        val domain = local ?: byDomain.maxByOrNull { it.value.size }?.takeIf { it.value.size >= 2 && it.value.size * 2 >= sites.size }?.key ?: return null
+        val tld = country?.lowercase()?.let { if (it == "gb") "uk" else it }
+        val own = name?.let(Brands::key)?.takeIf { it.isNotEmpty() }
+        val local = if (tld == null || own == null) null else byDomain.keys
+            .filter { d -> d.endsWith(".$tld") && Brands.key(d.substringBefore('.')) == own }
+            .maxByOrNull { byDomain.getValue(it).size }
+        val counts = byDomain.mapValues { it.value.size }
+        val most = counts.values.maxOrNull() ?: return null
+        val domain = local ?: counts.entries.singleOrNull { it.value == most }?.takeIf { it.value >= 2 }?.key ?: return null
         // the form they write it in most, the domain itself or its www before a subdomain, https before http
         return byDomain.getValue(domain).groupingBy { it.origin }.eachCount().entries.sortedWith(
             compareByDescending<Map.Entry<String, Int>> { it.value }

@@ -36,7 +36,7 @@ class OnlineTest {
     fun theEngineFallsBackToOverpassAndPhoton() = runBlocking {
         val empty = PlaceStore.inMemory()
         val engine = SearchEngine(empty, geocoder = Photon(Http()), overpass = Overpass(Http()))
-        val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday)
+        val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday, hours = Nowhere)
         val kerk = engine.search("Westerkerk Amsterdam", ctx)
         println("photon: " + kerk.items.take(3))
         assertTrue(kerk.usedOnline)

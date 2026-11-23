@@ -35,7 +35,7 @@ class OnlineMockTest {
     @Test
     fun memoryPlacesAnswerLikeAStore() {
         val places = OverpassParser.parse(StringReader(eat)).places()
-        val mem = MemoryPlaces(places)
+        val mem = MemoryPlaces(places, country = null)
         assertEquals(1925, mem.size)
         val store = PlaceStore.inMemory().also { it.importOverpass(Fixtures.eat) }
         val ctx = Fixtures.context().copy(limit = 2000)
@@ -77,7 +77,7 @@ class OnlineMockTest {
         server { MockResponse.Builder().body(photon).build() }.use { s ->
             val empty = PlaceStore.inMemory()
             val engine = SearchEngine(empty, geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
-            val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday)
+            val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday, hours = Nowhere)
             val r = engine.search("westerkerk", ctx)
             assertTrue(r.usedOnline)
             val first = r.items.filterIsInstance<SearchItem.Online>().first()
@@ -105,8 +105,8 @@ class OnlineMockTest {
     fun aSignInPageInsteadOfPhotonsAnswerLeavesTheOfflineResults() = runBlocking {
         server { MockResponse.Builder().body("<html><body>Sign in to the hotel's Wi-Fi</body></html>").build() }.use { s ->
             val kerk = Place(OsmId(OsmType.WAY, 99205257), Fixtures.westerkerk, mapOf("amenity" to "place_of_worship", "name" to "Westerkerk"))
-            val engine = SearchEngine(MemoryPlaces(listOf(kerk)), geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
-            val r = engine.search("westerkerk", SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday))
+            val engine = SearchEngine(MemoryPlaces(listOf(kerk), country = null), geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
+            val r = engine.search("westerkerk", SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday, hours = Nowhere))
             assertEquals(listOf("Westerkerk"), r.places.map { it.hit.place.name() })
             assertTrue("Photon was asked", s.requestCount > 0)
         }
@@ -131,7 +131,7 @@ class OnlineMockTest {
         server { r -> MockResponse.Builder().body(if ("haarlem" in r.url.toString()) haarlem else apotheek).build() }.use { s ->
             val empty = PlaceStore.inMemory()
             val engine = SearchEngine(empty, geocoder = Photon(Http(policies = emptyMap()), s.url("/").toString().removeSuffix("/")))
-            val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday)
+            val ctx = SearchContext(location = Fixtures.westerkerk, online = true, now = Fixtures.saturday, hours = Nowhere)
             val pharmacies = engine.search("apotheek", ctx).items.filterIsInstance<SearchItem.Online>()
             assertEquals(listOf("Apotheek Leidsestraat", "Apotheek Oud Zuid", "Apotheek"), pharmacies.map { it.place.name() })
             assertTrue(pharmacies.last().distance!! > 40_000)

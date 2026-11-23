@@ -95,12 +95,13 @@ object SourcesModel {
     fun keyed(rows: List<Row>): List<Row> = rows.filter { it.canTakeKey }
 
     /**
-     * The source that holds back a request to [host]: the one the host belongs to, where the user switched it off ([off],
-     * by id); null lets the request go. A source asked through another's servers (OpenStreetMap's chargers, through
-     * Overpass) is held back where it is asked, as those servers serve others too; one without a switch never is.
+     * The source that holds back a request to [host]: the one the host belongs to ([ProviderInfo.holds]: one of its hosts,
+     * or below its `*.name`), where the user switched it off ([off], by id); null lets the request go. A source asked
+     * through another's servers (OpenStreetMap's chargers, through Overpass) is held back where it is asked, as those
+     * servers serve others too; one without a switch never is.
      */
     fun blockedBy(host: String, off: Set<String>, all: List<ProviderInfo> = ALL): String? =
-        if (off.isEmpty()) null else all.firstOrNull { it.id in off && it.switchable && it.via == null && host in it.hosts }?.id
+        if (off.isEmpty()) null else all.firstOrNull { it.id in off && it.switchable && it.via == null && it.holds(host) }?.id
 
     /** A licence in a few characters for a tag: "ODbL", "CC BY 4.0", "open data", "own terms", "per source". */
     fun licenceLabel(licence: String): String {
