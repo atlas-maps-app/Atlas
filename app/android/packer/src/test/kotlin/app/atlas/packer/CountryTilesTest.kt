@@ -76,6 +76,11 @@ class CountryTilesTest {
         val said = ArrayList<String>()
         assertEquals(0, run(listOf("country", d.data.path, d.index.path, out.path, "--core", tool.path, "--id", "test", "--threads", "2", "--batch", "3"), said::add))
         assertTrue(said.joinToString("\n"), said.any { it.startsWith("test.tiles: 4 windows (2 with a tile, 2 empty") })
+        // a line a batch: its windows and the levels' tiles counted apart (the cell's, once its last window is built)
+        assertEquals(
+            listOf("  3 of 4 windows, 0 tiles of their cells' levels, ", "  4 of 4 windows, 4 tiles of their cells' levels, "),
+            said.filter { it.contains(" of 4 windows, ") }.map { it.substringBefore("tiles of their cells' levels, ") + "tiles of their cells' levels, " },
+        )
         // the buildings: A's twenty houses and B's one, each in its own window's scene alone, all clean; A's of 2 and 3
         // storeys, about 8.2 by 8.9 m, so 16 bays of 2.1 m about each, the most windows a tile of them can hold
         val buildings = said.single { it.startsWith("  the buildings: ") }

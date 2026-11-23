@@ -334,6 +334,8 @@ object CountryTiles {
         var buildings = Buildings()
         val uneasy = ArrayList<String>()
         val past = ArrayList<String>()
+        // the windows the tool has said its word of, built or not; the index's entries hold the levels' tiles too
+        var done = 0
         try {
             FileChannel.open(data.toPath(), StandardOpenOption.READ).use { channel ->
                 part.outputStream().buffered(1 shl 20).use { file ->
@@ -432,7 +434,11 @@ object CountryTiles {
                             dir.deleteRecursively()
                         }
                         val bad = b.count { said.getValue(key(it.x, it.y)).failed != null }
-                        log("  ${entries.size + failed.size} of ${windows.size} windows, ${offset shr 20} MiB of tiles (${ms() / 1000} s)" + if (bad == 0) "" else "; $bad not built")
+                        done += b.size
+                        log(
+                            "  $done of ${windows.size} windows, $levels tiles of their cells' levels, ${offset shr 20} MiB of tiles (${ms() / 1000} s)" +
+                                if (bad == 0) "" else "; $bad not built",
+                        )
                     }
                 }
             }
