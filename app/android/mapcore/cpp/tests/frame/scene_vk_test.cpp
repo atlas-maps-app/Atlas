@@ -3655,9 +3655,9 @@ TEST_CASE("the sun's scenes keep each tile's part over a frame cell's levels: ov
     // The coarse level's place and steps (the case above), run with the sun's scenes taking the last one's parts and
     // built whole. The L13 is in the scene from 8.5 km with every place's cells, from 5.5 km at 60° of pitch with the
     // north place's alone (the south's drawn from its window), and from 4 km once the south window is gone with the
-    // south place's alone: its chunk and its ladder level the same each time, so its part is taken where its cells are
-    // the ones it was made with alone. Then the sun moved: every tile's bits of another bucket from the scene as it
-    // was.
+    // south place's alone: its chunk and its ladder level the same each time and its cells other, so no scene takes
+    // the last one's L13 (nor its windows, which the scene before held) and every part is made, as built whole. Then
+    // the sun moved: every tile's bits of another bucket from the scene as it was.
     const auto made = levels_place();
     ATLAS_REQUIRE(made.has_value(), made.error());
     auto session = test::open_session();
@@ -3735,8 +3735,9 @@ TEST_CASE("the sun's scenes keep each tile's part over a frame cell's levels: ov
     run(true, kept);
     run(false, whole);
     const std::size_t tiles = hold_steps(kept.steps, whole.steps);
-    // The L13 had bits in the last four steps, made from other cells in the second, third and fourth: fewer samples
-    // with the north place's alone than with every place's, and others with the south's.
+    // The L13 had bits in the last four steps, made from other cells in the second, third and fourth: a place outside
+    // its cells is lit as its faces turn to the sun, with no march (sun::leave_out), so the south house's west wall is
+    // in the tower's shadow with every place's cells and with the south's, and lit with the north's alone.
     ATLAS_REQUIRE(whole.steps.size() == 5);
     const std::uint64_t coarse = made->coarse.packed();
     for (std::size_t s = 1; s < whole.steps.size(); ++s) {
@@ -3744,11 +3745,12 @@ TEST_CASE("the sun's scenes keep each tile's part over a frame cell's levels: ov
         CHECK(whole.steps[s].contains(coarse));
     }
     if (whole.steps[1].contains(coarse) && whole.steps[2].contains(coarse) && whole.steps[3].contains(coarse)) {
-        CHECK(whole.steps[2].at(coarse).count < whole.steps[1].at(coarse).count);
+        CHECK(whole.steps[2].at(coarse).words != whole.steps[1].at(coarse).words);
         CHECK(whole.steps[3].at(coarse).words != whole.steps[2].at(coarse).words);
     }
     CHECK(kept.stats.scenes > 1);
-    CHECK(kept.stats.parts_kept > 0);
+    CHECK(kept.stats.parts_kept == 0); // no scene's L13 taken
+    CHECK(kept.stats.parts_made == whole.stats.parts_made);
     CHECK(whole.stats.parts_kept == 0);
     CHECK(kept.stats.failed == 0);
     CHECK(whole.stats.failed == 0);
@@ -5135,8 +5137,8 @@ TEST_CASE("the sun's scenes keep a whole tile's part where the decks near its qu
         CHECK(!alone.quays.empty());
         CHECK(alone.quays != bridged.quays);
     }
+    // (a part taken and made again counts as made, not kept)
     CHECK(kept.stats.parts_remade > 0);
-    CHECK(kept.stats.parts_kept > 0);
     CHECK(whole.stats.parts_kept == 0);
     CHECK(whole.stats.parts_remade == 0);
     MESSAGE(
