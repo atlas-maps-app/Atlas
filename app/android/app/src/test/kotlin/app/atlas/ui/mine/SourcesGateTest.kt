@@ -247,21 +247,25 @@ class SourcesGateTest {
         MockWebServer().use { server ->
             server.dispatcher = object : mockwebserver3.Dispatcher() {
                 override fun dispatch(request: mockwebserver3.RecordedRequest): MockResponse =
-                    if (request.headers["Host"]!!.startsWith("www.wikidata.org")) MockResponse.Builder().code(302).addHeader("Location", "http://upload.wikimedia.org:${server.port}/p.jpg").build()
+                    if (request.url.encodedPath == "/w") MockResponse.Builder().code(302).addHeader("Location", "http://upload.wikimedia.org:${server.port}/p.jpg").build()
                     else MockResponse.Builder().code(200).body("picture").build()
             }
             server.start(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), 0)
+            // Services' own client, its name lookup gate and all: only the JVM's proxies are left out, and the first hop is
+            // asked by the mock's address, which needs no name
             val watch = Watch { true }
-            val client = services.http("wikidata").client.newBuilder().direct().dns(watch.dns).eventListener(watch).build()
-            fun get() = client.newCall(okhttp3.Request.Builder().url("http://www.wikidata.org:${server.port}/w").build()).execute().use { it.body.string() }
-            // Wikidata on, Commons off: the first hop goes, the hop to Commons' host is refused before it is sent
+            val own = services.http("wikidata").client.newBuilder().direct().eventListener(watch).build()
+            fun get(client: OkHttpClient) = client.newCall(okhttp3.Request.Builder().url("http://127.0.0.1:${server.port}/w").build()).execute().use { it.body.string() }
+            // Wikidata on, Commons off: the first hop goes, the hop to Commons' host is refused before it is sent: by the
+            // gate in the name lookup, before the lookup (this machine knows no such name: a lookup would fail otherwise)
             services.switch(setOf("commons"))
-            val refused = runCatching { get() }.exceptionOrNull()
+            val refused = runCatching { get(own) }.exceptionOrNull()
             assertTrue("$refused", refused is SwitchedOffException && refused.source == "commons" && refused.host == "upload.wikimedia.org")
+            assertEquals("one connection, to the first hop: ${watch.connects}", 1, watch.connects.size)
             assertEquals(1, server.requestCount)
-            // both on: it goes
+            // both on: it goes (Commons' host by the test's own name for this machine)
             services.switch(emptySet())
-            assertEquals("picture", get())
+            assertEquals("picture", get(services.http("wikidata").client.newBuilder().direct().dns(watch.dns).build()))
             assertEquals(3, server.requestCount)
         }
         services.close()

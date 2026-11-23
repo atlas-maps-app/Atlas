@@ -347,6 +347,62 @@ class HttpTest {
         }
     }
 
+    /**
+     * Behind a proxy (a Wi-Fi network's, or a PAC file's) the hop's name is the proxy's to look up, so the gated name lookup
+     * is never asked: the root's proxy selector holds a refused hop instead, before a proxy is told its name or a
+     * connection is made. A request that goes still goes by the system's proxy.
+     */
+    @Test
+    fun aRefusedHopIsToldToNoProxyAndNeverConnected() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            // the mock is the proxy: it answers what it is asked, the first hop with a redirect into a switched-off host
+            m.dispatch { r ->
+                if (r.url.host == "a.example") MockResponse.Builder().code(302).addHeader("Location", "http://b.example:$port/b").build()
+                else MockResponse.Builder().code(200).body("b").build()
+            }
+            val proxy = java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress(java.net.InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)), port))
+            val told = java.util.Collections.synchronizedList(ArrayList<String>())
+            val system = java.net.ProxySelector.getDefault()
+            java.net.ProxySelector.setDefault(object : java.net.ProxySelector() {
+                // OkHttp asks with the request's address; the JDK asks too, with socket://, for each socket it opens
+                // (the one to the proxy): only the first are what the proxy is told
+                override fun select(uri: java.net.URI): List<java.net.Proxy> {
+                    if (uri.scheme == "http" || uri.scheme == "https") told += uri.host
+                    return listOf(proxy)
+                }
+                override fun connectFailed(uri: java.net.URI, sa: java.net.SocketAddress, ioe: java.io.IOException) = Unit
+            })
+            try {
+                val looked = java.util.Collections.synchronizedList(ArrayList<String>())
+                val connects = java.util.concurrent.atomic.AtomicInteger()
+                val base = okhttp3.OkHttpClient.Builder()
+                    .dns { name -> looked += name; throw java.net.UnknownHostException(name) }
+                    .eventListener(object : okhttp3.EventListener() {
+                        override fun connectStart(call: okhttp3.Call, inetSocketAddress: java.net.InetSocketAddress, proxy: java.net.Proxy) { connects.incrementAndGet() }
+                    })
+                    .build()
+                var off = setOf("commons")
+                val http = Http(policies = emptyMap(), base = base, gate = { host, _ -> if (host == "b.example" && "commons" in off) "commons" else null }).of("wikidata")
+                val refused = runCatching { http.text("http://a.example:$port/a") }.exceptionOrNull()
+                assertTrue("$refused", refused is SwitchedOffException && refused.source == "commons" && refused.host == "b.example")
+                assertEquals("the proxy was told a.example alone", listOf("a.example"), told.toList())
+                assertEquals("one connection, to the proxy for a.example", 1, connects.get())
+                assertEquals("no name looked up", emptyList<String>(), looked.toList())
+                assertEquals(1, m.count)
+                // switched on: both hops go by the system's proxy
+                off = emptySet()
+                assertEquals("b", http.text("http://a.example:$port/a"))
+                // a's connection to the proxy came back to the pool and is used again: only b's address is new
+                assertEquals(listOf("a.example", "b.example"), told.toList())
+                assertEquals(3, m.count)
+                assertEquals(emptyList<String>(), looked.toList())
+            } finally {
+                java.net.ProxySelector.setDefault(system)
+            }
+        }
+    }
+
     @Test
     fun anAnswerFromTheCacheMakesNoHop() = runBlocking {
         Mock().use { m ->

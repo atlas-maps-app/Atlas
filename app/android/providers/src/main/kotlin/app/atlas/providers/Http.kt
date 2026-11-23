@@ -27,6 +27,10 @@ import okhttp3.Response
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.SocketAddress
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -165,11 +169,13 @@ class Http private constructor(
 
     companion object {
         /**
-         * The root's client: the timeouts, the cache, and the gate, three times over. The first application interceptor
+         * The root's client: the timeouts, the cache, and the gate, four times over. The first application interceptor
          * asks it by the request's host and source (and adds the User-Agent). A redirect is followed below the application
-         * interceptors, so each hop is asked again by its host alone: in the name lookup, so a refused hop is never looked
-         * up nor connected to, and in a network interceptor, for a hop that would reuse a connection already open. A hop
-         * to a host no list names goes, as the request did; an answer from the cache makes no hop.
+         * interceptors, so each hop is asked again by its host alone: by the proxy selector ([GatedProxies]), before a proxy
+         * is told the hop's name, which gives a refused hop no proxy; in the name lookup, which then refuses it before it is
+         * looked up or connected to; and in a network interceptor, for a hop that would reuse a connection already open.
+         * All of it by name: a host written as numbers is in no list and goes, by design, as a hop to a host no list names
+         * goes, as the request did. An answer from the cache makes no hop.
          *
          * The network interceptor counts each hop it lets go in [asked] (by [listed], else the request's source, with the
          * host beyond its list); the first interceptor counts a request refused, wherever below it was, once.
@@ -196,6 +202,7 @@ class Http private constructor(
                         throw e
                     }
                 }
+                .proxySelector(GatedProxies { host -> gate(host, null) != null })
                 .dns { host -> gate(host, null)?.let { throw SwitchedOffException(it, host) } ?: lookup.lookup(host) }
                 .addNetworkInterceptor { chain ->
                     val req = chain.request()
@@ -234,6 +241,28 @@ class HttpResponse(val code: Int, val headers: Headers, val body: ByteArray, val
 /** The source a request is asked for, by its provider id: stamped on it as a tag by a named view of [Http] ([Http.of]). */
 class SourceTag(val id: String) {
     override fun toString() = id
+}
+
+/**
+ * The root's proxy selector, asked by OkHttp with each hop's address before a proxy is told its name or any name is looked
+ * up (with an HTTP proxy the lookup is the proxy's, with a SOCKS proxy there is none, so the gated lookup alone would not
+ * hold the hop). A host a switched-off source holds ([refused], by name) gets no proxy: it meets the gated name lookup
+ * next and is refused there, before any connection, and counted where the others are. Any other host is handed to the
+ * system's selector, read at each ask (none: no proxy), and so is a failed connection, so a proxy's failover is the
+ * system's as before. It never throws: OkHttp reads an exception here as a route still to try.
+ */
+private class GatedProxies(private val refused: (host: String) -> Boolean) : ProxySelector() {
+    private fun system(): ProxySelector? = getDefault()?.takeIf { it !== this }
+
+    override fun select(uri: URI): List<Proxy> {
+        val host = uri.host
+        if (host != null && refused(host)) return listOf(Proxy.NO_PROXY)
+        return system()?.select(uri)?.takeIf { it.isNotEmpty() } ?: listOf(Proxy.NO_PROXY)
+    }
+
+    override fun connectFailed(uri: URI, sa: SocketAddress, ioe: IOException) {
+        system()?.connectFailed(uri, sa, ioe)
+    }
 }
 
 /** Stamps [source] on each request that carries no [SourceTag] yet. */
