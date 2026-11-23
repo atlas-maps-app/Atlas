@@ -215,7 +215,7 @@ class ColourOnlyBrandsTest {
         val lines = eaterNames.map { textOf(it) }
         assertEquals(
             listOf(
-                "New York Pizza / New York Pizza / Pizza",
+                "New York Pizza / Pizza",
                 "McDonald's / Burger",
                 "Snackbar Ali / Kebab",
                 "Broodje Bert / Sandwich",
