@@ -59,10 +59,10 @@ internal fun WikiReader(url: String, load: suspend () -> WikipediaArticle?, onDi
             when {
                 read == null -> Looking()
                 // Wikipedia switched off: said in the user's language, naming the Settings row as it names itself, not the
-                // gate's own sentence
+                // gate's own sentence; another source held back on the way (a hop's) is any other failure, in its own words
                 article == null -> StateMessage(
                     "ui-book", stringResource(R.string.place_wiki_none), Modifier.padding(16.dp),
-                    text = read?.exceptionOrNull()?.let { if (it is SwitchedOffException) stringResource(R.string.place_wiki_off, stringResource(R.string.mine_settings_data)) else it.message },
+                    text = read?.exceptionOrNull()?.let { if (it is SwitchedOffException && it.source == app.atlas.providers.Wikipedia.ID) stringResource(R.string.place_wiki_off, stringResource(R.string.mine_settings_data)) else it.message },
                     action = { PrimaryButton(stringResource(R.string.place_wiki_read), { runCatching { uri.openUri(url) } }) },
                 )
                 else -> Article(article) { runCatching { uri.openUri(article.url) } }

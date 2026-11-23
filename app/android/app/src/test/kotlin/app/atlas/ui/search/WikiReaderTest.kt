@@ -81,6 +81,14 @@ class WikiReaderTest {
     }
 
     @Test
+    fun anotherSourceSwitchedOffIsNotWikipedia() {
+        // since point 5 a hop's refusal names the hop's source: Commons held back on the way is Commons', in its own words
+        read { throw SwitchedOffException("commons", "upload.wikimedia.org") }
+        assertTrue(compose.onAllNodes(hasText(off, substring = true)).fetchSemanticsNodes().isEmpty())
+        compose.onNodeWithText(SwitchedOffException("commons", "upload.wikimedia.org").message!!).assertExists()
+    }
+
+    @Test
     fun anotherFailureThatIsNotTheSwitchShowsItsOwnWordsToo() {
         read { throw java.io.IOException("the server could not answer") }
         assertTrue(compose.onAllNodes(hasText(off, substring = true)).fetchSemanticsNodes().isEmpty())
