@@ -603,13 +603,13 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
     parts.region = region;
     std::unordered_map<std::uint64_t, std::vector<std::size_t>> by_key;
     for (std::size_t i = 0; i < last.tiles.size(); ++i) by_key[last.tiles[i].key.packed()].push_back(i);
-    const auto take = [&](Part::Kind kind, tiles::TileKey key, const tiles::Sha256Digest& chunk, std::uint8_t level,
+    const auto take = [&](Part::Kind kind, tiles::TileKey key, const tiles::Sha256Digest& chunk, [[maybe_unused]] std::uint8_t level,
                           std::uint64_t live) -> Part* {
         const auto it = by_key.find(key.packed());
         if (it == by_key.end()) return nullptr;
         for (const std::size_t i : it->second) {
             Part& k = last.tiles[i];
-            if (k.tile && k.kind == kind && k.chunk == chunk && k.level == level && k.live == live) return &k;
+            if (k.tile && k.kind == kind && k.chunk == chunk && k.live == live) return &k;
         }
         return nullptr;
     };
