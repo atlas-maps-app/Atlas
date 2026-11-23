@@ -445,10 +445,8 @@ TEST_CASE("the glyph atlas says its count and rows in the core's stats line, whi
     const auto geist = fonts->instance({.face = text::Face::sans, .weight = 700});
     ATLAS_REQUIRE(geist.has_value());
     slug::GlyphAtlas glyphs;
-    CHECK(glyphs.line() ==
-          std::format("vk glyphs 0 in 0 of {0} curve rows and 0 of {0} band rows", slug::GlyphAtlas::max_rows));
+    CHECK(glyphs.line() == "vk glyphs 0 in 0 of 20 curve rows and 0 of 96 band rows");
     REQUIRE(glyphs.glyph(**geist, (*geist)->glyph_of(U'A')) != nullptr);
     REQUIRE(glyphs.glyph(**geist, (*geist)->glyph_of(U'A')) != nullptr); // once
-    CHECK(glyphs.line() ==
-          std::format("vk glyphs 1 in 1 of {0} curve rows and 1 of {0} band rows", slug::GlyphAtlas::max_rows));
+    CHECK(glyphs.line() == "vk glyphs 1 in 1 of 20 curve rows and 1 of 96 band rows");
 }

@@ -131,11 +131,21 @@ private:
 /// The glyphs the frame's text draws, shared by its passes (the ground's text, then the house numbers and shop signs)
 /// and set 1's provider of their data (passes/GroundText.hpp's GlyphGlobals, which copies what was added since its last
 /// copy to the GPU before the frame draws): each glyph's outline added on first use, by face, weight and glyph id, up
-/// to max_rows rows of each texture (the provider's buffers). Locked, so frames on two render threads may share it.
+/// to max_curve_rows rows of curves and max_band_rows of bands (the provider's buffers). Locked, so frames on two
+/// render threads may share it.
 class GlyphAtlas {
 public:
-    /// The rows of each texture at most: 32,768 texels each, some 400 glyphs (640 KB of buffers in all).
-    static constexpr std::uint32_t max_rows = 8;
+    /// The rows of each texture at most, as the provider's two buffers hold them: 20 rows of curves (16 bytes a texel,
+    /// 1.25 MB) and 96 of bands (4 bytes a texel, 1.5 MB), 2,883,584 bytes in all. The bands fill about five times as
+    /// fast as the curves (a Geist glyph takes some 26 curve texels and 144 band texels), hence two bounds. They hold
+    /// every glyph of Latin-1, Latin Extended-A, -B and Additional, Greek and Cyrillic of the three faces the frame's
+    /// text draws (Geist 700 and 800, Gelasio 400) at once, with about a tenth of each to spare: slug_test holds it,
+    /// and its message says the rows they take.
+    static constexpr std::uint32_t max_curve_rows = 20;
+    static constexpr std::uint32_t max_band_rows = 96;
+    /// The texels of each texture at most.
+    static constexpr std::size_t max_curve_texels = std::size_t{max_curve_rows} << log_texture_width;
+    static constexpr std::size_t max_band_texels = std::size_t{max_band_rows} << log_texture_width;
 
     /// Glyph `id` of `instance`'s place, added on first use; null when it cannot be (the data are full, or the
     /// outline is refused). The place stays put once made.
@@ -150,8 +160,8 @@ public:
     [[nodiscard]] std::size_t size() const;
     [[nodiscard]] bool full() const;
     /// Its part of the core's stats line while the map is on (jni/Bridge.cpp, which the bench's table prints): `vk
-    /// glyphs <n> in <c> of <max> curve rows and <b> of <max> band rows`, then `, full` once it refused one for want
-    /// of room.
+    /// glyphs <n> in <c> of 20 curve rows and <b> of 96 band rows` (max_curve_rows, max_band_rows), then `, full`
+    /// once it refused one for want of room.
     [[nodiscard]] std::string line() const;
 
 private:

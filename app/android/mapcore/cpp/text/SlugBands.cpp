@@ -372,10 +372,9 @@ const Glyph* GlyphAtlas::glyph(const Instance& instance, std::uint32_t id) {
     const std::lock_guard lock(mutex_);
     if (const auto it = glyphs_.find(key); it != glyphs_.end()) return &it->second;
     if (full_) return nullptr;
-    constexpr std::size_t capacity = std::size_t{max_rows} << log_texture_width;
     const auto added = atlas_.add(text::outline(instance, id), instance.units_per_em());
     if (!added && added.error() != AtlasError::full) return nullptr; // this glyph's outline alone is refused
-    if (!added || atlas_.curve_texels() > capacity || atlas_.band_texels() > capacity) {
+    if (!added || atlas_.curve_texels() > max_curve_texels || atlas_.band_texels() > max_band_texels) {
         // Past the rows the provider copies: this glyph's texels (if any) are never read, and no glyph is added again.
         full_ = true;
         log::warn("text: the glyph data are full ({} glyphs); glyph {} and the glyphs after it are not drawn",
@@ -398,7 +397,7 @@ bool GlyphAtlas::full() const {
 std::string GlyphAtlas::line() const {
     const std::lock_guard lock(mutex_);
     return std::format("vk glyphs {} in {} of {} curve rows and {} of {} band rows{}", glyphs_.size(),
-                       atlas_.curve_rows(), max_rows, atlas_.band_rows(), max_rows, full_ ? ", full" : "");
+                       atlas_.curve_rows(), max_curve_rows, atlas_.band_rows(), max_band_rows, full_ ? ", full" : "");
 }
 
 GlyphAtlas& shared_glyphs() noexcept {

@@ -39,7 +39,8 @@ namespace sl = layouts::text_slug;
 
 constexpr std::size_t draw_bytes = sizeof(sl::GlyphDraw);
 constexpr std::size_t slot_bytes = GroundText::max_draws * draw_bytes;
-constexpr std::size_t glyph_capacity = std::size_t{text::slug::GlyphAtlas::max_rows} << text::slug::log_texture_width;
+constexpr std::size_t curve_capacity = text::slug::GlyphAtlas::max_curve_texels;
+constexpr std::size_t band_capacity = text::slug::GlyphAtlas::max_band_texels;
 
 /// The coverage tables, a face each (sans, serif, serif italic): the identity until calibrated against Skia's text on
 /// the emulator (D13).
@@ -477,8 +478,8 @@ void GlyphGlobals::update(const frame::FrameState& state, frame::Globals& global
         // The buffers, once, at the shared atlas's rows (record copies what is added before each frame draws).
         const vk::BufferUsageFlags storage = vk::BufferUsageFlagBits::eStorageBuffer;
         auto curves =
-            device_.memory().buffer(glyph_capacity * sizeof(text::slug::CurveTexel), storage, gpu::MemoryUse::upload);
-        auto bands = device_.memory().buffer(glyph_capacity * sizeof(std::uint32_t), storage, gpu::MemoryUse::upload);
+            device_.memory().buffer(curve_capacity * sizeof(text::slug::CurveTexel), storage, gpu::MemoryUse::upload);
+        auto bands = device_.memory().buffer(band_capacity * sizeof(std::uint32_t), storage, gpu::MemoryUse::upload);
         if (!curves || !bands) {
             log::error("text: the glyphs' buffers: {}", (!curves ? curves.error() : bands.error()).text());
             return;
@@ -500,7 +501,7 @@ void GlyphGlobals::record(const gpu::FrameContext& frame) {
     // The texels the frame's passes added since the last copy (the atlas only grows): into memory no frame in flight
     // reads yet, before this frame's commands go to the GPU.
     text::slug::shared_glyphs().read([&](const text::slug::Atlas& atlas) {
-        const std::size_t curves = std::min(atlas.curve_texels(), glyph_capacity);
+        const std::size_t curves = std::min(atlas.curve_texels(), curve_capacity);
         if (curves > curves_copied_) {
             const auto all = atlas.curves();
             std::memcpy(curves_.bytes().data() + (curves_copied_ * sizeof(text::slug::CurveTexel)),
@@ -508,7 +509,7 @@ void GlyphGlobals::record(const gpu::FrameContext& frame) {
             curves_.flush();
             curves_copied_ = curves;
         }
-        const std::size_t bands = std::min(atlas.band_texels(), glyph_capacity);
+        const std::size_t bands = std::min(atlas.band_texels(), band_capacity);
         if (bands > bands_copied_) {
             const auto all = atlas.bands();
             std::vector<std::uint32_t> packed(bands - bands_copied_);
