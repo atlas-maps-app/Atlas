@@ -67,12 +67,26 @@ class SourcesTruthTest {
             "the engine's `HttpUrlPost`, a default the app never takes: MapData hands `OverpassClient` its gated client's `post`; the packer's own",
     )
 
-    /** Making a client or opening a connection: OkHttp's, the JDK's, a raw socket's. */
+    /**
+     * Making a client or opening a connection, by the spellings this test knows: OkHttp's client and builder, the JDK's
+     * connections, streams, sockets and socket factories (TLS's too, and anything under `javax.net`), Java's own
+     * `HttpClient`, Kotlin's `URL(…).readText()` and `.readBytes()`; Android's fetchers (`DownloadManager`, `WebView`,
+     * `MediaPlayer`); and what sheds a view's gate from a client built on it: a [app.atlas.providers.SourceTag] set by
+     * hand, a lookup, a proxy, a proxy selector or a socket factory of its own, and interceptors cleared or added. It
+     * knows spellings, not every way to open a connection: a reference held in a variable (`val u = URL(x); u.readText()`),
+     * a reflective call, a library that fetches by itself, or native code is not read.
+     */
     private val opens = Regex(
-        """\bOkHttpClient\s*\(|\bOkHttpClient\.Builder\s*\(|\.openConnection\s*\(|\.openStream\s*\(|""" +
-            """\bjava\.net\.(Socket|ServerSocket|DatagramSocket|http)\b|\bSocketChannel\b|\bSocketFactory\b|""" +
-            """\bHttpClient\.new""",
+        """\bOkHttpClient\s*\(|\bOkHttpClient\.Builder\s*\(|\.openConnection\s*\(|\.openStream\s*\(|URL::openConnection|""" +
+            """\bjava\.net\.(Socket|ServerSocket|DatagramSocket|http)\b|\bSocketChannel\b|\b(SSL)?SocketFactory\b|\bjavax\.net\.|""" +
+            """\bHttpClient\.new|\bURL\s*\([^)]*\)\s*\.read(Text|Bytes)\s*\(|""" +
+            """\bSourceTag\s*\(|\.(dns|proxy|proxySelector|socketFactory|sslSocketFactory)\s*\(|""" +
+            """\b(networkI|i)nterceptors\s*\(\s*\)|\.add(Network)?Interceptor\s*\(|""" +
+            """\bDownloadManager\b|\bWebView\b|\bMediaPlayer\b""",
     )
+
+    /** OkHttp's builder written across two lines (`OkHttpClient` on one, `.Builder(` on the next), read in the whole text. */
+    private val opensAcross = Regex("""\bOkHttpClient\s*\n\s*\.\s*Builder\s*\(|\bOkHttpClient\s*\.\s*\n\s*Builder\s*\(""")
 
     private val wikipediaRequest = "providers/src/main/kotlin/app/atlas/providers/Wikipedia.kt" to "\"https://\$lang.wikipedia.org/w/api.php\""
 
@@ -480,9 +494,9 @@ class SourcesTruthTest {
             File(android, "$m/src/main").walkTopDown().filter { it.isFile && (it.name.endsWith(".kt") || it.name.endsWith(".java")) }
                 .flatMap { f ->
                     val path = f.relativeTo(android).path
-                    f.readLines().withIndex()
-                        .filter { (_, l) -> l.trim().let { t -> !t.startsWith("//") && !t.startsWith("*") && !t.startsWith("/*") } && opens.containsMatchIn(l) }
-                        .map { (i, _) -> path to i + 1 }
+                    val lines = f.readLines().map { l -> l.trim().let { t -> if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) "" else l } }
+                    val across = opensAcross.findAll(lines.joinToString("\n")).map { m -> path to lines.joinToString("\n").substring(0, m.range.first).count { it == '\n' } + 1 }
+                    lines.withIndex().filter { (_, l) -> opens.containsMatchIn(l) }.map { (i, _) -> path to i + 1 } + across
                 }.toList()
         }
         assertTrue("the shipped sources at $android", found.isNotEmpty())
