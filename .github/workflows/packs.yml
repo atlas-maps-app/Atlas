@@ -360,6 +360,23 @@ jobs:
           gh release upload "$TAG" "$WORK"/out/"$ID".* --clobber
           jq -r '"- \(.id): " + ([.files[] | "\(.kind) \(.bytes / 1048576 | floor) MiB"] | join(", ")) + ", OSM data of \(.osm_timestamp // "?")"' \
             "$WORK/out/$ID.pack.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Locate the cleaning's leftovers
+        # gates-proof alone, never landed: the buildings behind each count the cleaning left that should be 0 (the
+        # windows "the cleaning left" names, its first 20), found on the runner by the core's own tool as the
+        # countries builder found the Netherlands' nine (.github/scripts/locate-leftovers.py: the window's buildings,
+        # its box halved, then the buildings dropped while the count holds). Each one's buildings go into the run's
+        # summary and its seed into the measures' artifact; the windows' data stays on the runner.
+        if: ${{ always() && env.WINDOWS == 'true' && env.PUBLISH != 'true' }}
+        timeout-minutes: 85
+        run: |
+          set +e
+          [ -s "$RUNNER_TEMP/country.txt" ] && [ -s "$WORK/out/$ID.windows.idx" ] || exit 0
+          L="$RUNNER_TEMP/measures/$ID"
+          mkdir -p "$L/located"
+          python3 -I .github/scripts/locate-leftovers.py "$RUNNER_TEMP/country.txt" "$WORK/out/$ID.windows" \
+            "$WORK/out/$ID.windows.idx" "$ATLAS_STAGEP" "$L/located" 15 2>&1 | tee "$L/located.txt"
+          { echo "### $ID: the cleaning's leftovers, located"; echo '```'; cat "$L/located.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          true
       - name: The measures
         # a run that publishes nothing: the region's packs.json entry (each file whole, its size and SHA-256), its
         # indexes, its steps' reports and measure.tsv, as the run's artifact; kept whatever became of the steps before
