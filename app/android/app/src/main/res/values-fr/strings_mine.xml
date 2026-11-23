@@ -954,5 +954,9 @@
         <item quantity="other">retenu %1$d fois, la dernière à %2$s</item>
     </plurals>
     <string name="mine_asked_hosts">aussi chez %1$s</string>
-    <string name="mine_privacy_held">Retenu depuis l\'ouverture d\'Atlas</string>
+    <string name="mine_privacy_held">Pas demandé maintenant</string>
+    <plurals name="mine_asked_hosts_more">
+        <item quantity="one">aussi chez %1$s et %2$d autre</item>
+        <item quantity="other">aussi chez %1$s et %2$d autres</item>
+    </plurals>
 </resources>

@@ -954,5 +954,9 @@
         <item quantity="other">%1$d keer tegengehouden, het laatst om %2$s</item>
     </plurals>
     <string name="mine_asked_hosts">ook bij %1$s</string>
-    <string name="mine_privacy_held">Tegengehouden sinds Atlas openging</string>
+    <string name="mine_privacy_held">Nu niet gevraagd</string>
+    <plurals name="mine_asked_hosts_more">
+        <item quantity="one">ook bij %1$s en nog %2$d</item>
+        <item quantity="other">ook bij %1$s en nog %2$d</item>
+    </plurals>
 </resources>

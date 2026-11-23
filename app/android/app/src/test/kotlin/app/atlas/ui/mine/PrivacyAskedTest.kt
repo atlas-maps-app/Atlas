@@ -67,8 +67,8 @@ class PrivacyAskedTest {
         shown("asked 2 times since Atlas was opened, last at $t")
         shown("asked 1 time since Atlas was opened, last at $t · also at nl.panoramax.xyz")
         shown("not asked since Atlas was opened")
-        label("Held back since Atlas was opened")
-        shown("not asked since Atlas was opened · held back 1 time, last at $t")
+        label("Not asked now")
+        shown("held back 1 time, last at $t")
         assertEquals("the screen reads the app's own count", 2L, s.asked.of(Overpass.INFO.id).sent)
         repeat(4) { compose.waitForIdle(); Thread.sleep(120) }
         val f = File(shotsDir, "mine_privacy_asked.png")
@@ -83,7 +83,7 @@ class PrivacyAskedTest {
         show(s)
         val t = at(s)
         shown("demandé 2 fois depuis l'ouverture d'Atlas, la dernière à $t")
-        label("Retenu depuis l'ouverture d'Atlas")
+        label("Pas demandé maintenant")
     }
 
     @Test

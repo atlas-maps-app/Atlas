@@ -955,5 +955,9 @@
         <item quantity="other">held back %1$d times, last at %2$s</item>
     </plurals>
     <string name="mine_asked_hosts">also at %1$s</string>
-    <string name="mine_privacy_held">Held back since Atlas was opened</string>
+    <string name="mine_privacy_held">Not asked now</string>
+    <plurals name="mine_asked_hosts_more">
+        <item quantity="one">also at %1$s and %2$d more</item>
+        <item quantity="other">also at %1$s and %2$d more</item>
+    </plurals>
 </resources>

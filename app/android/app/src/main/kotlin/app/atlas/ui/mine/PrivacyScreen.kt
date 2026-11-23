@@ -177,12 +177,13 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
                     if (routing) OnlineRow(stringResource(R.string.mine_offline_layer_routes), "brouter.de", stringResource(R.string.mine_sent_routing))
                 }
             }
-            // Sources not asked now that a request was held back from since Atlas was opened: switched off on the way.
-            val held = rows.filter { r -> live.none { it.info.id == r.info.id } && (counts[r.info.id]?.refused ?: 0L) > 0L }
-            if (held.isNotEmpty()) {
+            // Sources not asked now (switched off on the way) that were asked or held back since the count began: what
+            // they were sent, and the count; none, and there is no heading.
+            val earlier = rows.filter { r -> live.none { it.info.id == r.info.id } && counts[r.info.id].let { it != null && (it.sent > 0 || it.refused > 0) } }
+            if (earlier.isNotEmpty()) {
                 CardLabel(stringResource(R.string.mine_privacy_held), Modifier.padding(top = 14.dp, bottom = 9.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (r in held) OnlineRow(r.info.name, r.host, askedLine(counts[r.info.id], zone))
+                    for (r in earlier) OnlineRow(r.info.name, r.host, sentLine(r.info.id), askedLine(counts[r.info.id], zone))
                 }
             }
         }
@@ -216,20 +217,30 @@ private fun OnlineRow(name: String, host: String?, line: String, asked: String? 
 }
 
 /**
- * What a source was asked since Atlas was opened ([Services.asked]): how often and when last, how often it was held
- * back, and the hosts beyond its list its requests went to.
+ * What a source was asked since Atlas was opened ([Services.asked]), each part only where it holds and in this order: how
+ * often it was asked and when last, how often it was held back and when last, and the hosts beyond its list its requests
+ * went to ([SHOWN_HOSTS] of them, then how many more). Neither asked nor held back: "not asked".
  */
 @Composable
 internal fun askedLine(c: Asked.Count?, zone: ZoneId): String {
     fun at(ms: Long?) = ms?.let { HOUR_MINUTE.format(Instant.ofEpochMilli(it).atZone(zone)) }.orEmpty()
     val sent = (c?.sent ?: 0L).toInt()
     val refused = (c?.refused ?: 0L).toInt()
+    val hosts = c?.hosts.orEmpty().sorted()
+    val first = hosts.take(SHOWN_HOSTS).joinToString(", ")
     return listOfNotNull(
-        if (sent == 0) stringResource(R.string.mine_asked_none) else pluralStringResource(R.plurals.mine_asked, sent, sent, at(c?.lastSent)),
+        if (sent > 0) pluralStringResource(R.plurals.mine_asked, sent, sent, at(c?.lastSent)) else null,
         if (refused > 0) pluralStringResource(R.plurals.mine_asked_refused, refused, refused, at(c?.lastRefused)) else null,
-        c?.hosts?.takeIf { it.isNotEmpty() }?.let { stringResource(R.string.mine_asked_hosts, it.sorted().joinToString(", ")) },
-    ).joinToString(" · ")
+        when {
+            hosts.isEmpty() -> null
+            hosts.size <= SHOWN_HOSTS -> stringResource(R.string.mine_asked_hosts, first)
+            else -> (hosts.size - SHOWN_HOSTS).let { more -> pluralStringResource(R.plurals.mine_asked_hosts_more, more, first, more) }
+        },
+    ).ifEmpty { listOf(stringResource(R.string.mine_asked_none)) }.joinToString(" · ")
 }
+
+/** The hosts beyond its list a row names before it says how many more. */
+private const val SHOWN_HOSTS = 3
 
 private val HOUR_MINUTE: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 

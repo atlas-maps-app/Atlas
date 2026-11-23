@@ -954,5 +954,9 @@
         <item quantity="other">%1$d-mal zurückgehalten, zuletzt um %2$s</item>
     </plurals>
     <string name="mine_asked_hosts">auch bei %1$s</string>
-    <string name="mine_privacy_held">Zurückgehalten, seit Atlas offen ist</string>
+    <string name="mine_privacy_held">Jetzt nicht gefragt</string>
+    <plurals name="mine_asked_hosts_more">
+        <item quantity="one">auch bei %1$s und %2$d weiteren</item>
+        <item quantity="other">auch bei %1$s und %2$d weiteren</item>
+    </plurals>
 </resources>
