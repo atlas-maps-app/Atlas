@@ -711,10 +711,13 @@ public:
     }
 
     /// The app's window hidden (its lifecycle's ON_STOP) or shown again (ON_START; ENGINE.md's audit, B1). While
-    /// hidden the frame loop rests and asks no vsync: what asks for a frame (a new camera, a tile landed, the app's
-    /// inputs, the minute's tick) is held, and drawn by the first vsync once the window shows again. The workers are
-    /// not stopped: they run dry by themselves, and while hidden and following the location each fix's update_scene
-    /// gives them the tiles the camera wants.
+    /// hidden the frame loop rests and asks no vsync: what asks for a frame meanwhile (a new camera, a tile landed, the
+    /// app's inputs, the minute's tick) is held. Shown again, the first vsync draws at the camera last written, whether
+    /// anything asked or not: the hide's rest() took a request pending then with it, and the core is the process's, so
+    /// one activity's late stop and destroy hide and show it under another's window (Back at the root and a quick
+    /// return, where Back still ends the activity), whose own redraw came before. The workers are not stopped: they
+    /// run dry by themselves, and while hidden and following the location each fix's update_scene gives them the tiles
+    /// the camera wants.
     void set_hidden(bool hidden) {
         loop_->post([this, hidden] {
             if (hidden == hidden_) return;
@@ -727,6 +730,9 @@ public:
             }
             // `vk hidden: off` and the scene's updates meanwhile (ci/smoke.sh's hidden phase reads it)
             log::info("vk hidden: off after {} updates of the scene", hidden_updates_);
+            // the return's own frame (Due::changed: at rest too), so that it hangs on nothing asked before or since
+            due_.changed();
+            requested_ = true;
             ask_vsync();
         });
     }
