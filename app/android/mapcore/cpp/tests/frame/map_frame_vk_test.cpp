@@ -12,6 +12,7 @@
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
 #include "frame/MapFrame.hpp"
+#include "frame/Still.hpp"
 #include "fx/FieldCache.hpp"
 #include "fx/GpuFields.hpp"
 #include "gpu/Guard.hpp"
@@ -1769,14 +1770,24 @@ namespace {
     return std::move(*pixels);
 }
 
-/// Draws `camera` until the picture is complete and nothing in it moves, then until two frames in a row read back the
-/// same (at most 60 more frames); that picture, or none where it never settled.
+/// Draws `camera` until the picture is complete and nothing in it moves, then until two frames in a row are final
+/// (frame/Still.hpp: complete, the sun done with them, its shadows in) and read back the same (at most 60 more
+/// frames); that picture, or none where it never settled. complete() and animating() do not wait for the sun's
+/// workers, and two frames drawn before a tile's bits come read back the same too: by day the picture then changes
+/// once more, under a comparison (a slow build's, as TSan's). A frame that is not final is followed to its rest (the
+/// bits it takes cross-fade in, which is the map's own animating).
 [[nodiscard]] std::optional<gpu::Pixels> settled_picture(standin::Session& session, frame::MapFrame& map,
                                                          const KeptWindow& window, const style::CameraState& camera) {
     if (draw_until_complete(session, map, camera) <= 0 || !draw_until_still(session, map, camera)) return std::nullopt;
     std::optional<gpu::Pixels> last;
     for (int i = 0; i < 60; ++i) {
+        frame::Still still(map); // the sun's work before the frame
         if (session.draw(camera, {}).stale) session.remake();
+        if (!still.final_frame()) {
+            last.reset();
+            if (!draw_until_still(session, map, camera)) return std::nullopt;
+            continue;
+        }
         std::optional<gpu::Pixels> now = last_picture(window);
         if (!now) return std::nullopt;
         if (last && *last == *now) return now;
