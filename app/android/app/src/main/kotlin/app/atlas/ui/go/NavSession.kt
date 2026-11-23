@@ -186,15 +186,22 @@ class NavSession(
         return vias.drop(passed).filter { v -> Geo.distance(v, s.location) > ARRIVED_M || passed == 0 }
     }
 
-    /** Says the next instruction again, with its distance refreshed. */
+    /**
+     * Says the next instruction again, with its distance refreshed: in [scope], not on the caller's thread (the
+     * screen's button, the notification's and the headset's ask on the main one). A fix holds the session while the
+     * next maneuver's landmark is looked up in the regions' stores, a repeat may look one up itself, and a store's
+     * lock waits while the store is filed anew (the app maintainer, 19 November 2026, batch 6 B10).
+     */
     fun repeat() {
-        val cues = synchronized(this) { navigator.repeat() }
-        if (cues.isEmpty()) voice.repeat() else cues.forEach(voice::play)
+        scope.launch {
+            val cues = synchronized(this@NavSession) { navigator.repeat() }
+            if (cues.isEmpty()) voice.repeat() else cues.forEach(voice::play)
+        }
     }
 
-    /** Says the distance and time to go and the arrival time. */
+    /** Says the distance and time to go and the arrival time: in [scope], as [repeat] does. */
     fun summary() {
-        synchronized(this) { navigator.summary() }.forEach(voice::play)
+        scope.launch { synchronized(this@NavSession) { navigator.summary() }.forEach(voice::play) }
     }
 
     fun stop() {

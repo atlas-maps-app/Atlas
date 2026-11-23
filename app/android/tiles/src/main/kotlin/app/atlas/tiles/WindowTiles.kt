@@ -43,6 +43,13 @@ class WindowTiles(
     clock: () -> Long = System::currentTimeMillis,
     /** A country's tiles of a set kept whole on the phone ([Local]), or null where the phone keeps none of them. */
     private val local: (Pack, TileSet) -> Local? = { _, _ -> null },
+    /**
+     * Told the pack's id as each of its tiles' indexes comes into memory, whether [index] or [window] read it, under
+     * the indexes' lock, so it must not block: what [level] answers for that pack changes then (the app maintainer, 19
+     * November 2026, batch 6 B15: the country question reads it near a border, and the screens that read the country
+     * read it again).
+     */
+    private val indexRead: (String) -> Unit = {},
 ) {
     /** A set of a country's tiles on the phone: its [tiles] and their [index], as packs.json publishes them. */
     class Local(val tiles: File, val index: File)
@@ -197,6 +204,7 @@ class WindowTiles(
         if (read.tilesBytes != tiles) throw IOException("pack ${pack.id}: its tiles' index is of ${read.tilesBytes} bytes of tiles, its tiles are $tiles")
         indexes[pack.id] = sha to read
         known = known + (pack.id to read)
+        indexRead(pack.id)
         return read
     }
 

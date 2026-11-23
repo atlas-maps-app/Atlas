@@ -86,7 +86,7 @@ data class PlaceSummary(
  * logo where the brand has one, else its kind's symbol (kinds.tsv), on its family's colour ([Symbols.markFor],
  * [Symbols.colourFor]) or its kind's own, its thing's ([KindColours]: a bakery's bread brown); the same mark on every
  * screen, so a place seen once is known again, but on the search's pins and rows, where a chain with a colour of its
- * own is on its sign ([signOf]). Its brand is the one of [country], the country of the map at it, unless it names its
+ * own is on its sign, its logo or its letter ([signOf]). Its brand is the one of [country], the country of the map at it, unless it names its
  * own ([Brands.forTags]). Kept by the place's key, for the maps and lists that ask on every frame.
  */
 fun markOf(place: Place, country: String?): Pair<String, Int> {
@@ -102,13 +102,15 @@ private class Mark(val tags: Map<String, String>, val country: String?, val mark
 private val marks = ConcurrentHashMap<String, Mark>()
 
 /**
- * The brand whose own sign [place] wears on the search's pins and rows, as on the brand's page: one with a logo and a
- * colour of its own, the Albert Heijn blue everyone knows from the street (the owner, 6 November, of a green Albert
- * Heijn among the groceries: "Why doesnt albert heijn get its color on this image?"). Null for the rest, a brand whose
- * colour is not known among them, which wear [markOf]. The brand of [country], as [markOf]'s.
+ * The brand whose own sign [place] wears on the search's pins and rows, as on the brand's page: one with a colour of its
+ * own, the Albert Heijn blue everyone knows from the street (the owner, 6 November, of a green Albert Heijn among the
+ * groceries: "Why doesnt albert heijn get its color on this image?"), its logo on it, else the first letter of its name
+ * ([BrandSign]): a Kruidvat's red, not a chemist's symbol (the owner, 17 November: "There are brands with only a colour
+ * and name, these can show their colour in search results views too, instead of the generic or cuisine art"). Null for
+ * a brand whose colour is not known, and for a place of no brand, which wear [markOf]: never a colour made up for it.
+ * The brand of [country], as [markOf]'s.
  */
-fun signOf(place: Place, country: String?): Brand? =
-    Brands.forTags(place.tags, country)?.takeIf { b -> b.colour != null && b.logoSlug?.let { Symbols.has("logo-$it") } == true }
+fun signOf(place: Place, country: String?): Brand? = Brands.forTags(place.tags, country)?.takeIf { it.colour != null }
 
 /** The most marks kept: a city's places in view and in the lists, a few times over. */
 private const val MARKS = 4096

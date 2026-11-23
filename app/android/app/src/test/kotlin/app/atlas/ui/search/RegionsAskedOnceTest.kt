@@ -65,6 +65,23 @@ class RegionsAskedOnceTest {
         assertEquals("the regions asked once for each of the four kilometres", 4, store.asked.get())
     }
 
+    /**
+     * Each turn is let go once its kilometre is answered (the app maintainer, 19 November 2026, batch 6 B9: one kept
+     * for ever for each kilometre the run asked passed every test): 37 kilometres read by eight rows at once.
+     */
+    @Test
+    fun eachTurnIsLetGoOnceAnswered() {
+        val cafes = (0 until 37).map { i -> cafe(97_300_000L + i, LatLon(54.21 + (i / 6) * 0.02, 3.21 + (i % 6) * 0.02)) }
+        val s = testServices(stores = listOf(MemoryPlaces(cafes, country = null)))
+        val rows = Executors.newFixedThreadPool(8)
+        try {
+            cafes.map { c -> rows.submit { HereContext.region(s, c.location) } }.forEach { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            rows.shutdownNow()
+        }
+        assertEquals("still asked", emptyList<LatLon>(), cafes.map { it.location }.filter { HereContext.beingAsked(s, it) })
+    }
+
     @Test
     fun aListAcrossMoreThan256KilometresIsNotAskedAgain() {
         // 501 cafés each in a kilometre of its own, read one after another as a list's rows are, then again

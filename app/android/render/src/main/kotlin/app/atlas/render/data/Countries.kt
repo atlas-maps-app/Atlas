@@ -44,6 +44,9 @@ object Countries {
     /** The ISO 3166 code of the country around [p], or null far from any of the boxes. */
     fun of(p: LatLon): String? = boxes.filter { it.has(p) }.minByOrNull { it.area }?.code
 
+    /** Whether a box of the country [code] holds [p] (the United States has three), though a smaller one may too. */
+    fun holds(code: String, p: LatLon): Boolean = boxes.any { it.code == code && it.has(p) }
+
     private val zones = mapOf(
         "NL" to "Europe/Amsterdam", "BE" to "Europe/Brussels", "LU" to "Europe/Luxembourg", "DE" to "Europe/Berlin",
         "FR" to "Europe/Paris", "GB" to "Europe/London", "IE" to "Europe/Dublin", "ES" to "Europe/Madrid", "PT" to "Europe/Lisbon",

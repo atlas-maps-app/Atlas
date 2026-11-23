@@ -158,7 +158,11 @@ sealed class ResultItem {
 
     /** A brand's branches, nearest first. */
     data class Bundle(val brand: String, override val hits: List<ResultHit>) : Deck() {
-        val name: String get() = Brands.byId(brand)?.name ?: first.record.name() ?: brand
+        /**
+         * Its title: the brand's name as the street says it, the table's `brand` ("Jumbo"), else its name, which may tell
+         * it from a namesake ("Jumbo (Europe)"); the app's `brandName` reads it so.
+         */
+        val name: String get() = Brands.byId(brand)?.let { b -> b.brand.ifBlank { b.name } } ?: first.record.name() ?: brand
         val logo: String? get() = Brands.byId(brand)?.logoSlug?.let { "logo-$it" }
     }
 

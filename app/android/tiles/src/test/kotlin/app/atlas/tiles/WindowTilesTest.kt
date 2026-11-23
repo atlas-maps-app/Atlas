@@ -348,6 +348,29 @@ class WindowTilesTest {
         assertEquals(1, gh.storageRequests.size)
     }
 
+    /**
+     * Each index that comes into memory is told, by its pack, once (the app maintainer, 19 November 2026, batch 6 B15):
+     * the country question reads them near a border, so the screens that read the country read it again. Whether
+     * [WindowTiles.index] read it or a window did, and not again from memory.
+     */
+    @Test
+    fun eachIndexThatComesIntoMemoryIsToldOnce() {
+        val list = listOf(publish("netherlands", country(), date))
+        val told = java.util.Collections.synchronizedList(ArrayList<String>())
+        val tiles = WindowTiles({ list }, dir, indexRead = { told += it })
+        val (lat, lon) = middle(westerkerk.first, westerkerk.second)
+        assertNull(tiles.level("netherlands", version, lat, lon))
+        assertEquals(emptyList<String>(), told)
+        tiles.index("netherlands", version)
+        assertEquals(listOf("netherlands"), told)
+        tiles.index("netherlands", version)
+        tiles.window(14, westerkerk.first, westerkerk.second, version)
+        assertEquals("from memory, told nothing more", listOf("netherlands"), told)
+        val byWindow = java.util.Collections.synchronizedList(ArrayList<String>())
+        WindowTiles({ list }, tempDir("towindow"), indexRead = { byWindow += it }).window(14, westerkerk.first, westerkerk.second, version)
+        assertEquals("a window read it", listOf("netherlands"), byWindow)
+    }
+
     @Test
     fun aWindowNoCountryHoldsGetsNoAnswer() {
         val list = listOf(publish("netherlands", country(), date))

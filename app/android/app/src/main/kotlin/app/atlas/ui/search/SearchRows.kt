@@ -352,6 +352,13 @@ internal fun statusOf(words: String?, tone: Tone, mark: String?, rest: List<Stri
     }
 }
 
+/**
+ * Whether a fact in words is the kind's own word ("Pizza" a pizza place's cuisine), ignoring case and the space around
+ * it: a line then says it once, as the kind in its place ("Pizza · Pizza" read as one word said twice).
+ */
+internal fun sameWord(fact: String?, kind: String?): Boolean =
+    fact != null && kind != null && fact.trim().equals(kind.trim(), ignoreCase = true)
+
 /** For hours not checked for long, the year they last were ("’17"), "?" when never; null for hours still sure. */
 internal fun staleMark(h: ResultHit): String? =
     if (!h.hoursStale) null else h.hoursChecked?.let { "’" + "%02d".format(it.year % 100) } ?: "?"
@@ -389,7 +396,7 @@ internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true, seat: 
     // where it misses the hour asked, that says more than open or not now
     val timed = h.misses.firstOrNull().let { it is Miss.Opens || it is Miss.Closed || it == Miss.HoursUnknown }
     IndexLine(
-        line.summary.name, rowStatus(words.takeUnless { timed }, tone, staleMark(h).takeUnless { timed }, spare, near, worded, listOfNotNull(kind, distance), missed),
+        line.summary.name, rowStatus(words.takeUnless { timed }, tone, staleMark(h).takeUnless { timed }, spare, near, worded.filterNot { sameWord(it.text, kind) }, listOfNotNull(kind, distance), missed),
         onClick = { w.onPlace(p) }, modifier = Modifier.testTag(PLACE_TAG),
         reach = { Reach(h.minutes, h.metres) },
         lead = { remember(p, w.country) { signOf(p, w.country) }?.let { SignTile(it, tone) } ?: KindTile(line.summary.symbol, line.summary.colour, tone) },

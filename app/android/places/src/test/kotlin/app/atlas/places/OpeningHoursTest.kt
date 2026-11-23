@@ -321,6 +321,9 @@ class OpeningHoursTest {
         assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T06:00"), stockholm))
         assertEquals(false, oh("sunrise+").isOpen(t("2026-12-22T12:00"), tromso))
         assertEquals(false, oh("sunset+").isOpen(t("2026-06-22T00:30"), tromso))
+        // a bare sunrise or dawn, with no +, is a point in time, as 17:00 is: not the morning (19 November 2026,
+        // batch 6 B9: read as one, open till midnight, it passed every test)
+        for (h in listOf("sunrise", "dawn", "Mo-Su sunrise")) assertEquals(h, false, oh(h).isOpen(t("2026-06-21T12:00"), stockholm))
     }
 
     @Test
@@ -583,6 +586,33 @@ class OpeningHoursTest {
         assertEquals(false, oh("sunrise+").isOpen(t("2026-12-22T00:30"), tromso))
         val ams = OpeningHoursContext(sun = SunClock.at(52.3746, 4.8840, java.time.ZoneId.of("Europe/Amsterdam")))
         assertEquals(true, oh("sunset+").isOpen(t("2026-10-13T20:00"), ams))
+    }
+
+    /**
+     * A start by sunset or dusk that does not happen that day never opens, with or without its `+` (the app maintainer,
+     * 19 November 2026, batch 6 A7): Longyearbyen's polar night read `sunset+` and `dusk+` open from 00:00 to 06:00
+     * every day, the missing evening as midnight, and a bare `sunset` open at 00:00; 38ddafa1 had them shut. The starts
+     * by sunrise and dawn stay as batch 5 A7 left them, and the spans as they are.
+     */
+    @Test
+    fun aSunsetOrDuskThatDoesNotHappenNeverOpens() {
+        val lyb = OpeningHoursContext(sun = SunClock.at(78.2232, 15.6267, java.time.ZoneId.of("Europe/Oslo")))
+        val night = LocalDate.of(2026, 12, 22)
+        for (h in listOf("sunset+", "dusk+", "sunset", "Mo-Su sunset+", "(sunset-01:00)+")) {
+            for (at in listOf("00:00", "00:30", "03:00", "05:59", "12:00", "23:59")) assertEquals("$h at $at", false, oh(h).isOpen(t("2026-12-22T$at"), lyb))
+            assertEquals(h, emptyList<OpenSpan>(), oh(h).spans(night, lyb))
+        }
+        // the midsummer evening that never comes, as batch 4 B19 left it
+        assertEquals(false, oh("sunset+").isOpen(t("2026-06-21T00:30"), lyb))
+        assertEquals(emptyList<OpenSpan>(), oh("sunset+").spans(LocalDate.of(2026, 6, 21), lyb))
+        // neighbours as they were: a rising's start (batch 5 A7, batch 4 B19), a span (finding 11), a dusk that comes
+        assertEquals(true, oh("sunrise+").isOpen(t("2026-06-21T12:00"), lyb))
+        assertEquals(false, oh("sunrise+").isOpen(t("2026-12-22T12:00"), lyb))
+        assertEquals(true, oh("sunset-sunrise").isOpen(t("2026-12-22T12:00"), lyb))
+        val tromso = OpeningHoursContext(sun = SunClock.at(69.6492, 18.9553, java.time.ZoneId.of("Europe/Oslo")))
+        val dusk = tromso.sun.times(night)?.dusk
+        assertNotNull("Tromsø's December dusk", dusk)
+        assertEquals(true, oh("dusk+").isOpen(LocalDateTime.of(night, dusk!!.plusMinutes(60)), tromso))
     }
 
     @Test

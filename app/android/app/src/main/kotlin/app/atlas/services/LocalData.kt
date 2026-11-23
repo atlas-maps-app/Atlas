@@ -52,6 +52,7 @@ import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 /**
@@ -321,8 +322,8 @@ class LocalData(
      * answer for the whole of it ([windowsBeside]: waited for first where they can make the box whole, else asked beside
      * it, and the packs' part shown once they came where Overpass has not answered by then); [ask]'s answer kept by
      * [keep] and sorted by [order]; where it failed, what the phone holds by then (with the windows the packs sent, waited
-     * for what was left of the wait) and [ask]'s error. Nothing on the phone and offline: [ask]'s answer alone (none, no
-     * origin).
+     * for what was left of the wait) with every place shown before it, and [ask]'s error. Nothing on the phone and
+     * offline: [ask]'s answer alone (none, no origin).
      */
     private fun asFound(
         at: LatLon,
@@ -336,12 +337,16 @@ class LocalData(
         var best = onPhone(at, box, fromStore, accept, keep, order)
         best?.let { emit(it) }
         if (best?.partial == false) return@flow
+        // every place shown, by key, for a failure's answer
+        val shown = LinkedHashMap<String, Place>()
+        best?.value?.forEach { shown[it.key] = it }
         val available = online.available()
         val asked = windowsBeside(at, box, accept, show = { (found, whole) ->
             val got = LocalAnswer(order(found.filter(keep)), PlaceOrigin.PACK, partial = !whole)
             val before = best
             if (before == null || got.partial != before.partial || got.value.map { it.key } != before.value.map { it.key }) emit(got)
             best = got
+            got.value.forEach { shown[it.key] = it }
         }, failed = { it.error != null }, ask = ask.takeIf { available })
         val phone = best
         val got = when {
@@ -350,11 +355,19 @@ class LocalData(
             phone == null -> ask()
             else -> return@flow
         }
-        // where it failed, what the phone holds by now: the windows the packs were asked for that came meanwhile too
+        // where it failed, what the phone holds by now (the windows the packs were asked for that came meanwhile too),
+        // with every place shown before it, each once, now's copy first (the app maintainer, 19 November 2026, batch 6
+        // A3: what it held by now could be fewer than were shown, where another lookup had let the windows go
+        // meanwhile; 38ddafa1 kept what it had shown); where that read fails, what was shown
         val now = when {
             got.error == null -> null
             phone?.origin == PlaceOrigin.STORE -> phone
-            else -> onPhone(at, box, fromStore, accept, keep, order) ?: phone
+            else -> {
+                val read = orNull { onPhone(at, box, fromStore, accept, keep, order) }
+                val base = read ?: phone
+                if (base == null || shown.isEmpty()) base
+                else base.copy(value = order((read?.value.orEmpty() + shown.values).distinctBy { it.key }.filter(keep)))
+            }
         }
         emit(now?.copy(error = got.error) ?: got.copy(value = order(got.value.filter(keep))))
     }.flowOn(Dispatchers.IO)
@@ -448,6 +461,8 @@ class LocalData(
      * wait, so the phone's answer read after it holds them. So no answer comes later than on 38ddafa1, which waited for
      * the windows before it asked. Null where [ask] was not asked (the windows made the box whole, or there is none).
      * Offline, where a region's store covers [at], where a pack covers the whole box, or with no windows: [ask] alone.
+     * The windows are let go once they came or the wait is over, not when [ask] answers (the app maintainer, 19
+     * November 2026, batch 6 B15: up to 40 s a server, so the lookups meanwhile had their windows go in theirs).
      */
     private suspend fun <T> windowsBeside(
         at: LatLon,
@@ -458,22 +473,46 @@ class LocalData(
         ask: (suspend () -> T)?,
     ): T? {
         val w = windowPlaces
-        val started = if (w == null || !isOnline()) null else withContext(Dispatchers.IO) {
-            try {
-                val pack = packsCovering(at)
-                if (storeCovering(at) != null || pack?.covers(box) == true) null
-                else pack to w.start(box, at, windowWaitMs)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                null
+        // the fetch made, closed where the lookup is cancelled as it starts (the app maintainer, 19 November 2026,
+        // batch 6 A4: `withContext` dropped it, so its windows stayed waited for, and every other lookup's went in
+        // their place)
+        val made = AtomicReference<WindowPlaces.Fetch?>()
+        val started = if (w == null || !isOnline()) null else try {
+            withContext(Dispatchers.IO) {
+                try {
+                    val pack = packsCovering(at)
+                    if (storeCovering(at) != null || pack?.covers(box) == true) null
+                    else pack to w.start(box, at, windowWaitMs).also { made.set(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    made.getAndSet(null)?.close()
+                    null
+                }
             }
+        } catch (e: CancellationException) {
+            made.getAndSet(null)?.close()
+            throw e
         }
         if (started == null) return ask?.invoke()
         val (pack, fetch) = started
         return fetch.use { f ->
-            // what the packs and the windows hold once those asked for came, or the wait is over; null where none
-            val landed = suspend { withContext(Dispatchers.IO) { joined(pack, orNull { f.landed() }, box, accept) } }
+            // what the packs and the windows hold once those asked for came, or the wait is over; null where none. A
+            // pack that does not read holds nothing there, as where there is none, so Overpass is asked (the app
+            // maintainer, 19 November 2026, batch 6 A5: it threw through the lookup, where 38ddafa1 asked Overpass);
+            // and the windows let go then, read, cancelled or failed: Overpass may take 40 s a server, and the lookups
+            // meanwhile would have their windows go in these (batch 6 B15). What they brought is shown, and a
+            // failure's answer holds what was shown (batch 6 A3)
+            val landed = suspend {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val held = orNull { f.landed() }
+                        orNull { joined(pack, held, box, accept) } ?: joined(null, held, box, accept)
+                    }
+                } finally {
+                    f.close()
+                }
+            }
             if (!f.asks || f.makesWhole || ask == null) {
                 val got = landed()
                 if (got != null) show(got)

@@ -92,6 +92,9 @@ class EatRepository internal constructor(
             val (first, whole) = fromPacks(centre, r, online, local)
             var sketch = first
             if (sketch != null) out.value = sketch
+            // every place shown, by key, for a failure's answer
+            val seen = LinkedHashMap<String, EatPlace>()
+            first?.places?.forEach { seen[it.key] = it }
             // packs and windows around the whole circle answer fully, with every tag
             if (!online || whole) {
                 if (sketch == null) out.value = EatArea(centre, r, emptyList(), null, loading = false, local = local)
@@ -102,6 +105,7 @@ class EatRepository internal constructor(
             val answer = localData().beside(centre, r, EatKind.FILTER, limit = 5_000, show = { got ->
                 packArea(centre, r, got, more = true, local).first?.let {
                     sketch = it
+                    it.places.forEach { p -> seen[p.key] = p }
                     out.value = it
                 }
             }, failed = { it.isFailure }) {
@@ -114,11 +118,16 @@ class EatRepository internal constructor(
                 }
             } ?: return
             out.value = answer.getOrElse { e ->
-                // A network failure, or an answer that does not parse (a captive portal's page): what the packs and windows
-                // hold by now, with the windows the packs were asked for that came meanwhile, else what was shown
+                // A network failure, or an answer that does not parse (a captive portal's page): what the packs and
+                // windows hold by now, with the windows the packs were asked for that came meanwhile, and every place
+                // shown, each once, now's copy first, nearest first (the app maintainer, 19 November 2026, batch 6 A3:
+                // what they held by now could be fewer than were shown, where another lookup had let the windows go
+                // meanwhile); else what was shown
                 val why = (e as? IOException)?.message ?: e.message ?: e.javaClass.simpleName
                 val now = fromPacks(centre, r, more = false, local).first
-                (now ?: sketch)?.copyWith(loading = false, error = why) ?: EatArea(centre, r, emptyList(), null, loading = false, local = local, error = why)
+                val all = (now?.places.orEmpty() + seen.values).distinctBy { it.key }.sortedBy { it.distanceM }.take(5_000)
+                if (all.isNotEmpty()) EatArea(centre, r, all, PlaceOrigin.PACK, loading = false, local = local, error = why)
+                else (now ?: sketch)?.copyWith(loading = false, error = why) ?: EatArea(centre, r, emptyList(), null, loading = false, local = local, error = why)
             }
         } catch (e: CancellationException) {
             throw e

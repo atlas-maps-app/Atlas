@@ -118,19 +118,21 @@ class SheetMovesTest {
     }
 
     /**
-     * Runs the main thread's queue until the sheet's state stays the same over a tenth of a second of the other threads'
-     * work and the queue they leave: what they post while the test waits is run before the state is read.
+     * Runs the main thread's queue until none of the sheet's readings is under way ([SearchSheetModel.busy]) but those
+     * in [heldBack], which the test holds, and nothing is left on the queue, at most 20 s (the app maintainer,
+     * 19 November 2026, batch 6 B9: it waited for the state to stay the same over a tenth of a second, so a reading
+     * slower than that was read in flight).
      */
-    private fun rest(m: SearchSheetModel) {
-        var rested = false
-        until("the sheet at rest") {
-            if (!rested) {
-                val s = m.state.value
-                Thread.sleep(100)
-                shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(400))
-                rested = m.state.value === s
-            }
-            rested
+    private fun rest(m: SearchSheetModel, vararg heldBack: String) {
+        val main = shadowOf(Looper.getMainLooper())
+        val end = System.currentTimeMillis() + 20_000
+        while (true) {
+            main.idle()
+            val under = m.busy - heldBack.toSet()
+            if (under.isEmpty() && main.isIdle) return
+            assertTrue("not at rest in 20 s but for ${heldBack.toList()}: $under under way", System.currentTimeMillis() < end)
+            main.idleFor(Duration.ofMillis(50))
+            Thread.sleep(20)
         }
     }
 
@@ -163,7 +165,8 @@ class SheetMovesTest {
         m.moveTo(c2)
         assertFalse("Bavaria not yet known at c2", bavarianHoliday(m))
         until("Bavaria settled at c2") { bavarianHoliday(m) }
-        rest(m)
+        // all of it but the grid's read at c2, which the gate holds
+        rest(m, "pool")
         val during = m.state.value
         assertTrue("tiles counted from c2 over places beyond its circle: ${far(during)}", far(during).isEmpty())
         assertSame("the grid keeps c1's tiles until c2's come", before.pulses, during.pulses)
@@ -174,6 +177,31 @@ class SheetMovesTest {
         assertEquals(PlaceOrigin.STORE, after.gridOrigin)
         assertTrue("c2's places on the grid: ${nearest(after)}", nearest(after).isNotEmpty() && nearest(after).all { it in atC2 })
         assertTrue("tiles over places beyond c2's circle: ${far(after)}", far(after).isEmpty())
+        s.close()
+    }
+
+    /**
+     * The quests are counted where the grid's places were read (the app maintainer, 19 November 2026, batch 6 B9:
+     * counted around the new centre over the last centre's places, they passed every test, as none counted them after
+     * a move): moved 3.3 km north, c2's grid held back, the grid's places are still c1's, and their quests c1's.
+     */
+    @Test
+    fun theQuestsAreCountedWhereTheGridsPlacesWereRead() {
+        c1 = LatLon(49.5897, 11.0120)
+        val gated = Gated(store(bakeryTags), c2)
+        val s = testServices(clock = epiphany, stores = listOf(gated))
+        val (m, _) = openedAtC1(s)
+        val there = QuestFinder.countAround(s, gated.inBox(BBox.around(c1, 1_000.0), PlaceSource.UNLIMITED).map { it.place }, c1, "en")
+        assertTrue("c1's places hold quests", there > 0)
+        val gate = CountDownLatch(1).also { gated.gate = it }
+        try {
+            m.moveTo(c2)
+            m.countQuests()
+            until("the quests counted") { m.state.value.quests != null }
+            assertEquals(there, m.state.value.quests)
+        } finally {
+            gate.countDown()
+        }
         s.close()
     }
 
@@ -193,11 +221,14 @@ class SheetMovesTest {
         m.moveTo(c2)
         assertFalse("Bavaria not yet known at c2", bavarianHoliday(m))
         until("Bavaria settled at c2") { bavarianHoliday(m) }
-        rest(m)
+        // all of it but the grid's read at c2, which the gate holds, and a count of c1's places from c2 begun, which
+        // the trap would hold: the region settled at c2 showing them, as before batch 5 A4
+        rest(m, "pool", "region")
         val held = m.state.value
         gate.countDown()
         until("c2's grid") { m.state.value.pulses !== held.pulses }
-        rest(m)
+        // c2's grid read and shown; such a count still held
+        rest(m, "region")
         trap.countDown()
         rest(m)
         val after = m.state.value

@@ -54,11 +54,14 @@ class StoreOffTheMainThreadTest {
     /** A third, for the regions' own files. */
     private val nuremberg = LatLon(49.4521, 11.0767)
 
+    /** A fourth, for a region deleted: only Germany's box holds it, as the map reads a country no region holds. */
+    private val bayreuth = LatLon(49.9456, 11.5713)
+
     /** Epiphany 2026, a Tuesday, at 10:00 in Bavaria: a holiday there, not in Germany as a whole. */
     private val epiphany: Clock = Clock.fixed(Instant.parse("2026-01-06T09:00:00Z"), ZoneId.of("Europe/Berlin"))
 
     /** A store that notes each question it is asked on the main thread, with where it was asked from. */
-    private class Watched(private val inner: PlaceSource) : PlaceSource {
+    internal class Watched(private val inner: PlaceSource) : PlaceSource {
         val onMain: MutableList<String> = Collections.synchronizedList(ArrayList())
 
         private fun <T> asked(what: String, answer: () -> T): T {
@@ -152,12 +155,75 @@ class StoreOffTheMainThreadTest {
         s.close()
     }
 
+    /**
+     * A frame reads nothing a deleted region said (the app maintainer, 19 November 2026, batch 6 B15): what the regions
+     * said is kept by the count of places they held when last asked ([HereContext.regionNow]), which nothing forgot as
+     * a region's store went, so the frames read its state and its holidays on till the regions were next asked.
+     */
+    @Test
+    fun aFrameReadsNothingADeletedRegionSaid() {
+        val root = TempFiles.dir("atlas-deleted")
+        val places = File(root, "places").apply { mkdirs() }
+        val bavaria = File(places, "bavaria.db")
+        PlaceStore.open(bavaria).apply { importPlaces(quarter(bayreuth), regionName = "Bavaria") }.close()
+        val s = Services(RuntimeEnvironment.getApplication(), ServicesConfig(root = root, offline = true, mapEngine = false, clock = epiphany))
+        assertEquals("DE-BY", runBlocking(Dispatchers.IO) { HereContext.region(s, bayreuth) }.subdivision)
+        assertEquals("DE-BY", HereContext.regionNow(s, bayreuth).subdivision)
+        // the region deleted, as the Maps board deletes it
+        assertTrue(bavaria.delete())
+        s.reloadRegions()
+        until { s.placeStores.stores.isEmpty() && HereContext.regionNow(s, bayreuth).subdivision == null }
+        assertTrue("the store let go", s.placeStores.stores.isEmpty())
+        val now = HereContext.regionNow(s, bayreuth)
+        assertEquals("DE", now.country)
+        assertEquals(null, now.subdivision)
+        assertTrue("no Epiphany in Germany as a whole", now.hours(bayreuth, epiphany.zone).publicHolidays?.isHoliday(LocalDate.of(2026, 1, 6)) != true)
+        s.close()
+    }
+
+    /**
+     * The season page's market reads its hours by the regions off the main thread, which the page's produceState runs
+     * on (the app maintainer, 19 November 2026, batch 6 B9: read on it, it passed every test). The market is the local
+     * finder's own answer, so the store is asked only for the hours.
+     */
+    @Test
+    fun theSeasonPagesMarketAsksTheRegionsOffTheMainThread() {
+        val ingolstadt = LatLon(48.7665, 11.4258)
+        val market = place(7601, LatLon(ingolstadt.lat + 0.002, ingolstadt.lon), "amenity" to "marketplace", "name" to "Wochenmarkt",
+            "opening_hours" to "Sa 07:00-13:00; PH off")
+        val store = Watched(MemoryPlaces(quarter(ingolstadt) + market, country = null))
+        val s = testServices(clock = epiphany, stores = listOf(store))
+        s.local.finder.fake = { _, _, _ -> listOf(market) }
+        assertTrue(Looper.myLooper() == Looper.getMainLooper())
+        val line = runBlocking { app.atlas.ui.local.nearestMarket(s, ingolstadt, epiphany.instant(), epiphany.zone) }
+        assertEquals("Wochenmarkt", line?.name)
+        assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
+        s.close()
+    }
+
     @Test
     fun aBrandsBranchesAskTheCountryInTheirFlow() {
         val store = Watched(MemoryPlaces(quarter(regensburg), country = null))
         val s = testServices(clock = epiphany, stores = listOf(store))
         // made on the main thread, as the sheet makes it: collected off it
         s.localData.branchesAsFound("albertheijn-0b5a2d", regensburg, 500.0)
+        assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
+        s.close()
+    }
+
+    /**
+     * The query builder counts the regions off the main thread too (the app maintainer, 19 November 2026, batch 6 B10):
+     * where the phone finds nothing, whether it holds any region at all says if Overpass is asked, and that count was
+     * made on the main thread as the answer landed, every store's places, where a store filed anew waits on its lock.
+     */
+    @Test
+    fun theQueryBuilderCountsTheRegionsOffTheMainThread() {
+        // a region that holds nothing the query finds
+        val store = Watched(MemoryPlaces(listOf(place(75, nuremberg, "shop" to "bakery", "name" to "Bäckerei")), country = null))
+        val s = testServices(clock = epiphany, stores = listOf(store))
+        val vm = QueryViewModel(s, "cafe near bicycle rental", { nuremberg }, "en", connected = { false })
+        until { vm.state.value.result != null && !vm.state.value.running }
+        assertTrue("found nothing", vm.state.value.result!!.hits.isEmpty())
         assertEquals("asked on the main thread: ${store.onMain.joinToString("; ")}", 0, store.onMain.size)
         s.close()
     }

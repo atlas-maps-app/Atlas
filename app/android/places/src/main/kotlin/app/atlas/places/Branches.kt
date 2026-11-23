@@ -110,10 +110,11 @@ object BrandHours {
  * branches link .nl, .com and .co.uk pages; ".uk" Britain's), however few link it: a shopping centre's pages under the
  * country's domain are not the brand's (the reviewer, 17 November, finding 11; the app maintainer, 18 November 2026,
  * batch 4 B24: two branches on one centre's beat forty on the brand's .com). Else the site most of the branches that
- * link one link, two at least and no other as often, though fewer than half link it (the app maintainer, 18 November
- * 2026, batch 5 A9: hema.nl, three times beside seven pages of one link each, was no site; and the name was read from
- * the domains alone, so a centre's name under two of them was the brand's). Social pages and booking sites say nothing
- * about the brand.
+ * link one link, two at least and no other as often, where at least half of them link it or its label is the brand's
+ * own [name] under any domain (the app maintainer, 18 November 2026, batch 5 A9: hema.nl, three times beside seven
+ * pages of one link each, was no site, and the name was read from the domains alone, so a centre's name under two of
+ * them was the brand's; 19 November 2026, batch 6 A8: but the most linked whatever its share made just-eat.co.uk, two
+ * of five, the brand's site). Social pages and booking sites say nothing about the brand.
  */
 object BrandSite {
     fun of(branches: List<Map<String, String>>, country: String?, name: String?): String? {
@@ -129,7 +130,12 @@ object BrandSite {
             .maxByOrNull { byDomain.getValue(it).size }
         val counts = byDomain.mapValues { it.value.size }
         val most = counts.values.maxOrNull() ?: return null
-        val domain = local ?: counts.entries.singleOrNull { it.value == most }?.takeIf { it.value >= 2 }?.key ?: return null
+        // the most linked, two at least and no other as often, where at least half of the branches that link a site
+        // link it or its label is the brand's own name (batch 6 A8: two of five branches on just-eat.co.uk made the
+        // delivery platform the brand's site, where 38ddafa1 gave none)
+        val top = counts.entries.singleOrNull { it.value == most }?.takeIf { it.value >= 2 }?.key
+            ?.takeIf { d -> most * 2 >= sites.size || (own != null && Brands.key(d.substringBefore('.')) == own) }
+        val domain = local ?: top ?: return null
         // the form they write it in most, the domain itself or its www before a subdomain, https before http
         return byDomain.getValue(domain).groupingBy { it.origin }.eachCount().entries.sortedWith(
             compareByDescending<Map.Entry<String, Int>> { it.value }
