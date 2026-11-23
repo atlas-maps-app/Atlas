@@ -190,9 +190,14 @@ class SourcesGateTest {
 
     @Test
     fun servicesHandsOutNamedViewsOnly() {
-        // no public member of Services gives the client without a source's name
-        val unnamed = Services::class.java.methods.filter { Http::class.java.isAssignableFrom(it.returnType) && it.parameterCount == 0 }
+        // no public member of Services gives the client, ours or OkHttp's, without a source's name
+        val unnamed = Services::class.java.methods.filter { m ->
+            (Http::class.java.isAssignableFrom(m.returnType) || OkHttpClient::class.java.isAssignableFrom(m.returnType)) && m.parameterCount == 0
+        }
         assertEquals("$unnamed", emptyList<java.lang.reflect.Method>(), unnamed)
+        // nor a name by default (`http(source: String = "")`, whose default Kotlin keeps in a method of its own)
+        val defaults = Services::class.java.declaredMethods.filter { it.name.startsWith("http\$") }
+        assertEquals("$defaults", emptyList<java.lang.reflect.Method>(), defaults)
         val services = testServices()
         assertEquals("overpass", services.http("overpass").source)
         assertTrue("one view a source", services.http("overpass") === services.http("overpass"))

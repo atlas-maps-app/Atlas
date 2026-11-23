@@ -403,6 +403,33 @@ class HttpTest {
         }
     }
 
+    /**
+     * A hop is asked of the gate by its host alone, never by the view's name: a view whose source is off asks a host
+     * another source lists (that one on, so it goes), and is sent on to a host no list names, which goes as the request did.
+     */
+    @Test
+    fun aHopToAHostInNoListGoesWhateverTheViewsSourceIs() = runBlocking {
+        Mock().use { m ->
+            val port = m.server.port
+            m.dispatch { r ->
+                if (r.headers["Host"]!!.startsWith("b.example")) MockResponse.Builder().code(302).addHeader("Location", "http://c.example:$port/c").build()
+                else MockResponse.Builder().code(200).body("c").build()
+            }
+            // the app's rule (SourcesModel.blockedBy): a listed host by its own source; a host in no list by the view's
+            val lists = mapOf("b.example" to "bee")
+            val off = setOf("a")
+            val gate = { host: String, source: String? ->
+                lists[host]?.takeIf { it in off } ?: source?.takeIf { host !in lists && it in off }
+            }
+            val base = okhttp3.OkHttpClient.Builder().dns { name -> listOf(java.net.InetAddress.getByAddress(name, byteArrayOf(127, 0, 0, 1))) }.build()
+            val view = Http(policies = emptyMap(), base = base, gate = gate).of("a")
+            // a's own request to a host in no list is held back by a's switch; to bee's host it goes, and so does the hop
+            assertEquals("a", (runCatching { view.text("http://c.example:$port/c") }.exceptionOrNull() as? SwitchedOffException)?.source)
+            assertEquals("c", view.text("http://b.example:$port/b"))
+            assertEquals(2, m.count)
+        }
+    }
+
     @Test
     fun anAnswerFromTheCacheMakesNoHop() = runBlocking {
         Mock().use { m ->

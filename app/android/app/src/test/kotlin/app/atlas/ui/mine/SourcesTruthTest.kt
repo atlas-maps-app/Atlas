@@ -365,6 +365,19 @@ class SourcesTruthTest {
     }
 
     @Test
+    fun aHostOnlyASourceWithoutASwitchListsGoesThroughAnyViewWhateverIsOff() {
+        // OpenStreetMap's sign-in, notes and edits: listed, so no view's name decides for them, even a view switched off
+        val switchable = SourcesModel.ALL.filter { it.switchable && it.via == null }
+        val allOff = switchable.map { it.id }.toSet()
+        val unswitched = SourcesModel.ALL.filter { !it.switchable }
+        assertTrue(unswitched.isNotEmpty())
+        for (s in unswitched) for (h in s.hosts) for (name in namesFor(h)) for (v in switchable) {
+            assertNull("${s.id}'s $name through ${v.id}'s view, off", SourcesModel.blockedBy(name, allOff, named = v.id))
+            assertNull("${s.id}'s $name through ${v.id}'s view, alone off", SourcesModel.blockedBy(name, setOf(v.id), named = v.id))
+        }
+    }
+
+    @Test
     fun aPatternHoldsItsNameAndEveryHostBelowIt() {
         val wiki = setOf("wikipedia")
         // Wikipedia's own hosts, as its reader asks them (one per language) and as its links name them
