@@ -2,7 +2,8 @@
 // closed quadratic contours; the curve and band textures of every glyph the ground text draws, within their budget;
 // the bands list every curve a sample's ray can meet (banded coverage equals the coverage over every curve); Slug's
 // coverage against the exact, supersampled coverage of the outline at sizes from 4 to 40 px, turned and sheared; the
-// root code's table; and the atlas's refusals.
+// root code's table; the atlas's refusals; and the process's atlas holding Latin, Greek and Cyrillic of the faces
+// the frame's text draws.
 #include "tests/base/require.hpp"
 #include "tests/text/text_support.hpp"
 #include "tests/tiles/support.hpp"
@@ -14,6 +15,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -449,4 +451,61 @@ TEST_CASE("the glyph atlas says its count and rows in the core's stats line, whi
     REQUIRE(glyphs.glyph(**geist, (*geist)->glyph_of(U'A')) != nullptr);
     REQUIRE(glyphs.glyph(**geist, (*geist)->glyph_of(U'A')) != nullptr); // once
     CHECK(glyphs.line() == "vk glyphs 1 in 1 of 20 curve rows and 1 of 96 band rows");
+}
+
+TEST_CASE("the glyph atlas holds every glyph of Latin, Greek and Cyrillic of the three faces the frame's text draws") {
+    // Latin-1's printable characters, Latin Extended-A, -B and Additional (Vietnamese among them), Greek and Coptic,
+    // and Cyrillic: in Geist at 700 (the canal names, the runways) and 800 (the shop signs), and Gelasio at 400 (the
+    // house numbers), all in one atlas as the process's would hold them
+    struct Block {
+        char32_t first;
+        char32_t last;
+    };
+    constexpr std::array<Block, 7> blocks = {{{0x0020, 0x007E},
+                                              {0x00A0, 0x00FF},
+                                              {0x0100, 0x017F},
+                                              {0x0180, 0x024F},
+                                              {0x1E00, 0x1EFF},
+                                              {0x0370, 0x03FF},
+                                              {0x0400, 0x04FF}}};
+    const text::Fonts* fonts = bundled_fonts();
+    ATLAS_REQUIRE(fonts != nullptr);
+    slug::GlyphAtlas glyphs;
+    std::size_t points = 0;
+    std::size_t without = 0;
+    std::size_t drawn = 0;
+    for (const text::FontSpec spec : {text::FontSpec{.face = text::Face::sans, .weight = 700},
+                                      text::FontSpec{.face = text::Face::sans, .weight = 800},
+                                      text::FontSpec{.face = text::Face::serif, .weight = 400}}) {
+        const auto instance = fonts->instance(spec);
+        ATLAS_REQUIRE(instance.has_value());
+        for (const Block& block : blocks) {
+            for (char32_t c = block.first; c <= block.last; ++c) {
+                ++points;
+                const std::uint32_t id = (*instance)->glyph_of(c);
+                if (id == 0) {
+                    ++without; // the face has no glyph for it: its .notdef is not asked for
+                    continue;
+                }
+                const slug::Glyph* g = glyphs.glyph(**instance, id);
+                CHECK_MESSAGE(g != nullptr, std::format("U+{:04X}", static_cast<std::uint32_t>(c)));
+                if (g == nullptr) continue;
+                const bool empty = text::outline(**instance, id).empty();
+                CHECK(g->drawn() == !empty);
+                if (g->drawn()) ++drawn;
+            }
+        }
+    }
+    std::uint32_t curve_rows = 0;
+    std::uint32_t band_rows = 0;
+    glyphs.read([&](const slug::Atlas& atlas) {
+        curve_rows = atlas.curve_rows();
+        band_rows = atlas.band_rows();
+    });
+    MESSAGE(glyphs.size() << " glyphs (" << drawn << " drawn) of " << points << " code points, " << without
+                          << " without a glyph in their face: " << glyphs.line());
+    CHECK_FALSE(glyphs.full());
+    CHECK(glyphs.size() > 1500);
+    CHECK(curve_rows <= slug::GlyphAtlas::max_curve_rows);
+    CHECK(band_rows <= slug::GlyphAtlas::max_band_rows);
 }
