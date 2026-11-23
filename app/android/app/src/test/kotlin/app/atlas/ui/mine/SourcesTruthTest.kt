@@ -107,7 +107,8 @@ class SourcesTruthTest {
             "osm-edits", "brouter",
         ),
         "app/src/main/kotlin/app/atlas/services/MapData.kt" to listOf(
-            "overpass", "overpass", "atlas-packs", "atlas-packs", "atlas-packs", "overpass", "atlas-packs", "atlas-packs",
+            "overpass", "atlas-packs", "atlas-packs", "atlas-packs", "atlas-packs", "atlas-packs", "overpass", "atlas-packs",
+            "atlas-packs",
         ),
         "app/src/main/kotlin/app/atlas/ui/local/LocalHub.kt" to listOf("wikidata", "iss-orbit", "iss-orbit"),
         "app/src/main/kotlin/app/atlas/ui/local/StreetPhotos.kt" to listOf("panoramax"),

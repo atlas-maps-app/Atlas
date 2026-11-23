@@ -62,13 +62,21 @@ class MapData(private val services: Services) {
     /** The world on the phone changed (a start found it, a new version came, its keep list came). */
     private val landed = MutableSharedFlow<Unit>(replay = 1, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
-    /** No call timeout: a region pack is megabytes, an Overpass answer can take minutes. */
-    private val client: OkHttpClient by lazy {
-        services.http(Overpass.INFO.id).client.newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
-    }
+    /** Overpass's long reads, on Overpass's view: no call timeout, as an Overpass answer can take minutes. */
+    private val client: OkHttpClient by lazy { services.http(Overpass.INFO.id).client.longReads() }
+
+    /**
+     * The packs' long reads (their list and every download, [packs]), on Atlas packs' view, so Atlas packs' switch holds
+     * a pack's address in no list and the Privacy screen counts them as Atlas packs': a region pack is megabytes.
+     */
+    private val packsClient: OkHttpClient by lazy { services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).client.longReads() }
+
+    /** A client for long reads built on a view, its gate and stamp kept: no cache, no call timeout, 330 s between bytes. */
+    private fun OkHttpClient.longReads(): OkHttpClient =
+        newBuilder().cache(null).callTimeout(0, TimeUnit.SECONDS).readTimeout(330, TimeUnit.SECONDS).build()
 
     private val get = HttpGet { url ->
-        val res = client.newCall(Request.Builder().url(url).header("User-Agent", services.http(Overpass.INFO.id).userAgent).build()).execute()
+        val res = packsClient.newCall(Request.Builder().url(url).header("User-Agent", services.http(app.atlas.ui.mine.SourcesModel.ATLAS_PACKS.id).userAgent).build()).execute()
         if (!res.isSuccessful) {
             res.close()
             throw IOException("$url answered ${res.code}")
