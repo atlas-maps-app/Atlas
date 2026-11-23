@@ -61,6 +61,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unistd.h>
 #include <utility>
 #include <vector>
@@ -2003,6 +2004,115 @@ TEST_CASE("the world by ranges: the blocks and tiles a view wants are asked of t
                             asked.size(), kept, drawn.size(), f->draws.size(), f->bare));
         CHECK(std::ranges::includes(drawn, asked));
         CHECK(tiles->stats().failed == 0);
+    }
+    std::error_code ec;
+    fs::remove_all(guard, ec);
+}
+
+TEST_CASE("hidden: the scene updated without a frame asks for the tiles a camera moved there wants and builds them, "
+          "and the first frame drawn there is complete") {
+    // The app hidden and following its location (ENGINE.md's audit, B1): at each fix the core updates its scene for
+    // the fix's camera without drawing (Session::update_scene), so that on the return the first frame has the tiles.
+    if (!test::open_session()) return;
+    const fs::path guard = fs::temp_directory_path() / std::format("atlas-world-hidden-{}", ::getpid());
+    fs::create_directories(guard);
+    // Amsterdam's L6 block (32, 21) with its L9 to L11 tiles over the city, and the globe's L0 and L5 tiles over it,
+    // files on the phone
+    constexpr std::array<std::uint8_t, 3> fine = {11, 10, 9};
+    constexpr std::array<std::uint8_t, 6> coarse = {5, 4, 3, 2, 1, 0};
+    const std::vector<std::byte> block = test::world_pack(
+        {test::world_tile(9, 262, 168), test::world_tile(10, 525, 336), test::world_tile(11, 1051, 673)}, fine);
+    const std::vector<std::byte> globe =
+        test::world_pack({test::world_tile(0, 0, 0), test::world_tile(5, 16, 10)}, coarse);
+    const auto write = [](const fs::path& path, const std::vector<std::byte>& bytes) {
+        std::ofstream out(path, std::ios::binary);
+        out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size())); // NOLINT
+    };
+    write(guard / "world-6-32-21.atlas", block);
+    write(guard / tiles::world_globe_file, globe);
+    frame::MapPack mid;
+    mid.number = 101;
+    mid.ref.id = "world/6/32/21";
+    mid.ref.kind = tiles::PackKind::world_mid;
+    mid.ref.path = (guard / "world-6-32-21.atlas").string();
+    mid.ref.offset = 0;
+    mid.ref.length = block.size();
+    frame::MapPack base;
+    base.number = 102;
+    base.ref.id = std::string(tiles::world_globe_id);
+    base.ref.kind = tiles::PackKind::world_base;
+    base.ref.path = (guard / tiles::world_globe_file).string();
+    auto started = gpu::start_guarded({.guard_dir = guard,
+                                       .cache_file = guard / "pipelines.bin",
+                                       .system = "host-test-system",
+                                       .build = "world-hidden-test",
+                                       .present = true,
+                                       .spirv = 42});
+    if (!started) {
+        if (auto instance = test::open_instance({}); instance) test::cannot_present(*instance, started.error().reason);
+        return;
+    }
+    {
+        frame::MapFrame map(2, [] {}, {.cache_dir = guard});
+        standin::Session session(*started, {.cache_file = guard / "pipelines.bin", .spirv = 42});
+        CHECK(map.set_packs({mid, base}).find("world-globe listed") != std::string::npos);
+        CHECK(session.map(&map).empty());
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<KeptWindow>(), size, why), why);
+        map.set_theme(sunny());
+        // no frame drawn yet: nothing to update
+        const style::CameraState near = camera(52.37, 4.89, 0.0, 0.0, 30'000.0);
+        CHECK_FALSE(session.update_scene(near));
+        // the globe from 3,000 km, drawn until complete
+        const style::CameraState far = camera(52.37, 4.89, 0.0, 0.0, 3'000'000.0);
+        int frames = 0;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (std::chrono::steady_clock::now() < until) {
+            const standin::Drawn s = session.draw(far, {});
+            if (s.stale) session.remake();
+            frames += s.drawn ? 1 : 0;
+            const scene::WorldFrame* f = map.world()->world_tiles()->frame();
+            if (map.complete() && f != nullptr && f->wanted == 0 && !f->fading && frames > 2) break;
+            map.world()->world_tiles()->wait_idle();
+        }
+        ATLAS_REQUIRE(map.complete());
+        scene::WorldTiles* tiles = map.world()->world_tiles();
+        const auto has_l11 = [&] {
+            const scene::WorldFrame* f = tiles->frame();
+            return f != nullptr &&
+                   std::ranges::any_of(f->draws, [](const scene::WorldDraw& d) { return d.tile->key.z == 11; });
+        };
+        CHECK_FALSE(has_l11());
+        const std::uint64_t built = tiles->stats().built;
+        // hidden: the camera at 30 km, the scene updated without a frame until it wants nothing more
+        int updates = 0;
+        const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (std::chrono::steady_clock::now() < by) {
+            ATLAS_REQUIRE(session.update_scene(near));
+            ++updates;
+            const scene::WorldFrame* f = tiles->frame();
+            if (f != nullptr && f->wanted == 0 && updates > 1) break;
+            tiles->wait_idle();
+        }
+        const scene::WorldFrame* updated = tiles->frame();
+        ATLAS_REQUIRE(updated != nullptr);
+        CHECK(updated->wanted == 0);
+        CHECK(tiles->stats().built > built);
+        CHECK(has_l11());
+        // the return, after more than a fade: the first frame there draws the block's L11 whole, and is complete
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        const standin::Drawn back = session.draw(near, {});
+        CHECK(back.drawn);
+        const scene::WorldFrame* f = tiles->frame();
+        ATLAS_REQUIRE(f != nullptr);
+        MESSAGE(std::format(
+            "{} frames at 3,000 km; {} updates without a frame built {} tiles; the first frame at 30 km: "
+            "{} draws, {} wanted, fading {}, complete {}",
+            frames, updates, tiles->stats().built - built, f->draws.size(), f->wanted, f->fading, map.complete()));
+        CHECK(has_l11());
+        CHECK(f->wanted == 0);
+        CHECK_FALSE(f->fading);
+        CHECK(map.complete());
     }
     std::error_code ec;
     fs::remove_all(guard, ec);

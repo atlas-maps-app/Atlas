@@ -218,6 +218,19 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
     fun requestFrame() = core.call(Unit) { Native.requestFrame(it) }
 
     /**
+     * The app's window hidden ([hidden], its lifecycle's ON_STOP) or shown again (ON_START): while hidden the core draws
+     * no frame and asks no vsync, and what asks for one ([requestFrame], a tile landed) is held until the window shows,
+     * then drawn at once. Its workers are not stopped: they run dry, or build what [updateScene] asks for.
+     */
+    fun setHidden(hidden: Boolean) = core.call(Unit) { Native.setHidden(it, hidden) }
+
+    /**
+     * While hidden and following the location: the map's scene updated for the source's camera now, without a frame,
+     * so that the tiles of a fix are asked for and built and the map is there on the return. Nothing while shown.
+     */
+    fun updateScene() = core.call(Unit) { Native.updateScene(it) }
+
+    /**
      * VK bench (bench and debug builds): the stand-in drawn in [config] by [route] as [form] into [target]; [pills]
      * draws the frosted pills in the core (the SurfaceView host); [texture] says the host is a TextureView. The frame
      * is 8 bits a channel; [tenBit] is VK bench's colour stage, the frame at 10 where the surface offers them (the

@@ -32,6 +32,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import app.atlas.geo.LatLon
 import app.atlas.geo.UnitSystem
 import app.atlas.mapview.vk.HonestMap
@@ -133,6 +136,19 @@ fun AtlasMap(
         controller.attach()
         onDispose { controller.detach() }
     }
+    // The app's window hidden (ON_STOP) and shown again (ON_START): no frame while hidden (ENGINE.md's audit, B1).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(controller, lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> controller.hidden = true
+                Lifecycle.Event.ON_START -> controller.hidden = false
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     // The core (K11): what MapEngine.core says draws, the chrome's shapes over the map (K11b) told whether the core
     // frosts under them (it does on its SurfaceView, where its picture is the one seen).
     val coreState = MapEngine.core
@@ -169,11 +185,11 @@ fun AtlasMap(
                 )
             }.collect { controller.update() }
         }
-        // The live moment moves on with the clock.
+        // The live moment moves on with the clock; hidden, the return brings it up to date (MapController.hidden).
         launch {
             while (true) {
                 delay(60_000)
-                if (state.time == null) controller.update()
+                if (state.time == null && !controller.hidden) controller.update()
             }
         }
         snapshotFlow { state.follow to controller.overlays.location }.collect { controller.followUpdate() }

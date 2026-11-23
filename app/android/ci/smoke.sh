@@ -881,6 +881,10 @@ map_phase() {
     line=$(first_frame "$run"); ms=${line% *}; kind=${line#* }
     limit=45000
     echo "map: $run first frame ${line:-none} (limit ${limit} ms)"
+    # The start's frames (ENGINE.md's audit, B1): the paper's, drawn again while it waits for the core's first complete
+    # picture and while it fades (its `vk cover gone` line), and the core's from its surface to that picture.
+    wait_line "$run" 10 "vk cover gone: " > /dev/null
+    echo "map: $run start: $(since_marker "$run" | grep -m1 -o 'vk cover gone: .*' | tr -d '\r' | sed 's/.*alone; //'); the core drew $(since_marker "$run" | sed -n '/AtlasMap: vk surface /,/AtlasMap: vk first frame /p' | grep -c 'AtlasMap: vk frame ') frames before its first complete one"
     if ! [[ $ms =~ ^[0-9]+$ ]] || [ "$ms" -gt "$limit" ]; then echo "MAP FAILED: the core's first frame ($run): ${line:-none}"; FAIL=1; fi
     [ "$run" = mapwarm ] && [ "$kind" != warm ] && { echo "MAP FAILED: the second launch was not warm (${line:-none})"; FAIL=1; }
     vk_crashes "$run"; vk_anr "$run"
@@ -913,7 +917,8 @@ map_phase() {
   echo "map: Java heap at the canal ring ${heap} MB (native heap $((PEAK_NATIVE / 1024)) MB, graphics $((PEAK_GFX / 1024)) MB)"
   [ "$heap" -le 96 ] || { echo "MAP FAILED: the Java heap at the canal ring is ${heap} MB (at most 96)"; FAIL=1; }
   adb exec-out screencap -p > "$OUT/map-swipe.png"
-  since_marker mapwarm | grep -E 'AtlasMap: (vk (first frame|map|tiles|config|path|surface|window|honest|swipe)|vk frame )' | sed 's/.*AtlasMap: //' > "$OUT/map.txt"
+  hidden_check
+  since_marker mapwarm | grep -E 'AtlasMap: (vk (first frame|map|tiles|config|path|surface|window|honest|swipe|hidden)|vk frame )' | sed 's/.*AtlasMap: //' > "$OUT/map.txt"
   # Away from the core's tiles (its own cover, and the map's line) and back to its picture.
   vk_launch mapaway --es atlas.screen home --ez atlas.ci true --es atlas.vk.script away
   wait_line mapaway 420 "vk script done" || { echo "MAP FAILED: the away script did not finish within 420 s"; FAIL=1; }
@@ -955,6 +960,48 @@ map_phase() {
   adb exec-out screencap -p > "$OUT/map-off.png"
   vk_crashes mapoff; vk_anr mapoff
   map_tiles
+}
+
+# Hidden (ENGINE.md's audit, B1): the warm home at rest goes to the background as a phone leaves it, for HIDDEN_S seconds
+# (75: the live moment's tick of a minute falls inside), and comes back as the launcher brings it. While hidden the core
+# draws no frame: no `vk frame` line between `vk hidden: on` and `vk hidden: off`. Back, it draws at once: a frame
+# within HIDDEN_BACK_S seconds (10: lavapipe's frames take about 2 s with the water's light), the same process (no
+# second `vk first frame`). Called in the map phase, after the swipe.
+hidden_check() {
+  local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-60} frames back delay firsts surface i
+  adb shell input keyevent KEYCODE_HOME
+  if ! wait_line mapwarm 10 "vk hidden: on"; then
+    echo "MAP FAILED: no 'vk hidden: on' within 10 s of the home key (the core was not told the app went to the background)"
+    FAIL=1
+    return
+  fi
+  sleep "$hidden"
+  adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $PKG/.MainActivity > /dev/null
+  wait_line mapwarm 10 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 10 s of the return"; FAIL=1; }
+  # The first frame back: at once where the surface outlived the stop; where it did not, once the core has made its
+  # pipelines again for the new one (9 s and over 10 s on the emulator, 18 November), so up to $wait s; then 2 s more.
+  for i in $(seq 1 "$wait"); do
+    since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk frame ' && break
+    sleep 1
+  done
+  sleep 2
+  frames=$(since_marker mapwarm | sed -n '/AtlasMap: vk hidden: on/,/AtlasMap: vk hidden: off/p' | grep -c 'AtlasMap: vk frame ')
+  back=$(since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -c 'AtlasMap: vk frame ')
+  delay=$(since_marker mapwarm | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
+    /AtlasMap: vk hidden: off/ { off = t($2) } off && /AtlasMap: vk frame / { d = t($2) - off; if (d < 0) d += 86400; printf "%.1f", d; exit }')
+  firsts=$(since_marker mapwarm | grep -c 'AtlasMap: vk first frame ')
+  # A window whose surface did not outlive the stop comes back with a new one, and the core makes its pipelines again
+  # for it (Session::release_window) before the first frame: say which, as that is the delay's cause.
+  if since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk window: surface created'; then
+    surface="a new surface (the old one went at the stop), the pipelines made again"
+  else
+    surface="the surface kept"
+  fi
+  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames, the first ${delay:-none} s after 'vk hidden: off', $surface; $(since_marker mapwarm | grep -o 'vk hidden: off.*' | tail -1)"
+  [ "$frames" -eq 0 ] || { echo "MAP FAILED: the core drew $frames frames while the app was hidden (none, ENGINE.md's audit B1)"; FAIL=1; }
+  [ "$back" -gt 0 ] || { echo "MAP FAILED: no frame within $wait s of the return from the background"; FAIL=1; }
+  [ "$firsts" -le 1 ] || { echo "MAP FAILED: the return started the map again ($firsts 'vk first frame' lines)"; FAIL=1; }
+  adb exec-out screencap -p > "$OUT/map-hidden-back.png"
 }
 
 # The phone's own way to its map (ENGINE.md step 3, one pack per country), which nothing above takes: CI's runs draw the

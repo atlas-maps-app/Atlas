@@ -127,6 +127,7 @@ Result<PipelineCache> PipelineCache::open(const vk::raii::Device& device, const 
             data = body;
             cache.status_ = "hit";
             cache.loaded_bytes_ = file.size();
+            cache.held_ = Held{.size = stored.size, .checksum = stored.checksum};
         }
     }
     ATLAS_VK_LET(handle, device.createPipelineCache({.initialDataSize = data.size(), .pInitialData = data.data()}),
@@ -144,9 +145,21 @@ Result<std::size_t> PipelineCache::save() const {
     const auto body = std::as_bytes(std::span(data));
     h.size = body.size();
     h.checksum = fnv1a(body);
+    // every pipeline made since came from the file (or added nothing the driver keeps): the file stays as it is, if it
+    // is still there whole (the system may clear an app's cache folder while it runs)
+    std::error_code ec;
+    const std::uintmax_t on_disk = std::filesystem::file_size(path_, ec);
+    if (held_ && held_->size == h.size && held_->checksum == h.checksum && !ec && on_disk == sizeof h + h.size) {
+        std::atomic_ref(changed_).store(false, std::memory_order_relaxed);
+        log::info("vk pipeline cache: the driver's data is the file's ({} bytes), nothing written", h.size);
+        return std::size_t{0};
+    }
     if (!write_file(path_, std::as_bytes(std::span(&h, 1)), body))
         return fail(std::format("cannot write {}", path_.string()));
     std::atomic_ref(changed_).store(false, std::memory_order_relaxed);
+    log::info("vk pipeline cache: written, {} bytes of the driver's data ({} before)", h.size,
+              held_ ? std::format("{}", held_->size) : std::string("none"));
+    held_ = Held{.size = h.size, .checksum = h.checksum};
     return sizeof h + body.size();
 }
 

@@ -202,6 +202,9 @@ public:
     /// a label's or a canal name's: FrameBuilder::fading): another is due at the same camera, so none stops part-faded
     /// when the gesture ends on its first frame.
     [[nodiscard]] bool animating() const noexcept { return made() && (world_->animating() || builder_->fading()); }
+    /// How long from now until a frame is due though nothing lands or moves (scene::World::due_at: a waiting pack
+    /// switch's hold ends), seconds, at least 0; none where no such frame is to come. The frame loop's timer asks it.
+    [[nodiscard]] std::optional<double> due_in() const noexcept;
     /// The pack the last frame drew ("" for none).
     [[nodiscard]] std::string_view drawn_pack() const noexcept;
     /// Its world's `vk tiles <n> resident <MB> build <ms>` line (Appendix C).
@@ -249,6 +252,9 @@ public:
     [[nodiscard]] gpu::Content& content() noexcept override { return *builder_; }
     [[nodiscard]] bool ready() const noexcept override { return made() && theme_.has_value(); }
     void next(const style::CameraState& camera, double seconds) override;
+    /// next's inputs for `camera`, then the world's update for them alone (FrameBuilder::update_scene): its tiles
+    /// wanted and built, nothing drawn. Nothing before it is ready.
+    void update_scene(const style::CameraState& camera, double seconds) override;
     [[nodiscard]] standin::MapCounts counts() const noexcept override;
     void set_gpu_noise(bool on) noexcept override { gpu_noise_ = on; }
     [[nodiscard]] bool noise_due(const style::CameraState& camera) const override;

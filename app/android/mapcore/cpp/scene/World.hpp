@@ -126,6 +126,11 @@ public:
     [[nodiscard]] const tiles::StorePack* incoming() const noexcept { return incoming_.get(); }
     /// How long a switch waits at most for the named pack's tiles, seconds.
     static constexpr double incoming_hold = 3.0;
+    /// When, by the world's clock, a frame is due though nothing lands: the end of a waiting switch's hold
+    /// (incoming_hold after it was named), where the next frame draws the named pack with whatever of it is in. None
+    /// while no switch waits. A switch's tiles and its stage T wake the frame loop as they are published (set_wake),
+    /// so it draws no frame while it waits for them (ENGINE.md's audit, B1: it drew every vsync for up to 3 s).
+    [[nodiscard]] std::optional<double> due_at() const noexcept;
     /// Where a fling lands (ENGINE.md gain 26): the camera's target, bearing, pitch and distance at its end, which the
     /// app knows as the fling begins. From then on the landing's tiles are wanted after the frame's own (its visible
     /// ones in the prefetch lane, ahead of any other prefetch), so the map lands whole. None: no fling under way.
