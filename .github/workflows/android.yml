@@ -164,9 +164,9 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
       # Android ABIs' targets for the NDK's build
-      - name: Rust, as mapcore/rust pins it
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
@@ -190,6 +190,15 @@ jobs:
           ccache --zero-stats > /dev/null
           ./gradlew assembleDebug assembleBench :app:benchTiles testDependencies --stacktrace
           ccache --show-stats
+      # What the Rust library takes of each libatlasmap.so just linked, by build and ABI (each link writes its line:
+      # mapcore/cpp/cmake/LinkedBytes.cmake), into the log and the run's summary.
+      - name: The Rust library's bytes in each libatlasmap.so
+        if: ${{ !cancelled() && steps.apk.outcome == 'success' }}
+        run: |
+          lines=$(find mapcore/build -name rust-bytes.txt -exec cat {} + | sort -t'(' -k2)
+          if [ -z "$lines" ]; then echo "::error::no build wrote rust-bytes.txt"; exit 1; fi
+          echo "$lines"
+          { echo "### The Rust library's bytes in libatlasmap.so"; echo "$lines" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
       # The caches' entries, once the build is done: what this run's compilations used (the hits and the new units),
       # and nothing older, so each entry is one build's size however many runs came before. ccache marks a unit used
       # by its file's time.
@@ -315,9 +324,9 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
       # Android ABIs' targets for the NDK's build
-      - name: Rust, as mapcore/rust pins it
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
@@ -439,9 +448,9 @@ jobs:
           path: ~/.cache/ccache-stagep
           key: ccache-android-stagep-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-android-stagep-
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake), with the
       # Android ABIs' targets for the NDK's build
-      - name: Rust, as mapcore/rust pins it
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/rust.sh" android
       - name: "The packer's tool: the core's stage P"
@@ -542,8 +551,8 @@ jobs:
           pin() { grep "^$1=" mapcore/tools.properties | cut -d= -f2-; }
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" \
             "ndk;$(pin ndk.version)" "cmake;$(pin cmake.version)" > /dev/null
-      # The Rust the buildings' cleaning is built with (mapcore/rust/rust-toolchain.toml; cpp/cmake/Rust.cmake)
-      - name: Rust, as mapcore/rust pins it
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as rust-toolchain.toml pins it
         run: |
           "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "Map core host build: LLVM's clang and libc++, and ccache"

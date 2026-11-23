@@ -131,6 +131,11 @@ public:
     /// alone, which the GPU then signals. A held slot's earlier frame is waited for first.
     [[nodiscard]] Result<void> hold_next();
     [[nodiscard]] Result<void> let_go();
+#if defined(ATLAS_TESTS)
+    /// A test's: the next submit ends its frame's commands, then fails as a queue that refuses them does (out of device
+    /// memory) before they reach the GPU: a frame recorded and never submitted.
+    void fail_next_submit() noexcept { fail_submit_ = true; }
+#endif
     /// Waits until every submitted frame has finished and reads their times (shutdown, resize, tests): without a
     /// bound, since what follows destroys or remakes what those frames use.
     void drain();
@@ -146,6 +151,9 @@ private:
     std::uint32_t next_ = 0;
     std::uint64_t slot_wait_ns_ = 0;
     std::uint32_t held_ = in_flight; // the slot hold_next() holds, else in_flight
+#if defined(ATLAS_TESTS)
+    bool fail_submit_ = false; // fail_next_submit
+#endif
     double period_ns_ = 1.0;
     std::uint64_t mask_ = 0;
     GpuTimes last_;
@@ -216,6 +224,11 @@ public:
 
     /// Draws one frame, presented at `desired_ns` where the output can say when (0: as soon as possible).
     [[nodiscard]] Result<FrameReport> draw(std::uint64_t desired_ns);
+    /// Whether the last draw recorded its frame and then failed to submit it: what the content moved on as it recorded
+    /// (its kept results, the layouts it tracks, the uploads it let go of) is not what the GPU holds, nor is the
+    /// output's (an image acquired and not presented, its semaphore signalled), so only a rebuild of what was made on
+    /// the device makes them agree again (standin::Session takes the path of a lost device).
+    [[nodiscard]] bool unsubmitted() const noexcept { return unsubmitted_; }
     /// Switches the configuration (VK bench): waits for the frames in flight, then remakes the main pass and the
     /// content.
     [[nodiscard]] Result<void> reconfigure(const Configuration& configuration);
@@ -243,7 +256,8 @@ private:
     Sync sync_;
     std::unique_ptr<Frames> frames_;
     std::unique_ptr<MainPass> pass_;
-    bool prepared_ = false; // the content holds what this renderer prepared for pass_
+    bool prepared_ = false;    // the content holds what this renderer prepared for pass_
+    bool unsubmitted_ = false; // unsubmitted()
     std::uint64_t number_ = 0;
 };
 

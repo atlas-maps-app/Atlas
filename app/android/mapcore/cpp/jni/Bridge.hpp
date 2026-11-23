@@ -51,8 +51,10 @@ namespace atlas::jni {
 /// part, kept while VK bench asks). 34: the terrain's relief (ENGINE.md part 6, step 2): Native.terrainWants,
 /// terrainBlocks and terrainKeep (a country's terrain packs fetched by range, as the world's), Native.terrain (the
 /// relief on or off) and Native.terrainSources (the sources of the relief drawn, for the credit line); Native.packs and
-/// Native.worldHead take a terrain pack's kind (5).
-inline constexpr jint abi = 34;
+/// Native.worldHead take a terrain pack's kind (5). 35: Native.setHidden (the frame loop held while the app's window is
+/// hidden) and Native.updateScene (the map's scene updated without a frame while hidden, at each fix of the location
+/// followed).
+inline constexpr jint abi = 35;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

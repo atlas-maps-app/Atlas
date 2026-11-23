@@ -1,9 +1,12 @@
 // The Westerkerk's living pack as the core's stage P makes the app's own (its tiles/amsterdam.atlas, :app's
 // generateFactsTiles through atlas_stagep, which VK facts' hash lines run over on the phones' Bionic): the repository's
 // data/ams/raw.json loaded and cut by the core (load/Amsterdam.hpp, load/Cut.hpp), with the core's head and style for
-// the living map (load/PackHead.hpp), written once a process into the tests' scratch folder. The host's checks the
-// emulator is held to (ground_check, the sun's bundled_check, twin_check; ci/hashes.env) run over it, since the core's
-// buildings are its own (core-p14) and the bundled packs (ATLAS_TILES_DIR) stay the port's until cut 2.
+// the living map (load/PackHead.hpp), written once a process into the tests' scratch folder: under a name of the
+// process's own, then renamed over the last one, since ctest runs the tests that read it side by side and one that has
+// the pack mapped reads past its end where another truncates the file it maps (SIGBUS); a rename leaves it the file it
+// opened, the same bytes. The host's checks the emulator is held to (ground_check, the sun's bundled_check, twin_check;
+// ci/hashes.env) run over it, since the core's buildings are its own (core-p14) and the bundled packs (ATLAS_TILES_DIR)
+// stay the port's until cut 2.
 #pragma once
 
 #include "load/Amsterdam.hpp"
@@ -20,6 +23,8 @@
 #include <iterator>
 #include <span>
 #include <string>
+#include <system_error>
+#include <unistd.h>
 #include <vector>
 
 #ifndef ATLAS_TESTS_DIR
@@ -69,10 +74,24 @@ namespace atlas::test {
         if (!bytes) return std::string();
         const std::filesystem::path out = std::filesystem::path(ATLAS_TEST_SCRATCH) / "westerkerk-core.atlas";
         std::filesystem::create_directories(out.parent_path());
-        std::ofstream file(out, std::ios::binary | std::ios::trunc);
-        file.write(reinterpret_cast<const char*>(bytes->data()), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
-                   static_cast<std::streamsize>(bytes->size()));
-        return file ? out.string() : std::string();
+        std::filesystem::path own = out;
+        own += "." + std::to_string(::getpid());
+        {
+            std::ofstream file(own, std::ios::binary | std::ios::trunc);
+            file.write(
+                reinterpret_cast<const char*>(bytes->data()), // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+                static_cast<std::streamsize>(bytes->size()));
+            file.close();
+            if (!file) return std::string();
+        }
+        std::error_code renamed;
+        std::filesystem::rename(own, out, renamed);
+        if (renamed) {
+            std::error_code ignored;
+            std::filesystem::remove(own, ignored);
+            return std::string();
+        }
+        return out.string();
     }();
     return path;
 }

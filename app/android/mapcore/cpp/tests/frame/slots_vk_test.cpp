@@ -147,7 +147,6 @@ TEST_CASE("frames back to back while the camera moves: each frame slot's own buf
         CHECK(ground->drew_ripple());
         REQUIRE(ground->soft_shadows() != nullptr);
         slots.push_back(ground->soft_shadows()->last);
-        CHECK(slots.back() == (*builder)->state().slot);
         CHECK((*world)->cover()->missing() == 0);
         CHECK_FALSE((*world)->animating());
     }

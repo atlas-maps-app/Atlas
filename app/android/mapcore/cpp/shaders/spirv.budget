@@ -11,5 +11,8 @@
 *  211280  17  780
 # Stages alpha 15 already shipped larger, unchanged since, which the phone ran: held at their alpha 15 bytes until they
 # are split under the line above.
-item_draw:items_cs  418600  17  780
 tree_draw:things_cs  234116  17  780
+# The region items' decide stages have no line of their own: items_cs, 418,600 bytes from alpha 14 to alpha 38, is a
+# stage a kind since the audit of 17 November 2026 (change 7; its records the same, byte for byte:
+# tests/item/items_vk_test.cpp). The largest, cranes_cs, was 85,064 bytes at the split, and roof_masts_cs was a stage
+# of its own already: each is held by "*", as every stage that has room under it is.

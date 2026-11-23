@@ -1,7 +1,7 @@
 // A region's items (ENGINE.md step 4, "Trees and things"; render/regions.py's draw_items; CP/geometry/Items.hpp),
-// shared by the GPU (shaders/item/draw.slang's items_cs, roof_masts_cs and its stages) and the twin
-// (CP/twin/item/ItemShader.hpp compiles it as C++ after tree.slangh, whose coverage tests and prints it uses). Not a
-// module.
+// shared by the GPU (shaders/item/draw.slang's kinds' stages, towers_cs to woods_cs, roof_masts_cs and its draw
+// stages) and the twin (CP/twin/item/ItemShader.hpp compiles it as C++ after tree.slangh, whose coverage tests and
+// prints it uses). Not a module.
 //
 // An item in the points heap is ITEM_VECTORS uint4: its foot tile-local (a segment's first end) and its kind and flags,
 // a segment's second end (a crane's half sizes), its height and a kind's own value (a turbine's rotor's radius, a
@@ -9,8 +9,8 @@
 // its length (stage T's, in double) or a crane's axes. Per frame the render thread decides in double what the item's depth d decides (passes::item_choice: drawn
 // or not, s = focal / d, the widths and radii as the port prints them, a power line's fade), the moment's colours (the
 // box faces' by their normals, the port's light in binary64) and the parts' order where draw_items sorts them, and
-// writes a job a drawn item; items_cs (a roof mast's roof_masts_cs) writes its records as draw_items draws it, every
-// printed value snapped at rest:
+// writes a job a drawn item; its kind's stage (a roof mast's roof_masts_cs) writes its records as draw_items draws it,
+// every printed value snapped at rest:
 //   - a tower: its bands (the shaft, and a cab's base, glass, gallery and antenna), each a quad facing the camera
 //     (along its right vector, at the band's radius) as Camera.poly cuts it at the near plane and keeps it within 200 px
 //     of the frame, filled with its gradient across its box: mix(col, shadow, .35), col at .35 (.65 where the sun lies
@@ -209,8 +209,8 @@ inline uint item_side_count(uint kind) {
     return 0u;
 }
 
-/// A roof mast's faces (its pole, its three panels' five faces), which a stage of their own writes (roof_masts_cs), so
-/// that items_cs stays at the bytes the user's phone ran (shaders/spirv.budget).
+/// A roof mast's faces (its pole, its three panels' five faces), which a stage of their own writes (roof_masts_cs), as
+/// each other kind's stage writes its own (shaders/spirv.budget).
 static const uint ITEM_ROOF_MAST_FACES = 16u;
 
 /// The faces a job reserves: item_face_count's, a roof mast's ITEM_ROOF_MAST_FACES.

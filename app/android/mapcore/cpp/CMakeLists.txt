@@ -35,6 +35,11 @@ set(ATLAS_EXTRA_TEST_SOURCES "" CACHE STRING "More test sources, compiled into a
 option(ATLAS_PLANTED_PLATFORM_SIN "Plant the platform's sin in pymath's (CI's canary; never in a real build)" OFF)
 if(ATLAS_TESTS)
     enable_testing()
+    # A test's hook in one of the core's classes compiles only here, within #if defined(ATLAS_TESTS) (the Architect's
+    # review of 19 November 2026, section 3, point 4): every unit of the build sees it, since the tests link the same
+    # core objects as the library, so a class is laid out alike in all of them; Android's build and :mapcorecheck's
+    # library (ATLAS_TESTS off) have none of it.
+    add_compile_definitions(ATLAS_TESTS=1)
 endif()
 # At most ATLAS_JOBS of the build's compile, link and shader jobs at once (Ninja's pool atlas_jobs; the Vulkan-Hpp
 # units keep their own pool of two, below), for a build whose Ninja is run by a tool that gives it no -j: Gradle's NDK
@@ -182,6 +187,24 @@ list(APPEND _stage_p_sources "${CMAKE_CURRENT_SOURCE_DIR}/text/Case.cpp" "${CMAK
      "${CMAKE_CURRENT_SOURCE_DIR}/style/Palette.cpp")
 list(REMOVE_ITEM _core_sources ${_stage_p_sources})
 
+# The buildings' cleaning (load/Clean.hpp), a Rust library: app/android/mapcore/rust/clean, built by cargo as a static
+# library (cmake/Rust.cmake) and linked into stage P (atlas_clean). Release settings in its Cargo.toml (opt-level s,
+# LTO over the crate and the standard library, one unit, panic = abort) keep it small. A fuzz build instruments it for
+# libFuzzer as the C++ is (sanitizer coverage), and turns on its overflow checks, which the build that ships has off
+# (overflow-checks = false): there an overflow is a panic, which aborts, and libFuzzer reports it where the shipped
+# build would wrap. The build fails if the library's code names no overflow panic (OVERFLOW_CHECKS, cmake/Rust.cmake).
+# The other sanitizers leave it as it is (it holds no C++ and shares no memory it does not own).
+set(_clean_crate "${CMAKE_CURRENT_SOURCE_DIR}/../rust/clean")
+set(_clean_rustflags "")
+set(_clean_checks "")
+if(ATLAS_SANITIZE STREQUAL "fuzzer")
+    string(JOIN " " _clean_rustflags -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
+        -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
+        -Cllvm-args=-sanitizer-coverage-trace-compares)
+    set(_clean_checks OVERFLOW_CHECKS)
+endif()
+atlas_rust_library(atlas_clean CRATE "${_clean_crate}" LIB atlas_clean RUSTFLAGS "${_clean_rustflags}" ${_clean_checks})
+
 # What stage P's code links: dialect, warnings, sanitizers, zstd, the buildings' cleaning, and the generated headers
 # under the build directory (gen/data/*: the style file and the traditions).
 find_package(Threads REQUIRED)
@@ -263,6 +286,17 @@ if(ATLAS_ANDROID)
         "{\n  global: JNI_On*; Java_*; atlas_*;\n  local: *;\n};\n")
     target_link_options(atlasmap PRIVATE "-Wl,--version-script=${_exports}" -Wl,-z,max-page-size=16384)
     set_target_properties(atlasmap PROPERTIES LINK_DEPENDS "${_exports}")
+    # What the Rust library takes of this build's libatlasmap.so, for its ABI: counted from lld's map of the link after
+    # every link (cmake/LinkedBytes.cmake), printed, and kept in rust-bytes.txt, which CI's Android build puts in its
+    # summary. The cost of a crate stays in sight as crates are added.
+    set(_link_map "${CMAKE_BINARY_DIR}/libatlasmap.so.map")
+    target_link_options(atlasmap PRIVATE "-Wl,-Map=${_link_map}")
+    add_custom_command(TARGET atlasmap POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" "-DMAP=${_link_map}" -DARCHIVE=libatlas_clean.a
+                "-DWHAT=libatlasmap.so (${ATLAS_BUILD}, ${ANDROID_ABI})" "-DOUT=${CMAKE_BINARY_DIR}/rust-bytes.txt"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinkedBytes.cmake"
+        BYPRODUCTS "${_link_map}" "${CMAKE_BINARY_DIR}/rust-bytes.txt"
+        VERBATIM)
 else()
     add_library(atlasmap SHARED ${_core_objects} ${_jni_sources} ${_jni_test_sources})
     set_target_properties(atlasmap PROPERTIES OUTPUT_NAME atlasmap_host)
@@ -309,6 +343,28 @@ if(ATLAS_TESTS)
         atlas_vulkan_objects(atlas_tests_vulkan ${_test_vulkan_sources})
         target_link_libraries(atlas_tests_vulkan PRIVATE atlas_doctest)
         target_sources(atlas_tests PRIVATE $<TARGET_OBJECTS:atlas_tests_vulkan>)
+        # items_vk_test's: the region items' decide stage before it was split by kind (tests/item/items_whole.slang),
+        # compiled as the core's modules are, but neither embedded nor budgeted: the test reads it from this file
+        # (ATLAS_ITEMS_WHOLE) and holds the kinds' stages' records to its, byte for byte.
+        set(_items_whole_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/item/items_whole.slang")
+        set(_items_whole "${CMAKE_BINARY_DIR}/tests/item/items_whole")
+        add_custom_command(
+            OUTPUT "${_items_whole}.spv"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_BINARY_DIR}/tests/item"
+            COMMAND "${CMAKE_COMMAND}" -E env SLANG_RUN_SPIRV_VALIDATION=1
+                    "${ATLAS_SLANGC}" "${_items_whole_source}" -target spirv -profile spirv_1_3
+                    -fvk-use-entrypoint-name -entry items_cs -stage compute -std 2026 -warnings-as-errors all
+                    -I "${CMAKE_CURRENT_SOURCE_DIR}" -I "${CMAKE_CURRENT_SOURCE_DIR}/shaders"
+                    -o "${_items_whole}.slangc.spv" -depfile "${_items_whole}.d"
+            COMMAND ${ATLAS_NOCONTRACT} capabilities "${_items_whole}.slangc.spv" "${_items_whole}.spv"
+            DEPFILE "${_items_whole}.d"
+            DEPENDS "${_items_whole_source}" "${ATLAS_SLANGC}" ${ATLAS_NOCONTRACT_DEPENDS}
+            COMMENT "slangc tests/item/items_whole.slang"
+            ${ATLAS_JOB_POOL}
+            VERBATIM)
+        add_custom_target(atlas_items_whole DEPENDS "${_items_whole}.spv")
+        add_dependencies(atlas_tests atlas_items_whole)
+        target_compile_definitions(atlas_tests_vulkan PRIVATE ATLAS_ITEMS_WHOLE="${_items_whole}.spv")
     endif()
     atlas_tidy(atlas_tests)
     # One ctest entry per test file, tests/<area>/<name>.cpp as <area>/<name>, each a process of its own, so ctest -j
@@ -396,8 +452,9 @@ if(ATLAS_TESTS)
     set_tests_properties(atlas_tests_rest atlas_tests_split PROPERTIES LABELS atlas_tests)
     # the buildings' cleaning's own tests (rust/clean, cargo's), built in a folder of their own
     if(ATLAS_HOST)
-        add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests" --
-                 "${ATLAS_CARGO}" test --offline --locked --quiet --features std WORKING_DIRECTORY "${ATLAS_RUST_DIR}/clean")
+        add_test(NAME rust/clean COMMAND "${CMAKE_COMMAND}" -E env "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/rust-tests"
+                 RUSTUP_AUTO_INSTALL=0 -- "${ATLAS_CARGO}" test --offline --locked --quiet --features std
+                 WORKING_DIRECTORY "${_clean_crate}")
         set_tests_properties(rust/clean PROPERTIES LABELS "atlas_tests;load")
     endif()
 endif()

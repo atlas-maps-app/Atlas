@@ -1288,9 +1288,11 @@ void Ground::release() noexcept {
     drew_soft_ = false;
     drew_ripple_ = false;
     ripple_key_.clear();
+    ripple_next_.reset();
     ripple_stale_ = true;
     drew_glow_ = false;
     glow_key_.clear();
+    glow_next_.reset();
     glow_stale_ = true;
 }
 
@@ -1673,6 +1675,7 @@ void Ground::write_words(const frame::FrameState& state) {
     write_light(v, state);
     write_lit(v, state);
     write_ripple(v, state);
+    key_shadow_mask(v, state);
     write_wind_glints(v, state);
     write_clouds(v, state);
     write_canopy(v, state);

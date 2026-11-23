@@ -18,6 +18,23 @@ std = []
 name = "footprints"
 required-features = ["std"]
 
+# Every place a panic can come from, named by clippy (CI's tidy job, .github/scripts/rust-lint.sh; a panic aborts the
+# core's process, src/lib.rs):
+# - the ones written as one (a panic, an unwrap, an expect, a todo): the library has none, and these hold it so. A
+#   test's are allowed (../clippy.toml).
+# - the ones that come unwritten: an index or a slice out of bounds, and an integer overflow (where the checks are on,
+#   as in the fuzz build) or a division by zero: clippy's indexing_slicing and arithmetic_side_effects name them, and
+#   CI's tidy job lists every one in the library, in its log and its summary.
+[lints.clippy]
+panic = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+unwrap_in_result = "deny"
+panic_in_result_fn = "deny"
+
 [profile.release]
 # small and whole: one unit, LTO over the crate and the standard library it calls, no unwinding (a panic aborts, as
 # the core's asserts do), no debug info

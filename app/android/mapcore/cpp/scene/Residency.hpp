@@ -294,6 +294,7 @@ struct ResidencyStats {
     double build_ms = 0; ///< the workers' time over every tile built (its decoding, its passes and its publication)
     std::uint64_t shared = 0; ///< passes built on a worker other than the one that decoded their tile (gain 9)
     std::uint64_t pieces = 0; ///< pieces of a pass's work (TileBuild::share) run on another worker than the pass's
+    std::uint64_t wakes = 0;  ///< the wants that woke the workers: those that queued a tile not queued before
     std::size_t resident = 0;
     std::size_t native_bytes = 0; ///< the resident tiles' native bytes (ResidentTile::native_bytes)
     std::size_t pending = 0;

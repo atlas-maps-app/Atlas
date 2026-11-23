@@ -10,7 +10,10 @@ has none, by design) and lists each such case once, by the place of its MESSAGE 
 the line of its seconds prints it, since another thread's log line can break into its TEST CASE line), its message and
 the jobs it skipped in. A
 case that names any other variable among its folders (ATLAS_LOOK_OUT, ATLAS_PINCH_OUT, the seeds' and the diff's) is
-a tool that draws or writes only when asked, not data CI lacks, and is left out. With --summary, the list as Markdown.
+a tool that draws or writes only when asked, not data CI lacks, and is left out. Beside them it lists each case that had
+its data and passed without the comparison it is there for, since the data is at another version than the core's: the
+world's style, when the world's globe was built at another style version (load/pack_style_test), so a world published
+at a new style shows in the run's summary, though nothing failed. With --summary, both lists as Markdown.
 
 Python 3's standard library only; no network.
 """
@@ -31,6 +34,9 @@ MESSAGE = re.compile(r"^(.*?:[0-9]+): MESSAGE: (.*\S)\s*$")
 # "<the folders> is not set: ...", "... are not set: ..."
 UNSET = re.compile(r"^(.*?) (?:is|are) not set\b")
 VARIABLE = re.compile(r"\bATLAS_[A-Z0-9_]+\b")
+# a case that passed without its comparison: the world's globe built at another style version than the core's
+# (load/pack_style_test's "the world's globe was built at style N, the core's is M: their styles are not compared")
+UNCOMPARED = re.compile(r"^the world's globe was built at style \S+, the core's is \S+: their styles are not compared")
 
 
 def data_skip(message):
@@ -45,8 +51,10 @@ def data_skip(message):
 
 
 def read(root):
-    """(entry, the MESSAGE's file:line) -> {"names", "message", "folders", "jobs"}, and every job read."""
+    """The data skips and the passes without a comparison, each (entry, the MESSAGE's file:line) -> {"names",
+    "message", "folders", "jobs"}, and every job read."""
     skips = {}
+    uncompared = {}
     jobs = set()
     for junit in sorted(root.rglob(FIRST_RUN)):
         job = junit.parent.parent.name
@@ -75,33 +83,50 @@ def read(root):
                 if said is None:
                     continue
                 folders = data_skip(said.group(2))
-                if folders is None:
+                if folders is not None:
+                    found = skips
+                elif UNCOMPARED.match(said.group(2)):
+                    found, folders = uncompared, []
+                else:
                     continue
                 key = (entry.get("name") or "", said.group(1))
-                skip = skips.setdefault(key, {"names": collections.Counter(), "message": said.group(2),
+                skip = found.setdefault(key, {"names": collections.Counter(), "message": said.group(2),
                                               "folders": folders, "jobs": set()})
                 skip["jobs"].add(job)
                 pending.append(skip)
             named(name)
-    return skips, jobs
+    return skips, uncompared, jobs
 
 
 def cell(text):
     return text.replace("|", "\\|")
 
 
-def summary(skips, jobs):
-    if not jobs:
-        return ["No host job's test results were found."]
-    if not skips:
-        return [f"No test case skipped for a data folder CI does not set, in {len(jobs)} host jobs."]
-    folders = sorted({f for s in skips.values() for f in s["folders"]})
-    lines = [f"**{len(skips)} test cases skipped for a data folder CI does not set** ({', '.join(folders)}), and count "
-             "as passed:", "", "| entry | test case | its message | jobs |", "|---|---|---|---|"]
-    rows = sorted((entry, s["names"].most_common(1)[0][0], s) for (entry, _), s in skips.items())
+def table(found, jobs):
+    lines = ["| entry | test case | its message | jobs |", "|---|---|---|---|"]
+    rows = sorted((entry, s["names"].most_common(1)[0][0], s) for (entry, _), s in found.items())
     for entry, case, s in rows:
         where = f"all {len(jobs)}" if s["jobs"] == jobs else ", ".join(sorted(s["jobs"]))
         lines.append(f"| {cell(entry)} | {cell(case)} | {cell(s['message'])} | {where} |")
+    return lines
+
+
+def cases(n):
+    return f"{n} test case" if n == 1 else f"{n} test cases"
+
+
+def summary(skips, uncompared, jobs):
+    if not jobs:
+        return ["No host job's test results were found."]
+    if not skips:
+        lines = [f"No test case skipped for a data folder CI does not set, in {len(jobs)} host jobs."]
+    else:
+        folders = sorted({f for s in skips.values() for f in s["folders"]})
+        lines = [f"**{cases(len(skips))} skipped for a data folder CI does not set** ({', '.join(folders)}), and "
+                 "count as passed:", "", *table(skips, jobs)]
+    if uncompared:
+        lines += ["", f"**{cases(len(uncompared))} had their data and passed without their comparison**, the data "
+                  "being at another version than the core's:", "", *table(uncompared, jobs)]
     return lines
 
 
@@ -113,12 +138,13 @@ def main():
     root = Path(args.junit)
     if not root.is_dir():
         sys.exit(f"skips.py: {root} is no folder")
-    skips, jobs = read(root)
-    lines = summary(skips, jobs)
+    skips, uncompared, jobs = read(root)
+    lines = summary(skips, uncompared, jobs)
     if args.summary:
         Path(args.summary).write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
-    print(f"skips.py: {len(skips)} test cases skipped for data, in {len(jobs)} jobs", file=sys.stderr)
+    print(f"skips.py: {len(skips)} test cases skipped for data, {len(uncompared)} passed without their comparison, "
+          f"in {len(jobs)} jobs", file=sys.stderr)
 
 
 if __name__ == "__main__":
