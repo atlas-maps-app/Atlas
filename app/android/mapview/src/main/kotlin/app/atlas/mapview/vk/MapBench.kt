@@ -576,6 +576,6 @@ object MapBench {
     /** The core's GPU memory in its stats line (`… graphics <MB> MB`), MB; NaN where it says none. */
     fun gpuMemory(stats: String): Double = Regex("""graphics ([0-9.]+) MB""").find(stats)?.groupValues?.get(1)?.toDoubleOrNull() ?: Double.NaN
 
-    /** The text's glyph atlas in the core's stats line (`… vk glyphs <n> in <c> of <m> curve rows and <b> of <m> band rows[, full]`), `—` where it says none. */
+    /** The text's glyph atlas in the core's stats line (`… vk glyphs <n> in <c> of 20 curve rows and <b> of 96 band rows[, full]`), `—` where it says none. */
     fun glyphs(stats: String): String = Regex("""vk glyphs ([^;]+)""").find(stats)?.groupValues?.get(1)?.trim() ?: "—"
 }

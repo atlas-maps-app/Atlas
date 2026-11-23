@@ -269,7 +269,7 @@ class MapBenchTest {
             build = "build 0.1.0-alpha.42", timing = MapBench.timing(VkBench.Length.MAP), tiles = "212 windows and packs, 14 of the world",
             battery = "78 %, unplugged, 31.5 °C", thermal = "0.42 at the first lap, 0.71 at the end (1 is throttling)", look = "The sunny moment",
             refresh = "the Look setting's Fast refresh on; ran with it full on, full60 off, nosun on, flat on; the display's modes 60, 120 Hz",
-            glyphs = "312 in 3 of 8 curve rows and 5 of 8 band rows",
+            glyphs = "312 in 3 of 20 curve rows and 5 of 96 band rows",
         )
         val results = listOf(
             result(MapBench.Setup.FULL, 16.6, 9.1, 0),
@@ -295,7 +295,7 @@ class MapBenchTest {
         assertEquals("full   every 9.10 · 4.55; ground 2.10 · —; buildings 4.20 · —; world — · 1.50", split)
         assertTrue(text, text.contains("Refresh: the Look setting's Fast refresh on; ran with it full on, full60 off, nosun on, flat on;"))
         assertTrue(text, text.contains("Display Hz during the laps, least/median/most: full 60/120/120 · nosun 60/120/120 · flat 60/120/120"))
-        assertTrue(text, text.contains("Glyphs: 312 in 3 of 8 curve rows and 5 of 8 band rows (the text's atlas at the end; past its rows a letter is not drawn)."))
+        assertTrue(text, text.contains("Glyphs: 312 in 3 of 20 curve rows and 5 of 96 band rows (the text's atlas at the end; past its rows a letter is not drawn)."))
         // shown a second: 200 frames over a 45 s lap
         assertTrue(row, row.contains(" 4.4 "))
         // stage F by part: the scene, the globals and the ranks always, a pass where it takes 0.05 ms or more
@@ -330,8 +330,8 @@ class MapBenchTest {
         assertEquals(305.0, MapBench.gpuMemory("vk frame 12 cpu 4.00 ms gpu 3.00 ms record 1.00 ms draws 40 triangles 900k graphics 305.0 MB; vk tiles 3"), 0.0)
         assertTrue(MapBench.gpuMemory("vk no frames").isNaN())
         assertEquals(
-            "312 in 3 of 8 curve rows and 5 of 8 band rows, full",
-            MapBench.glyphs("vk frame 12 cpu 4.00 ms graphics 305.0 MB; vk tiles 3; vk glyphs 312 in 3 of 8 curve rows and 5 of 8 band rows, full"),
+            "312 in 3 of 20 curve rows and 5 of 96 band rows, full",
+            MapBench.glyphs("vk frame 12 cpu 4.00 ms graphics 305.0 MB; vk tiles 3; vk glyphs 312 in 3 of 20 curve rows and 5 of 96 band rows, full"),
         )
         assertEquals("—", MapBench.glyphs("vk no frames"))
         // the table says whether the lap's map was all there, and names what was not
