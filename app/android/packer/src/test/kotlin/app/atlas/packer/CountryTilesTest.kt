@@ -255,6 +255,59 @@ class CountryTilesTest {
     }
 
     @Test
+    fun aTileThatCanPassTheWindowsAFrameDrawsFailsTheRunNamedUnlessTheRunLetsIt() {
+        needTool()
+        val d = windowsData(tool!!)
+        // the core's tool, but for A's tile: its buildings said to have one window more than a frame draws
+        val past = File(tmp.root, "past").apply {
+            writeText(
+                """
+                #!/bin/sh
+                said=${'$'}("${tool.path}" "${'$'}@"); code=${'$'}?
+                [ -z "${'$'}said" ] || printf '%s\n' "${'$'}said" | sed 's/^\(${A.first} ${A.second} .*\) windows=[0-9]*${'$'}/\1 windows=1048577/'
+                exit ${'$'}code
+                """.trimIndent() + "\n",
+            )
+            setExecutable(true)
+        }
+        val a = "14/${A.first}/${A.second}"
+        fun country(core: File, out: File, vararg more: String, said: MutableList<String> = ArrayList()) =
+            run(listOf("country", d.data.path, d.index.path, out.path, "--core", core.path, "--id", "test", "--threads", "2") + more, said::add)
+        val out = tmp.newFolder("out")
+        val said = ArrayList<String>()
+        try {
+            country(past, out, said = said)
+            fail("a tile past the windows a frame draws")
+        } catch (x: IOException) {
+            assertEquals(
+                "1 of the 4 windows' tiles can pass the 1048576 windows a frame draws, where stage T leaves walls without them: $a: 1048577 windows",
+                x.message,
+            )
+        }
+        // the run's numbers first, and no tiles left
+        assertTrue(said.joinToString("\n"), said.any { it.startsWith("  the buildings: ") && it.endsWith("at most 1048577 windows in a tile ($a), 1 tiles that can pass the 1048576 a frame draws") })
+        assertEquals(emptyList<String>(), out.list()!!.toList())
+        // let through, the tile is kept, named on a line of its own, and its tiles are the core's as without it
+        val kept = tmp.newFolder("kept")
+        said.clear()
+        assertEquals(0, country(past, kept, "--allow-past", "1", said = said))
+        assertEquals(listOf("can pass the 1048576 windows a frame draws, let through: $a: 1048577 windows"), said.filter { it.startsWith("can pass") })
+        assertTrue(said.joinToString("\n"), said.single { it.startsWith("  the buildings: ") }.endsWith(", 1 tiles that can pass the 1048576 a frame draws"))
+        val whole = tmp.newFolder("whole")
+        said.clear()
+        assertEquals(0, country(tool, whole, said = said))
+        assertFalse(said.joinToString("\n"), said.any { it.startsWith("can pass") })
+        for (f in listOf("test.tiles", "test.tiles.idx")) assertArrayEquals(f, File(whole, f).readBytes(), File(kept, f).readBytes())
+        // one more than it lets through fails as before
+        try {
+            country(past, tmp.newFolder("strict"), "--allow-past", "0")
+            fail("one tile more than --allow-past lets through")
+        } catch (x: IOException) {
+            assertTrue(x.message, x.message!!.startsWith("1 of the 4 windows' tiles can pass"))
+        }
+    }
+
+    @Test
     fun aDamagedPackIsRefused() {
         needTool()
         val d = windowsData(tool!!)
@@ -323,6 +376,7 @@ class CountryTilesTest {
         }
         assertTrue(usage(d.data.path, d.index.path, out.path).contains("--core"))
         assertTrue(usage(d.data.path, d.index.path, out.path, "--core", failing.path, "--batch", "0").contains("--batch"))
+        assertTrue(usage(d.data.path, d.index.path, out.path, "--core", failing.path, "--allow-past", "-1").contains("--allow-past"))
         assertTrue(usage(d.data.path, d.index.path, out.path, "--core", failing.path, "--id", "Not An Id").contains("--id"))
         assertTrue(usage(d.data.path, d.index.path, "--core", failing.path).contains("the output folder"))
     }
@@ -345,6 +399,9 @@ class CountryTilesTest {
         assertEquals("uncovered 1", a.uneasy)
         assertEquals("pairs 2, unsettled 1", b.uneasy)
         assertNull(c.uneasy)
+        // a tile can pass what a frame draws past 1048576 windows, not at it
+        assertEquals(0L, CountryTiles.Buildings.of(words(5, 0, 0, 0, 0, 0, 0, 0, 5, 1_048_576), 7, 8)!!.past)
+        assertEquals(1L, CountryTiles.Buildings.of(words(5, 0, 0, 0, 0, 0, 0, 0, 5, 1_048_577), 7, 8)!!.past)
         assertEquals(
             "  the buildings: 45 footprints in the windows' scenes, each with the 200 m about its window (33 in the tiles), 2 overlapping pairs, " +
                 "1 outlines uncovered, 1 unsettled, 0 unmeasured, 5 flat roofs, 2 hidden, 1 doubles; at most 1100000 windows in a tile (14/3/4), " +

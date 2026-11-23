@@ -51,10 +51,13 @@ import java.util.zip.GZIPInputStream
  *
  * The tool says of each window what its stage P counted of the buildings ([Buildings]), which the report sums over the
  * country in a line of its own, the cleaning's counts and the most windows a tile can hold (the Architect's audit of
- * 19 November, 7.3: no gate yet; the Netherlands' first numbers say where one can sit).
+ * 19 November, 7.3). One of them is a gate (countries' gates, 23 November): a tile whose buildings can have more
+ * windows than a frame draws ([TILE_WINDOWS], where stage T leaves the walls past them without) fails the run, named,
+ * unless --allow-past lets that many through. The cleaning's counts stay a report, its windows named on a line of their
+ * own: their gate waits for the Netherlands' last unsettled building to be fixed.
  */
 object CountryTiles {
-    const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N] [--allow-failed N]
+    const val USAGE = """packer country <region.windows> <region.windows.idx> <out-dir> --core <atlas_stagep> [--id ID] [--threads N] [--batch N] [--allow-failed N] [--allow-past N]
       A country's tiles from its windows' data (packer windows): every window built by the core's stage P tool (--core)
       as the phone builds it (atlas_stagep windows), each window's pack with its chunks compressed at zstd 19, its
       style as what differs from the country's (the first window's, held by the index) and every other byte the core's,
@@ -64,7 +67,9 @@ object CountryTiles {
       deleted once built. --id defaults to the data's name less .windows; --threads, the tool's and the compression's,
       to the machine's cores. Any window the tool cannot build fails the run, named, unless --allow-failed lets that
       many through: they are left out of the index (the phone builds them from their data, with the same core) and
-      named, each on a line of its own beginning "not built"."""
+      named, each on a line of its own beginning "not built". A tile whose buildings can have more windows than a frame
+      draws (1048576, by the core's bound) fails the run too, named, unless --allow-past lets that many through: they
+      are kept, and named each on a line of its own beginning "can pass"."""
 
     /** The windows' level: load::window_level, the windows' data's. */
     const val LEVEL = WindowPacks.LEVEL
@@ -118,6 +123,8 @@ object CountryTiles {
         val buildings: Buildings = Buildings(),
         /** The windows whose cleaning left a count the yardstick wants 0 ([Buildings.uneasy]), "14/x/y: the counts". */
         val uneasy: List<String> = emptyList(),
+        /** The tiles whose buildings can have more windows than a frame draws, "14/x/y: N windows"; --allow-past's. */
+        val past: List<String> = emptyList(),
     ) {
         val empty: Int get() = windows - drawn - failed.size
     }
@@ -153,7 +160,10 @@ object CountryTiles {
         val allowFailed = options["--allow-failed"]?.let {
             it.toIntOrNull()?.takeIf { n -> n in 0..100_000 } ?: throw UsageException("bad --allow-failed '$it': want 0 to 100000")
         } ?: 0
-        val r = build(data, index, File(positional[2]), id, core, threads, batch, allowFailed, log = out)
+        val allowPast = options["--allow-past"]?.let {
+            it.toIntOrNull()?.takeIf { n -> n in 0..100_000 } ?: throw UsageException("bad --allow-past '$it': want 0 to 100000")
+        } ?: 0
+        val r = build(data, index, File(positional[2]), id, core, threads, batch, allowFailed, allowPast, log = out)
         report(r, out)
         return 0
     }
@@ -254,7 +264,9 @@ object CountryTiles {
      * The tiles of the windows' [data] (its index [index]) in [outDir]: `<id>.tiles` and `<id>.tiles.idx`, each through
      * a file beside it renamed once whole. The core's tool [core] builds [batch] windows at a time on [threads] threads,
      * and as many compress its packs. Throws, naming them, where more windows than [allowFailed] do not build; those it
-     * lets through are left out of the index and [log]ged, each on a line beginning "not built". The tool's other
+     * lets through are left out of the index and [log]ged, each on a line beginning "not built". Throws too, naming them,
+     * where more tiles than [allowPast] can pass the windows a frame draws ([Buildings.past]), having [log]ged the
+     * buildings' line; those it lets through are kept and logged, each on a line beginning "can pass". The tool's other
      * failures, a pack that is not one the core writes or does not read back the same, and packs of two versions throw
      * at once.
      */
@@ -267,6 +279,7 @@ object CountryTiles {
         threads: Int = Runtime.getRuntime().availableProcessors(),
         batch: Int = BATCH,
         allowFailed: Int = 0,
+        allowPast: Int = 0,
         log: (String) -> Unit = {},
     ): Result {
         val started = System.nanoTime()
@@ -320,6 +333,7 @@ object CountryTiles {
         val levelsFailed = ArrayList<String>()
         var buildings = Buildings()
         val uneasy = ArrayList<String>()
+        val past = ArrayList<String>()
         try {
             FileChannel.open(data.toPath(), StandardOpenOption.READ).use { channel ->
                 part.outputStream().buffered(1 shl 20).use { file ->
@@ -380,6 +394,7 @@ object CountryTiles {
                             }
                             buildings += built.buildings
                             built.buildings.uneasy?.let { uneasy += "$LEVEL/${e.x}/${e.y}: $it" }
+                            if (built.buildings.past > 0) past += "$LEVEL/${e.x}/${e.y}: ${built.buildings.windows} windows"
                             val keep = cellDir(cellOf(e))
                             ahead.addLast(pool.submit(Callable { pack(File(packs, "$LEVEL-${e.x}-${e.y}.atlas"), e, built, keep) }))
                             if (ahead.size >= threads * 4) take(result(ahead.removeFirst()))
@@ -436,6 +451,17 @@ object CountryTiles {
                         if (uneasy.size > 20) "; and ${uneasy.size - 20} more" else "",
                 )
             }
+            // the gate: past the windows a frame draws stage T leaves a tile's walls without them (the run's numbers first)
+            if (past.size > allowPast) {
+                log(buildingsLine(buildings))
+                throw IOException(
+                    "${past.size} of the ${windows.size} windows' tiles can pass the $TILE_WINDOWS windows a frame draws, " +
+                        "where stage T leaves walls without them: " + past.take(20).joinToString("; ") +
+                        (if (past.size > 20) "; and ${past.size - 20} more" else "") +
+                        if (allowPast > 0) " (--allow-past lets $allowPast through)" else "",
+                )
+            }
+            for (p in past) log("can pass the $TILE_WINDOWS windows a frame draws, let through: $p")
             if (version == null) throw IOException("the core's tool built none of the ${windows.size} windows")
         } catch (x: Throwable) {
             part.delete()
@@ -453,7 +479,7 @@ object CountryTiles {
         return Result(
             tiles, tilesIndex, windows.date, version!!, windows.size, drawn, features, coreBytes, offset, chunkRaw, chunkBytes, styleRaw, styleBytes,
             jsonBytes, batchJsonBytes, ms(), unzipMillis, buildMillis, packMillis, failed.toList(),
-            levels, levelBytes, levelMillis, levelsFailed.toList(), buildings, uneasy.toList(),
+            levels, levelBytes, levelMillis, levelsFailed.toList(), buildings, uneasy.toList(), past.toList(),
         )
     }
 
@@ -653,6 +679,6 @@ object CountryTiles {
         }
     }
 
-    private val VALUED = setOf("--core", "--id", "--threads", "--batch", "--allow-failed")
+    private val VALUED = setOf("--core", "--id", "--threads", "--batch", "--allow-failed", "--allow-past")
     private val ID = Regex("[a-z0-9][a-z0-9-]*")
 }
