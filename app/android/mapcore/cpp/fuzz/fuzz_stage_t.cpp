@@ -9,8 +9,9 @@
 // Whatever a scene holds, stage T must build it or leave it out without failing an invariant, without reading out of
 // bounds and without running without bound: no tag's value, no height and no length may end the process. The pack the
 // writer writes must open, and each tile in it decode. The walls and the sun's samples must count the same windows,
-// each window's sample where the walls number it (windows_agree). Seeds: fuzz/corpus/fuzz_stage_t (fuzz_load's seeds
-// and crash inputs, a big road's lanes and widths, and every input that crashed it).
+// each window's sample where the walls number it (windows_agree); a tile's railings take at most
+// geometry::most_tile_railing_pieces. Seeds: fuzz/corpus/fuzz_stage_t (fuzz_load's seeds and crash inputs, a big road's
+// lanes and widths, a bridge's railings, and every input that crashed it).
 #include "base/arena.hpp"
 #include "base/assert.hpp"
 #include "fuzz/scenes.hpp"
@@ -144,6 +145,9 @@ void build_tile(const tl::Tile& tile, const tl::RenderHead& head, const tl::Styl
         geo::build_trees({.tile = &tile, .head = &head, .style = &style, .kind = 2, .lean = lean});
     if (!trees.trees.empty()) (void)atlas::passes::tree_words(trees, ox, 0.0, oz, lean);
     const geo::TileThings things = geo::build_things({.tile = &tile, .head = &head, .kind = 3});
+    ATLAS_ASSERT(std::ranges::count(things.things, geo::ThingKind::railing, &geo::Thing::kind) <=
+                     geo::most_tile_railing_pieces,
+                 "a tile's railings past the most a tile holds");
     if (!things.things.empty()) (void)atlas::passes::thing_words(things, ox, 0.0, oz);
     const geo::TileRegionItems items = geo::build_region_items({.tile = &tile, .head = &head, .kind = 4});
     if (!items.items.empty()) (void)atlas::passes::item_words(items, ox, 0.0, oz);

@@ -1,6 +1,7 @@
 #include "geometry/Things.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/BigRoad.hpp"
 #include "geometry/Ribbons.hpp"
 #include "geometry/Trees.hpp"
 #include "tiles/layers/Lines.hpp"
@@ -33,6 +34,20 @@ namespace tl = atlas::tiles;
 
 /// A way's owner kind in scene::owner_key (AnchorItems' OwnerType.WAY).
 constexpr std::uint8_t owner_way = 2;
+
+/// The pieces railing_pieces cuts `line` into, from its segments' lengths alone: ceil(length / 2) a segment (its loop's
+/// k = 0, 2, 4, ... below the length, each exact), none for one without length. Each term is a whole number, so the
+/// sum is exact in any order.
+[[nodiscard]] double railing_piece_count(std::span<const P2> line) noexcept {
+    double pieces = 0.0;
+    for (std::size_t i = 0; i + 1 < line.size(); ++i) {
+        const std::array<double, 2> pa{line[i].x, line[i].z};
+        const std::array<double, 2> pb{line[i + 1].x, line[i + 1].z};
+        const double lg = pymath::dist(pa, pb);
+        if (lg > 0.0) pieces += std::ceil(lg / 2.0);
+    }
+    return pieces;
+}
 
 /// amsterdam.py's railing: each segment of `line` cut into pieces of 2 m, each one a thing at its ends with its posts'
 /// gaps, numbered in the road's order (the pieces of a side past its 16,383rd, 32.8 km on, share the last number); the
@@ -142,26 +157,50 @@ TileThings build_things(const ThingInput& in) {
     }
     // the bridges' railings: for s_ in (-1, 1), off = ribbon(r['pts'], r['w'] / 2 + 0.15), off[:n] or off[n:][::-1];
     // then the app's map's, at the edges of its street as wide as its way there (ground.slang's GROUND_WIDE), each side
-    // twice as far from the centreline: ribbon(r['pts'], r['w'] + 0.3)
+    // twice as far from the centreline: ribbon(r['pts'], r['w'] + 0.3). Each bridge's four railings are counted from
+    // their lines before any piece is made, and kept while the tile's pieces stay within most_tile_railing_pieces.
     if (const tl::Layer* roads = in.tile->layer(tl::LayerId::road)) {
         std::vector<P2> pts;
-        std::vector<P2> off;
+        std::array<std::vector<P2>, 2> off; // the renders' ribbon and the app's
+        std::vector<P2> right;
+        double pieces = 0.0; // the tile's so far
+        bool full = false;
         for (std::uint32_t i = 0; i < roads->count; ++i) {
             if (!roads->boolean(tl::road::bridge, i).value_or(false)) continue;
             const tl::RingView r = roads->ring(tl::road::line, i);
             if (r.size() < 2) continue;
+            if (full) {
+                out.railings_cut += 4;
+                continue;
+            }
             pts.clear();
             for (std::size_t k = 0; k < r.size(); ++k) pts.push_back({frame.x(r.lon[k]), frame.z(r.lat[k])});
-            const double w = roads->decimal(tl::road::w, i).value_or(0.0);
+            // a width no road has (not finite, or past 0 to widest_road) reads as an absent one, as a big road's does
+            // (geometry/BigRoad.hpp), never as the bound: a railing's bends part by twice its offset
+            const double mapped = roads->decimal(tl::road::w, i).value_or(0.0);
+            const double w = mapped >= 0.0 && mapped <= widest_road ? mapped : 0.0;
             const std::size_t n = pts.size();
+            double bridge = 0.0;
+            for (const bool app : {false, true}) {
+                std::vector<P2>& o = off.at(app ? 1 : 0);
+                o.clear();
+                ribbon(pts, app ? w + 0.3 : (w / 2) + 0.15, o);
+                bridge += railing_piece_count(std::span<const P2>(o).first(n)) +
+                          railing_piece_count(std::span<const P2>(o).subspan(n));
+            }
+            if (pieces + bridge > most_tile_railing_pieces) {
+                full = true;
+                out.railings_cut += 4;
+                continue;
+            }
+            pieces += bridge;
             const std::int64_t id = roads->integer(tl::road::id, i);
             const auto road = static_cast<std::uint32_t>(roads->integer(tl::road::index, i));
             const std::uint8_t cell = roads->cell_of(i);
             for (const bool app : {false, true}) {
-                off.clear();
-                ribbon(pts, app ? w + 0.3 : (w / 2) + 0.15, off);
-                railing_pieces(std::span<const P2>(off).first(n), id, road, 0, app, in.kind, cell, out);
-                std::vector<P2> right(off.begin() + static_cast<std::ptrdiff_t>(n), off.end());
+                const std::vector<P2>& o = off.at(app ? 1 : 0);
+                railing_pieces(std::span<const P2>(o).first(n), id, road, 0, app, in.kind, cell, out);
+                right.assign(o.begin() + static_cast<std::ptrdiff_t>(n), o.end());
                 std::ranges::reverse(right);
                 railing_pieces(right, id, road, 1, app, in.kind, cell, out);
             }

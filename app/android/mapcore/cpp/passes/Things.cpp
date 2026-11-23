@@ -298,6 +298,11 @@ std::uint64_t Things::camera_parts() const noexcept { return style::camera_part:
 
 gpu::Result<void> Things::build(scene::TileBuild& b) const {
     const geometry::TileThings g = geometry::build_things({.tile = &b.tile(), .head = &b.head(), .kind = kind_});
+    if (g.railings_cut > 0) {
+        const tiles::TileHeader& h = b.tile().header;
+        log::warn("vk things: {}/{}/{} holds more railing pieces than a tile takes ({}): {} railings are left out",
+                  h.level, h.x, h.y, geometry::most_tile_railing_pieces, g.railings_cut);
+    }
     if (g.things.empty()) return {};
     const std::vector<hlsl::uint4> words = thing_words(g, b.origin().x, b.origin().y, b.origin().z);
     ATLAS_GPU_LET(

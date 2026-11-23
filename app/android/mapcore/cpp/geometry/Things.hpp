@@ -4,8 +4,9 @@
 // its place in S['nodes'], sorted by the depth of (x, 1, z), from 2 m, the radius cut at it; and the bridges' railings
 // (amsterdam.py's railing, with weather): each side of a bridge road's ribbon(pts, w / 2 + 0.15) cut into pieces of
 // 2 m along each of its segments, each piece an item at the depth of its middle 0.5 m over the railing's foot, from
-// 0.8 m, no radius cut (drawn with its road). What each draws (draw_lamp, draw_bench, draw_box, draw_bollard,
-// draw_rack, railing) the frame decides at its camera (shaders/tree/things.slangh).
+// 0.8 m, no radius cut (drawn with its road), a tile's pieces at most most_tile_railing_pieces. What each draws
+// (draw_lamp, draw_bench, draw_box, draw_bollard, draw_rack, railing) the frame decides at its camera
+// (shaders/tree/things.slangh).
 #pragma once
 
 #include "scene/ItemTable.hpp"
@@ -36,6 +37,14 @@ inline constexpr std::uint32_t railings_list = 5;
 /// A bridge's railing's foot over the street (amsterdam.py: the road's 0.05 + 0.4 on a bridge, and 0.02).
 inline constexpr double railing_foot = 0.47;
 
+/// The most railing pieces a tile holds. Each piece is a Thing and an item (some 200 bytes), and a railing's pieces
+/// follow its length, which its bridge's lines and width set: without a bound one tile's railings could take any
+/// memory (fuzz_stage_t ran out at 1.8 GB). Eight times the most any tile holds in the eleven regions and the
+/// Netherlands' pack, rounded up, so that no real tile reaches it. A tile's bridges keep their railings in the tile's
+/// order while their pieces fit; from the first bridge whose railings would take the tile past it, the railings still
+/// to come are left out whole, and TileThings::railings_cut counts them.
+inline constexpr std::uint32_t most_tile_railing_pieces = 1U << 18U;
+
 /// One thing: a piece of street furniture, or a railing's piece.
 struct Thing {
     std::int64_t id = 0;    ///< its OSM node (a railing's: its road's way)
@@ -53,6 +62,10 @@ struct Thing {
 struct TileThings {
     std::vector<Thing> things;
     std::vector<scene::ItemSpec> items;
+    /// The railings left out, which would have taken the tile past most_tile_railing_pieces: a bridge's four (each
+    /// side of the renders' and of the app's), from the first bridge whose railings did not fit on. None in a real
+    /// tile.
+    std::uint32_t railings_cut = 0;
 };
 
 /// What the things read: the tile, its pack's head (its frame), and the items' kind.
