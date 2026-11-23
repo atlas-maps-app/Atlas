@@ -945,13 +945,16 @@
         <item quantity="other">aus %2$s · %1$d Farben geändert</item>
     </plurals>
     <plurals name="mine_asked">
-        <item quantity="one">seit Atlas offen ist %1$d-mal gefragt, zuletzt um %2$s</item>
-        <item quantity="other">seit Atlas offen ist %1$d-mal gefragt, zuletzt um %2$s</item>
+        <item quantity="one">%1$d-mal gefragt, zuletzt %2$s</item>
+        <item quantity="other">%1$d-mal gefragt, zuletzt %2$s</item>
     </plurals>
-    <string name="mine_asked_none">seit Atlas offen ist nicht gefragt</string>
+    <string name="mine_asked_none">nicht gefragt</string>
+    <string name="mine_asked_since">Gezählt seit dem Start von Atlas, %1$s. Nichts davon wird behalten.</string>
+    <string name="mine_asked_at">um %1$s</string>
+    <string name="mine_asked_on">am %1$s um %2$s</string>
     <plurals name="mine_asked_refused">
-        <item quantity="one">%1$d-mal zurückgehalten, zuletzt um %2$s</item>
-        <item quantity="other">%1$d-mal zurückgehalten, zuletzt um %2$s</item>
+        <item quantity="one">%1$d-mal zurückgehalten, zuletzt %2$s</item>
+        <item quantity="other">%1$d-mal zurückgehalten, zuletzt %2$s</item>
     </plurals>
     <string name="mine_asked_hosts">auch bei %1$s</string>
     <string name="mine_privacy_held">Jetzt nicht gefragt</string>

@@ -5,7 +5,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * What was asked since Atlas was opened, per source: requests sent, requests refused, when each last was, and the hosts
+ * What was asked since Atlas started (since this was made: [started]), per source: requests sent, requests refused, when each last was, and the hosts
  * its requests went to beyond the ones it lists. In memory only, and only counts and hosts: never a path nor a query,
  * which hold what was searched. Nothing waits on it: counters and a concurrent set, no lock a download could wait on.
  *
@@ -28,6 +28,9 @@ class Asked(private val clock: () -> Long = System::currentTimeMillis) {
 
         fun count() = Count(sent.get(), refused.get(), lastSent.get().takeIf { it > 0 }, lastRefused.get().takeIf { it > 0 }, hosts.toSet())
     }
+
+    /** When the count began, in Unix ms by its clock: when Atlas started, as nothing of it is kept. */
+    val started: Long = clock()
 
     private val tallies = ConcurrentHashMap<String, Tally>()
 

@@ -121,4 +121,80 @@ class PrivacyCountTest {
         assertTrue(texts("held back").none { "not asked" in it })
         shown("not asked")
     }
+
+    // H10: the words say what is counted, and since when.
+
+    @Test
+    fun theHeadSaysOnceSinceWhenAndNoRowSaysSinceAtlasWasOpened() {
+        val s = services()
+        repeat(2) { s.asked.sent(Overpass.INFO.id) }
+        show(s)
+        val t = at(s)
+        shown("Counted since Atlas started, at $t. Nothing of it is kept.")
+        assertEquals(1, texts("Counted since").size)
+        shown("asked 2 times, last at $t")
+        notShown("since Atlas was opened")
+    }
+
+    @Test
+    fun aTimeNotOfTodayCarriesItsDate() {
+        val clock = Moving(Instant.parse("2026-10-12T08:05:00Z"))
+        val s = services(clock = clock)
+        s.asked.sent(Overpass.INFO.id)
+        clock.at = Instant.parse("2026-10-13T17:30:00Z")
+        show(s)
+        // the time of day as the app writes it (the test's locale is en-US: 12 hours)
+        val t = GoFormat.clock(Instant.parse("2026-10-12T08:05:00Z"), clock.zone)
+        shown("Counted since Atlas started, on 12 Oct at $t. Nothing of it is kept.")
+        shown("asked 1 time, last on 12 Oct at $t")
+    }
+
+    @Test
+    @Config(qualifiers = "en-rUS-w412dp-h915dp-xhdpi")
+    fun aTimeOfDayIsWrittenAsTheAppWritesOne() {
+        val s = services()
+        s.asked.sent(Overpass.INFO.id)
+        show(s)
+        val t = at(s)
+        assertTrue(t, t.endsWith("PM"))
+        shown("asked 1 time, last at $t")
+    }
+
+    @Test
+    fun theScreenReadsTheCountAgainWhenItComesBack() {
+        val s = services()
+        repeat(2) { s.asked.sent(Overpass.INFO.id) }
+        show(s)
+        shown("asked 2 times")
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        s.asked.sent(Overpass.INFO.id)
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.settle(30_000)
+        shown("asked 3 times")
+    }
+
+    @Test
+    fun everyLanguageSaysItWithoutSinceAtlasWasOpened() {
+        val app = RuntimeEnvironment.getApplication()
+        for (lang in listOf("en", "de", "fr", "nl")) {
+            val c = android.content.res.Configuration(app.resources.configuration).apply { setLocale(java.util.Locale.forLanguageTag(lang)) }
+            val r = app.createConfigurationContext(c).resources
+            val at = r.getString(R.string.mine_asked_at, "14:02")
+            val on = r.getString(R.string.mine_asked_on, "12 Oct", "14:02")
+            assertTrue("$lang: $on", "12 Oct" in on && "14:02" in on)
+            val head = r.getString(R.string.mine_asked_since, at)
+            assertTrue("$lang: $head", "14:02" in head)
+            for (n in listOf(1, 2, 12)) {
+                val asked = r.getQuantityString(R.plurals.mine_asked, n, n, at)
+                val held = r.getQuantityString(R.plurals.mine_asked_refused, n, n, at)
+                val more = r.getQuantityString(R.plurals.mine_asked_hosts_more, n, "a.example, b.example, c.example", n)
+                for (line in listOf(asked, held)) assertTrue("$lang: $line", "$n" in line && "14:02" in line)
+                assertTrue("$lang: $more", "$n" in more && "c.example" in more)
+            }
+            val words = listOf(
+                r.getQuantityString(R.plurals.mine_asked, 2, 2, at), r.getString(R.string.mine_asked_none), r.getString(R.string.mine_privacy_held), head,
+            )
+            for (w in words) assertFalse("$lang: $w", listOf("since Atlas was opened", "seit Atlas offen ist", "sinds Atlas openging", "depuis l'ouverture d'Atlas").any { it in w })
+        }
+    }
 }

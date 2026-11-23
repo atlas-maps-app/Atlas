@@ -26,10 +26,9 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
-import java.time.format.DateTimeFormatter
 
 /**
- * The Privacy screen says what was asked of each source since Atlas was opened, from the app's own count
+ * The Privacy screen says what was asked of each source since Atlas started, from the app's own count
  * ([Services.asked]): how often and when last, what was held back, and hosts beyond a source's list.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -57,16 +56,16 @@ class PrivacyAskedTest {
     /** A card's label, which [CardLabel] draws in capitals. */
     private fun label(text: String) = shown(text.uppercase())
 
-    private fun at(services: Services) = DateTimeFormatter.ofPattern("HH:mm").format(services.clock.instant().atZone(services.clock.zone))
+    private fun at(services: Services) = app.atlas.ui.go.GoFormat.clock(services.clock.instant(), services.clock.zone)
 
     @Test
-    fun eachRowSaysWhatWasAskedSinceAtlasWasOpened() {
+    fun eachRowSaysWhatWasAsked() {
         val s = asked()
         show(s)
         val t = at(s)
-        shown("asked 2 times since Atlas was opened, last at $t")
-        shown("asked 1 time since Atlas was opened, last at $t · also at nl.panoramax.xyz")
-        shown("not asked since Atlas was opened")
+        shown("asked 2 times, last at $t")
+        shown("asked 1 time, last at $t · also at nl.panoramax.xyz")
+        shown("not asked")
         label("Not asked now")
         shown("held back 1 time, last at $t")
         assertEquals("the screen reads the app's own count", 2L, s.asked.of(Overpass.INFO.id).sent)
@@ -82,7 +81,7 @@ class PrivacyAskedTest {
         val s = asked()
         show(s)
         val t = at(s)
-        shown("demandé 2 fois depuis l'ouverture d'Atlas, la dernière à $t")
+        shown("demandé 2 fois, la dernière à $t")
         label("Pas demandé maintenant")
     }
 

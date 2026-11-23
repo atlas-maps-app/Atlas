@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.atlas.R
 import app.atlas.providers.Asked
@@ -45,6 +46,7 @@ import app.atlas.nav.LocalServices
 import app.atlas.nav.Navigator
 import app.atlas.services.SettingsKeys
 import app.atlas.ui.kit.Atlas
+import app.atlas.ui.go.GoFormat
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.mine.offline.RegionEngine
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +55,7 @@ import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * On this phone, the privacy board: the promise, what is kept here with a switch or a button to forget each thing (where
@@ -74,6 +77,11 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
     val work by services.go.store.work.collectAsStateWithLifecycle(null)
     val osmUser by services.osmAccount.user.collectAsStateWithLifecycle()
     var tick by remember { mutableStateOf(0) }
+    // Back at the front, what is kept and what was asked are read again.
+    LifecycleResumeEffect(Unit) {
+        tick++
+        onPauseOrDispose {}
+    }
     val trail = remember(trailOn, tick) { services.mine.trail.let { it.count() to it.bytes() } }
     val pressure = remember(pressureOn, tick) { services.mine.pressure.readings().size }
     val barometer = remember { Barometers.available(context) }
@@ -159,11 +167,13 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
         BoardCard(padding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 14.dp)) {
             CardLabel(stringResource(R.string.mine_privacy_online), Modifier.padding(bottom = 9.dp))
             val live = SourcesModel.asked(rows)
-            // what each was asked since Atlas was opened, as it stands when the screen is opened
+            // what each was asked, as it stands when the screen is opened or comes back to the front; since when, once
             val counts = remember(off, keys, tick) { services.asked.all() }
+            val now = remember(tick) { services.clock.instant() }
             val zone = services.clock.zone
+            BText(stringResource(R.string.mine_asked_since, askedAt(services.asked.started, now, zone)), bt(11f, 400, 14f), SOFT, Modifier.padding(bottom = 9.dp), lines = 2)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id), askedLine(counts[r.info.id], zone))
+                for (r in live) OnlineRow(r.info.name, r.host, sentLine(r.info.id), askedLine(counts[r.info.id], now, zone))
                 if (live.isEmpty()) BText(stringResource(R.string.mine_privacy_online_none), bt(12f, 400, 15.5f), SOFT, lines = 3)
             }
             // What a download you start asks of its server (these hosts see your address and what you asked for), where its
@@ -183,7 +193,7 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
             if (earlier.isNotEmpty()) {
                 CardLabel(stringResource(R.string.mine_privacy_held), Modifier.padding(top = 14.dp, bottom = 9.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    for (r in earlier) OnlineRow(r.info.name, r.host, sentLine(r.info.id), askedLine(counts[r.info.id], zone))
+                    for (r in earlier) OnlineRow(r.info.name, r.host, sentLine(r.info.id), askedLine(counts[r.info.id], now, zone))
                 }
             }
         }
@@ -201,8 +211,8 @@ fun PrivacyScreen(args: Dest.Privacy, nav: Navigator) {
 
 /**
  * One host something is sent to, as the board's lines: a 6 px blue dot, the name (13, 800 on 17) and 8 px on what it is
- * told and the host (12 on 15.5, grey, wrapping beside the name), and under it what was asked since Atlas was opened
- * (11 on 14, grey).
+ * told and the host (12 on 15.5, grey, wrapping beside the name), and under it what was asked ([askedLine], 11 on
+ * 14, grey).
  */
 @Composable
 private fun OnlineRow(name: String, host: String?, line: String, asked: String? = null) {
@@ -217,13 +227,15 @@ private fun OnlineRow(name: String, host: String?, line: String, asked: String? 
 }
 
 /**
- * What a source was asked since Atlas was opened ([Services.asked]), each part only where it holds and in this order: how
- * often it was asked and when last, how often it was held back and when last, and the hosts beyond its list its requests
- * went to ([SHOWN_HOSTS] of them, then how many more). Neither asked nor held back: "not asked".
+ * What a source was asked since Atlas started ([Services.asked], which the screen's head dates), each part only where it
+ * holds and in this order: how often it was asked and when last, how often it was held back and when last, and the hosts
+ * beyond its list its requests went to ([SHOWN_HOSTS] of them, then how many more). Neither asked nor held back: "not
+ * asked". A time as [askedAt] writes it, against [now].
  */
 @Composable
-internal fun askedLine(c: Asked.Count?, zone: ZoneId): String {
-    fun at(ms: Long?) = ms?.let { HOUR_MINUTE.format(Instant.ofEpochMilli(it).atZone(zone)) }.orEmpty()
+internal fun askedLine(c: Asked.Count?, now: Instant, zone: ZoneId): String {
+    @Composable
+    fun at(ms: Long?) = ms?.let { askedAt(it, now, zone) }.orEmpty()
     val sent = (c?.sent ?: 0L).toInt()
     val refused = (c?.refused ?: 0L).toInt()
     val hosts = c?.hosts.orEmpty().sorted()
@@ -242,7 +254,18 @@ internal fun askedLine(c: Asked.Count?, zone: ZoneId): String {
 /** The hosts beyond its list a row names before it says how many more. */
 private const val SHOWN_HOSTS = 3
 
-private val HOUR_MINUTE: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+/**
+ * When something was asked, [ms] in Unix ms: "at 14:05" today (by [now] in [zone]), else "on 12 Oct at 14:05". The time
+ * of day as the app's clocks write it ([GoFormat.clock]: 12 hours where the locale's country writes them so, else 24).
+ */
+@Composable
+internal fun askedAt(ms: Long, now: Instant, zone: ZoneId): String {
+    val at = Instant.ofEpochMilli(ms)
+    val time = GoFormat.clock(at, zone)
+    val day = at.atZone(zone).toLocalDate()
+    return if (day == now.atZone(zone).toLocalDate()) stringResource(R.string.mine_asked_at, time)
+    else stringResource(R.string.mine_asked_on, DateTimeFormatter.ofPattern("d MMM", Locale.getDefault()).format(day), time)
+}
 
 /** What each source is sent, in a few plain words. */
 @Composable

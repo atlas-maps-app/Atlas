@@ -944,15 +944,18 @@
         <item quantity="one">from %2$s · %1$d colour changed</item>
         <item quantity="other">from %2$s · %1$d colours changed</item>
     </plurals>
-    <!-- What was asked since Atlas was opened, under each source on the Privacy screen: in memory only -->
+    <!-- What was asked since Atlas started, under each source on the Privacy screen, and since when (the head): in memory only -->
     <plurals name="mine_asked">
-        <item quantity="one">asked %1$d time since Atlas was opened, last at %2$s</item>
-        <item quantity="other">asked %1$d times since Atlas was opened, last at %2$s</item>
+        <item quantity="one">asked %1$d time, last %2$s</item>
+        <item quantity="other">asked %1$d times, last %2$s</item>
     </plurals>
-    <string name="mine_asked_none">not asked since Atlas was opened</string>
+    <string name="mine_asked_none">not asked</string>
+    <string name="mine_asked_since">Counted since Atlas started, %1$s. Nothing of it is kept.</string>
+    <string name="mine_asked_at">at %1$s</string>
+    <string name="mine_asked_on">on %1$s at %2$s</string>
     <plurals name="mine_asked_refused">
-        <item quantity="one">held back %1$d time, last at %2$s</item>
-        <item quantity="other">held back %1$d times, last at %2$s</item>
+        <item quantity="one">held back %1$d time, last %2$s</item>
+        <item quantity="other">held back %1$d times, last %2$s</item>
     </plurals>
     <string name="mine_asked_hosts">also at %1$s</string>
     <string name="mine_privacy_held">Not asked now</string>
