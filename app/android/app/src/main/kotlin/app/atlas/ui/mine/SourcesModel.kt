@@ -96,6 +96,13 @@ object SourcesModel {
     fun keyed(rows: List<Row>): List<Row> = rows.filter { it.canTakeKey }
 
     /**
+     * The source a request to [host] is counted under ([app.atlas.providers.Asked]): the request's own, [named], where it
+     * lists [host] (the chargers asked of Overpass's servers), else the first that lists it; null where none does.
+     */
+    fun listedFor(host: String, named: String?, all: List<ProviderInfo> = ALL): String? =
+        (all.firstOrNull { it.id == named && it.holds(host) } ?: all.firstOrNull { it.holds(host) })?.id
+
+    /**
      * The source that holds back a request to [host] asked for the source [named] (a named view's, null where none): the
      * one the host belongs to ([ProviderInfo.holds]: one of its hosts, or below its `*.name`), where the user switched it
      * off ([off], by id), whatever the view is named; where no source lists the host, the view's own, where it is off.
@@ -103,13 +110,6 @@ object SourcesModel {
      * through another's servers (OpenStreetMap's chargers, through Overpass) is held back where it is asked, as those
      * servers serve others too; one without a switch never is.
      */
-    /**
-     * The source a request to [host] is counted under ([app.atlas.providers.Asked]): the request's own, [named], where it
-     * lists [host] (the chargers asked of Overpass's servers), else the first that lists it; null where none does.
-     */
-    fun listedFor(host: String, named: String?, all: List<ProviderInfo> = ALL): String? =
-        (all.firstOrNull { it.id == named && it.holds(host) } ?: all.firstOrNull { it.holds(host) })?.id
-
     fun blockedBy(host: String, off: Set<String>, all: List<ProviderInfo> = ALL, named: String? = null): String? {
         if (off.isEmpty()) return null
         all.firstOrNull { it.id in off && it.switchable && it.via == null && it.holds(host) }?.let { return it.id }

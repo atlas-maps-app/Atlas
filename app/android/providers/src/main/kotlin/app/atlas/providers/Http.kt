@@ -92,8 +92,9 @@ class Http private constructor(
 
     /**
      * The view of this client for [source], a provider's id: every request it sends, and every request of a client built on
-     * its [client], carries [source] as a [SourceTag] (one already stamped keeps its own). The stamp runs before every
-     * other interceptor, the gate's too, also after [OkHttpClient.newBuilder]. A view's view is the root's.
+     * its [client], carries [source] as a [SourceTag] (one already stamped keeps its own). The stamp runs before the
+     * gate's interceptor, also after [OkHttpClient.newBuilder]; an interceptor put before it on a client built on the view
+     * runs first. A view's view is the root's.
      */
     fun of(source: String): Http =
         Http(root.newBuilder().apply { interceptors().add(0, Stamp(source)) }.build(), limiter, userAgent, source, root, asked)

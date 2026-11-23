@@ -46,15 +46,22 @@ class SourcesTruthTest {
      * own code, with what it is: a host wholly built (`https://$t`), or with a template in a later label
      * (`https://api.$region.example.net`). Any other such address fails. A host whose first label alone is built
      * (`https://$lang.wikipedia.org`) is no exception: it reads as `*.wikipedia.org`, and a listed pattern must hold it.
-     * Not read: a host joined at run time (`"https://" + x`), built by `HttpUrl.Builder().host(x)` or `String.format`, or
-     * held in a resource; from point 4 on the gate holds those by their view's source.
+     *
+     * What the scans read: an address written on one line with `http://` or `https://` in lower case and a host of two
+     * labels or more. What they do not: a host joined at run time (`"https://" + x`, `buildString`), built by
+     * `HttpUrl.Builder().host(x)`, `URI(scheme, host, …)`, `URL(proto, host, …)` or `String.format`, held in a resource,
+     * written across lines, with its scheme in capitals or from a template (`"$scheme://host"`), or a host of one label.
+     * Nor, the largest class, the addresses that come from answers and files: Panoramax's `imageUrl`, Commons'
+     * `thumbUrl`, the `url` fields of world.json and terrain.json, the packs' addresses in their lists, a redirect's
+     * `Location`. The gate holds one of those by its view's source only where it is a first request, to a host no list
+     * names, through a view whose source has a switch of its own; a redirect's hop to such a host goes, a listed host is
+     * held by its own source, and a view of a source without a switch, or asked through another's, holds nothing.
      */
     private val builtHosts = mapOf(
         ("app/src/main/kotlin/app/atlas/ui/search/PlaceParts.kt" to "else -> \"https://\$t\"") to "a place's own website, opened in the browser",
         ("app/src/main/kotlin/app/atlas/ui/shop/ShopUi.kt" to "scheme == null -> \"https://\$t\"") to "a shop's own website, opened in the browser",
     )
 
-    /** The one request among Wikipedia's built addresses: the reader's API, which must be read as `*.wikipedia.org`. */
     /**
      * The only shipped files that may make an HTTP client or open a connection of their own, each with why. Every
      * other request is made on a view of `providers/Http.kt`'s one client, through its gate.
@@ -88,6 +95,7 @@ class SourcesTruthTest {
     /** OkHttp's builder written across two lines (`OkHttpClient` on one, `.Builder(` on the next), read in the whole text. */
     private val opensAcross = Regex("""\bOkHttpClient\s*\n\s*\.\s*Builder\s*\(|\bOkHttpClient\s*\.\s*\n\s*Builder\s*\(""")
 
+    /** The one request among Wikipedia's built addresses: the reader's API, which must be read as `*.wikipedia.org`. */
     private val wikipediaRequest = "providers/src/main/kotlin/app/atlas/providers/Wikipedia.kt" to "\"https://\$lang.wikipedia.org/w/api.php\""
 
     /** What in the app's wiring asks each listed source: a client built, or the address it fetches. */
