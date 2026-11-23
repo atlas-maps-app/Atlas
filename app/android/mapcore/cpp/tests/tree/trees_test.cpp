@@ -3,19 +3,25 @@
 // over a tree's tags, autumn's tint by the date, tree_choice's thresholds as the port compares them, and every bundled
 // tile's trees: one for each row of its tree layer, its item in S['nodes']'s order at (x, 1, z), its clumps' and blobs'
 // radii in the port's ranges, and the points heap's bytes they take; the gather's kinds of furniture, thing_choice's
-// thresholds, the moment's colours, every bundled tile's things. That the clumps and the furniture are the port's, the
-// twins' elements against the port's SVG say (L1).
+// thresholds, the moment's colours, every bundled tile's things; a bridge's railings at a width no road has, and a
+// tile's railings held to the most a tile takes. That the clumps and the furniture are the port's, the twins' elements
+// against the port's SVG say (L1).
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Things.hpp"
 #include "geometry/Trees.hpp"
+#include "load/Window.hpp"
 #include "passes/Things.hpp"
 #include "passes/Trees.hpp"
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
+#include "tiles/Container.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
+#include "tiles/Source.hpp"
+#include "tiles/layers/Lines.hpp"
 #include "tiles/layers/Points.hpp"
 #include "twin/tree/TreeShader.hpp"
 
@@ -25,9 +31,13 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <format>
+#include <map>
+#include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -473,4 +483,164 @@ TEST_CASE("things: stage T of every bundled tile") {
         MESSAGE(std::format("{}: {} lamps, {} benches, {} baskets, {} bollards, {} racks, {} railings' pieces", name,
                             kinds[0], kinds[1], kinds[2], kinds[3], kinds[4], kinds[5]));
     }
+}
+
+namespace {
+
+/// The Westerkerk's L14 tile, a window's.
+[[nodiscard]] tl::TileKey westerkerk_tile() { return tl::tile_of(14, 523'746'000, 48'840'000); }
+
+/// A bridge of a residential street: way `id`, its width tag (none where empty), its points (lat, lon).
+[[nodiscard]] std::string bridge_way(std::int64_t id, std::string_view width,
+                                     const std::vector<std::array<double, 2>>& pts) {
+    std::string out =
+        std::format(R"({{"type": "way", "id": {}, "tags": {{"highway": "residential", "bridge": "yes")", id);
+    if (!width.empty()) out += std::format(R"(, "width": "{}")", width);
+    out += R"(}, "geometry": [)";
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        out += std::format(R"({}{{"lat": {:.7f}, "lon": {:.7f}}})", i == 0 ? "" : ", ", pts[i][0], pts[i][1]);
+    }
+    return out + "]}";
+}
+
+/// The things of the window's tile built from `ways` (Overpass's elements), and its road layer's bridges in the tile's
+/// order: each one's way and its first point (frame metres).
+struct BridgeTile {
+    gm::TileThings things;
+    std::vector<std::pair<std::int64_t, std::array<double, 2>>> bridges;
+};
+
+[[nodiscard]] BridgeTile bridge_tile(const std::vector<std::string>& ways) {
+    const tl::TileKey k = westerkerk_tile();
+    std::string data = R"({"version": 0.6, "osm3s": {"timestamp_osm_base": "2026-10-22T18:00:00Z"}, "elements": [)";
+    for (std::size_t i = 0; i < ways.size(); ++i) data += (i == 0 ? "" : ",\n") + ways[i];
+    data += "]}";
+    const auto built =
+        atlas::load::build_window(std::as_bytes(std::span(data.data(), data.size())), k, atlas::load::place_of(k));
+    ATLAS_REQUIRE_OR_RETURN(BridgeTile{}, built.has_value(), built.error().what);
+    auto pack = tl::Pack::open(std::make_unique<tl::MemorySource>(built->pack));
+    ATLAS_REQUIRE_OR_RETURN(BridgeTile{}, pack.has_value(), tl::describe(pack.error()));
+    const tl::RenderHead* head = pack->head();
+    ATLAS_REQUIRE_OR_RETURN(BridgeTile{}, head != nullptr && !pack->chunks().chunks().empty());
+    tl::Zstd zstd;
+    tl::TileDecoder decoder;
+    atlas::Arena arena(8U << 20U, atlas::Growth::grows, "things test, a window's tile");
+    std::vector<std::byte> raw;
+    std::vector<std::byte> scratch;
+    const auto tile = pack->decode(pack->chunks().chunks()[0], zstd, decoder, arena, raw, scratch);
+    ATLAS_REQUIRE_OR_RETURN(BridgeTile{}, tile.has_value(), tl::describe(tile.error()));
+    BridgeTile out;
+    out.things = gm::build_things({.tile = &*tile, .head = head, .kind = 9});
+    if (const tl::Layer* roads = tile->layer(tl::LayerId::road)) {
+        for (std::uint32_t i = 0; i < roads->count; ++i) {
+            if (!roads->boolean(tl::road::bridge, i).value_or(false)) continue;
+            const tl::RingView r = roads->ring(tl::road::line, i);
+            if (r.size() < 2) continue;
+            out.bridges.push_back(
+                {roads->integer(tl::road::id, i), {head->frame.x(r.lon[0]), head->frame.z(r.lat[0])}});
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("things: a bridge's width that no road has reads as an unmapped one for its railings, never as the bound") {
+    // each bridge 80 m east, then 60 m north, in the tile; its width and the width its railings stand at
+    const std::vector<std::pair<std::string_view, double>> widths = {
+        {"6", 6.0},   {"250", 250.0}, {"250.5", 0.0}, {"500000000", 0.0}, // 500,000 km: the fault's kind of width
+        {"-12", 0.0}, {"-0.5", 0.0},  {"0", 0.0},
+    };
+    std::vector<std::string> ways;
+    for (std::size_t i = 0; i < widths.size(); ++i) {
+        const double lat = 52.3700 + (0.0012 * static_cast<double>(i));
+        ways.push_back(bridge_way(200 + static_cast<std::int64_t>(i), widths[i].first,
+                                  {{lat, 4.8800}, {lat, 4.8812}, {lat + 0.00054, 4.8812}}));
+    }
+    const BridgeTile t = bridge_tile(ways);
+    REQUIRE(t.bridges.size() == widths.size());
+    CHECK(t.things.railings_cut == 0);
+    std::map<std::int64_t, std::size_t> pieces; // each bridge's
+    for (const auto& [id, first] : t.bridges) {
+        const auto& [tag, w] = widths.at(static_cast<std::size_t>(id - 200));
+        CAPTURE(tag);
+        // the first piece of each railing starts at the ribbon's first point: the renders' w / 4 + 0.075 from the
+        // centreline (ribbon(pts, w / 2 + 0.15)), the app's w / 2 + 0.15 (ribbon(pts, w + 0.3)), on either side
+        std::map<std::uint64_t, double> starts; // by the piece's order: its side and set
+        for (std::size_t i = 0; i < t.things.things.size(); ++i) {
+            const gm::Thing& p = t.things.things[i];
+            if (p.kind != gm::ThingKind::railing || p.id != id) continue;
+            ++pieces[id];
+            const std::uint64_t order = t.things.items[i].order;
+            if ((order & ((1U << 14U) - 1U)) != 0) continue; // not a railing's first piece
+            starts[order] = atlas::pymath::hypot(p.x - first[0], p.z - first[1]);
+        }
+        REQUIRE(starts.size() == 4);
+        for (const auto& [order, d] : starts) {
+            const bool app = (order & (1U << 14U)) != 0;
+            CHECK(d == doctest::Approx(app ? (w / 2) + 0.15 : (w / 4) + 0.075).epsilon(1e-6));
+        }
+    }
+    // a width read as none: each railing as many pieces as the untagged-as-0 bridge's (the same shape further north),
+    // 82 m and 60 m in 41 and 30 pieces
+    const std::size_t none = pieces[206];
+    CHECK(none == 4 * (41 + 30));
+    for (std::size_t i = 0; i < widths.size(); ++i) {
+        CAPTURE(widths[i].first);
+        if (widths[i].second == 0.0) CHECK(pieces[200 + static_cast<std::int64_t>(i)] == none);
+    }
+}
+
+TEST_CASE("things: a tile's railings take at most most_tile_railing_pieces, the bridges past it without theirs") {
+    // three bridges zigzagging across the tile, each some two fifths of the most a tile takes in its four railings, and
+    // a short one: two fit, and from the first that does not, the railings still to come are left out whole
+    const std::array<double, 4> box = atlas::load::window_box(westerkerk_tile(), 0.0); // south, west, north, east
+    const double south = box[0] + (0.1 * (box[2] - box[0]));
+    const double north = box[2] - (0.1 * (box[2] - box[0]));
+    const double tooth = (north - south) * 110540.0; // metres, a zigzag's segment about as long
+    const auto segments =
+        static_cast<std::size_t>(std::ceil(0.4 * gm::most_tile_railing_pieces / (4.0 * std::ceil(tooth / 2.0))));
+    std::vector<std::string> ways;
+    for (std::int64_t b = 0; b < 3; ++b) {
+        std::vector<std::array<double, 2>> pts;
+        const double west = box[1] + (0.1 * (box[3] - box[1])) + (0.00002 * static_cast<double>(b));
+        const double step = 0.75 * (box[3] - box[1]) / static_cast<double>(segments);
+        for (std::size_t i = 0; i <= segments; ++i) {
+            pts.push_back({i % 2 == 0 ? south : north, west + (step * static_cast<double>(i))});
+        }
+        ways.push_back(bridge_way(101 + b, "6", pts));
+    }
+    ways.push_back(bridge_way(104, "6", {{52.3746, 4.8840}, {52.3746, 4.8843}}));
+    const BridgeTile t = bridge_tile(ways);
+    REQUIRE(t.bridges.size() == 4);
+    std::map<std::int64_t, std::size_t> pieces;
+    std::size_t railings = 0;
+    for (const gm::Thing& p : t.things.things) {
+        if (p.kind != gm::ThingKind::railing) continue;
+        ++pieces[p.id];
+        ++railings;
+    }
+    MESSAGE(std::format("{} segments a zigzag of {:.0f} m teeth: {} railing pieces of at most {}, {} railings left out",
+                        segments, tooth, railings, gm::most_tile_railing_pieces, t.things.railings_cut));
+    CHECK(railings <= gm::most_tile_railing_pieces);
+    CHECK(t.things.things.size() == t.things.items.size());
+    // in the tile's order: each bridge's railings until the third zigzag, which would pass the most, and none after
+    std::size_t zigzags = 0;
+    std::size_t cut = 0;
+    std::size_t one_zigzag = 0;
+    for (const auto& [id, first] : t.bridges) {
+        CAPTURE(id);
+        if (id != 104) ++zigzags;
+        if (zigzags < 3) {
+            CHECK(pieces[id] > 0);
+            if (id != 104) one_zigzag = pieces[id];
+        } else {
+            CHECK(pieces[id] == 0);
+            ++cut;
+        }
+    }
+    CHECK(t.things.railings_cut == 4 * cut);
+    // the third zigzag's railings, as many as another's, would have taken the tile past the most
+    CHECK(railings + one_zigzag > gm::most_tile_railing_pieces);
+    CHECK(one_zigzag > gm::most_tile_railing_pieces / 4);
 }
