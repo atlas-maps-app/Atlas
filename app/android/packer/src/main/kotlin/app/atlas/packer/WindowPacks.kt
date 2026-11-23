@@ -14,6 +14,8 @@ import java.io.File
 import java.io.IOException
 import java.lang.management.ManagementFactory
 import java.lang.management.MemoryType
+import java.nio.channels.FileChannel
+import java.nio.file.StandardOpenOption
 import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -44,7 +46,10 @@ import java.util.zip.Deflater
  * the extract holds whole: every node of every way in it, every member of every relation in it. A relation across the
  * border may lack members (in Noord-Holland's extract of 26 October 2026, the protected areas over the sea and the
  * IJsselmeer, multipolygons among them): its windows are left out, and the phone asks Overpass there. A window with
- * nothing in it is listed too, so the phone never asks for the open sea.
+ * nothing in it is listed too, so the phone never asks for the sea by a coast, but not where every window of its frame
+ * cell (L10, the phone's) is so and none is left out for what it holds: the open sea, which the world's tiles draw as
+ * they draw beyond the country. A polygon of much sea keeps its index a country's size so (Norway's one ring round the
+ * mainland, Svalbard and Jan Mayen holds some 4.4 million windows); the Netherlands' 122 frame cells all hold something.
  */
 object WindowPacks {
     const val USAGE = """packer windows <in.osm.pbf> <out-dir> --poly <region.poly> --core <atlas_stagep> [--id ID] [--bbox W,S,E,N] [--threads N] [--level 1-9] [--shard I/N]
@@ -59,7 +64,9 @@ object WindowPacks {
       --shard I/N cuts shard I of N alone: the windows of the L10 columns (frame cells) that fall to it, the columns
       shared out by the extract's nodes, from what its windows need of the extract (every node's position, but only
       its own cells' tagged nodes and ways, and the ways of the relations asked for), into <out-dir> with
-      <id>.windows.shard naming the run's plan. packer windows-join joins the N folders into the whole run's files."""
+      <id>.windows.shard naming the run's plan. packer windows-join joins the N folders into the whole run's files.
+      A frame cell (L10) whose every window has nothing in it, none left out for what it holds, is not listed: the open
+      sea, which the world's tiles draw."""
 
     /** The windows' level: load::window_level. */
     const val LEVEL = 14
@@ -159,6 +166,8 @@ object WindowPacks {
         val shard: Shard? = null,
         /** The pass a shard surveys the extract in first. */
         val surveyMillis: Long = 0,
+        /** The frame cells of the open sea, not listed ([LeftOut.OPEN] counts their windows). */
+        val openCells: Int = 0,
     )
 
     /** The biggest window listed: its tile, its answer's bytes and gzip member's, its elements. */
@@ -216,6 +225,7 @@ object WindowPacks {
         out("${r.index.name}: ${r.index.length()} bytes")
         out("left out: $left" + if (left == 0) "" else " (" + r.leftOut.entries.filter { it.value > 0 }.joinToString("; ") { "${it.value}: ${it.key.why}" } + ")")
         for ((what, n) in r.by) out("  $n left out by $what")
+        if (r.openCells > 0) out("the open sea: ${r.leftOut.getValue(LeftOut.OPEN)} empty windows in ${r.openCells} frame cells that hold nothing, not listed")
         r.biggest?.let { b -> out("the biggest window: 14/${b.x}/${b.y}, ${b.jsonBytes} bytes of JSON, ${b.gzipBytes} gzipped, ${b.elements} elements") }
         out("the extract: ${r.extract}")
         val survey = if (r.shard == null) "" else "surveying ${r.surveyMillis / 1000} s, "
@@ -284,11 +294,11 @@ object WindowPacks {
 
         val extract = Extract.read(pbf, minOf(threads, 8), keep)
         val read = ms() - surveyed
-        val held = "${extract.nodeCount} nodes (${extract.taggedCount} tagged), ${extract.wayCount} ways (${extract.brokenWays} lacking nodes), " +
+        val heldText = "${extract.nodeCount} nodes (${extract.taggedCount} tagged), ${extract.wayCount} ways (${extract.brokenWays} lacking nodes), " +
             "${extract.relationCount} relations asked for (${extract.brokenRelations} lacking members), ${extract.twice} with a key twice; " +
             "${extract.bytes shr 20} MiB held (${extract.nodeBytes shr 20} the nodes' positions, ${extract.jsonBytes shr 20} the elements' tags)" +
             if (keep == null) "" else "; the shard's cells left out ${extract.droppedTagged} tagged nodes and ${extract.droppedWays} ways"
-        log("read in ${read / 1000} s: $held")
+        log("read in ${read / 1000} s: $heldText")
 
         // the grid over the run's windows, whole or a shard of it
         val cut = WindowCut(extract, windows, dateText, level)
@@ -303,6 +313,11 @@ object WindowPacks {
         var empty = 0
         var biggest: Biggest? = null
         val by = HashMap<Pair<LeftOut, Long>, Int>()
+        // the frame cells that hold something: a window with an element in it, or one left out for what it holds; and
+        // the windows listed empty, among which those of the other cells are the open sea
+        val held = HashSet<Long>()
+        val emptyAt = BitSet()
+        var emptyJson = 0
         val cutStart = ms()
         val pool = Executors.newFixedThreadPool(threads) { r -> Thread(r, "window-cut").apply { isDaemon = true } }
         val works = ThreadLocal.withInitial { cut.work() }
@@ -311,6 +326,7 @@ object WindowPacks {
                 fun take(a: Answer) {
                     val why = a.leftOut
                     if (why != null) {
+                        held += cellOf(a.window.x, a.window.y)
                         leftOut.merge(why, 1, Int::plus)
                         by.merge(why to a.by, 1, Int::plus)
                         return
@@ -320,7 +336,11 @@ object WindowPacks {
                     entries += WindowsIndex.Entry(a.window.x, a.window.y, offset, gz.size, a.sha256!!)
                     offset += gz.size
                     jsonBytes += a.jsonBytes
-                    if (a.elements == 0) empty++
+                    if (a.elements == 0) {
+                        empty++
+                        emptyAt.set(entries.size - 1)
+                        emptyJson = a.jsonBytes
+                    } else held += cellOf(a.window.x, a.window.y)
                     if (biggest == null || a.jsonBytes > biggest!!.jsonBytes) biggest = Biggest(a.window.x, a.window.y, a.jsonBytes, gz.size, a.elements)
                     if (entries.size % 5000 == 0) log("  ${entries.size} windows, ${offset shr 20} MiB (${ms() / 1000} s)")
                 }
@@ -338,9 +358,29 @@ object WindowPacks {
             pool.shutdownNow()
         }
         val cutMillis = ms() - cutStart
+        // the open sea: the frame cells none of whose windows holds anything, left out and their answers' bytes with them
+        val open = BitSet()
+        var e = emptyAt.nextSetBit(0)
+        while (e >= 0) {
+            if (cellOf(entries[e].x, entries[e].y) !in held) open.set(e)
+            e = emptyAt.nextSetBit(e + 1)
+        }
+        var listedEntries: List<WindowsIndex.Entry> = entries
+        var openCells = 0
+        if (!open.isEmpty) {
+            openCells = open.stream().mapToObj { cellOf(entries[it].x, entries[it].y) }.distinct().count().toInt()
+            val (kept, bytes) = withoutOpen(dataPart, entries, open)
+            listedEntries = kept
+            offset = bytes
+            val n = open.cardinality()
+            leftOut.merge(LeftOut.OPEN, n, Int::plus)
+            empty -= n
+            jsonBytes -= n.toLong() * emptyJson
+            log("the open sea: $n empty windows in $openCells frame cells that hold nothing, left out (${kept.size} windows listed, $bytes bytes)")
+        }
         move(dataPart, data)
         val indexPart = File(index.path + ".part")
-        indexPart.outputStream().buffered().use { WindowsIndex.of(LEVEL, WindowsIndex.QUERY, date, offset, entries).write(it) }
+        indexPart.outputStream().buffered().use { WindowsIndex.of(LEVEL, WindowsIndex.QUERY, date, offset, listedEntries).write(it) }
         move(indexPart, index)
         if (part != null) {
             val side = File(outDir, id + SHARD_SUFFIX)
@@ -353,7 +393,54 @@ object WindowPacks {
             val (why, id) = k
             (if (why == LeftOut.RELATION) extract.describeRelation(id) else "${why.name.lowercase()} $id") to n
         }
-        return Result(data, index, date, entries.size, empty, leftOut, offset, jsonBytes, biggest, held, ms(), read, cutMillis, peak, culprits, part, surveyed)
+        return Result(data, index, date, listedEntries.size, empty, leftOut, offset, jsonBytes, biggest, heldText, ms(), read, cutMillis, peak, culprits, part, surveyed, openCells)
+    }
+
+    /** The L10 frame cell of window ([x], [y]), as a key. */
+    private fun cellOf(x: Int, y: Int): Long = ((x ushr 4).toLong() shl 32) or (y ushr 4).toLong()
+
+    /**
+     * [data] (the windows' answers back to back, as [entries] list them) rewritten in place of itself without the
+     * windows [open] names: the kept windows' bytes in the same order, each run of them copied whole. Returns the kept
+     * entries, moved on to their new offsets, and the file's new length.
+     */
+    internal fun withoutOpen(data: File, entries: List<WindowsIndex.Entry>, open: BitSet): Pair<List<WindowsIndex.Entry>, Long> {
+        val kept = ArrayList<WindowsIndex.Entry>(entries.size - open.cardinality())
+        val compact = File(data.path + ".compact")
+        var at = 0L
+        try {
+            FileChannel.open(data.toPath(), StandardOpenOption.READ).use { src ->
+                FileChannel.open(compact.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING).use { dst ->
+                    var i = 0
+                    while (i < entries.size) {
+                        if (open[i]) {
+                            i++
+                            continue
+                        }
+                        val start = i
+                        while (i < entries.size && !open[i]) i++
+                        val from = entries[start].offset
+                        val length = entries[i - 1].offset + entries[i - 1].length - from
+                        var done = 0L
+                        while (done < length) {
+                            val n = src.transferTo(from + done, length - done, dst)
+                            if (n <= 0) throw IOException("$data ends before byte ${from + done}")
+                            done += n
+                        }
+                        for (k in start until i) {
+                            val e = entries[k]
+                            kept += WindowsIndex.Entry(e.x, e.y, e.offset - from + at, e.length, e.sha256)
+                        }
+                        at += length
+                    }
+                }
+            }
+            move(compact, data)
+        } catch (x: Throwable) {
+            compact.delete()
+            throw x
+        }
+        return kept to at
     }
 
     /** The L14 tiles around [polygon]'s box (within [clip]), one more each side: x0, y0, x1, y1 (y from the north). */
