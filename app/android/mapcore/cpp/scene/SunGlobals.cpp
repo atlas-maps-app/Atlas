@@ -598,7 +598,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
 #endif
     Parts last = std::move(parts);
     parts = {};
-    if (!keep || !sun::same_ground(last.frame, last.region, head->frame, region)) last.tiles.clear();
+    if (!keep) last.tiles.clear();
     parts.frame = head->frame;
     parts.region = region;
     std::unordered_map<std::uint64_t, std::vector<std::size_t>> by_key;
