@@ -19,7 +19,11 @@
 //! is read from the vehicle: it waits for whoever came in since the one before it left (`Search::left_before`).
 //! And since the vehicle depends on the arrival, a later trip of a route can do what an earlier one cannot. So
 //! where a ride ends at a stop such rules lead from, the route's later trips that are in before the plain change
-//! from this one could be made are held too, each for what waits for it alone (`Search::later_arrivals`).
+//! from this one could be made are held too, each for what waits for it alone (`Search::later_arrivals`). A later
+//! trip is given only to whoever could have boarded it by the means the earlier one was boarded: from standing ready
+//! at the stop, any; under rules that bar or lengthen, one they do not bar; as the one vehicle a rule held, none
+//! (`Boarded`). So a boarding that others are ahead of, who could not have boarded its trip, is kept along the
+//! route though nobody rides it further (`Work::could`).
 //!
 //! **The search is aimed.** From the journey's end, the least time to it that any timetable could give is counted
 //! back stop by stop: the shortest way over each pattern's fastest hops and the walks, by Dijkstra's method. A
@@ -100,6 +104,19 @@ const NEVER: i32 = i32::MAX;
 /// The most stops a search begins at, or ends at: of the stops a place stands for, the nearest so many.
 const MAX_ENDS: usize = 4096;
 
+/// Whether the riders of `e` could have boarded every trip of the route that the riders of `c` could, `c`'s own
+/// and the later ones, as far as the way each boarded says ([`Boarded`]); that `e` is here no later and no dearer
+/// is the caller's to know.
+fn covers(e: &Riding, c: &Riding) -> bool {
+    let same_trip = (e.trip, e.off) == (c.trip, c.off);
+    match e.how {
+        Boarded::Freely => true,
+        Boarded::Alone => same_trip && c.how == Boarded::Alone,
+        // (the same held label: it boards from its first trip on, as far as its rules or its vehicle let it)
+        _ => e.how == c.how || (same_trip && c.how == Boarded::Alone),
+    }
+}
+
 /// Whether a rule's field, which may name nothing, lets this trip or line through.
 fn fits(want: u32, is: u32) -> bool {
     want == NONE || want == is
@@ -140,6 +157,26 @@ struct Riding {
     /// The label it was boarded from, and where along the pattern.
     from: u32,
     pos: u32,
+    how: Boarded,
+}
+
+/// How those riding a trip boarded it, for what else they could have boarded: a later trip of the route, which
+/// [`Search::later_arrivals`] gives them where a vehicle waits for that trip alone. A number is the held label's
+/// place in its round's list.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Boarded {
+    /// From a label ready at the stop, or held under rules none of which speaks of this route: any later trip of
+    /// the route as well.
+    Freely,
+    /// From a label held under rules that bar or lengthen a change to this route: a later trip where they do not
+    /// bar that one.
+    Under(u32),
+    /// Searching back, as an arrival that the vehicle of a held label waits for: an earlier trip of the route where
+    /// that vehicle waits for it as well.
+    Waited(u32),
+    /// As the one vehicle a rule holds for those of a held label (forward), or as the one arrival a rule names
+    /// (back): no other trip.
+    Alone,
 }
 
 /// A journey found: the last ride's label, the seconds on foot after it, and what it comes to.
@@ -555,6 +592,10 @@ struct Work {
     stamp: u32,
     search: u32,
     riding: Vec<Riding>,
+    /// Along the route being ridden: boardings that ride no further, each beaten by one in `riding` that is here
+    /// no later and no dearer, kept because the riders of that one could not have boarded this one's trip, or the
+    /// later trips this one's riders could (`Search::join`, `Search::later_arrivals`). 64 at most.
+    could: Vec<Riding>,
     fresh: Vec<u32>,
     /// The rides that ended this round by a trip the feed has a rule for at that stop. And those nobody rode: a
     /// later trip of a route ridden to a stop where a vehicle waits for it (`Search::later_arrivals`).
@@ -2295,17 +2336,49 @@ impl<'s> Search<'s, '_> {
     }
 
     /// A ride that nobody boarded, held all the same. One who rides trip `e` of a route to a stop where vehicles
-    /// wait could have taken any later trip of the route as well, and what waits for that one is another
+    /// wait could have taken a later trip of the route as well, and what waits for that one is another
     /// vehicle: the next of its line, where the one for `e` may be closed by a wish, cost more, or lead elsewhere.
     /// Whatever leaves `reach` seconds or more after `e` is in is reached from `e` without any rule, so only the
     /// trips in before that are looked at, each held for what waits for it and for nothing else.
+    ///
+    /// Could have taken: by the means `e` was boarded by ([`Boarded`]), from the same label at the same stop.
+    /// From a label ready there, any later trip. From one held under the feed's rules, a later trip that those
+    /// rules do not bar at its own time. As the one vehicle a rule holds for an arrival, no other: whoever makes
+    /// that change by the walk has a label of their own, which boards its first trip and has the later ones.
+    /// Searching back, as an arrival a held vehicle waits for: an earlier trip that it waits for as well, in
+    /// since the vehicle before it left.
+    ///
+    /// `rides` says that `e` is ridden on, so its own arrival here is offered as any ride's. Where it is not (a
+    /// boarding kept in `could`: another trip is here no later and no dearer), its own trip is looked at with the
+    /// later ones: it was boarded, and what waits for it here waits for no other.
     #[allow(clippy::too_many_arguments)]
-    fn later_arrivals(&mut self, round: usize, r: u32, pos: u32, stop: u32, e: &Riding, costs: u32, reach: i32) {
+    fn later_arrivals(&mut self, round: usize, r: u32, pos: u32, stop: u32, e: &Riding, rides: bool, costs: u32, reach: i32) {
+        let held = |s: &Self, at: u32| s.w.held.get(round - 1).and_then(|list| list.get(at as usize)).copied();
+        let alone = e.how == Boarded::Alone;
+        let (under, waited) = match e.how {
+            Boarded::Alone if rides => return,
+            Boarded::Alone | Boarded::Freely => (None, None),
+            Boarded::Under(at) => {
+                let Some(lab) = held(self, at).map(|h| self.w.labels[h.label as usize]) else { return };
+                (self.before(&lab, lab.stop), None)
+            }
+            Boarded::Waited(at) => {
+                let Some(h) = held(self, at) else { return };
+                // (the vehicle held, which is no arrival for itself: as in `board_waiting`)
+                let lab = self.w.labels[h.label as usize];
+                let Some(ride) = self.w.labels.get(lab.prev as usize).map(|l| (l.trip, l.off as i32)) else { return };
+                (None, Some((h, ride, self.before(&lab, lab.stop))))
+            }
+        };
+        let line = self.tt.route(r).line;
         let came = self.alight_time(e.times, pos, e.off);
         let boarded = self.board_time(e.times, e.pos, e.off);
         let until = came.saturating_add(reach).min(self.limit.saturating_add(1));
         let own = cost(&self.prefs.trip_cost, e.trip);
         for off in self.off_lo..=self.off_hi {
+            if alone && off != e.off {
+                continue;
+            }
             let run = self.run(r, off);
             // (the ranks rise with the time of alighting as with the time of boarding: no trip overtakes)
             let (mut lo, mut hi) = (0u32, run.trips.len() as u32);
@@ -2318,11 +2391,31 @@ impl<'s> Search<'s, '_> {
                 self.steps.add(1);
                 let (trip, times) = self.trip_at(&run, rank);
                 let time = self.alight_time(times, pos, off);
-                if time >= until || self.steps.over() {
+                if time >= until || self.steps.over() || (alone && time > came) {
                     break;
                 }
-                if (trip, off) == (e.trip, e.off) || self.board_time(times, e.pos, off) < boarded || bit(&self.prefs.trip_closed, trip) || !self.named(&self.ix.waiting[self.back as usize], trip, stop) {
+                let board = self.board_time(times, e.pos, off);
+                let its_own = (trip, off) == (e.trip, e.off);
+                if if its_own { rides } else { alone || board < boarded } || bit(&self.prefs.trip_closed, trip) || !self.named(&self.ix.waiting[self.back as usize], trip, stop) {
                     continue;
+                }
+                if let Some(b) = under.as_ref().filter(|_| !its_own) {
+                    self.steps.add((b.hi - b.lo) as u64);
+                    if self.barred(b, trip, line, board) {
+                        continue;
+                    }
+                }
+                if let Some((h, ride, before)) = waited.as_ref().filter(|_| !its_own) {
+                    let last = if (trip, off) == h.own { h.own_last } else { h.last };
+                    if board > last.min(self.limit) || (trip, off) == *ride {
+                        continue;
+                    }
+                    if let Some(b) = before {
+                        self.steps.add((b.hi - b.lo) as u64);
+                        if self.forbidden(b, trip, line) {
+                            continue;
+                        }
+                    }
                 }
                 let cost = e.cost.saturating_sub(own).saturating_add(cost(&self.prefs.trip_cost, trip)).saturating_add(costs).min(64 * MAX_PENALTY);
                 if self.pointless(round, stop, time, cost) {
@@ -2444,8 +2537,9 @@ impl<'s> Search<'s, '_> {
         let line_cost = cost(&self.prefs.line_cost, route.line);
         let mut riding = core::mem::take(&mut self.w.riding);
         riding.clear();
+        self.w.could.clear();
         for i in from..route.stops {
-            self.steps.add(1 + riding.len() as u64);
+            self.steps.add(1 + (riding.len() + self.w.could.len()) as u64);
             let pos = if self.back { route.stops - 1 - i } else { i };
             let ps = self.tt.pattern_stop(route.first_stop + pos);
             let stop = ps.stop;
@@ -2466,14 +2560,22 @@ impl<'s> Search<'s, '_> {
                 }
                 if let Some(reach) = self.wait_reach(stop) {
                     for e in riding.iter() {
-                        self.later_arrivals(round, r, pos, stop, e, here.saturating_add(at_stop), reach);
+                        self.later_arrivals(round, r, pos, stop, e, true, here.saturating_add(at_stop), reach);
+                    }
+                    if !self.w.could.is_empty() {
+                        let could = core::mem::take(&mut self.w.could);
+                        for e in could.iter() {
+                            self.later_arrivals(round, r, pos, stop, e, false, here.saturating_add(at_stop), reach);
+                        }
+                        self.w.could = could;
                     }
                 }
             }
             if bit(&self.prefs.closed_through, stop) {
                 riding.clear();
+                self.w.could.clear();
             } else if here != 0 {
-                for e in riding.iter_mut() {
+                for e in riding.iter_mut().chain(self.w.could.iter_mut()) {
                     e.cost = e.cost.saturating_add(here);
                 }
             }
@@ -2481,22 +2583,22 @@ impl<'s> Search<'s, '_> {
                 let mut l = self.w.cells[stop as usize * self.w.rounds + round - 1].head[1];
                 while l != NONE {
                     let lab = self.w.labels[l as usize];
-                    self.board(&mut riding, r, &route, pos, l, &lab, line_cost.saturating_add(here), false);
+                    self.board(&mut riding, r, &route, pos, l, &lab, line_cost.saturating_add(here), None);
                     l = lab.next;
                 }
                 if self.w.held_rounds[stop as usize] >> (round - 1) & 1 == 1 {
                     let held = core::mem::take(&mut self.w.held[round - 1]);
                     let from = self.w.held_from.get(round - 1).copied().unwrap_or(0).min(held.len());
                     self.steps.add((held.len() - from) as u64);
-                    for h in held[from..].iter() {
+                    for (at, h) in held.iter().enumerate().skip(from) {
                         let lab = self.w.labels[h.label as usize];
                         if lab.stop != stop {
                             continue;
                         }
                         if h.rule == NONE {
-                            self.board(&mut riding, r, &route, pos, h.label, &lab, line_cost.saturating_add(here), true);
+                            self.board(&mut riding, r, &route, pos, h.label, &lab, line_cost.saturating_add(here), Some(at as u32));
                         } else {
-                            self.board_waiting(&mut riding, r, &route, pos, h, &lab, line_cost.saturating_add(here));
+                            self.board_waiting(&mut riding, r, &route, pos, h, at as u32, &lab, line_cost.saturating_add(here));
                         }
                     }
                     self.w.held[round - 1] = held;
@@ -2648,6 +2750,32 @@ impl<'s> Search<'s, '_> {
         false
     }
 
+    /// Whether the rules say that no change is possible from the ride before to `trip` of `line`, whatever time
+    /// there is: what holds also against a rule that says the vehicle waits (a least time does not: a vehicle
+    /// that waits is boarded whatever the change takes).
+    fn forbidden(&self, b: &Before, trip: u32, line: u32) -> bool {
+        (b.lo..b.hi).any(|i| {
+            let r = self.tt.rule(if self.back { self.ix.rules_by_to[i as usize] } else { i });
+            let (from, to) = self.sides(&r);
+            r.kind == 3 && (from.1 != NONE || from.2 != NONE || to.1 != NONE || to.2 != NONE) && fits(from.1, b.trip) && fits(from.2, b.line) && fits(to.1, trip) && fits(to.2, line)
+        })
+    }
+
+    /// Whether any of those rules could bar a trip of this route, whatever its time: one that says no change is
+    /// possible, or gives a least time, from the ride before to the route's line or to one of its trips.
+    fn speaks_of(&mut self, b: &Before, route: &Route) -> bool {
+        self.steps.add((b.hi - b.lo) as u64);
+        (b.lo..b.hi).any(|i| {
+            let r = self.tt.rule(if self.back { self.ix.rules_by_to[i as usize] } else { i });
+            if r.from_trip == NONE && r.to_trip == NONE && r.from_line == NONE && r.to_line == NONE {
+                return false;
+            }
+            let (from, to) = self.sides(&r);
+            let on_route = to.1 == NONE || (to.1 >= route.first_trip && to.1 < route.first_trip.saturating_add(route.trips));
+            fits(from.1, b.trip) && fits(from.2, b.line) && fits(to.2, route.line) && on_route && (r.kind == 3 || (r.kind == 2 && r.min_time != NONE))
+        })
+    }
+
     /// When the one vehicle that a rule holds for an arrival at `time` leaves `stop`: of the trips its far side
     /// speaks of (its trip; a trip of its line; any trip where it names neither) that take people on there, on
     /// every service day in reach, the first to leave at `time` or later; `NEVER` where there is none. `own`, the
@@ -2734,10 +2862,15 @@ impl<'s> Search<'s, '_> {
     /// label was held, back every arrival that this vehicle is the one for (the first of this route that can be
     /// caught, and where trips differ in cost each cheaper one after it, as in `board`). A trip a wish closes is not
     /// boarded, and nothing takes its place.
-    fn board_waiting(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, h: &Held, lab: &Label, cost_here: u32) {
+    #[allow(clippy::too_many_arguments)]
+    fn board_waiting(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, h: &Held, at: u32, lab: &Label, cost_here: u32) {
         let rule = self.tt.rule(h.rule);
         let (_, to) = self.sides(&rule);
         let named = to.1 != NONE;
+        // (what else those let on could have boarded: `later_arrivals`)
+        let how = if self.back && !named { Boarded::Waited(at) } else { Boarded::Alone };
+        // the feed may say of the same two rides that no change is possible: then nothing waits
+        let before = self.before(lab, lab.stop);
         if !fits(to.2, route.line) || named && (to.1 < route.first_trip || to.1 >= route.first_trip.saturating_add(route.trips)) {
             return;
         }
@@ -2754,8 +2887,14 @@ impl<'s> Search<'s, '_> {
                 let times = self.tt.trip_times(to.1);
                 let time = self.board_time(times, pos, off);
                 if self.tt.runs(self.tt.trip(to.1).service, self.day + off) && time >= lab.time && time <= last(to.1) && (to.1, off) != ride && !bit(&self.prefs.trip_closed, to.1) {
+                    if let Some(b) = &before {
+                        self.steps.add((b.hi - b.lo) as u64);
+                        if self.forbidden(b, to.1, route.line) {
+                            continue;
+                        }
+                    }
                     let c = cost(&self.prefs.trip_cost, to.1);
-                    self.join(riding, Riding { trip: to.1, times, off, cost: base.saturating_add(c), from: h.label, pos }, pos);
+                    self.join(riding, Riding { trip: to.1, times, off, cost: base.saturating_add(c), from: h.label, pos, how }, pos);
                 }
                 continue;
             }
@@ -2777,10 +2916,18 @@ impl<'s> Search<'s, '_> {
                 if time > last(trip) || (trip, off) == ride || bit(&self.prefs.trip_closed, trip) {
                     continue;
                 }
+                if let Some(b) = &before {
+                    self.steps.add((b.hi - b.lo) as u64);
+                    // (no other takes its place, but one that leaves in the same second waits as well; back, this
+                    // is an arrival the vehicle does not wait for, and the one before it is another matter)
+                    if self.forbidden(b, trip, route.line) {
+                        continue;
+                    }
+                }
                 let c = cost(&self.prefs.trip_cost, trip);
                 if c < cheapest {
                     cheapest = c;
-                    self.join(riding, Riding { trip, times, off, cost: base.saturating_add(c), from: h.label, pos }, pos);
+                    self.join(riding, Riding { trip, times, off, cost: base.saturating_add(c), from: h.label, pos, how }, pos);
                 }
                 if !trip_costs || c <= least {
                     break;
@@ -2794,18 +2941,24 @@ impl<'s> Search<'s, '_> {
 
     /// Those of label `lab`, ready at a stop, board the first trip of the route they can catch.
     #[allow(clippy::too_many_arguments)]
-    fn board(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, l: u32, lab: &Label, cost_here: u32, held: bool) {
+    fn board(&mut self, riding: &mut Vec<Riding>, r: u32, route: &Route, pos: u32, l: u32, lab: &Label, cost_here: u32, held: Option<u32>) {
         let stop = lab.stop;
         // only a held label comes off a trip the feed has rules for
         let base = lab.cost.saturating_add(cost(&self.prefs.stop_cost, stop)).saturating_add(cost_here);
         // Whoever rides a trip that leaves here no later than this label is ready, at no more cost, is ahead of
         // anything the label can catch: the usual case along a route, and no search for a trip is needed. (Not so
-        // where trips differ in cost, or the label is under the feed's rules.)
+        // where trips differ in cost, or the label is under the feed's rules; nor where those ahead boarded in a
+        // way that gave them that trip and not the later ones of the route, which this label can board.)
         let trip_costs = self.soft && self.prefs.trip_cost.is_some();
-        if !held && !trip_costs && riding.iter().any(|e| (!self.soft || e.cost <= base) && self.board_time(e.times, pos, e.off) <= lab.time) {
+        let ahead = |e: &Riding| e.how == Boarded::Freely && (!self.soft || e.cost <= base) && self.board_time(e.times, pos, e.off) <= lab.time;
+        if held.is_none() && !trip_costs && riding.iter().chain(self.w.could.iter()).any(ahead) {
             return;
         }
-        let before = if held { self.before(lab, stop) } else { None };
+        let before = if held.is_some() { self.before(lab, stop) } else { None };
+        let how = match (held, &before) {
+            (Some(at), Some(b)) if self.speaks_of(b, route) => Boarded::Under(at),
+            _ => Boarded::Freely,
+        };
         let least = cost(&self.prefs.route_least, r);
         // The earliest boarding so far; where trips differ in cost, the earliest at the least any trip of the route
         // costs. Whoever has that has nothing to gain from a later service day, none of whose trips leaves before
@@ -2852,7 +3005,7 @@ impl<'s> Search<'s, '_> {
                     if !trip_costs || c <= least {
                         best = best.min(time);
                     }
-                    self.join(riding, Riding { trip, times, off, cost: base.saturating_add(c), from: l, pos }, pos);
+                    self.join(riding, Riding { trip, times, off, cost: base.saturating_add(c), from: l, pos, how }, pos);
                 }
                 // (no trip of this route costs less than that: nothing later is cheaper)
                 if !trip_costs || c <= least {
@@ -2872,13 +3025,19 @@ impl<'s> Search<'s, '_> {
         let time = self.board_time(new.times, pos, new.off);
         let mut i = 0;
         while i < riding.len() {
-            let e = &riding[i];
+            let e = riding[i];
             let t = self.board_time(e.times, pos, e.off);
             if t <= time && (!self.soft || e.cost <= new.cost) {
+                if !covers(&e, &new) {
+                    self.could_too(riding, new, pos);
+                }
                 return;
             }
             if time <= t && (!self.soft || new.cost <= e.cost) {
                 riding.swap_remove(i);
+                if !covers(&new, &e) {
+                    self.could_too(riding, e, pos);
+                }
             } else {
                 i += 1;
             }
@@ -2890,6 +3049,23 @@ impl<'s> Search<'s, '_> {
                 riding.swap_remove(worst);
                 self.dropped = true;
             }
+        }
+    }
+
+    /// Keeps a boarding that rides no further (one in `riding` is here no later and no dearer) for the trips of
+    /// the route that its riders could have boarded, its own and the later ones: unless the riders of one kept
+    /// already, no later and no dearer, could board all of those. Of more than 64 the newest is let go, and the
+    /// answer says a bag was full.
+    fn could_too(&mut self, riding: &[Riding], new: Riding, pos: u32) {
+        let time = self.board_time(new.times, pos, new.off);
+        let ahead = |s: &Self, e: &Riding| s.board_time(e.times, pos, e.off) <= time && (!s.soft || e.cost <= new.cost) && covers(e, &new);
+        if riding.iter().chain(self.w.could.iter()).any(|e| ahead(self, e)) {
+            return;
+        }
+        if self.w.could.len() < 64 {
+            self.w.could.push(new);
+        } else {
+            self.dropped = true;
         }
     }
 

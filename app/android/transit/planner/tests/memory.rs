@@ -232,12 +232,12 @@ fn a_country_takes_what_the_readme_says() {
 }
 
 /// What a planner's index takes is known before it is made, to the byte: of every file here the most held at once
-/// while it is made is what `Planner::index_bytes` said, and what stays is no more. The four files written by
-/// hand take what the packer says of them when it writes them: ../pack/test_ttpack.py holds the same four numbers.
+/// while it is made is what `Planner::index_bytes` said, and what stays is no more. The five files written by
+/// hand take what the packer says of them when it writes them: ../pack/test_ttpack.py holds the same five numbers.
 #[test]
 fn an_index_takes_what_was_said_before_it_was_made() {
     let _one = alone();
-    for (name, packer) in [("tiny.tt", Some(352)), ("edges.tt", Some(1704)), ("autumn.tt", Some(152)), ("waits.tt", Some(160)), ("utrecht-20261117.tt", None)] {
+    for (name, packer) in [("tiny.tt", Some(352)), ("edges.tt", Some(1704)), ("autumn.tt", Some(152)), ("waits.tt", Some(160)), ("keten.tt", Some(1432)), ("utrecht-20261117.tt", None)] {
         let bytes = read(name);
         let tt = Timetable::open(&bytes).unwrap();
         let says = Planner::index_bytes(&tt);

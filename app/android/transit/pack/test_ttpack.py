@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The packer's checks: python3 -I app/android/transit/pack/test_ttpack.py
 
-- the hand-written feeds (planner/tests/data/tiny, edges, autumn and waits) pack to the very bytes kept beside them
-  (tiny.tt, edges.tt, autumn.tt, waits.tt), twice over: the planner's tests read those files, so they can't drift from the
-  packer, and the same feed gives the same bytes;
+- the hand-written feeds (planner/tests/data/tiny, edges, autumn, waits and keten) pack to the very bytes kept
+  beside them (tiny.tt, edges.tt, autumn.tt, waits.tt, keten.tt), twice over: the planner's tests read those files,
+  so they can't drift from the packer, and the same feed gives the same bytes;
 - the days the clock changes are found from the feed's timezone and written into the file (edges has the night it
   goes forward, autumn the night it goes back);
 - the cosine table is the planner's (planner/src/geo.rs), number for number, so both measure alike;
@@ -76,11 +76,20 @@ class Packer(unittest.TestCase):
             self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "waits"), kept)
             self.assertIn("47 trips, 0 walks, 1 transfer rules", self.said)
 
+    def test_the_keten_feed_packs_to_the_kept_bytes(self):
+        # (planner/tests/chains.rs: five islands on which one rule of the feed leads to the next)
+        with open(os.path.join(DATA, "keten.tt"), "rb") as f:
+            kept = f.read()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.pack(os.path.join(tmp, "a.tt"), "keten"), kept, "keten.tt is stale: pack planner/tests/data/keten again")
+            self.assertEqual(self.pack(os.path.join(tmp, "b.tt"), "keten"), kept)
+            self.assertIn("30 trips, 18 walks, 11 transfer rules", self.said)
+
     def test_the_summary_says_what_a_planners_index_takes(self):
-        # (the planner says the same four numbers of the same four files, and holds what it asks for to them:
+        # (the planner says the same five numbers of the same five files, and holds what it asks for to them:
         # planner/tests/memory.rs, an_index_takes_what_was_said_before_it_was_made)
         with tempfile.TemporaryDirectory() as tmp:
-            for feed, takes in (("tiny", 352), ("edges", 1704), ("autumn", 152), ("waits", 160)):
+            for feed, takes in (("tiny", 352), ("edges", 1704), ("autumn", 152), ("waits", 160), ("keten", 1432)):
                 self.pack(os.path.join(tmp, feed + ".tt"), feed)
                 self.assertIn("a planner's index: %d bytes\n" % takes, self.said, feed)
         # by hand, of a file with 100 stops, 7 walks, 30 stops along patterns, 5 profiles and a day the clock changes:
