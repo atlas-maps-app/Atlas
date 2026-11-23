@@ -952,7 +952,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * or its clock did ([litPlace]), or the user's Tone or palette (MapEngine.tone, MapEngine.palette). A moment's own
      * step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at rest has not moved); a new
      * Tone or palette is the user's, so once the core has the theme the camera is published again and the map draws it
-     * at once, at rest too.
+     * at once, at rest too. A moment that turned day to night or back draws the canvas again ([draw] reads
+     * [CoreMap.night] for the start's paper and its own overlays).
      */
     private fun sendMoment(c: CoreMap, moment: Moment) {
         val place = litPlace(c) ?: return
@@ -962,10 +963,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         val retoned = before != null && (key.tone != before.tone || key.palette != before.palette)
         moments.start(key)
         val daylight = MapEngine.DAYLIGHT
+        val nightBefore = c.night
         scope.launch(Dispatchers.Default) {
             val ok = c.moment(moment, place.zone, daylight, place.lat, place.lon, key.tone, key.palette).isEmpty()
             main.post {
                 if (core !== c || closed) return@post
+                // while the start's paper waits for the core's picture nothing else draws it again (stepCover), and
+                // at a night start its first draw came before the core had the moment: the day's paper until the fade
+                if (ok && c.night != nightBefore) canvasTick.intValue++
                 // only a moment the core took is recorded as its; one that failed goes again at the next update, and
                 // once at rest
                 if (moments.finish(key, ok)) main.postDelayed(resend, RESEND_MS)
