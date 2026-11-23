@@ -74,6 +74,7 @@ import app.atlas.ui.eat.Meal
 import app.atlas.ui.eat.mealName
 import app.atlas.ui.kit.WalkTime
 import app.atlas.ui.kit.rememberHere
+import app.atlas.ui.kit.rememberHoursAt
 import app.atlas.ui.kit.rememberNow
 import app.atlas.ui.kit.walkMinutes
 import kotlinx.coroutines.CancellationException
@@ -246,7 +247,7 @@ fun WhereScreen(args: Dest.Where, nav: Navigator) {
         if (WherePicker.wet(forecast, services.clock.instant())) filters = filters.copy(indoors = true)
         asked = true
     }
-    val hours = remember(here) { HereContext.hours(services, here, ZonedDateTime.now(services.clock).zone) }
+    val hours = rememberHoursAt(here)
     val places by produceState<WheelPlaces?>(null, filters, here, asked) { if (asked) value = WherePicker.places(services, here, filters, now, hours) }
     var spins by rememberSaveable { mutableIntStateOf(0) }
     var landed by remember { mutableStateOf<Pair<Int, Place>?>(null) }
@@ -390,7 +391,7 @@ private fun WhereChip(text: String, on: Boolean, symbol: String? = null, onClick
 @Composable
 private fun Landed(w: Wedge, p: Place, here: LatLon, now: LocalDateTime, hours: OpeningHoursContext, lang: String, nav: Navigator, modifier: Modifier) {
     val services = LocalServices.current
-    val line = remember(p, now) { PlaceLine.of(p, here, lang, now, open = OpeningHours.parseOrNull(p.tags["opening_hours"])?.status(now, hours)) }
+    val line = remember(p, now, hours.country) { PlaceLine.of(p, here, lang, now, open = OpeningHours.parseOrNull(p.tags["opening_hours"])?.status(now, hours), country = hours.country) }
     val sunset = remember(here, now) { Sun.times(now.toLocalDate(), here.lat, here.lon, ZonedDateTime.now(services.clock).zone).sunset?.toLocalDateTime() }
     val walk = Geo.distance(here, p.location)
     Column(

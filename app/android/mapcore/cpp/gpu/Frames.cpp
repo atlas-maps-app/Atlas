@@ -13,9 +13,16 @@ namespace {
 constexpr std::uint32_t marks = static_cast<std::uint32_t>(Mark::count);
 } // namespace
 
+std::uint64_t Frames::wait_ns(const Device& device) noexcept {
+    const vk::PhysicalDeviceType type = device.facts().type;
+    const bool gpu = type == vk::PhysicalDeviceType::eIntegratedGpu || type == vk::PhysicalDeviceType::eDiscreteGpu;
+    return gpu ? 2'000'000'000ULL : 60'000'000'000ULL;
+}
+
 Result<Frames> Frames::create(const Device& device) {
     Frames frames;
     frames.device_ = &device;
+    frames.slot_wait_ns_ = wait_ns(device);
     const vk::raii::Device& d = device.handle();
     for (std::uint32_t i = 0; i < in_flight; ++i) {
         FrameSlot& s = frames.slots_[i];
@@ -90,16 +97,16 @@ void Frames::read_back(FrameSlot& slot) {
 
 Result<FrameSlot*> Frames::begin(std::uint64_t number) {
     FrameSlot& slot = slots_[next_];
-    next_ = (next_ + 1) % in_flight;
     const vk::raii::Device& d = device_->handle();
     waited_ms_ = 0;
     if (slot.pending) {
         const auto waiting = std::chrono::steady_clock::now();
-        const vk::Result waited = d.waitForFences(*slot.done, vk::True, UINT64_MAX);
+        const vk::Result waited = d.waitForFences(*slot.done, vk::True, slot_wait_ns_);
         waited_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waiting).count();
-        if (waited != vk::Result::eSuccess) return fail(waited, "a frame's fence");
+        if (waited != vk::Result::eSuccess) return fail(waited, "a frame's fence"); // the slot kept for the next begin
         read_back(slot);
     }
+    next_ = (next_ + 1) % in_flight;
     ATLAS_VK_CHECK(d.resetFences(*slot.done), "resetting a frame's fence");
     ATLAS_VK_CHECK(slot.pool.reset({}), "resetting a frame's command pool");
     ATLAS_VK_CHECK(slot.cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}),
@@ -126,6 +133,12 @@ Result<void> Frames::submit(FrameSlot& slot, bool acquired, vk::Semaphore render
     const vk::raii::CommandBuffer& cmd = slot.cmd;
     if (*statistics_) cmd.endQuery(*statistics_, slot.slot);
     ATLAS_VK_CHECK(cmd.end(), "ending a frame's commands");
+#if defined(ATLAS_TESTS)
+    if (fail_submit_) {
+        fail_submit_ = false;
+        return fail(vk::Result::eErrorOutOfDeviceMemory, std::format("submitting frame {} (a test's)", slot.number));
+    }
+#endif
     const vk::Semaphore wait = *slot.acquired;
     // The acquired image is first touched by the main pass's colour writes (or the barrier before them).
     const vk::PipelineStageFlags wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -139,6 +152,27 @@ Result<void> Frames::submit(FrameSlot& slot, bool acquired, vk::Semaphore render
                               .pSignalSemaphores = &rendered};
     ATLAS_VK_CHECK(device_->queue().submit(info, *slot.done), std::format("submitting frame {}", slot.number));
     slot.pending = true;
+    return {};
+}
+
+Result<void> Frames::hold_next() {
+    FrameSlot& slot = slots_[next_];
+    const vk::raii::Device& d = device_->handle();
+    if (slot.pending) {
+        const vk::Result waited = d.waitForFences(*slot.done, vk::True, UINT64_MAX);
+        if (waited != vk::Result::eSuccess) return fail(waited, "a frame before its slot is held");
+        read_back(slot);
+    }
+    ATLAS_VK_CHECK(d.resetFences(*slot.done), "resetting a held slot's fence");
+    slot.pending = true;
+    held_ = next_;
+    return {};
+}
+
+Result<void> Frames::let_go() {
+    if (held_ == in_flight) return {};
+    ATLAS_VK_CHECK(device_->queue().submit(nullptr, *slots_[held_].done), "letting a held slot go");
+    held_ = in_flight;
     return {};
 }
 
@@ -224,6 +258,7 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
     const auto start = clock::now();
     FrameReport report;
     report.number = ++number_;
+    unsubmitted_ = false;
     auto begun = [&] {
         const trace::Section traced("atlas frame fence"); // the slot's frame from two frames ago, done on the GPU
         return frames_->begin(report.number);
@@ -254,7 +289,11 @@ Result<FrameReport> Renderer::draw(std::uint64_t desired_ns) {
     report.record_ms = std::chrono::duration<double, std::milli>(clock::now() - recording).count();
     {
         const trace::Section traced("atlas submit");
-        ATLAS_GPU_CHECK(frames_->submit(*slot, output_->acquire_signals(), output_->rendered(image)));
+        auto submitted = frames_->submit(*slot, output_->acquire_signals(), output_->rendered(image));
+        if (!submitted) {
+            unsubmitted_ = true; // recorded, and never on the GPU (unsubmitted())
+            return std::unexpected(std::move(submitted.error()));
+        }
     }
     const Acquired presented = [&] {
         const trace::Section traced("atlas present");

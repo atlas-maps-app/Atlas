@@ -51,6 +51,9 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsPropertyKey
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.drawText
@@ -311,7 +314,7 @@ internal fun KindPin(symbol: String, colour: Int, modifier: Modifier = Modifier,
 internal fun KindTile(
     symbol: String, colour: Int, tone: Tone?, modifier: Modifier = Modifier, size: Dp = ROW_TILE, faded: Boolean = tone == Tone.CLOSED,
 ) {
-    Box(modifier.size(size)) {
+    Box(modifier.size(size).semantics { tileMark = "kind:$symbol" }) {
         Box(Modifier.closed(faded)) { RowTile(symbol, Color(colour), size) }
         if (tone != null && tone != Tone.UNKNOWN) StatusLight(tone, Modifier.align(Alignment.BottomEnd).offset(x = 3.dp, y = 3.dp))
     }
@@ -320,14 +323,24 @@ internal fun KindTile(
 /** The side of a row's tile: the "NEAREST" row's 40. */
 internal val ROW_TILE = 40.dp
 
-/** A chain's place on its own sign, in the colours it has in the street, with its status light ([signOf]); [faded] as [KindTile]. */
+/**
+ * A chain's place on its own sign, in the colours it has in the street, its logo or its letter, with its status light
+ * ([signOf]); [faded] as [KindTile]. The letter is not said: the row says the name.
+ */
 @Composable
 internal fun SignTile(brand: Brand, tone: Tone?, modifier: Modifier = Modifier, size: Dp = ROW_TILE, faded: Boolean = tone == Tone.CLOSED) {
-    Box(modifier.size(size)) {
+    Box(modifier.size(size).clearAndSetSemantics { tileMark = "sign:${brand.id}" }) {
         BrandSign(brand, brand.name, size, Modifier.closed(faded), shape = RoundedCornerShape(size * 0.3f))
         if (tone != null && tone != Tone.UNKNOWN) StatusLight(tone, Modifier.align(Alignment.BottomEnd).offset(x = 3.dp, y = 3.dp))
     }
 }
+
+/**
+ * What a row's tile shows, for the tests: "sign:" and the brand's id ([SignTile]), or "kind:" and the symbol
+ * ([KindTile]); a row's merged semantics carry its tile's.
+ */
+internal val TileMark = SemanticsPropertyKey<String>("TileMark", mergePolicy = { parent, child -> parent ?: child })
+internal var SemanticsPropertyReceiver.tileMark by TileMark
 
 /** A closed place's mark, where [faded]: half way into the paper under it, which shows through ([Palette.CLOSED_FADE]). */
 private fun Modifier.closed(faded: Boolean): Modifier = if (faded) alpha(1f - Palette.CLOSED_FADE) else this

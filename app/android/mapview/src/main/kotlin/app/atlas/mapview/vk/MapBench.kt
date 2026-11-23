@@ -445,6 +445,8 @@ object MapBench {
         val look: String,
         /** The Fast refresh: the user's Look setting, what each setup ran with, the display's modes. */
         val refresh: String,
+        /** The text's glyph atlas at the end ([glyphs]), or `—`. */
+        val glyphs: String = "—",
     )
 
     /** A setup's line of a lap's numbers, as CI keeps it: `vkbench real <key> lap: <VkBench.line's numbers> …`. */
@@ -483,6 +485,7 @@ object MapBench {
         )
         appendLine("Tiles: ${head.tiles}. ${head.look}. Battery ${head.battery}. Thermal headroom ${head.thermal}.")
         appendLine("Refresh: ${head.refresh}.")
+        appendLine("Glyphs: ${head.glyphs} (the text's atlas at the end; past its rows a letter is not drawn).")
         appendLine("Budgets: p50 ≤ $BUDGET_P50 ms, p95 ≤ $BUDGET_P95 ms (presented intervals), 0 frames at rest.")
         appendLine()
         appendLine(pad("setup", 7) + left("p50", 7) + left("p95", 7) + left("drop", 6) + left("shown/s", 8) + left("gpu50", 7) +
@@ -572,4 +575,7 @@ object MapBench {
 
     /** The core's GPU memory in its stats line (`… graphics <MB> MB`), MB; NaN where it says none. */
     fun gpuMemory(stats: String): Double = Regex("""graphics ([0-9.]+) MB""").find(stats)?.groupValues?.get(1)?.toDoubleOrNull() ?: Double.NaN
+
+    /** The text's glyph atlas in the core's stats line (`… vk glyphs <n> in <c> of <m> curve rows and <b> of <m> band rows[, full]`), `—` where it says none. */
+    fun glyphs(stats: String): String = Regex("""vk glyphs ([^;]+)""").find(stats)?.groupValues?.get(1)?.trim() ?: "—"
 }

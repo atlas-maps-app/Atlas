@@ -929,6 +929,10 @@ jobs:
       - name: Build the packer
         working-directory: app/android
         run: ./gradlew :packer:installDist --stacktrace
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as rust-toolchain.toml pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "The core's stage P tool"
         # The packs are read as the phone's store reads them, by the core's own code (mapcore/cpp/stagep), built alone
         # (the host-stagep preset) with LLVM's clang and libc++ at core.yml's pin, as packs.yml builds it.
@@ -1165,6 +1169,10 @@ jobs:
             echo "- its views' own walk: $(wc -l < "$K/views.txt") packs, $(wc -l < "$K/views-more.txt") of them not kept; $(tail -1 "$K/views-cut.txt")"
             { grep -E '^world-refs: (not kept|kept) for netherlands: ' "$K/views-cut.txt" || true; } | sed 's/^/- /'
           } >> "$GITHUB_STEP_SUMMARY"
+      # The Rust the buildings' cleaning is built with (app/android/rust-toolchain.toml; cpp/cmake/Rust.cmake)
+      - name: Rust, as rust-toolchain.toml pins it
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/rust.sh"
       - name: "Map core host build: LLVM's clang and libc++, and ccache"
         run: |
           LLVM=$(grep -m1 "^  LLVM: '" .github/workflows/core.yml | cut -d"'" -f2) # core.yml's pin: NDK r30's major

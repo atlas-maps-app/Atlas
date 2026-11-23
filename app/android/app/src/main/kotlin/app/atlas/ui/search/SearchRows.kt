@@ -292,7 +292,8 @@ internal enum class Arrival(val tone: Tone) { CLOSED(Tone.CLOSED), CLOSES(Tone.S
  */
 internal fun arrivalOf(open: OpenStatus?, minutes: Int, now: LocalDateTime): Pair<Arrival, Int>? {
     if (open == null) return null
-    val at = open.changesAt ?: return null
+    // an open end states no closing time: open on arriving, as far as its hours say
+    val at = open.statedChangeAt ?: return null
     val after = Duration.between(now.plusMinutes(minutes.toLong()), at).toMinutes().toInt()
     return when {
         open.isOpen && open.nextChangeKind == ChangeKind.CLOSES -> when {
@@ -351,6 +352,13 @@ internal fun statusOf(words: String?, tone: Tone, mark: String?, rest: List<Stri
     }
 }
 
+/**
+ * Whether a fact in words is the kind's own word ("Pizza" a pizza place's cuisine), ignoring case and the space around
+ * it: a line then says it once, as the kind in its place ("Pizza · Pizza" read as one word said twice).
+ */
+internal fun sameWord(fact: String?, kind: String?): Boolean =
+    fact != null && kind != null && fact.trim().equals(kind.trim(), ignoreCase = true)
+
 /** For hours not checked for long, the year they last were ("’17"), "?" when never; null for hours still sure. */
 internal fun staleMark(h: ResultHit): String? =
     if (!h.hoursStale) null else h.hoursChecked?.let { "’" + "%02d".format(it.year % 100) } ?: "?"
@@ -369,7 +377,7 @@ internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true, seat: 
     val c = indexColors()
     val p = h.record.place
     val lang = w.lang
-    val line = remember(h, w.now) { PlaceLine.of(p, null, lang, w.now, h.open, w.nameOf(h), h.metres) }
+    val line = remember(h, w.now, w.country) { PlaceLine.of(p, null, lang, w.now, h.open, w.country, w.nameOf(h), h.metres) }
     val arrival = arrivalWords(h.open, h.minutes, w.now)
     val tone = arrival?.second ?: if (h.open == null) Tone.UNKNOWN else line.tone
     val words = (arrival?.first ?: openWords(line))?.let { if (!h.hoursConfirmed) "≈ $it" else it }
@@ -388,10 +396,10 @@ internal fun PlaceRow(h: ResultHit, w: RowWays, hairline: Boolean = true, seat: 
     // where it misses the hour asked, that says more than open or not now
     val timed = h.misses.firstOrNull().let { it is Miss.Opens || it is Miss.Closed || it == Miss.HoursUnknown }
     IndexLine(
-        line.summary.name, rowStatus(words.takeUnless { timed }, tone, staleMark(h).takeUnless { timed }, spare, near, worded, listOfNotNull(kind, distance), missed),
+        line.summary.name, rowStatus(words.takeUnless { timed }, tone, staleMark(h).takeUnless { timed }, spare, near, worded.filterNot { sameWord(it.text, kind) }, listOfNotNull(kind, distance), missed),
         onClick = { w.onPlace(p) }, modifier = Modifier.testTag(PLACE_TAG),
         reach = { Reach(h.minutes, h.metres) },
-        lead = { remember(p) { signOf(p) }?.let { SignTile(it, tone) } ?: KindTile(line.summary.symbol, line.summary.colour, tone) },
+        lead = { remember(p, w.country) { signOf(p, w.country) }?.let { SignTile(it, tone) } ?: KindTile(line.summary.symbol, line.summary.colour, tone) },
         seat = seat,
         trailing = if (kept == null && power == null && symbols.isEmpty() && unknown.isEmpty() && plan == null) null else ({
             Row(Modifier.padding(start = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -424,10 +432,10 @@ internal fun PlanKey(onClick: () -> Unit) {
     ) { Symbol("temaki-info_board", tint = c.ink, size = 18.dp) }
 }
 
-/** The minutes to spare on arriving before it closes, where it closes within the errand's window; null where not. */
-private fun spareMinutes(h: ResultHit, now: LocalDateTime): Int? {
+/** The minutes to spare on arriving before it closes, where it closes within the errand's window; null where not, or where an open end states no closing time. */
+internal fun spareMinutes(h: ResultHit, now: LocalDateTime): Int? {
     val open = h.open?.takeIf { it.isOpen && it.nextChangeKind == ChangeKind.CLOSES } ?: return null
-    val at = open.changesAt ?: return null
+    val at = open.statedChangeAt ?: return null
     return Duration.between(now.plusMinutes(h.minutes.toLong()), at).toMinutes().toInt().takeIf { it in MIN_SPARE..CLOSING_WINDOW }
 }
 
@@ -606,7 +614,7 @@ internal fun DeckRow(b: ResultItem.Deck, w: RowWays) {
     }
     var open by rememberSaveable(id) { mutableStateOf(false) }
     val first = b.first
-    val mark = remember(first.record.place) { markOf(first.record.place) }
+    val mark = remember(first.record.place, w.country) { markOf(first.record.place, w.country) }
     val anyOpen = b.hits.count { it.open?.isOpen == true }
     // none of which says whether it is open (gift shops mapping no hours): how many alone, no "0 open"
     val told = b.hits.any { it.open != null }
@@ -638,7 +646,7 @@ internal fun DeckRow(b: ResultItem.Deck, w: RowWays) {
                     // a chain's deck wears its own sign, as its pins have it, else its logo on its family's colour; lighter
                     // where every branch is closed, as their pins are
                     val shut = b.hits.all { closedThere(it.open, it.minutes, w.now) }
-                    remember(first.record.place) { signOf(first.record.place) }?.let { SignTile(it, null, faded = shut) }
+                    remember(first.record.place, w.country) { signOf(first.record.place, w.country) }?.let { SignTile(it, null, faded = shut) }
                         ?: KindTile(mark.first, mark.second, null, faded = shut)
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(name, style = INDEX_NAME, color = c.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)

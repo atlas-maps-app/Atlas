@@ -57,7 +57,7 @@ class ChargeRepositoryTest {
         val w = Services.WESTERKERK
         val charger = Place(OsmId(OsmType.NODE, 1), LatLon(w.lat + 0.001, w.lon), mapOf("amenity" to "charging_station", "capacity" to "2"))
         val pump = Place(OsmId(OsmType.NODE, 2), LatLon(w.lat - 0.001, w.lon), mapOf("amenity" to "fuel", "brand" to "Shell", "name" to "Shell"))
-        val services = testServices(stores = listOf(MemoryPlaces(listOf(charger, pump))))
+        val services = testServices(stores = listOf(MemoryPlaces(listOf(charger, pump), country = null)))
         val got = ChargeRepository(services).load(w, 1_000.0)
         assertEquals(listOf("charging_station"), got.places.map { it.tags["amenity"] })
         services.close()

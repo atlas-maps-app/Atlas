@@ -85,7 +85,7 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
     var confirmReview by remember { mutableStateOf<Triple<Int, String, app.atlas.providers.Service?>?>(null) }
     var confirmQuest by remember { mutableStateOf<Pair<Quest, Boolean>?>(null) }
     // the status comes after the place where the hours are borrowed
-    val summary = remember(place, here, state.now, state.status) { PlaceSummary.of(place, here, lang, state.now).copy(open = state.status) }
+    val summary = remember(place, here, state.now, state.status, state.country) { PlaceSummary.withOpen(place, here, lang, state.status, state.country) }
     val words = remember(summary, state.now) { OpenWords.of(summary, state.now) }
     val guessed = state.guess?.let { guessFrom(it) }
 
@@ -107,7 +107,7 @@ internal fun PlaceSheetContent(place: Place, state: PlaceState, vm: PlaceViewMod
     if (week && state.hours != null) {
         // borrowed hours lead on to the real ones: What's here on the place, where a note leaves them for the mappers
         val correct = place.id?.takeIf { guessed != null }?.let { id -> { week = false; nav.go(Dest.WhatsHere(place.location.lat, place.location.lon, id.toString())) } }
-        WeekTableDialog(state.hours, place.tags["opening_hours"].orEmpty(), state.now.toLocalDate(), state.hoursContext, state.country, guessed, correct) { week = false }
+        WeekTableDialog(state.hours, place.tags["opening_hours"].orEmpty(), state.now.toLocalDate(), state.hoursContext, guessed, correct) { week = false }
     }
     if (review) {
         val eatery = Categories.groupOf(place.tags)?.id == "eat"
@@ -481,7 +481,7 @@ private fun AnswerButton(symbol: String, glyph: Float, description: String, tint
 private fun InfoCard(place: Place, state: PlaceState, here: LatLon) {
     val t = place.tags
     val rows = buildList {
-        Localise.address(t)?.let { add("ui-map-pin" to it) }
+        Localise.address(t, state.country)?.let { add("ui-map-pin" to it) }
         (t["phone"] ?: t["contact:phone"])?.let { add("ui-phone" to it.substringBefore(';').trim()) }
         (t["website"] ?: t["contact:website"])?.let { add("ui-globe" to it.substringBefore(';').trim().removePrefix("https://").removePrefix("http://").trimEnd('/')) }
         t["opening_hours"]?.let { add("ui-clock" to it) }

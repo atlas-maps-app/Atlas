@@ -129,6 +129,7 @@ void Residency::want(std::span<const Request> requests) {
     // before the frame waits on it.
     std::unique_lock<std::mutex> hinting;
     if (hints_) hinting = std::unique_lock(hint_mutex_);
+    bool added = false; // a job queued that was not queued before
     {
         const std::scoped_lock lock(mutex_);
         ++generation_;
@@ -209,7 +210,10 @@ void Residency::want(std::span<const Request> requests) {
         }
         for (Job& j : queue) {
             const std::uint64_t k = key_of(j.request.key, j.pack);
-            if (!underway_.contains(k)) ++stats_.requested;
+            if (!underway_.contains(k)) {
+                ++stats_.requested;
+                added = true;
+            }
             underway_[k] = 1;
         }
         std::ranges::stable_sort(queue, [](const Job& a, const Job& b) {
@@ -219,8 +223,12 @@ void Residency::want(std::span<const Request> requests) {
         queue_ = std::move(queue);
         for (Job& j : queue_) j.request.pack = j.pack; // the views follow the strings into the new vector
         if (hints_) tell(urgent_locked());
+        if (added) ++stats_.wakes;
     }
-    wake_.notify_all();
+    // The workers wake only for work this call added (ENGINE.md's audit, B1): one waits only while the queue is empty
+    // and nothing under way has a pass or a piece to hand out, so a queue the same as the last frame's, reordered or
+    // shorter, has nothing for an idle worker; every frame woke every worker for it before.
+    if (added) wake_.notify_all();
 }
 
 std::uint64_t Residency::wanted_for(std::uint64_t parts) const {

@@ -817,7 +817,8 @@ TEST_CASE("trees: close up, every clump of a tree drawn as its twin decides it")
     const std::string dir = environment("ATLAS_TILES_DIR");
     if (dir.empty()) return;
     const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (!std::filesystem::exists(path)) return;
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
     // the bundled pack's first tree, looked at from 45 m and from 25 m: tree_close's 26 and 36 clumps, its limbs and
     // its trunk's sunlit side, and its neighbours'
     auto source = tiles::MappedSource::open(path.string());
@@ -855,7 +856,8 @@ TEST_CASE("things: a bridge's railings close up, drawn as their twin decides the
     const std::string dir = environment("ATLAS_TILES_DIR");
     if (dir.empty()) return;
     const std::filesystem::path path = std::filesystem::path(dir) / "amsterdam.atlas";
-    if (!std::filesystem::exists(path)) return;
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
     // the bundled pack's first bridge, looked at from 40 m: its railings' rails and posts, with weather and without
     auto source = tiles::MappedSource::open(path.string());
     ATLAS_REQUIRE(source.has_value());

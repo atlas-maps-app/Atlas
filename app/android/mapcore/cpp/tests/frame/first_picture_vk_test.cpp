@@ -237,10 +237,13 @@ struct Serial {
 TEST_CASE("the first picture at the Westerkerk home: every tile in view built on 2 workers and on 8, each tile on one "
           "worker as before gain 9 and shared, with the sun and without; and each pass's share of their stage T") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
-    if (dir.empty() || !std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas")) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the first picture is not timed here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas"),
+                  "ATLAS_TILES_DIR has no " << (std::filesystem::path(dir) / "grachten.atlas").string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -317,10 +320,13 @@ TEST_CASE("the first picture at the Westerkerk home: every tile in view built on
 
 TEST_CASE("a dense tile in view while moving: built on 1 worker, as every tile was before gain 9, and on 2, 3 and 8") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
-    if (dir.empty() || !std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas")) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the dense tile is not timed here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas"),
+                  "ATLAS_TILES_DIR has no " << (std::filesystem::path(dir) / "grachten.atlas").string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
@@ -358,10 +364,13 @@ TEST_CASE("a dense tile in view while moving: built on 1 worker, as every tile w
 
 TEST_CASE("every tile the workers build is each pass's build by one thread alone, byte for byte (gain 9)") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
-    if (dir.empty() || !std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas")) {
+    if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR has no canal ring's pack: the workers' tiles are not held to one thread's here");
         return;
     }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(std::filesystem::path(dir) / "grachten.atlas"),
+                  "ATLAS_TILES_DIR has no " << (std::filesystem::path(dir) / "grachten.atlas").string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);

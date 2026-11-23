@@ -21,7 +21,6 @@ import app.atlas.places.Categories
 import app.atlas.places.CategoryNode
 import app.atlas.places.CategoryTree
 import app.atlas.places.NodeKind
-import app.atlas.places.PublicHolidays
 import app.atlas.places.SunClock
 import app.atlas.places.TagFilter
 import app.atlas.providers.BathingSite
@@ -81,6 +80,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
@@ -336,7 +336,10 @@ class SearchSheetModel(
     private val mutable = MutableStateFlow(SearchSheetState(centre, moment(centre, SearchPrefs())))
     val state: StateFlow<SearchSheetState> = mutable.asStateFlow()
 
-    private var pool: List<PlaceRecord> = emptyList()
+    /** The grid's places as shown ([showPool]): none before the first come. */
+    private var pool: Pool? = null
+
+    /** The centre the grid's places are being read around, or were: from the moment their reading begins ([loadPool]). */
     private var poolAt: LatLon? = null
     private var poolJob: Job? = null
     private var questsJob: Job? = null
@@ -345,6 +348,9 @@ class SearchSheetModel(
     private var alsoJob: Job? = null
     private var furtherJob: Job? = null
     private var walkJob: Job? = null
+
+    /** The regions asked off the main thread what region the centre is in ([settleRegion]). */
+    private var regionJob: Job? = null
 
     /** The node's places around, the same kind further away, and their hours. */
     private var places: List<PlaceRecord> = emptyList()
@@ -362,6 +368,20 @@ class SearchSheetModel(
     private var askedHits: List<Hit> = emptyList()
     private var askJob: Job? = null
 
+    /**
+     * The sheet's readings under way, by name: "pool" (the grid's places), "quests", "node" (a kind's), "rank", "also"
+     * (what else sells), "further" (the kind further), "walk", "region", "sites" (the bathing waters) and "ask" (typed
+     * words); one cancelled is under way until its body has returned. For a test that reads the sheet once its work is
+     * done, or all of it but what the test holds back (the app maintainer, 19 November 2026, batch 6 B9: it waited for
+     * a quiet tenth of a second). Not counted: the collectors that run for the sheet's life, what the user sends or
+     * keeps, and the kinds of a list opened from a kind ([openEvery]). The main thread.
+     */
+    internal val busy: Set<String>
+        get() = mapOf(
+            "pool" to poolJob, "quests" to questsJob, "node" to nodeJob, "rank" to rankJob, "also" to alsoJob,
+            "further" to furtherJob, "walk" to walkJob, "region" to regionJob, "sites" to sitesJob, "ask" to askJob,
+        ).filterValues { it != null && !it.isCompleted }.keys
+
     /** The circle typed words asked for ("within 500 m"): it does not widen. */
     private var fixedRadius: Double? = null
 
@@ -369,6 +389,7 @@ class SearchSheetModel(
     @Volatile private var holiday = false
 
     init {
+        settleRegion(centre)
         viewModelScope.launch {
             services.settings.data.map(::prefsOf).distinctUntilChanged().collect { p ->
                 val s = mutable.value
@@ -381,6 +402,7 @@ class SearchSheetModel(
                 // a filter kept or let go applies at once to the kind open
                 val selection = if (s.inside) s.selection.minus(s.prefs.sticky - p.sticky) + FacetSelection.of(p.sticky - s.prefs.sticky) else s.selection
                 mutable.value = s.copy(prefs = p, moment = moment(s.centre, p), selection = selection)
+                settleRegion(s.centre)
                 refreshNow()
                 // another way of getting about looks again, a quarter of an hour of it around; the kind in view shown with
                 // its kin, or no longer, reads its places again
@@ -388,12 +410,17 @@ class SearchSheetModel(
                 if (s.inside && (p.mode != s.prefs.mode || rejoined)) reload() else if (s.inside) rerank()
             }
         }
+        // a published country's tiles' index came into memory (the camera's, a window's): the country near a border may
+        // read otherwise now, so the moment is made again as when the sky changed (the app maintainer, 19 November
+        // 2026, batch 6 B15: at Antwerp on a Dutch phone it read the Netherlands till the next move)
+        viewModelScope.launch { services.packCountries.indexesRead.drop(1).collect { skyChanged() } }
     }
 
     /** The search opened here, or the searcher moved: the grid's places are read, again once it is [POOL_MOVE_M] away. */
     fun moveTo(c: LatLon) {
         val s = mutable.value
         mutable.value = s.copy(centre = c, moment = moment(c, s.prefs))
+        settleRegion(c)
         val last = poolAt
         if (last == null || Geo.distance(last, c) > POOL_MOVE_M) loadPool(c)
     }
@@ -402,6 +429,7 @@ class SearchSheetModel(
     fun skyChanged() {
         val s = mutable.value
         mutable.value = s.copy(moment = moment(s.centre, s.prefs))
+        settleRegion(s.centre)
         refreshNow()
         if (s.inside) rerank()
     }
@@ -494,12 +522,11 @@ class SearchSheetModel(
      * last line asks as it comes into view, so the facts of every place near are read only for those who scroll there.
      */
     fun countQuests() {
-        val c = poolAt ?: return
+        val shown = pool ?: return
         if (mutable.value.quests != null || questsJob?.isActive == true) return
-        val places = pool
         questsJob = viewModelScope.launch {
-            val n = withContext(Dispatchers.Default) { runCatching { QuestFinder.countAround(services, places.map { it.place }, c, lang) }.getOrDefault(0) }
-            if (pool === places) mutable.value = mutable.value.copy(quests = n)
+            val n = withContext(Dispatchers.Default) { runCatching { QuestFinder.countAround(services, shown.places.map { it.place }, shown.at, lang) }.getOrDefault(0) }
+            if (pool === shown) mutable.value = mutable.value.copy(quests = n)
         }
     }
 
@@ -554,7 +581,7 @@ class SearchSheetModel(
     fun reword(text: String) {
         val s = mutable.value
         val now = ZonedDateTime.now(services.clock)
-        val parsed = app.atlas.search.QueryParser.parse(text, lang, now)
+        val parsed = app.atlas.search.QueryParser.parse(text, lang, now, s.moment.hours.country)
         if (parsed.steps.isEmpty()) return close()
         if (parsed.isPlan) return plan(Asked.Outing(text, parsed, refine = (s.asked as? Asked.Outing)?.refine.orEmpty()))
         ask(Asked.Words(text, parsed))
@@ -653,7 +680,7 @@ class SearchSheetModel(
         val serving = s.intent ?: return
         walkJob = viewModelScope.launch {
             val greens = withContext(Dispatchers.Default) {
-                (places + pool).filter { serving.takes(it) && serving.goesRound(it) }.distinctBy { it.place.key }.mapNotNull { r ->
+                (places + pool?.places.orEmpty()).filter { serving.takes(it) && serving.goesRound(it) }.distinctBy { it.place.key }.mapNotNull { r ->
                     r.place.bbox?.takeIf { Laps.metres(it) != null }?.let { Green(it, r.name(lang) ?: r.place.name()) }
                 }
             }
@@ -862,7 +889,7 @@ class SearchSheetModel(
                     return@collect
                 }
                 found += id
-                val r = PlaceRecord.of(place)
+                val r = PlaceRecord.of(place, s.moment.hours.country)
                 val metres = r.distanceTo(s.centre)
                 val e = ours() ?: return@collect
                 val kinds = e.kinds.map { p -> if (p.node.id == id) p.copy(nearest = r, metres = metres, minutes = Travel.minutes(metres, s.moment.mode)) else p }
@@ -1004,40 +1031,51 @@ class SearchSheetModel(
         questsJob?.cancel()
         poolAt = c
         poolJob = viewModelScope.launch {
+            val country = withContext(Dispatchers.IO) { HereContext.country(services, c) }
             val (found, origin) = try {
-                withContext(Dispatchers.IO) { aroundOnPhone(c, POOL_RADIUS_M) }
+                withContext(Dispatchers.IO) { aroundOnPhone(c, POOL_RADIUS_M, country) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 emptyList<PlaceRecord>() to null
             }
             holiday = withContext(Dispatchers.IO) { runCatching { holidayAt(c) }.getOrDefault(false) }
-            showPool(c, found, origin)
-            // online, where the phone holds part of the circle: the map's windows it keeps no data for, from Atlas's packs
+            showPool(Pool(c, found, origin))
+            // online, where the phone holds part of the circle: the map's windows it keeps no data for, from Atlas's packs,
+            // waited for however much of it they make, as nothing is asked after them
             if (origin != PlaceOrigin.STORE && !services.config.offline && services.connectivity.online.value) {
                 val more = try {
-                    services.localData.inWindowPacks(c, POOL_RADIUS_M, ANY_PLACE, POOL_LIMIT)
+                    services.localData.inWindowPacks(c, POOL_RADIUS_M, ANY_PLACE, POOL_LIMIT, waitForPart = true)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     null
                 }
-                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(c, more.value.map { PlaceRecord.of(it) }, PlaceOrigin.PACK)
+                if (more != null && more.value.map { it.key } != found.map { it.place.key }) showPool(Pool(c, more.value.map { PlaceRecord.of(it, country) }, PlaceOrigin.PACK))
             }
         }
     }
 
-    /** The grid's tiles, the Now shelf, the kinds around and the chains around, from [found], the places around [c]. */
-    private suspend fun showPool(c: LatLon, found: List<PlaceRecord>, origin: PlaceOrigin?) {
-        pool = found
+    /**
+     * The places read around a centre, with where they came from, as the grid shows them ([showPool]): a region settled
+     * at a centre shows them again only where they are that centre's (the app maintainer, 18 November 2026, batch 5 A4).
+     */
+    private class Pool(val at: LatLon, val places: List<PlaceRecord>, val origin: PlaceOrigin?)
+
+    /** The grid's tiles, the Now shelf, the kinds around and the chains around, from [shown]'s places, read around its centre. */
+    private suspend fun showPool(shown: Pool) {
+        val c = shown.at
+        val found = shown.places
+        pool = shown
         mutable.value.node?.let { findAlso(it) }
+        // the region at the centre as known: the pool's country was asked off the main thread before it came
         mutable.value = mutable.value.let { it.copy(moment = moment(it.centre, it.prefs)) }
         val s = mutable.value
         val (pulses, served) = withContext(Dispatchers.Default) {
             val book = HoursBook(found)
             Browse.pulses(GRID, found, c, s.moment, book) to Intents.all.mapNotNull { i -> nodeOf(i)?.let { n -> i.id to Browse.pulse(i, n, found, c, s.moment, book) } }.toMap()
         }
-        mutable.value = mutable.value.copy(pulses = pulses.associateBy { it.node.id }, served = served, gridOrigin = origin)
+        mutable.value = mutable.value.copy(pulses = pulses.associateBy { it.node.id }, served = served, gridOrigin = shown.origin)
         refreshNow()
         // the families' kinds on the list, everything else on the map (a road, a canal) behind its row, as on the grid
         val (all, chains) = withContext(Dispatchers.Default) {
@@ -1054,11 +1092,12 @@ class SearchSheetModel(
     }
 
     /** The places within [r] of [c] on the phone: a region's store covering it, else the map's packs and windows. */
-    private fun aroundOnPhone(c: LatLon, r: Double): Pair<List<PlaceRecord>, PlaceOrigin?> {
+    /** The places within [r] of [c] on the phone, their brands as they trade in [country], the country of the map there. */
+    private fun aroundOnPhone(c: LatLon, r: Double, country: String?): Pair<List<PlaceRecord>, PlaceOrigin?> {
         val stores = services.placeStores
         if (stores.size > 0 && stores.covers(c)) return stores.within(c, r) to PlaceOrigin.STORE
         val packed = services.localData.inPacks(c, r, ANY_PLACE, POOL_LIMIT) ?: return emptyList<PlaceRecord>() to null
-        return packed.value.map { PlaceRecord.of(it) } to PlaceOrigin.PACK
+        return packed.value.map { PlaceRecord.of(it, country) } to PlaceOrigin.PACK
     }
 
     /**
@@ -1073,10 +1112,10 @@ class SearchSheetModel(
             .sortedWith(compareByDescending<BrandBranches> { it.branches.size }.thenBy { Geo.distance(c, it.branches.first().location) })
     }
 
-    /** True when today is a public holiday in the country at [c]. */
+    /** True when today is a public holiday at [c]: in its country, and in its state or nation (finding 10). */
     private fun holidayAt(c: LatLon): Boolean {
-        val country = HereContext.country(services, c) ?: return false
-        return PublicHolidays.forCountry(country)?.holiday(ZonedDateTime.now(services.clock).toLocalDate()) != null
+        val today = ZonedDateTime.now(services.clock).toLocalDate()
+        return HereContext.hours(services, c, services.clock.zone).publicHolidays?.holiday(today) != null
     }
 
     /**
@@ -1109,7 +1148,7 @@ class SearchSheetModel(
                 try {
                     val answers = if (brand != null) services.localData.branchesAsFound(brand, c, radius) else services.localData.placesAsFound(c, radius, takes, LIMIT)
                     answers.transformWhile<LocalAnswer<List<Place>>, Unit> { answer ->
-                        val records = withContext(Dispatchers.Default) { answer.value.map { PlaceRecord.of(it) } }
+                        val records = withContext(Dispatchers.Default) { HereContext.country(services, c).let { country -> answer.value.map { PlaceRecord.of(it, country) } } }
                         places = records
                         mutable.value = mutable.value.copy(radius = radius, origin = answer.origin, error = answer.error)
                         val serving = mutable.value.intent
@@ -1161,7 +1200,7 @@ class SearchSheetModel(
             return
         }
         if (answer.value.isEmpty()) return
-        val records = withContext(Dispatchers.Default) { answer.value.map { PlaceRecord.of(it) } }
+        val records = withContext(Dispatchers.Default) { HereContext.country(services, c).let { country -> answer.value.map { PlaceRecord.of(it, country) } } }
         places = records
         val reach = ceil(records.maxOf { it.distanceTo(c) } / FARTHER_STEP_M) * FARTHER_STEP_M
         mutable.value = mutable.value.copy(radius = max(reach, within), origin = answer.origin, error = answer.error, noneWithin = within)
@@ -1177,7 +1216,8 @@ class SearchSheetModel(
         val found = places
         val rated = withContext(Dispatchers.IO) { services.areaRatings.rate(found.map { it.place }) }
         if (rated.indices.none { rated[it] !== found[it].place }) return
-        places = withContext(Dispatchers.Default) { rated.map { PlaceRecord.of(it) } }
+        val country = mutable.value.moment.hours.country
+        places = withContext(Dispatchers.Default) { rated.map { PlaceRecord.of(it, country) } }
         // a query's places keep what the engine found of them, on their rated records
         if (askedHits.size == places.size) askedHits = askedHits.mapIndexed { i, h -> h.copy(record = places[i]) }
         hours = HoursBook(places + elsewhere)
@@ -1235,7 +1275,13 @@ class SearchSheetModel(
         val c = mutable.value.centre
         val now = ZonedDateTime.now(services.clock)
         val online = !services.config.offline && services.connectivity.online.value
-        return SearchContext(location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone))
+        return SearchContext(
+            location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone),
+            // each result's address as the country at it writes it (asked off the main thread, as the search is): a
+            // downloaded region's own place's by the region, each region asked once (batch 5 A6)
+            countryAt = { p -> HereContext.country(services, p) },
+            countryOf = { r -> HereContext.regionOf(services, r) },
+        )
     }
 
     /** The official bathing waters around [c], asked online once per kind of water entered; the results rank again with them. */
@@ -1280,7 +1326,7 @@ class SearchSheetModel(
         alsoJob?.cancel()
         if (node.preset == null && node.links.isEmpty()) return
         alsoJob = viewModelScope.launch {
-            val (also, see) = withContext(Dispatchers.Default) { alsoSold(node, pool).let { it to seeAlso(node, pool, it) } }
+            val (also, see) = withContext(Dispatchers.Default) { pool?.places.orEmpty().let { p -> alsoSold(node, p).let { it to seeAlso(node, p, it) } } }
             val s = mutable.value
             if (s.node?.id == node.id && s.asked == null) mutable.value = s.copy(alsoSold = also, seeAlso = see)
         }
@@ -1371,11 +1417,37 @@ class SearchSheetModel(
         }
     }
 
-    private fun moment(c: LatLon, p: SearchPrefs): Moment {
+    /**
+     * Who searches at [c], now, with [p]: the holidays and the sun there read in [region], as far as it is known without
+     * asking the regions on the phone ([HereContext.regionNow]: it is made on the main thread), which [settleRegion] asks.
+     */
+    private fun moment(c: LatLon, p: SearchPrefs, region: HereRegion = HereContext.regionNow(services, c)): Moment {
         val now = ZonedDateTime.now(services.clock)
         val sunset = runCatching { SunClock.at(c.lat, c.lon, now.zone).times(now.toLocalDate())?.sunset }.getOrNull()
         val outlook = forecast()?.let { f -> runCatching { Outlook.of(f, now) }.getOrNull() }
-        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday)
+        // the holidays and the sun at the centre, which every tile and row reads its places' hours in
+        return Moment(now, weatherNow(weather()), p.mode, p.picks, p.recent, sunset, lang, outlook, holiday, region.hours(c, now.zone))
+    }
+
+    /**
+     * Asks the regions on the phone, off the main thread, what region [c] is in ([HereContext.region]); where they say
+     * otherwise than the moment read there, the moment again, with the tiles, the Now shelf and the results read in it
+     * (the app maintainer, 18 November 2026: the moment asked the regions' places around on the main thread, as the
+     * sheet was made in the home's first composition and at each setting, move, change of sky and grid). The tiles are
+     * counted again only from places read around [c]: those of the last centre wait for its own (batch 5 A4).
+     */
+    private fun settleRegion(c: LatLon) {
+        val known = HereContext.regionNow(services, c)
+        regionJob?.cancel()
+        regionJob = viewModelScope.launch {
+            val region = withContext(Dispatchers.IO) { HereContext.region(services, c) }
+            val s = mutable.value
+            if (region == known || s.centre != c) return@launch
+            mutable.value = s.copy(moment = moment(c, s.prefs, region))
+            val shown = pool
+            if (shown != null && shown.at == c) showPool(shown) else refreshNow()
+            if (s.inside) rerank()
+        }
     }
 
     companion object {

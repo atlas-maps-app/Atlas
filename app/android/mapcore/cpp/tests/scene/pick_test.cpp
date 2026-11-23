@@ -330,3 +330,65 @@ TEST_CASE("pick: a guessed roof's shape, drawn as the plain box in its place whi
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
 }
+
+TEST_CASE("pick: a ring with seams is met piece by piece, a piece without a courtyard under the building's roof, one "
+          "with a courtyard flat") {
+    namespace fx = atlas::test::building;
+    // tests/building/fixture.hpp's pieces_ring (way 400, gabled, 15 m tall, its roof 5 m in the red tiles' slot): a
+    // 30 × 30 m block round a 10 × 10 m courtyard, drawn flat, and a 10 × 20 m house 10 m east of it, drawn gabled,
+    // its ridge from north to south
+    const std::string path = fx::write_pack(fx::pieces_tile(), 1, "pick-pieces");
+    auto pack = test::open_pack(path);
+    ATLAS_REQUIRE(pack.has_value(), tl::describe(pack.error()));
+    const tl::RenderHead* head = pack->head();
+    ATLAS_REQUIRE(head != nullptr);
+    const view::GroundFrame ground = view::frame_of(head->frame);
+    const std::uint8_t z = pack->chunks().level(head->levels[0]).front().tile.z;
+    tl::Store store;
+    ATLAS_REQUIRE(store.add({.id = "synthetic", .kind = tl::PackKind::bundled, .path = path}).has_value());
+    const std::array<scene::PickPack, 1> packs{scene::PickPack{.id = "synthetic", .z = z}};
+    const auto at = [&](std::int32_t dlon, std::int32_t dlat) {
+        const double lat = tl::Frame::degrees(fx::s0 + dlat);
+        const double lon = tl::Frame::degrees(fx::w0 + dlon);
+        return std::array<double, 2>{ground.x(lat, lon), ground.z(lat, lon)};
+    };
+    constexpr std::uint32_t red_tiles = 80;
+    const std::uint32_t flat_red_tiles = style::flat_roof_slot(red_tiles, 400);
+    REQUIRE(flat_red_tiles != red_tiles);
+    const auto down = [&](const std::array<double, 2>& p) {
+        return scene::pick_building(store, packs, ground, {p[0], 300.0, p[1]}, {0.0, -1.0, 0.0}, false);
+    };
+    // straight down: the house's lid a pitched roof's, the block's a flat top's, the courtyard nothing's
+    const auto house = down(at(5880 + 735, 900));
+    ATLAS_REQUIRE(house.has_value());
+    CHECK(house->id == 400);
+    CHECK(house->roof);
+    CHECK(house->slot == red_tiles);
+    const auto block = down(at(300, 300));
+    ATLAS_REQUIRE(block.has_value());
+    CHECK(block->id == 400);
+    CHECK(block->roof);
+    CHECK(block->slot == flat_red_tiles);
+    CHECK_FALSE(down(at(1470 + 735, 900 + 450)).has_value());
+    // level from the north onto the house's north wall, 1 m in from its west corner: its gable's slope there is at
+    // 10 m + 5 m / 5, so the roof over it at 12 m and the wall at 10.5 m
+    const std::array<double, 2> house_nw = at(5880, 1800);
+    for (const auto& [y, roof] : {std::pair{12.0, true}, std::pair{10.5, false}}) {
+        CAPTURE(y);
+        const auto met = scene::pick_building(store, packs, ground, {house_nw[0] + 1.0, y, house_nw[1] - 60.0},
+                                              {0.0, -1e-4, 1.0}, false);
+        ATLAS_REQUIRE(met.has_value());
+        CHECK(met->roof == roof);
+        CHECK(met->rgb == (roof ? 0x9E5038U : 0x8E5A46U));
+        if (roof) CHECK(met->slot == red_tiles);
+    }
+    // level from the west onto the block's west wall at 12 m: its walls reach its flat top, so the wall
+    const std::array<double, 2> block_w = at(0, 1350);
+    const auto wall =
+        scene::pick_building(store, packs, ground, {block_w[0] - 60.0, 12.0, block_w[1]}, {1.0, -1e-4, 0.0}, false);
+    ATLAS_REQUIRE(wall.has_value());
+    CHECK_FALSE(wall->roof);
+    CHECK(wall->rgb == 0x8E5A46U);
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+}

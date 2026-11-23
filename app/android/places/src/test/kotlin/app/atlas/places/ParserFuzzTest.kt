@@ -1,5 +1,6 @@
 package app.atlas.places
 
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.time.LocalDate
@@ -8,7 +9,9 @@ import kotlin.random.Random
 
 /**
  * Random text built from each grammar's own pieces: the parsers may refuse it, but only with their own exception,
- * and whatever parses must evaluate without throwing.
+ * and whatever parses must evaluate without throwing. Each holds a floor under how much parses, so that a parser
+ * refusing everything fails it (the reviewer, 17 November, finding 12: with none, it passed); the floors stand well
+ * under today's counts, which a grammar's change moves a little.
  */
 class ParserFuzzTest {
     private fun noise(r: Random, pieces: List<String>, n: Int) = buildString { repeat(r.nextInt(1, n)) { append(pieces[r.nextInt(pieces.size)]) } }
@@ -31,7 +34,7 @@ class ParserFuzzTest {
                 try {
                     oh.status(LocalDateTime.of(2026, 10, 13, 12, 0), ctx)
                     oh.spans(LocalDate.of(2026, 12, 25), ctx)
-                    oh.weekTable()
+                    oh.weekTable(weekOf = null, context = Nowhere)
                     oh.weekTable(LocalDate.of(2026, 12, 28), ctx)
                 } catch (e: Exception) {
                     fail("'$text' parsed but failed to evaluate: $e")
@@ -39,6 +42,7 @@ class ParserFuzzTest {
             }
         }
         println("opening hours fuzz: $parsed of 6000 random values parsed, all evaluated")
+        assertTrue("opening hours parsed: $parsed of 6000", parsed >= OPENING_HOURS_FLOOR)
     }
 
     @Test
@@ -49,10 +53,12 @@ class ParserFuzzTest {
         )
         val tags = mapOf("amenity" to "cafe", "a" to "b;c", "maxheight" to "4.5 m", "m" to "12")
         val r = Random(7)
+        var parsed = 0
         repeat(6000) {
             val text = noise(r, pieces, 10)
             val f = try { TagFilter.parse(text) } catch (e: TagFilterException) { null } catch (e: Exception) { fail("'$text': $e"); null }
             if (f != null) {
+                parsed++
                 try {
                     f.matches(tags)
                     f.toOverpass()
@@ -63,21 +69,34 @@ class ParserFuzzTest {
                 }
             }
         }
+        println("tag filter fuzz: $parsed of 6000 random values parsed")
+        assertTrue("tag filters parsed: $parsed of 6000", parsed >= TAG_FILTER_FLOOR)
     }
 
     @Test
     fun svgPaths() {
         val pieces = listOf("M", "m", "L", "l", "H", "v", "C", "s", "Q", "t", "A", "a", "Z", "z", " ", ",", "-", ".", "1", "0", "5.5", "e", "1e2", "-.5")
         val r = Random(11)
+        var parsed = 0
         repeat(6000) {
             val text = noise(r, pieces, 24)
             try {
                 SvgPath.parse(text).bounds()
+                parsed++
             } catch (e: SvgPathException) {
                 // refused, as it may be
             } catch (e: Exception) {
                 fail("'$text': $e")
             }
         }
+        println("svg path fuzz: $parsed of 6000 random values parsed")
+        assertTrue("svg paths parsed: $parsed of 6000", parsed >= SVG_PATH_FLOOR)
+    }
+
+    private companion object {
+        // the seeds are fixed: today's counts, 18 November, are 324 opening hours, 1096 tag filters and 15 paths
+        const val OPENING_HOURS_FLOOR = 250
+        const val TAG_FILTER_FLOOR = 800
+        const val SVG_PATH_FLOOR = 10
     }
 }

@@ -169,7 +169,9 @@ class SearchScreensTest {
         compose.waitForIdle()
         assertEquals(Dest.Lists(SavedPlaces.DEFAULT_LIST), nav.current)
         compose.runOnUiThread { nav.back() }
-        compose.onNodeWithTag(GRID_TAG).performScrollToKey("brands")
+        // the brands around are counted last, off the main thread, after the pulses and every kind, and "Every kind" is
+        // the grid's own head, there before any of them: the grid has the shelf's key once they are in
+        compose.waitUntil(20_000) { runCatching { compose.onNodeWithTag(GRID_TAG).performScrollToKey("brands") }.isSuccess }
         capture("search_brands")
         // A kind's chains share a stack: pressed, it is dealt out, its kind's disc first, which stacks it again.
         val stack = hasTestTag(BRAND_STACK_TAG)
@@ -909,7 +911,7 @@ class SearchScreensTest {
                 far(1, 0.27, "leisure" to "bowling_alley", "name" to "Bowling"),
                 far(2, 0.36, "leisure" to "ice_rink", "name" to "IJsbaan"),
                 far(3, 0.50, "leisure" to "water_park", "name" to "Zwemparadijs"),
-            ),
+            ), country = null,
         )
         open(Dest.Category("fun"), testServices(stores = listOf(Fixtures.amsStore, further)))
         waitFor("Playground")

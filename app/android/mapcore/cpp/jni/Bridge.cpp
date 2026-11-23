@@ -46,6 +46,7 @@
 #include "sun/Buckets.hpp"
 #include "text/Fonts.hpp"
 #include "text/Shaper.hpp"
+#include "text/SlugBands.hpp"
 #include "tiles/ExpandedCache.hpp"
 #include "tiles/Kept.hpp"
 #include "tiles/Source.hpp"
@@ -292,7 +293,9 @@ public:
     [[nodiscard]] std::string stats() {
         return on_session([this] {
             std::string line = session_->stats();
-            if (map_on_) line += "; " + map_->tiles_line();
+            // while the map is on, its tiles and the glyphs its text has drawn (the process's atlas, every frame's);
+            // a core with no map on says what it always has ("vk no frames" before any)
+            if (map_on_) line += "; " + map_->tiles_line() + "; " + text::slug::shared_glyphs().line();
             return line;
         });
     }
@@ -707,6 +710,51 @@ public:
         });
     }
 
+    /// The app's window hidden (its lifecycle's ON_STOP) or shown again (ON_START; ENGINE.md's audit, B1). While
+    /// hidden the frame loop rests and asks no vsync: what asks for a frame meanwhile (a new camera, a tile landed, the
+    /// app's inputs, the minute's tick) is held. Shown again, the first vsync draws at the camera last written, whether
+    /// anything asked or not: the hide's rest() took a request pending then with it, and the core is the process's, so
+    /// one activity's late stop and destroy hide and show it under another's window (Back at the root and a quick
+    /// return, where Back still ends the activity), whose own redraw came before. The workers are not stopped: they
+    /// run dry by themselves, and while hidden and following the location each fix's update_scene gives them the tiles
+    /// the camera wants.
+    void set_hidden(bool hidden) {
+        loop_->post([this, hidden] {
+            if (hidden == hidden_) return;
+            hidden_ = hidden;
+            if (hidden) {
+                log::info("vk hidden: on, no frames");
+                hidden_updates_ = 0;
+                rest();
+                return;
+            }
+            // `vk hidden: off` and the scene's updates meanwhile (ci/smoke.sh's hidden phase reads it)
+            log::info("vk hidden: off after {} updates of the scene", hidden_updates_);
+            // the return's own frame (Due::changed: at rest too), so that it hangs on nothing asked before or since
+            due_.changed();
+            requested_ = true;
+            ask_vsync();
+        });
+    }
+
+    /// While hidden: the map's scene updated for Kotlin's camera now, without a frame (Session::update_scene), so that
+    /// a fix's tiles are asked for and built and the return draws them at once. Shown, the next frame does it.
+    void update_scene() {
+        loop_->post([this] {
+            if (!hidden_ || !map_on_ || source_ == nullptr) return;
+            // the camera written for now (whether it moved since the last frame does not matter: nothing is drawn)
+            (void)render_env_->CallBooleanMethod(source_, camera_mid_, static_cast<jlong>(platform::now_ns()), camera_);
+            if (render_env_->ExceptionCheck() == JNI_TRUE) {
+                render_env_->ExceptionDescribe();
+                render_env_->ExceptionClear();
+                return;
+            }
+            const auto camera = style::read_camera_state(std::span(camera_bytes_, style::camera_state_size));
+            if (!camera) return;
+            if (session_->update_scene(*camera)) ++hidden_updates_;
+        });
+    }
+
     /// Switches VK bench's stand-in on (mode 1) or off (0) and its configuration; "" or why it could not.
     std::string bench(int mode, const gpu::Configuration& config, std::uint32_t flags) {
         return on_session([&] { return session_->bench(mode, config, flags); });
@@ -792,7 +840,7 @@ private:
     }
 
     void ask_vsync() {
-        if (!requested_) return;
+        if (!requested_ || hidden_) return; // hidden: held until the window shows (set_hidden)
         loop_->request_vsync([this](const platform::Vsync& v) { on_vsync(v); });
     }
 
@@ -803,19 +851,46 @@ private:
         pacer_.rest();
         session_->rest();
         // The window's frames come at 60 a second again once the map has been still for a second since it moved
-        // (frame/Motion.hpp): the render thread's timer says so then, unless the map moves again first.
-        if (motion_.rested(platform::now_ns())) {
-            loop_->set_timer(motion_.drop_ns(), [this] {
-                if (!closing_.load() && motion_.drop()) session_->set_moving(false);
-            });
+        // (frame/Motion.hpp), unless the map moves again first; and a frame the map is due by itself though nothing
+        // lands (a waiting pack switch's hold ending, MapFrame::due_in) is asked for then. The render thread's one
+        // timer is armed for the earlier.
+        const std::int64_t now = platform::now_ns();
+        (void)motion_.rested(now); // a drop to come is motion_.drop_ns()
+        due_ns_ = 0;
+        if (map_on_) {
+            if (const std::optional<double> in = map_->due_in()) {
+                due_ns_ = now + std::max<std::int64_t>(1, static_cast<std::int64_t>(*in * 1e9));
+            }
         }
+        arm_timer();
         // The map at rest: its tiles, once a rest (Appendix C's `vk tiles` line).
         if (map_on_ && drew_since_rest_) log::info("{}", map_->tiles_line());
         drew_since_rest_ = false;
     }
 
+    /// The render thread's one timer (platform::Loop::set_timer) at the earlier of what waits on a time at rest: the
+    /// window's drop to 60 (motion_) and the frame the map is due by itself (due_ns_); none where neither waits.
+    void arm_timer() {
+        std::int64_t at = motion_.drop_ns();
+        if (due_ns_ != 0 && (at == 0 || due_ns_ < at)) at = due_ns_;
+        if (at == 0) return;
+        loop_->set_timer(at, [this] {
+            if (closing_.load()) return;
+            const std::int64_t now = platform::now_ns();
+            if (motion_.drop_ns() != 0 && motion_.drop_ns() <= now && motion_.drop()) session_->set_moving(false);
+            if (due_ns_ != 0 && due_ns_ <= now) {
+                // the frame drawn at the camera last written (Due::changed), held while hidden like any other
+                due_ns_ = 0;
+                due_.changed();
+                requested_ = true;
+                ask_vsync();
+            }
+            arm_timer(); // the other, where it is still to come
+        });
+    }
+
     void on_vsync(const platform::Vsync& v) {
-        if (!requested_ || source_ == nullptr) return;
+        if (!requested_ || source_ == nullptr || hidden_) return; // one asked before the window hid: held
         if (!session_->drawing()) {
             session_->note_not_drawing(); // the panel's health: a frame was due, with none to draw
             return;
@@ -958,6 +1033,9 @@ private:
     jmethodID off_mid_ = nullptr; // FrameSource.off, or null
     bool off_told_ = false;
     bool requested_ = false;
+    bool hidden_ = false;              // the app's window hidden: no vsync asked, what asks held (set_hidden)
+    std::int64_t due_ns_ = 0;          // when a frame is due by itself at rest (now_ns, MapFrame::due_in; 0: none)
+    std::uint64_t hidden_updates_ = 0; // the scene's updates without a frame while hidden (update_scene)
     bool camera_warned_ = false;
     frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
     int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
@@ -1133,6 +1211,14 @@ void native_request_frame(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
     if (Core* core = core_of(handle); core != nullptr) core->request_frame();
 }
 
+void native_set_hidden(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean hidden) {
+    if (Core* core = core_of(handle); core != nullptr) core->set_hidden(hidden == JNI_TRUE);
+}
+
+void native_update_scene(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
+    if (Core* core = core_of(handle); core != nullptr) core->update_scene();
+}
+
 jstring native_bench(JNIEnv* env, jclass /*cls*/, jlong handle, jint mode, jint config, jint route, jint form,
                      jint target, jint flags) {
     Core* core = core_of(handle);
@@ -1159,6 +1245,8 @@ jboolean native_attach(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/, jobjec
 void native_resize(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/, jint /*w*/, jint /*h*/) {}
 void native_detach(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/) {}
 void native_request_frame(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/) {}
+void native_set_hidden(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/, jboolean /*hidden*/) {}
+void native_update_scene(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/) {}
 jstring native_bench(JNIEnv* env, jclass /*cls*/, jlong /*handle*/, jint /*mode*/, jint /*config*/, jint /*route*/,
                      jint /*form*/, jint /*target*/, jint /*flags*/) {
     return java(env, "hosts have no surfaces");
@@ -2180,8 +2268,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 77>& methods() {
-    static const std::array<JNINativeMethod, 77> table{{
+const std::array<JNINativeMethod, 79>& methods() {
+    static const std::array<JNINativeMethod, 79> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2197,6 +2285,8 @@ const std::array<JNINativeMethod, 77>& methods() {
         method("resize", "(JII)V", fn(&native_resize)),
         method("detach", "(J)V", fn(&native_detach)),
         method("requestFrame", "(J)V", fn(&native_request_frame)),
+        method("setHidden", "(JZ)V", fn(&native_set_hidden)),
+        method("updateScene", "(J)V", fn(&native_update_scene)),
         method("bench", "(JIIIIII)Ljava/lang/String;", fn(&native_bench)),
         method("records", "(JLjava/nio/ByteBuffer;)I", fn(&native_records)),
         method("publishRecords", "(J)V", fn(&native_publish_records)),

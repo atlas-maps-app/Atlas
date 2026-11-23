@@ -100,6 +100,8 @@ data class ServicesConfig(
     val mapEngine: Boolean = true,
     /** A router in place of the phone's own (tests: one that needs no routing data). */
     val router: Router? = null,
+    /** Nearby places by category in place of the phone's own ([Services.places]; tests: answers of their own). */
+    val placeFinder: PlaceFinder? = null,
 )
 
 /**
@@ -223,6 +225,16 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
      */
     val unreadableStores: StateFlow<Map<File, UnreadableStore>> = unreadable.asStateFlow()
 
+    /**
+     * How many places and addresses the downloaded regions held when [app.atlas.ui.search.HereContext] last asked them,
+     * off the main thread; -1 before it has. What a frame that cannot wait reads their answers by, so it touches no
+     * store: the first to read [placeStores] opens every region's file (the app maintainer, 18 November 2026, batch 5 A5).
+     * -1 again as a region's store goes ([syncPlaceStores]; 19 November 2026, batch 6 B15: a deleted region's state and
+     * holidays were read on by the old count till the regions were next asked).
+     */
+    @Volatile
+    internal var regionsCounted: Int = -1
+
     /** The offline place stores of the downloaded regions (`places/<region>.db`), all searched at once. */
     val placeStores: Regions by lazy {
         Regions(config.placeStores.orEmpty()).also { if (config.placeStores == null) syncPlaceStores(it) }
@@ -237,6 +249,8 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         val files = dirs.places.listFiles { f -> f.isFile && f.name.endsWith(".db") }.orEmpty().toSet()
         for (gone in openStores.keys - files) {
             openStores.remove(gone)?.let { regions.detach(it); runCatching { it.close() } }
+            // what the regions said with it a frame reads no more, till they are asked again ([regionsCounted])
+            regionsCounted = -1
         }
         val refused = HashMap<File, UnreadableStore>()
         for (f in files - openStores.keys) {
@@ -264,6 +278,18 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         unreadable.value = refused
     }
 
+    /**
+     * The country of each published pack, as the list names it: the country of the region whose store holds a point, or
+     * of the tiles that serve its windows, before the countries' boxes ([app.atlas.ui.search.HereContext]). The map
+     * tells it the list as it reads it; until then the copies Mine and the windows keep say.
+     */
+    val packCountries: app.atlas.services.PackCountries by lazy {
+        app.atlas.services.PackCountries(
+            app.atlas.ui.mine.offline.RegionFiles(dirs.regions, dirs.places, dirs.segments),
+            listOf(File(dirs.regions, "packs-latest.json"), File(dirs.engine, "windows/index/packs-latest.json")),
+        )
+    }
+
     /** The search box: offline over [placeStores]; online it adds Photon and Overpass. */
     val search: SearchEngine by lazy {
         SearchEngine(placeStores, geocoder = if (config.offline) null else geocoder, overpass = if (config.offline) null else overpass)
@@ -271,7 +297,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
 
     /** Nearby places by category (the Map home's row and needs): the place stores, else the map's packs and windows, then online. */
     val places: PlaceFinder by lazy {
-        LayeredPlaceFinder(
+        config.placeFinder ?: LayeredPlaceFinder(
             local = { localData },
             overpass = { if (config.offline) null else overpass },
             online = { connectivity.online.value },
@@ -478,6 +504,7 @@ class Services(context: Context, val config: ServicesConfig = ServicesConfig()) 
         app.atlas.services.LocalData(
             stores = { placeStores },
             packs = shelf,
+            countryAt = { at -> app.atlas.ui.search.HereContext.country(this, at) },
             overpass = { if (config.offline) null else overpass },
             isOnline = { !config.offline && connectivity.online.value },
             onClose = shelf::close,

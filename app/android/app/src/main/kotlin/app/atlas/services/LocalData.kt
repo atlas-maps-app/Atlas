@@ -35,19 +35,24 @@ import app.atlas.search.coversAll
 import app.atlas.search.walk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.last
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 /**
@@ -144,6 +149,8 @@ data class MapName(val name: String, val water: Boolean, val rank: Int, val poin
 class LocalData(
     private val stores: () -> PlaceSource?,
     private val packs: () -> PackFeatures?,
+    /** The country of the map at a point, which the brands of the places there are matched in ([app.atlas.ui.search.HereContext.country]). */
+    private val countryAt: (LatLon) -> String?,
     private val overpass: () -> Overpass? = { null },
     private val isOnline: () -> Boolean = { false },
     private val onClose: () -> Unit = {},
@@ -157,6 +164,8 @@ class LocalData(
      * the windows' kept data, and online their data from Atlas's packs); null for none.
      */
     private val windowPlaces: WindowPlaces? = null,
+    /** How long a lookup waits at most for the windows Atlas's packs send ([WindowPlaces.fetched]): [WINDOW_PACKS_MS]. */
+    private val windowWaitMs: Long = WINDOW_PACKS_MS,
 ) : Closeable {
     /** Elements asked of Overpass where no pack reaches: street names at a route's steps and near a pin, bridges along a line. */
     private val online = OnlineElements(overpass, isOnline)
@@ -309,10 +318,12 @@ class LocalData(
 
     /**
      * The places in [box] as they are found: what the phone holds ([onPhone]) at once; where that is only part of
-     * the box (or nothing), online, the packs and the map's windows again once the windows the phone keeps no data for
-     * came from Atlas's packs ([WindowPlaces.fetched]), where that holds more; then, where the box is still not held
-     * whole, [ask]'s (Overpass's) for the whole of it, kept by [keep] and sorted by [order], or the last answer again
-     * with [ask]'s error where it failed. Nothing on the phone and offline: [ask]'s answer alone (none, no origin).
+     * the box (or nothing), online, the windows the phone keeps no data for from Atlas's packs beside [ask]'s (Overpass's)
+     * answer for the whole of it ([windowsBeside]: waited for first where they can make the box whole, else asked beside
+     * it, and the packs' part shown once they came where Overpass has not answered by then); [ask]'s answer kept by
+     * [keep] and sorted by [order]; where it failed, what the phone holds by then (with the windows the packs sent, waited
+     * for what was left of the wait) with every place shown before it, and [ask]'s error. Nothing on the phone and
+     * offline: [ask]'s answer alone (none, no origin).
      */
     private fun asFound(
         at: LatLon,
@@ -326,16 +337,39 @@ class LocalData(
         var best = onPhone(at, box, fromStore, accept, keep, order)
         best?.let { emit(it) }
         if (best?.partial == false) return@flow
-        if (best?.origin != PlaceOrigin.STORE) fetchedWindows(at, box, accept)?.let { (found, whole) ->
+        // every place shown, by key, for a failure's answer
+        val shown = LinkedHashMap<String, Place>()
+        best?.value?.forEach { shown[it.key] = it }
+        val available = online.available()
+        val asked = windowsBeside(at, box, accept, show = { (found, whole) ->
             val got = LocalAnswer(order(found.filter(keep)), PlaceOrigin.PACK, partial = !whole)
             val before = best
             if (before == null || got.partial != before.partial || got.value.map { it.key } != before.value.map { it.key }) emit(got)
             best = got
-        }
+            got.value.forEach { shown[it.key] = it }
+        }, failed = { it.error != null }, ask = ask.takeIf { available })
         val phone = best
-        if (phone != null && (!phone.partial || !online.available())) return@flow
-        val got = ask()
-        emit(if (got.error != null && phone != null) phone.copy(error = got.error) else got.copy(value = order(got.value.filter(keep))))
+        val got = when {
+            asked != null -> asked
+            // not asked: the packs made the box whole, or Overpass cannot be asked, where nothing on the phone says so
+            phone == null -> ask()
+            else -> return@flow
+        }
+        // where it failed, what the phone holds by now (the windows the packs were asked for that came meanwhile too),
+        // with every place shown before it, each once, now's copy first (the app maintainer, 19 November 2026, batch 6
+        // A3: what it held by now could be fewer than were shown, where another lookup had let the windows go
+        // meanwhile; 38ddafa1 kept what it had shown); where that read fails, what was shown
+        val now = when {
+            got.error == null -> null
+            phone?.origin == PlaceOrigin.STORE -> phone
+            else -> {
+                val read = orNull { onPhone(at, box, fromStore, accept, keep, order) }
+                val base = read ?: phone
+                if (base == null || shown.isEmpty()) base
+                else base.copy(value = order((read?.value.orEmpty() + shown.values).distinctBy { it.key }.filter(keep)))
+            }
+        }
+        emit(now?.copy(error = got.error) ?: got.copy(value = order(got.value.filter(keep))))
     }.flowOn(Dispatchers.IO)
 
     /**
@@ -374,33 +408,140 @@ class LocalData(
         return joined(pack, windows, box, accept)
     }
 
-    /** [pack]'s places in [box] whose tags [accept] keeps and then [windows]', and whether the two hold the whole box. */
+    /**
+     * [pack]'s places in [box] whose tags [accept] keeps and then [windows]', and whether the two hold the whole box: the
+     * pack where its box holds the whole, else the windows each of the box's (the app maintainer, 18 November 2026,
+     * batch 5 A2: a pack's box is no proof of what it holds, so a window past a border inside it, the pack's place for
+     * none, no longer counts as held by it, as it did before batch 4 too).
+     */
     private fun joined(pack: PackFeatures?, windows: WindowPlaces.Held?, box: BBox, accept: (Map<String, String>) -> Boolean): Pair<List<Place>, Boolean>? {
         if (pack == null && windows == null) return null
         val found = pack?.let { packPlaces(it, box, accept) }.orEmpty() +
             windows?.places?.filter { p -> (p.bbox?.intersects(box) ?: (p.location in box)) && accept(p.tags) }.orEmpty()
-        val whole = pack?.covers(box) == true || windows?.covers(box) { b -> pack?.covers(b) == true } == true
+        val whole = pack?.covers(box) == true || windows?.covers(box) == true
         return found.distinctBy { it.key } to whole
     }
 
     /**
      * [packsAndWindows] again, online, once the windows meeting [box] that the phone keeps no data for came from Atlas's
-     * packs ([WindowPlaces.fetched], waited for at most [WINDOW_PACKS_MS]); null offline, or where no pack and no window
-     * holds any of the box.
+     * packs ([WindowPlaces.fetched], waited for at most [WINDOW_PACKS_MS] where they make the box whole, or with
+     * [waitForPart]; else the nearest asked for and not waited for); null offline, or where no pack and no window holds
+     * any of the box.
      */
-    private suspend fun fetchedWindows(at: LatLon, box: BBox, accept: (Map<String, String>) -> Boolean): Pair<List<Place>, Boolean>? {
+    private suspend fun fetchedWindows(
+        at: LatLon,
+        box: BBox,
+        accept: (Map<String, String>) -> Boolean,
+        waitForPart: Boolean = false,
+    ): Pair<List<Place>, Boolean>? {
         val w = windowPlaces ?: return null
         if (!isOnline() || storeCovering(at) != null) return null
         val pack = packsCovering(at)
         if (pack?.covers(box) == true) return null
         val held = try {
-            w.fetched(box, at, WINDOW_PACKS_MS)
+            w.fetched(box, at, windowWaitMs, waitForPart)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             null
         }
         return joined(pack, held, box, accept)
+    }
+
+    /**
+     * [ask]'s answer (Overpass's, for the whole of [box]; null where it cannot be asked), online, with the windows meeting
+     * the box that the phone keeps no data for from Atlas's packs beside it ([WindowPlaces.start]), the packs' and the
+     * windows' places in the box whose tags [accept] keeps [show]n as they come, with whether they hold the box whole (the
+     * app maintainer, 18 November 2026, batch 5 A1: where they could not make it whole they were not waited for, so a
+     * failure at once answered before they came, and with Overpass slow they showed only once it answered). Where what
+     * the packs send can make the box whole, where none is asked of them, or where there is no [ask], they are waited
+     * for, at most [windowWaitMs], and shown, and [ask] is asked after them where the box is still not whole, as before.
+     * Where they cannot, [ask] is asked at once beside them: they are shown once they came or the wait is over, where
+     * [ask] has not answered by then; where it [failed], its answer waits for those still coming, for what is left of the
+     * wait, so the phone's answer read after it holds them. So no answer comes later than on 38ddafa1, which waited for
+     * the windows before it asked. Null where [ask] was not asked (the windows made the box whole, or there is none).
+     * Offline, where a region's store covers [at], where a pack covers the whole box, or with no windows: [ask] alone.
+     * The windows are let go once they came or the wait is over, not when [ask] answers (the app maintainer, 19
+     * November 2026, batch 6 B15: up to 40 s a server, so the lookups meanwhile had their windows go in theirs).
+     */
+    private suspend fun <T> windowsBeside(
+        at: LatLon,
+        box: BBox,
+        accept: (Map<String, String>) -> Boolean,
+        show: suspend (Pair<List<Place>, Boolean>) -> Unit,
+        failed: (T) -> Boolean,
+        ask: (suspend () -> T)?,
+    ): T? {
+        val w = windowPlaces
+        // the fetch made, closed where the lookup is cancelled as it starts (the app maintainer, 19 November 2026,
+        // batch 6 A4: `withContext` dropped it, so its windows stayed waited for, and every other lookup's went in
+        // their place)
+        val made = AtomicReference<WindowPlaces.Fetch?>()
+        val started = if (w == null || !isOnline()) null else try {
+            withContext(Dispatchers.IO) {
+                try {
+                    val pack = packsCovering(at)
+                    if (storeCovering(at) != null || pack?.covers(box) == true) null
+                    else pack to w.start(box, at, windowWaitMs).also { made.set(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    made.getAndSet(null)?.close()
+                    null
+                }
+            }
+        } catch (e: CancellationException) {
+            made.getAndSet(null)?.close()
+            throw e
+        }
+        if (started == null) return ask?.invoke()
+        val (pack, fetch) = started
+        return fetch.use { f ->
+            // what the packs and the windows hold once those asked for came, or the wait is over; null where none. A
+            // pack that does not read holds nothing there, as where there is none, so Overpass is asked (the app
+            // maintainer, 19 November 2026, batch 6 A5: it threw through the lookup, where 38ddafa1 asked Overpass);
+            // and the windows let go then, read, cancelled or failed: Overpass may take 40 s a server, and the lookups
+            // meanwhile would have their windows go in these (batch 6 B15). What they brought is shown, and a
+            // failure's answer holds what was shown (batch 6 A3)
+            val landed = suspend {
+                try {
+                    withContext(Dispatchers.IO) {
+                        val held = orNull { f.landed() }
+                        orNull { joined(pack, held, box, accept) } ?: joined(null, held, box, accept)
+                    }
+                } finally {
+                    f.close()
+                }
+            }
+            if (!f.asks || f.makesWhole || ask == null) {
+                val got = landed()
+                if (got != null) show(got)
+                if (got?.second == true || ask == null) null else ask()
+            } else coroutineScope {
+                val asking = async { ask() }
+                val coming = async { landed() }
+                // Overpass's answer first, where both are in
+                select {
+                    asking.onAwait { got ->
+                        if (failed(got)) coming.await() else coming.cancel()
+                        got
+                    }
+                    coming.onAwait { got ->
+                        if (got != null) show(got)
+                        asking.await()
+                    }
+                }
+            }
+        }
+    }
+
+    /** [read]'s value, or null where it failed (a window's file that did not read). */
+    private suspend fun <T> orNull(read: suspend () -> T): T? = try {
+        read()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     /** The map's windows the phone holds meeting [box], nearest [at] first ([WindowPlaces.held]); null where none, or where they did not read. */
@@ -425,16 +566,45 @@ class LocalData(
 
     /**
      * [inPacks] once, online, the map's windows in the circle the phone keeps no data for came from Atlas's packs (not
-     * Overpass), waited for at most [WINDOW_PACKS_MS]: for the screens that show [inPacks]' part of a circle, before
-     * they ask Overpass for the whole. Null offline, where a region's store covers [centre], or where nothing holds any
-     * of the circle.
+     * Overpass), waited for at most [WINDOW_PACKS_MS], where they make the circle's box whole ([WindowPlaces.fetched]);
+     * at once where they cannot, the nearest asked for all the same. [waitForPart] for a screen that asks nothing after
+     * (the search's pool): they are waited for however much of the circle they make. A screen that asks Overpass after
+     * them takes [beside]. Null offline, where a region's store covers [centre], or where nothing holds any of the
+     * circle.
      */
-    suspend fun inWindowPacks(centre: LatLon, radiusM: Double, filter: TagFilter, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<Place>>? =
+    suspend fun inWindowPacks(
+        centre: LatLon,
+        radiusM: Double,
+        filter: TagFilter,
+        limit: Int = DEFAULT_LIMIT,
+        waitForPart: Boolean = false,
+    ): LocalAnswer<List<Place>>? =
         withContext(Dispatchers.IO) {
             val box = BBox.around(centre, radiusM)
-            val (found, whole) = fetchedWindows(centre, box) { filter.matches(it) } ?: return@withContext null
+            val (found, whole) = fetchedWindows(centre, box, { filter.matches(it) }, waitForPart) ?: return@withContext null
             LocalAnswer(nearest(found.filter { Geo.distance(centre, it.location) <= radiusM }, centre, limit), PlaceOrigin.PACK, partial = !whole)
         }
+
+    /**
+     * [ask]'s answer (Overpass's, for the whole circle; null where it cannot be asked), online, with the map's windows in
+     * the circle that the phone keeps no data for from Atlas's packs beside it, as [windowsBeside] runs them: [show] gets
+     * [inPacks]' answer once they came (waited for first where they can make the circle whole, else at most until the
+     * wait is over, where [ask] has not answered by then); where [ask] [failed], it waits for those still coming, for what
+     * is left of the wait, so [inPacks] read after it holds them. Null where [ask] was not asked: the windows made the
+     * circle whole, or there is no [ask]. For the screens that show the phone's part of a circle before Overpass's
+     * whole; [show] runs in the caller's coroutine, so a flow may emit in it.
+     */
+    suspend fun <T> beside(
+        centre: LatLon,
+        radiusM: Double,
+        filter: TagFilter,
+        limit: Int = DEFAULT_LIMIT,
+        show: suspend (LocalAnswer<List<Place>>) -> Unit = {},
+        failed: (T) -> Boolean,
+        ask: (suspend () -> T)?,
+    ): T? = windowsBeside(centre, BBox.around(centre, radiusM), { filter.matches(it) }, { (found, whole) ->
+        show(LocalAnswer(nearest(found.filter { Geo.distance(centre, it.location) <= radiusM }, centre, limit), PlaceOrigin.PACK, partial = !whole))
+    }, failed, ask)
 
     /** The chains trading in [box] (shops, eateries, banks, fuel, hotels), most branches first, at most [limit]: [brandsAsFound]'s last answer. */
     suspend fun brands(box: BBox, limit: Int = DEFAULT_LIMIT): LocalAnswer<List<LocalBrand>> = brandsAsFound(box, limit).last()
@@ -451,11 +621,12 @@ class LocalData(
     /** [answer]'s places in [box] as the chains among them, most branches first, at most [limit]. */
     private fun chains(answer: LocalAnswer<List<Place>>, box: BBox, limit: Int): LocalAnswer<List<LocalBrand>> {
         val centre = box.center
+        val country = countryAt(centre)
         val byBrand = LinkedHashMap<String, MutableList<Place>>()
         val brands = HashMap<String, Brand>()
         for (p in answer.value) {
             if (!isTrade(p.tags) || p.location !in box) continue
-            val b = Brands.forTags(p.tags) ?: continue
+            val b = Brands.forTags(p.tags, country) ?: continue
             brands[b.id] = b
             byBrand.getOrPut(b.id) { ArrayList() } += p
         }
@@ -470,19 +641,24 @@ class LocalData(
     /**
      * The branches of brand [id] within [radiusM] of [centre], nearest first, as they are found, as [placesAsFound]
      * gives places: the phone's at once, then online what completes them. A brand Atlas does not know is not asked online.
+     * The country there is asked in the flow, off the caller's thread (the app maintainer, 18 November 2026: the sheet
+     * made the flow on the main thread, and the regions' places were asked there).
      */
-    fun branchesAsFound(id: String, centre: LatLon, radiusM: Double): Flow<LocalAnswer<List<Place>>> {
+    fun branchesAsFound(id: String, centre: LatLon, radiusM: Double): Flow<LocalAnswer<List<Place>>> = flow {
         val box = BBox.around(centre, radiusM)
         val within = { p: Place -> Geo.distance(centre, p.location) <= radiusM }
-        val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t)?.id == id }
+        val country = countryAt(centre)
+        val ofBrand = { t: Map<String, String> -> isTrade(t) && Brands.forTags(t, country)?.id == id }
         val order = { list: List<Place> -> nearest(list, centre, Int.MAX_VALUE) }
         val brand = Brands.byId(id)
         val filter = brand?.wikidata?.let { TagFilter.Equals("brand:wikidata", it) } ?: brand?.let { TagFilter.Equals("brand", it.brand) }
-        return asFound(centre, box, { s -> s.byBrand(listOf(id), box).map { it.place } }, ofBrand, within, order) {
-            if (filter == null) LocalAnswer(emptyList(), null)
-            else askOverpass(filter, box).let { got -> got.copy(value = got.value.filter { ofBrand(it.tags) }) }
-        }
-    }
+        emitAll(
+            asFound(centre, box, { s -> s.byBrand(listOf(id), box).map { it.place } }, ofBrand, within, order) {
+                if (filter == null) LocalAnswer(emptyList(), null)
+                else askOverpass(filter, box).let { got -> got.copy(value = got.value.filter { ofBrand(it.tags) }) }
+            },
+        )
+    }.flowOn(Dispatchers.IO)
 
     /**
      * The places in [box] a passer-by could be asked about (named, of a category, with every tag, so only what is
@@ -825,7 +1001,7 @@ class LocalData(
         val at = ctx.location ?: area?.center ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
         storeCovering(at)?.let { return LocalAnswer(OfflineEvaluator(it).run(query, ctx), PlaceOrigin.STORE) }
         val f = packsCovering(at) ?: return LocalAnswer(QueryResult(emptyList(), 0, 0, 0), null)
-        val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true })
+        val places = MemoryPlaces(packPlaces(f, area ?: BBox.around(at, QUERY_M)) { true }, ctx.hours.country)
         return LocalAnswer(OfflineEvaluator(places).run(query, ctx), PlaceOrigin.PACK)
     }
 
@@ -1004,7 +1180,10 @@ class LocalData(
         /** What's here: the longest Overpass is waited on for the places around, where nothing else has them. */
         const val HERE_ONLINE_MS = 20_000L
 
-        /** A lookup's longest wait for the map's windows from Atlas's packs, where the phone keeps no data for them, before Overpass. */
+        /**
+         * A lookup's longest wait for the map's windows from Atlas's packs, where the phone keeps no data for them and
+         * they make its box whole, before Overpass.
+         */
         const val WINDOW_PACKS_MS = 10_000L
 
         /** Two bridge crossings closer than this along a route are one bridge (metres). */

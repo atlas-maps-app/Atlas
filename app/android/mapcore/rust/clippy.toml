@@ -1,0 +1,6 @@
+# clippy for the core's Rust (each crate under mapcore/rust: clippy reads the nearest clippy.toml above a crate's
+# Cargo.toml), as CI's tidy job runs it (.github/scripts/rust-lint.sh), beside the lints a crate's Cargo.toml sets. A
+# test may unwrap, expect and panic: that is how it fails.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

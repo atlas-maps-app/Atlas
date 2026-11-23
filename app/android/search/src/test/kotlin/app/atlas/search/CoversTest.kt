@@ -33,7 +33,7 @@ class CoversTest {
             place(50.7706, 6.0182, mapOf("addr:street" to "Maastrichterlaan", "addr:housenumber" to "10")),
             place(52.8920, 6.5310, mapOf("addr:street" to "Hoofdweg", "addr:housenumber" to "3")),
             place(51.4440, 4.9300, mapOf("amenity" to "bench")),
-        ),
+        ), country = null,
     )
 
     @Test
@@ -56,7 +56,7 @@ class CoversTest {
         // beyond its box, or with nothing of its own near: not
         assertFalse(netherlands.covers(LatLon(48.8566, 2.3522)))
         assertFalse(netherlands.covers(LatLon(52.6000, 5.4000)))
-        assertFalse(MemoryPlaces(emptyList()).covers(LatLon(52.3745, 4.8840)))
+        assertFalse(MemoryPlaces(emptyList(), country = null).covers(LatLon(52.3745, 4.8840)))
     }
 
     @Test

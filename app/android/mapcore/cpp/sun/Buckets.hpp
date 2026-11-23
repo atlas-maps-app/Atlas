@@ -21,8 +21,10 @@
 #include <atomic>
 #include <bit>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -60,18 +62,66 @@ struct Bucket {
 /// and elevation rounded to 0.5° (at least 0.5° up while the sun is up); straight down while the sun is set.
 [[nodiscard]] Bucket bucket_of(const style::ThemeBlock& block) noexcept;
 
+/// A scene's tiles in order, each one's part (shared between scenes) read as `const SunTile&`.
+class SceneTiles {
+public:
+    class Iterator {
+    public:
+        using iterator_concept = std::forward_iterator_tag;
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = SunTile;
+        using difference_type = std::ptrdiff_t;
+        using reference = const SunTile&;
+        using pointer = const SunTile*;
+        Iterator() = default;
+        explicit Iterator(std::span<const std::shared_ptr<const SunTile>>::iterator at) noexcept : at_(at) {}
+        [[nodiscard]] reference operator*() const noexcept { return **at_; }
+        [[nodiscard]] pointer operator->() const noexcept { return at_->get(); }
+        Iterator& operator++() noexcept {
+            ++at_;
+            return *this;
+        }
+        Iterator operator++(int) noexcept {
+            const Iterator was = *this;
+            ++at_;
+            return was;
+        }
+        [[nodiscard]] bool operator==(const Iterator&) const = default;
+
+    private:
+        std::span<const std::shared_ptr<const SunTile>>::iterator at_;
+    };
+
+    explicit SceneTiles(std::span<const std::shared_ptr<const SunTile>> parts) noexcept : parts_(parts) {}
+    [[nodiscard]] std::size_t size() const noexcept { return parts_.size(); }
+    [[nodiscard]] bool empty() const noexcept { return parts_.empty(); }
+    [[nodiscard]] const SunTile& operator[](std::size_t t) const noexcept { return *parts_[t]; }
+    [[nodiscard]] Iterator begin() const noexcept { return Iterator(parts_.begin()); }
+    [[nodiscard]] Iterator end() const noexcept { return Iterator(parts_.end()); }
+
+private:
+    std::span<const std::shared_ptr<const SunTile>> parts_;
+};
+
 /// The sun's scene: the tiles the worker holds and the grid over all their solids.
 class Scene {
 public:
     /// The grid over every tile's solids, in the tiles' order; `scene_maxh` is the scene's tallest solid
     /// (Samples.hpp's scene_maxh). `chunks` are the tiles' chunk hashes (for the disk cache; empty: none kept).
     Scene(std::vector<SunTile> tiles, double scene_maxh, std::vector<tiles::Sha256Digest> chunks = {});
+    /// The same over tiles' parts that other scenes may share (SunGlobals keeps each tile's part from one scene to
+    /// the next, never a copy of it).
+    Scene(std::vector<std::shared_ptr<const SunTile>> tiles, double scene_maxh,
+          std::vector<tiles::Sha256Digest> chunks = {});
     /// `from` with its tiles as `tiles`: the same tiles with the same solids, some made whole that were their solids
     /// alone (a tile of the halo come resident: SunGlobals). Its grid is `from`'s, shared, and so are its chunks.
-    Scene(const Scene& from, std::vector<SunTile> tiles);
+    Scene(const Scene& from, std::vector<std::shared_ptr<const SunTile>> tiles);
 
     [[nodiscard]] const Grid& grid() const noexcept { return *grid_; }
-    [[nodiscard]] std::span<const SunTile> tiles() const noexcept { return tiles_; }
+    /// Its tiles, in order, each one's part as `const SunTile&`.
+    [[nodiscard]] SceneTiles tiles() const noexcept { return SceneTiles(tiles_); }
+    /// Tile `t`'s part, which other scenes may share.
+    [[nodiscard]] const std::shared_ptr<const SunTile>& part(std::size_t t) const noexcept { return tiles_[t]; }
     /// Where tile `t`'s solids begin in the grid.
     [[nodiscard]] PrismId base(std::size_t t) const noexcept { return base_[t]; }
     /// Tile `t`'s chunk hash, or nothing: the disk cache's key for its bits (the scene's maker may hash into it the
@@ -85,7 +135,7 @@ public:
     [[nodiscard]] std::optional<std::uint32_t> find(tiles::TileKey key) const noexcept;
 
 private:
-    std::vector<SunTile> tiles_;
+    std::vector<std::shared_ptr<const SunTile>> tiles_;
     std::vector<PrismId> base_;
     std::vector<tiles::Sha256Digest> chunks_;
     std::shared_ptr<const Grid> grid_;
@@ -176,7 +226,7 @@ inline constexpr Sun bundled_sun{.x = std::bit_cast<double>(0xBFE3'702C'8755'BB0
 [[nodiscard]] tiles::Result<std::uint64_t> bundled_check(const tiles::Pack& pack);
 
 /// The host build's hash of the bundled check.
-inline constexpr std::uint64_t bundled_check_expected = 0x2BE1'DA13'70C7'1615ULL;
+inline constexpr std::uint64_t bundled_check_expected = 0x538B'B90B'B4F0'7E41ULL;
 
 /// `sun <hash> ok`, or `sun <hash> FAIL expected <hash>` (with the march check's hash when that one failed too), or
 /// `sun unavailable: <why>`, for the bundled pack in `pack`.
@@ -245,3 +295,7 @@ private:
 };
 
 } // namespace atlas::sun
+
+/// A scene's tiles view its scene's parts (it owns none), so an iterator outlives the view it came from.
+template <>
+inline constexpr bool std::ranges::enable_borrowed_range<atlas::sun::SceneTiles> = true;

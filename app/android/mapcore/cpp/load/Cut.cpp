@@ -1,7 +1,9 @@
 #include "load/Cut.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/BigRoad.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "geometry/StreetWall.hpp"
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
@@ -333,9 +335,11 @@ class Walls {
 public:
     explicit Walls(const Scene& s) {
         for (const Building& b : s.buildings) {
-            if (b.tags.is("building", "houseboat")) continue;
+            if (b.underground || b.tags.is("building", "houseboat")) continue; // what is below lines no quay
             const std::size_t n = b.poly.size();
+            const std::vector<std::uint8_t> seam = geometry::seams(b.poly); // a seam is no wall
             for (std::size_t i = 0; i < n; ++i) {
+                if (!seam.empty() && seam[i] != 0) continue;
                 const V2& c = b.poly[i];
                 const V2& d = b.poly[(i + 1) % n];
                 const auto k = static_cast<std::uint32_t>(walls_.size());
@@ -886,7 +890,7 @@ struct CutPlan {
         a.kind = b.kind;
     }
     a.relation = b.relation;
-    if (!part) a.hidden = b.hidden;
+    if (!part || b.hidden) a.hidden = b.hidden; // a part says so only where it is (one below the ground)
     if (b.look == LookPath::generic || b.look == LookPath::tradition) a.no_win = b.no_win;
     a.in_church = b.in_church;
     for (const Guess g : b.guessed.keys()) a.guessed.push_back(key_of(g));
@@ -1040,6 +1044,20 @@ private:
         out.reserve(list.size());
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             out.push_back(keyed_ring(list[i].poly, [&] { return std::format("{} {} ({})", label, i, list[i].id); }));
+            if (!out.back().keep.empty()) keep_seams(list[i].poly, out.back().keep);
+        }
+    }
+
+    /// A ring with seams keeps the ends of each at every level, so that each seam runs there and back at each.
+    static void keep_seams(std::span<const V2> ring, std::vector<std::uint8_t>& keep) {
+        const std::vector<std::uint8_t> seam = geometry::seams(ring);
+        if (seam.empty()) return;
+        const std::size_t n = ring.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            if (seam[i] != 0) {
+                keep[i] = tl::keep::all;
+                keep[(i + 1) % n] = tl::keep::all;
+            }
         }
     }
 
@@ -1081,7 +1099,7 @@ private:
         refs.assign(list.size(), {});
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             const Building& b = list[i];
-            const V2 c = geometry::centroid(b.poly);
+            const V2 c = b.at ? *b.at : geometry::centroid(b.poly); // where it was mapped (load/Clean.hpp)
             refs[i] = tl::nearest_grid(f_, c.x, c.z);
             put({.layer = layer,
                  .source = source,
@@ -1250,7 +1268,9 @@ private:
         std::optional<std::uint32_t> best;
         double least = 0.0;
         const std::size_t n = poly.size();
+        const std::vector<std::uint8_t> seam = geometry::seams(poly); // a seam opens onto nothing
         for (std::size_t i = 0; i < n; ++i) {
+            if (!seam.empty() && seam[i] != 0) continue;
             const V2 a = poly[i];
             const V2 c = poly[(i + 1) % n];
             const std::optional<geometry::StreetWall> w = geometry::street_wall_at(a, c, x, z);
@@ -1543,16 +1563,12 @@ private:
         }
     }
 
-    /// rendertiles' Drawn.line for a big road: its asphalt by lanes, the widest the renders draw where its width
-    /// cannot be read.
+    /// A big road's reach beside its line: half the width the ground draws it with and half a metre, the ground's own
+    /// rule (geometry/BigRoad.hpp: a lanes or a width that cannot be read or that no road has as absent), so that its
+    /// box is never narrower than its asphalt. (rendertiles' Drawn.line took the lanes as Long.toInt and a width as
+    /// given, so a negative one, or lanes past 2^31, gave no reach at all, and lanes past the doubles 30 m.)
     [[nodiscard]] static double big_pad(const BigRoad& r) {
-        constexpr double unknown = 30.0;
-        const double lanes_f = num(r.tags.get("lanes")).value_or(r.hw.ends_with("link") ? 1.0 : 2.0);
-        const auto lanes_l = pymath::checked::to_int(lanes_f); // PyMath.int: no value past the doubles' integers
-        if (!lanes_l) return unknown;
-        const auto lanes = static_cast<std::int32_t>(static_cast<std::uint32_t>(*lanes_l)); // Long.toInt()
-        const double w = num(r.tags.get("width")).value_or((lanes * 3.5) + (r.hw == "motorway" ? 3.0 : 1.0));
-        return std::isfinite(w) ? (w / 2) + 0.5 : unknown;
+        return (geometry::big_road_size(r.hw, r.tags.get("lanes"), r.tags.get("width")).width / 2) + 0.5;
     }
 
     /// regions.py's lines: railways, big roads, runways and taxiways, power lines, marine works, a park's edge.

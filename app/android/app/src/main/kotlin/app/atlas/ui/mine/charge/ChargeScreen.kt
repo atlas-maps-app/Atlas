@@ -79,6 +79,7 @@ import app.atlas.ui.search.centre
 import app.atlas.ui.search.rememberOverMap
 import app.atlas.ui.kit.Symbol
 import app.atlas.ui.kit.cssShadow
+import app.atlas.ui.kit.rememberCountryAt
 import app.atlas.ui.kit.rememberHere
 import app.atlas.ui.kit.shortDistance
 import app.atlas.ui.kit.softShadow
@@ -403,9 +404,10 @@ private fun CardSheet(c: Charger, car: Car, here: LatLon, onClose: () -> Unit, o
     // the head: the operator's 48 px tile (radius 14), 12 px on the name (18, 600) over the drive and the price (13, grey),
     // and the LIVE chip (26 high, a 7 px dot)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable(onClick = onClose)) {
-        // The operator's own logo from the brand index when it knows it; else the board's tile with the operator's initial
-        // (or the bolt when nobody is named).
-        val brand = remember(c.place) { Brands.forTags(c.place.tags) }
+        // The operator's own logo from the brand index when it knows it, the chain of the country there (batch 4 D); else
+        // the board's tile with the operator's initial (or the bolt when nobody is named).
+        val country = rememberCountryAt(c.place.location)
+        val brand = remember(c.place, country) { Brands.forTags(c.place.tags, country) }
         val initial = (c.operator ?: c.name).firstOrNull()?.uppercase()
         if (brand != null) BrandLogo(brand, 48.dp)
         else Box(Modifier.size(48.dp).bbox(0xFF10233F, cr(14f)), contentAlignment = Alignment.Center) {

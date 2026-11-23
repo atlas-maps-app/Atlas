@@ -275,6 +275,22 @@ struct TileStart {
                                    std::uint8_t level, std::uint64_t live = all_cells);
 [[nodiscard]] SunTile finish_tile(TileStart start, const Region& region, std::span<const Deck> decks);
 
+/// A quay edge as its pieces read the bridges' decks: its midpoint and its length. A deck is near it where the deck's
+/// box widened by the length holds the midpoint (deck_near). Only a near deck can cut a piece out (a point of the edge
+/// lies within half the length of the midpoint on each axis), and the pieces ask only whether any deck is near and
+/// whether any holds a point, so a tile's quay walls are the same over every list of decks whose near ones are the
+/// same, in any order (SunGlobals keeps a tile's part on that).
+struct QuayMark {
+    double mx = 0.0;
+    double mz = 0.0;
+    double el = 0.0;
+};
+[[nodiscard]] QuayMark quay_mark(double ax, double az, double bx, double bz) noexcept;
+/// Whether `deck` is near the quay edge `q` (the test finish_tile's pieces make).
+[[nodiscard]] bool deck_near(const QuayMark& q, const Deck& deck) noexcept;
+/// Every quay edge's mark of a tile's start, in its order.
+[[nodiscard]] std::vector<QuayMark> quay_marks(const TileStart& start);
+
 /// A tile's solids alone at ladder `level`, in `frame`'s metres, as make_tile makes them (those of records outside
 /// `live` left out): a tile of a scene whose bits no one asks for (the halo's around the resident tiles, SunGlobals),
 /// whose solids the grid holds and which needs no samples.
