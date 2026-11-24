@@ -282,7 +282,7 @@ if(ATLAS_ANDROID)
     set(_link_map "${CMAKE_BINARY_DIR}/libatlasmap.so.map")
     target_link_options(atlasmap PRIVATE "-Wl,-Map=${_link_map}")
     add_custom_command(TARGET atlasmap POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" "-DMAP=${_link_map}" "-DRUST_DIR=${ATLAS_RUST_DIR}"
+        COMMAND "${CMAKE_COMMAND}" "-DMAP=${_link_map}" "-DRUST_DIR=${ATLAS_RUST_DIR}" "-DWORK=${CMAKE_BINARY_DIR}"
                 "-DWHAT=libatlasmap.so (${ATLAS_BUILD}, ${ANDROID_ABI})" "-DOUT=${CMAKE_BINARY_DIR}/rust-bytes.txt"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LinkedBytes.cmake"
         BYPRODUCTS "${_link_map}" "${CMAKE_BINARY_DIR}/rust-bytes.txt"
