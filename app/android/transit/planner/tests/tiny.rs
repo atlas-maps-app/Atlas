@@ -35,22 +35,19 @@ fn ask(planner: &mut Planner, q: &Query) -> Vec<Journey> {
     a.journeys
 }
 
-/// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way, and knows
-/// no cap on rides and no on-foot journey): the earliest arrival, the latest departure, or a window's best pairs.
+/// The connection scan's word on an answer (src/reference.rs: it holds to the feed's rules in its own way). For one
+/// moment, every option by its time, its cost and its rides, each leaving as late as it can, with wishes or
+/// without, and the walk all the way where there is one (`moment_differs`). For a window, its best pairs of
+/// departure and arrival, whatever they cost (`window_differs`: those pairs know no cap on rides).
 fn held_to_the_scan(planner: &Planner, q: &Query, journeys: &[Journey]) {
-    if q.max_rides < 8 || q.day < 0 || journeys.iter().any(|j| j.rides == 0) {
+    if q.day < 0 {
         return;
     }
     let scan = Reference::new(planner, q.day, q.time as i32 - 86_400, q.time as i32 + 2 * 86_400);
-    if q.wishes.iter().any(|w| !matches!(w.how, How::Never)) {
-        // wishes that cost: the scan that carries a cost, which judges an answer for one moment
-        assert_eq!(scan.costs_differ(planner, q, journeys), None, "{q:?}");
-        return;
-    }
-    match (q.window, q.arrive_by) {
-        (0, false) => assert_eq!(journeys.iter().map(|j| j.arrive).min(), scan.earliest_arrival(planner, q, q.time as i32), "{q:?}"),
-        (0, true) => assert_eq!(journeys.iter().map(|j| j.depart).max(), scan.latest_departure(planner, q, q.time as i32), "{q:?}"),
-        _ => assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}"),
+    if q.window == 0 {
+        assert_eq!(scan.moment_differs(planner, q, journeys), None, "{q:?}");
+    } else if q.max_rides >= 8 {
+        assert_eq!(scan.window_differs(planner, q, journeys), None, "{q:?}");
     }
 }
 
@@ -102,7 +99,7 @@ fn the_file_is_what_the_feed_says() {
 fn the_fast_bus_that_overtakes() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, e) = (stop(&tt, "A"), stop(&tt, "E"));
     let j = ask(&mut p, &Query::new(Place::Stop(a), Place::Stop(e), 0, hm(8, 0)));
     assert_eq!(j.len(), 1);
@@ -126,7 +123,7 @@ fn the_fast_bus_that_overtakes() {
 fn a_change_and_the_feeds_rules_for_it() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, f) = (stop(&tt, "A"), stop(&tt, "F"));
     // without the rules: the fast bus is at Centrum 08:12, two minutes to the other platform, the 08:21 tram
     let mut q = Query::new(Place::Stop(a), Place::Stop(f), 0, hm(8, 0));
@@ -173,7 +170,7 @@ fn a_change_and_the_feeds_rules_for_it() {
 fn no_boarding_where_the_feed_says_so() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     // at Dorp nobody boards the day's buses; only the late one takes riders there
     let j = ask(&mut p, &Query::new(Place::Stop(stop(&tt, "D")), Place::Stop(stop(&tt, "E")), 0, hm(8, 0)));
     assert_eq!((j.len(), j[0].depart as u32, j[0].arrive as u32, numbers(&tt, &j[0])), (1, hm(24, 0), hm(24, 10), vec!["103".to_string()]));
@@ -186,7 +183,7 @@ fn no_boarding_where_the_feed_says_so() {
 fn past_midnight_and_the_days() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (d, e, g) = (stop(&tt, "D"), stop(&tt, "E"), stop(&tt, "G"));
     // Tuesday 00:00 at Dorp: Monday's last bus is there at its 24:00
     let j = ask(&mut p, &Query::new(Place::Stop(d), Place::Stop(e), 1, 0));
@@ -219,7 +216,7 @@ fn past_midnight_and_the_days() {
 fn wishes() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, e, f, bos) = (stop(&tt, "A"), stop(&tt, "E"), stop(&tt, "F"), stop(&tt, "B"));
     let base = Query::new(Place::Stop(a), Place::Stop(e), 0, hm(8, 0));
     let with = |what: What, how: How| {
@@ -305,7 +302,7 @@ fn wishes() {
 fn from_a_point_and_on_foot() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, e) = (tt.stop(stop(&tt, "A")), tt.stop(stop(&tt, "E")));
     // 100 m north of Aan Zee to 200 m north of Eind: the walks at both ends, at 1.25 m/s over the line and 30 %
     let north = |m: i32| (m as i64 * 10_000_000 / 111_195) as i32;
@@ -328,7 +325,7 @@ fn from_a_point_and_on_foot() {
 fn what_is_asked_wrongly_comes_back_empty() {
     let b = bytes();
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut q = Query::new(Place::Stop(9999), Place::Station(u32::MAX), i32::MAX, u32::MAX);
     q.window = u32::MAX;
     q.max_rides = u32::MAX;
@@ -338,4 +335,62 @@ fn what_is_asked_wrongly_comes_back_empty() {
     assert!(p.plan(&q).journeys.is_empty());
     q.arrive_by = true;
     assert!(p.plan(&q).journeys.is_empty());
+}
+
+/// What a wish names ends at its edge, and a station is its stops: on paper.
+///
+/// Fort and Gracht lie 0.0002 degree of latitude apart, 22.24 m. To Fort from Aan Zee at 08:00 the way is the bus
+/// of 08:00 and the tram that waits for it, in at 08:31. Never in an area round Gracht: while the area ends short
+/// of Fort that way stays, and once it holds Fort there is none. A circle of 22 m against one of 23; a box whose
+/// south edge lies a hundredth of a second of arc north of Fort against one whose edge is Fort's own latitude (an
+/// edge is inside); an outline drawn between the two stops against one drawn round both.
+///
+/// Centrum is a station of two platforms 120 s apart (and a third stop the feed gives no place). From the station
+/// at 08:20:30 the tram of 08:21 leaves platform 2, in at 08:31; from platform 1 it is two minutes on foot, and
+/// the tram is the 08:25, in at 08:35. To the station the fast bus is in at 08:12 at platform 1; to platform 2 it
+/// is 08:14.
+#[test]
+fn an_area_ends_at_its_edge_and_a_station_is_its_stops() {
+    let b = bytes();
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt).unwrap();
+    let (a, f, g, e) = (stop(&tt, "A"), stop(&tt, "F"), stop(&tt, "G"), stop(&tt, "E"));
+    let (fort, gracht) = (tt.stop(f), tt.stop(g));
+    assert_eq!((gracht.lat - fort.lat, gracht.lon - fort.lon), (2000, 0));
+    let to_fort = Query::new(Place::Stop(a), Place::Stop(f), 0, hm(8, 0));
+    let times = |js: &[Journey]| js.iter().map(|j| (j.depart as u32, j.arrive as u32)).collect::<Vec<_>>();
+    assert_eq!(times(&ask(&mut p, &to_fort)), [(hm(8, 0), hm(8, 31))]);
+    let (lat, lon) = (gracht.lat, gracht.lon);
+    let outline = |south: i32| Area::Outline(vec![(south, lon - 1000), (south, lon + 1000), (lat + 1000, lon + 1000), (lat + 1000, lon - 1000)]);
+    let areas = [
+        (Area::Circle { lat, lon, radius_m: 22 }, Area::Circle { lat, lon, radius_m: 23 }),
+        (Area::Box { south: fort.lat + 1, west: lon - 1000, north: lat + 1000, east: lon + 1000 }, Area::Box { south: fort.lat, west: lon - 1000, north: lat + 1000, east: lon + 1000 }),
+        (outline(fort.lat + 1000), outline(fort.lat - 1000)),
+    ];
+    for (short, holding) in areas {
+        for through in [false, true] {
+            let with = |area: &Area, q: &Query| {
+                let mut q = q.clone();
+                q.wishes.push(Wish { what: What::Area { area: area.clone(), through }, how: How::Never });
+                q
+            };
+            assert_eq!(times(&ask(&mut p, &with(&short, &to_fort))), [(hm(8, 0), hm(8, 31))], "{short:?}");
+            assert_eq!(times(&ask(&mut p, &with(&holding, &to_fort))), [], "{holding:?}");
+            // (and the area that ends short of Fort does hold Gracht: nobody begins there, where the train of
+            // 08:45 is in at Eind two minutes later)
+            let from_gracht = Query::new(Place::Stop(g), Place::Stop(e), 0, hm(8, 40));
+            assert_eq!(times(&ask(&mut p, &from_gracht)), [(hm(8, 45), hm(8, 47))]);
+            assert_eq!(times(&ask(&mut p, &with(&short, &from_gracht))), [], "{short:?}");
+        }
+    }
+    // a station is its stops
+    let (station, one, two) = (stop(&tt, "ST"), stop(&tt, "C1"), stop(&tt, "C2"));
+    let from = |place: Place| Query::new(place, Place::Stop(f), 0, hm(8, 20) + 30);
+    assert_eq!(times(&ask(&mut p, &from(Place::Station(station)))), [(hm(8, 21), hm(8, 31))]);
+    assert_eq!(times(&ask(&mut p, &from(Place::Stop(two)))), [(hm(8, 21), hm(8, 31))]);
+    assert_eq!(times(&ask(&mut p, &from(Place::Stop(one)))), [(hm(8, 23), hm(8, 35))]);
+    let to = |place: Place| Query::new(Place::Stop(a), place, 0, hm(8, 0));
+    assert_eq!(times(&ask(&mut p, &to(Place::Station(station)))), [(hm(8, 5), hm(8, 12))]);
+    assert_eq!(times(&ask(&mut p, &to(Place::Stop(one)))), [(hm(8, 5), hm(8, 12))]);
+    assert_eq!(times(&ask(&mut p, &to(Place::Stop(two)))), [(hm(8, 5), hm(8, 14))]);
 }
