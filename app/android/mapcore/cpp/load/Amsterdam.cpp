@@ -660,12 +660,12 @@ void count_flat_roofs(Scene& s) {
                 ++flat; // a shape stage T does not draw, or no height
                 continue;
             }
-            const std::vector<std::uint8_t> seam = geometry::seams(b.poly);
+            const std::vector<std::uint8_t> seam = seam_kinds(b.poly);
             if (seam.empty()) continue;
             bool courtyard = false;
             bool roofed = false;
-            for (const std::vector<std::uint32_t>& piece : geometry::pieces_of(b.poly, seam)) {
-                (geometry::has_courtyard(piece, seam) ? courtyard : roofed) = true;
+            for (const geometry::Piece& piece : geometry::split(b.poly, seam, 0.0).pieces) {
+                (piece.courtyard ? courtyard : roofed) = true;
             }
             if (courtyard) {
                 ++flat;

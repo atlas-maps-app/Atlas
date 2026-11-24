@@ -2,7 +2,6 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
-#include "geometry/Seams.hpp"
 #include "load/Clean.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
@@ -733,7 +732,7 @@ std::expected<Scene, LoadError> load_region(const osm::Document& doc, const Regi
         // a ring with seams stays whole: its courtyards and pieces would not stay joined
         for (auto* list : {&s.buildings, &s.parts}) {
             for (Building& b : *list) {
-                if (geometry::seams(b.poly).empty()) b.poly = simplify(b.poly, tolerance);
+                if (seams(b.poly).empty()) b.poly = simplify(b.poly, tolerance);
             }
         }
         area_rings.reserve(s.areas.size());

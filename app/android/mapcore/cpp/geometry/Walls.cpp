@@ -11,6 +11,7 @@
 #include "geometry/Houseboats.hpp"
 #include "geometry/Roofs.hpp"
 #include "geometry/Seams.hpp"
+#include "tiles/LeastFace.hpp"
 #include "tiles/Simplify.hpp"
 #include "tiles/layers/Buildings.hpp"
 
@@ -19,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -143,13 +145,15 @@ constexpr Slots variant_slots = slots_in(tl::variant::columns);
     return v;
 }
 
-/// A ring at the level, in metres in the pack's frame.
+/// A ring at the level, in metres in the pack's frame, and its seams there by its marks (geometry::seams_at; empty
+/// where it has none).
 void ring_at(const tl::RingView& ring, std::uint8_t level, const tl::Frame& frame, std::vector<std::uint32_t>& kept,
-             std::vector<V2>& out) {
+             std::vector<V2>& out, std::vector<std::uint8_t>& seam) {
     kept.resize(ring.size());
     const tl::Simplified s = tl::simplify(ring, level, frame, kept);
     out.clear();
     for (std::size_t k = 0; k < s.count; ++k) out.emplace_back(frame.x(ring.lon[kept[k]]), frame.z(ring.lat[kept[k]]));
+    seams_at(ring, std::span<const std::uint32_t>(kept).first(s.count), seam);
 }
 
 /// The cell of each record of a layer.
@@ -318,8 +322,10 @@ void Builder::polygon(std::vector<V3> ring, std::span<const V2> plan, PrimKind k
     const std::size_t n = poly.ring.size();
     used_.assign(n, 0);
     for (const std::uint32_t i : triangles_) used_[i] = 1;
-    // a seam (geometry/Seams.hpp) runs on the ring but is no edge of the n-gon: no outline along it
-    const std::vector<std::uint8_t> seam = seams(plan);
+    // a seam (geometry/Seams.hpp) runs on the ring but is no edge of the n-gon: no outline along it. The current
+    // building's, where the n-gon is over its ring (a piece with a courtyard, flat: its top)
+    const std::span<const std::uint8_t> seam = off.size() == n ? off : std::span<const std::uint8_t>{};
+    if (std::ranges::any_of(seam, [](std::uint8_t f) { return f != 0; })) poly.off.assign(seam.begin(), seam.end());
     const auto follows = [&](std::uint32_t u, std::uint32_t v) {
         for (std::size_t k = (u + 1) % n, prev = u; k != u; prev = k, k = (k + 1) % n) {
             if (!seam.empty() && seam[prev] != 0) return false;
@@ -492,7 +498,6 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
     // skillion's wall, the wall's shop glazing and its windows; after them the building's plinth and cornice
     // (facade_slots)
     const std::span<const V2> poly = bl.poly;
-    const std::size_t n = poly.size();
     const double y0 = bl.y0;
     const double wall_top = bl.wall_top;
     // K8's windowed walls (sun/Samples.cpp): not a part (but a church's), not a houseboat, not no_win, with levels
@@ -548,13 +553,14 @@ bool walls(Builder& b, const Building& bl, std::uint16_t variant) {
         const Rgba c = darken(rgba((flags & tl::building::flag_wall_drawn) != 0 ? bl.v.wall_rgb : 0x888888U), 0.62);
         return (std::uint32_t{c.r} << 16U) | (std::uint32_t{c.g} << 8U) | std::uint32_t{c.b};
     }();
-    for (std::size_t i = 0; i < n; ++i) {
-        const V2 a = poly[i];
-        const V2 bb = poly[(i + 1) % n];
+    for (const WallEdge<V2> w : walls_of(poly, bl.off)) { // a seam draws nothing
+        const std::size_t i = w.edge;
+        const V2 a = w.a;
+        const V2 bb = w.b;
         const double ex = bb.x - a.x;
         const double ez = bb.z - a.z;
         const double elen = hypot(ex, ez);
-        if (elen < 0.3 || bl.seam_at(i)) continue; // a seam draws nothing
+        if (elen < 0.3) continue;
         const V3 nrm = vnorm({ez, 0.0, -ex});
         const auto edge = static_cast<std::uint32_t>(i);
         // vdot(nrm, vsub(cam.C, ((a + bb) / 2, (y0 + wall_top) / 2))) > 0: the wall faces the eye
@@ -829,9 +835,12 @@ void lay_roof(Building& bl, double rh) {
 
 /// The walls, then the roof, of `bl` (its values, its ring and its seams, its base, its top and its roof's shape set),
 /// its roof `rh` high where it is pitched. A ring without seams as it is. One with seams piece by piece
-/// (geometry/Seams.hpp): every piece's walls in the ring's order, then every piece's roof, a piece without a courtyard
-/// under the building's roof by itself, one with a courtyard flat; a primitive keeps its edge's number on the ring.
+/// (geometry/Seams.hpp's split, which sets `bl.off`): every drawn piece's walls in the ring's order, then every
+/// piece's roof, a piece without a courtyard under the building's roof by itself, one with a courtyard flat; a
+/// primitive keeps its edge's number on the ring. A piece the level leaves no area, or less than its least face,
+/// draws nothing.
 void draw(Builder& b, Building& bl, double rh, std::uint16_t variant) {
+    bl.off.clear();
     if (bl.seam.empty()) {
         lay_roof(bl, rh);
         facade_slots(b, walls(b, bl, variant));
@@ -839,35 +848,40 @@ void draw(Builder& b, Building& bl, double rh, std::uint16_t variant) {
         return;
     }
     lay_roof(bl, 0.0); // the ring as a whole has no roof of its own
-    const std::vector<std::vector<std::uint32_t>> edges = pieces_of(bl.poly, bl.seam);
-    std::vector<Building> pieces(edges.size());
+    Split parts = split(bl.poly, bl.seam, b.least_face);
+    std::vector<Building> pieces;
+    pieces.reserve(parts.pieces.size());
     bool facade = false;
-    for (std::size_t k = 0; k < edges.size(); ++k) {
-        Building& p = pieces[k];
+    for (Piece& part : parts.pieces) {
+        if (!part.drawn) continue;
+        Building& p = pieces.emplace_back();
         p.source = bl.source;
         p.id = bl.id;
         p.v = bl.v;
         p.h = bl.h;
         p.y0 = bl.y0;
         p.roof = bl.roof;
-        p.edges = edges[k];
+        p.edges = std::move(part.edges);
         p.poly.reserve(p.edges.size());
         for (const std::uint32_t e : p.edges) p.poly.push_back(bl.poly[e]);
-        const bool courtyard = has_courtyard(p.edges, bl.seam);
-        if (courtyard) {
-            p.seam.reserve(p.edges.size());
-            for (const std::uint32_t e : p.edges) p.seam.push_back(bl.seam[e]);
+        if (part.courtyard) {
+            p.off.reserve(p.edges.size());
+            for (const std::uint32_t e : p.edges) p.off.push_back(parts.off[e]);
         }
-        lay_roof(p, courtyard || p.poly.size() < 3 ? 0.0 : rh);
+        lay_roof(p, part.courtyard || p.poly.size() < 3 ? 0.0 : rh);
         b.edges = p.edges;
+        b.off = p.off;
         facade = walls(b, p, variant) || facade;
     }
     facade_slots(b, facade);
     for (const Building& p : pieces) {
         b.edges = p.edges;
+        b.off = p.off;
         roofs(b, p, variant);
     }
     b.edges = {};
+    b.off = {};
+    bl.off = std::move(parts.off);
 }
 
 /// Records [from, to) of the walk into `out`, as one walk over every record makes them.
@@ -879,6 +893,7 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
     std::vector<Made>& spans = out.spans;
     Builder b(made);
     b.lean = in.lean || in.tile->header.level < 14;
+    b.least_face = tl::least_face(in.tile->header.level);
     b.paris = in.region.paris;
     b.kit_eaves = in.region.kit_eaves;
     b.kit_band = in.region.kit_band;
@@ -898,12 +913,12 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
             bl.v = it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(*l, record_slots, i);
             bl.id = l->integer(tl::building::id, i);
-            ring_at(l->ring(tl::building::ring, i), in.level, frame, kept, bl.poly);
+            ring_at(l->ring(tl::building::ring, i), in.level, frame, kept, bl.poly, bl.seam);
+            bl.off.clear(); // draw sets it
             // BuildingSamples::all: an outline drawn by its parts, what is below the ground (a part too), or one
             // without a height, is never drawn
             if (bl.v.hidden) continue;
             if (!bl.v.has_h || bl.poly.empty()) continue;
-            bl.seam = seams(bl.poly);
             bl.source = source;
             Made m{.cell = cell_of[i],
                    .edged_first = made.edged.size(),
@@ -927,11 +942,8 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
             draw(b, bl, drawn_pitched(bl.roof, bl.v.roof_h, false) ? bl.v.roof_h : 0.0, variant);
             // the reflection's samples (K16 draws it): one per wall of 0.3 m or more of a building near the water
             if ((bl.v.flags & tl::building::flag_near_water) != 0 && !bl.v.hidden && bl.v.h != 0.0) {
-                const std::size_t n = bl.poly.size();
-                for (std::size_t k = 0; k < n; ++k) {
-                    const V2 a = bl.poly[k];
-                    const V2 c = bl.poly[(k + 1) % n];
-                    if (hypot(c.x - a.x, c.z - a.z) >= 0.3 && !bl.seam_at(k)) ++b.sample;
+                for (const WallEdge<V2> wall : walls_of(bl.poly, bl.off)) {
+                    if (hypot(wall.b.x - wall.a.x, wall.b.z - wall.a.z) >= 0.3) ++b.sample;
                 }
             }
             // the item: Amsterdam.gatherItems' sort point (the footprint's centroid at h / 2, a part's between its base
@@ -1078,10 +1090,9 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
         bl.v = values_of(*l, record_slots, i);
         if (bl.v.relation != relation) continue;
         std::vector<std::uint32_t> kept;
-        ring_at(l->ring(tl::building::ring, i), in.level, in.head->frame, kept, bl.poly);
+        ring_at(l->ring(tl::building::ring, i), in.level, in.head->frame, kept, bl.poly, bl.seam);
         if (bl.v.hidden || !bl.v.has_h || bl.poly.size() < 3) return std::nullopt;
         if ((bl.v.flags & tl::building::flag_houseboat) != 0) return std::nullopt;
-        bl.seam = seams(bl.poly);
         bl.id = id;
         bl.source = Source::building;
         bl.h = bl.v.h;
@@ -1096,12 +1107,12 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
         } else if (own_pitch) {
             bl.rh = bl.v.roof_h;
         } else {
-            const std::size_t n = bl.poly.size();
-            double shortest = hypot(bl.poly[1].x - bl.poly[0].x, bl.poly[1].z - bl.poly[0].z);
-            for (std::size_t k = 1; k < n; ++k) {
-                const V2 a = bl.poly[k];
-                const V2 c = bl.poly[(k + 1) % n];
-                shortest = pm::min(shortest, hypot(c.x - a.x, c.z - a.z));
+            // its shortest side a wall stands on: a seam is no side of it
+            const Split parts =
+                bl.seam.empty() ? Split{} : split(bl.poly, bl.seam, tl::least_face(in.tile->header.level));
+            double shortest = std::numeric_limits<double>::infinity();
+            for (const WallEdge<V2> w : walls_of(bl.poly, parts.off)) {
+                shortest = pm::min(shortest, hypot(w.b.x - w.a.x, w.b.z - w.a.z));
             }
             bl.rh = house_roof_height(bl.h, shortest);
         }
@@ -1117,6 +1128,7 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
         {
             Builder b(*out);
             b.lean = true;
+            b.least_face = tl::least_face(in.tile->header.level);
             b.cell = 0;
             b.item = 0;
             draw(b, bl, rh, 0);

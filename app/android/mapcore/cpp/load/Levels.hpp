@@ -27,6 +27,7 @@
 
 #include "load/Window.hpp"
 #include "tiles/Chunks.hpp"
+#include "tiles/LeastFace.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -40,16 +41,16 @@ namespace atlas::load {
 inline constexpr std::uint8_t coarse_level = 13;
 /// The ladder index its rings are simplified at: 1.5 m.
 inline constexpr std::uint8_t coarse_code = 10;
-/// The depth from the eye it is first drawn at (the finest level's reach), metres, and the focal length of the phone's
-/// frame there (916 dp tall: 4.7 km is zoom 14.8 at 52° N), dp.
-inline constexpr double coarse_depth = 4'700.0;
-inline constexpr double frame_focal = 1'420.0;
+/// The depth from the eye it is first drawn at, metres, and the focal length of the phone's frame there, dp
+/// (tiles/LeastFace.hpp, which stage T reads too).
+inline constexpr double coarse_depth = tiles::coarse_depth;
+inline constexpr double frame_focal = tiles::frame_focal;
 
 /// The far level: sixteen places a tile, each one of its cells, drawn from twice the coarse level's depth on.
 inline constexpr std::uint8_t far_level = 12;
 /// The ladder index its rings are simplified at: 4 m.
 inline constexpr std::uint8_t far_code = 11;
-inline constexpr double far_depth = 2.0 * coarse_depth;
+inline constexpr double far_depth = tiles::far_depth;
 /// The buildings it keeps: a footprint of this many m² or more, or this height in metres or more.
 inline constexpr double far_least_area = 1'000.0;
 inline constexpr double far_least_height = 30.0;
@@ -62,6 +63,7 @@ struct BuiltLevel {
     std::uint64_t raw = 0;       ///< the tile's decompressed bytes
     std::uint32_t buildings = 0; ///< buildings and parts
     std::uint32_t trees = 0;
+    SeamMarks seams; ///< the seams marked on its buildings' and parts' rings (no ring's unpaired: such a cell fails)
 };
 
 /// The levels' tiles of one frame cell from its windows' packs (each a window's pack as build_window writes it, all of

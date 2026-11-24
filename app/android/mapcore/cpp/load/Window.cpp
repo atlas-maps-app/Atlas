@@ -8,6 +8,7 @@
 #include "gen/data/tradition_it_tuscan.hpp"
 #include "gen/data/tradition_nl_amsterdam.hpp"
 #include "gen/data/tradition_no_timber.hpp"
+#include "geometry/Seams.hpp"
 #include "load/Countries.hpp"
 #include "load/Cut.hpp"
 #include "load/PackHead.hpp"
@@ -17,6 +18,7 @@
 #include "tiles/Grid.hpp"
 #include "tiles/Json.hpp"
 #include "tiles/PackWriter.hpp"
+#include "tiles/Schema.hpp"
 #include "tiles/SectionWriter.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/TileWriter.hpp"
@@ -36,6 +38,7 @@
 #include <system_error>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace atlas::load {
 
@@ -372,6 +375,19 @@ std::uint64_t most_windows(const tiles::Tile& tile, const tiles::Frame& frame) {
     return most;
 }
 
+void count_marks(const tl::RingView& ring, const tl::Frame& frame, SeamMarks& out) {
+    namespace kind = geometry::seam_kind;
+    std::vector<std::uint8_t> seam;
+    geometry::seams_at(ring, seam);
+    if (seam.empty()) return;
+    std::vector<geometry::V2> poly;
+    poly.reserve(ring.size());
+    for (std::size_t i = 0; i < ring.size(); ++i) poly.emplace_back(frame.x(ring.lon[i]), frame.z(ring.lat[i]));
+    out.piece += static_cast<std::uint64_t>(std::ranges::count(seam, kind::piece));
+    out.court += static_cast<std::uint64_t>(std::ranges::count(seam, kind::court));
+    if (!geometry::split(poly, seam, 0.0).paired) ++out.unpaired;
+}
+
 std::expected<PackBuildings, WindowError> buildings_of(std::span<const std::byte> pack) {
     auto opened = tl::Pack::open(std::make_unique<tl::MemorySource>(pack));
     if (!opened) return std::unexpected(WindowError{"the pack does not open: " + tl::describe(opened.error())});
@@ -388,7 +404,12 @@ std::expected<PackBuildings, WindowError> buildings_of(std::span<const std::byte
         const auto tile = opened->decode(c, zstd, decoder, arena, raw, scratch);
         if (!tile) return std::unexpected(WindowError{"the tile does not decode: " + tl::describe(tile.error())});
         for (const tl::LayerId id : {tl::LayerId::building, tl::LayerId::part}) {
-            if (const tl::Layer* l = tile->layer(id)) out.records += l->count;
+            const tl::Layer* l = tile->layer(id);
+            if (l == nullptr) continue;
+            out.records += l->count;
+            for (std::uint32_t i = 0; i < l->count; ++i) {
+                count_marks(l->ring(tl::building::ring, i), head->frame, out.seams);
+            }
         }
         out.most_windows += most_windows(*tile, head->frame);
     }

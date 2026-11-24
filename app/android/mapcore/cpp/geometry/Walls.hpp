@@ -327,7 +327,11 @@ inline constexpr std::uint32_t window_slots = 5;
 /// An n-gon the port fills as one path (a flat top, a skillion roof, a mansard's top, a deck, a cabin roof).
 struct Polygon {
     std::vector<V3> ring; ///< its corners in the port's order and arithmetic
-    double area = 0.0;    ///< its area in space, m² (its projected area at a camera is estimated from it)
+    /// Per corner, 1 where the edge from it to the ring's next is no edge of the n-gon: a seam of its footprint
+    /// (geometry/Seams.hpp), or an edge nothing stands on. No outline runs along it, in the frame's pieces or in the
+    /// twin's path. Empty where every edge is the n-gon's.
+    std::vector<std::uint8_t> off;
+    double area = 0.0; ///< its area in space, m² (its projected area at a camera is estimated from it)
     std::uint32_t face = 0;
     std::uint32_t first = 0; ///< its pieces: plain primitives [first, first + count)
     std::uint32_t count = 0;
@@ -503,10 +507,13 @@ struct Building {
     std::int64_t id = 0; ///< its OpenStreetMap id (a guessed flat roof's mid grey goes by it)
     Values v;
     std::vector<V2> poly;
-    /// Per edge of `poly`, 1 where it is a seam (geometry/Seams.hpp: it joins a courtyard or a piece and draws
-    /// nothing); empty where it has none.
+    /// Per edge of `poly`, what it is (geometry/Seams.hpp's seam_kind, as the tile's marks say: seams_at); empty
+    /// where the ring has no seam.
     std::vector<std::uint8_t> seam;
-    /// Where it is one piece of its record's ring (geometry::pieces_of), drawn as a building of its own: each of its
+    /// Per edge of `poly`, 1 where nothing stands on it (geometry::split's: a seam, or an edge of a piece or a
+    /// courtyard not drawn at the level); empty where a wall stands on every edge.
+    std::vector<std::uint8_t> off;
+    /// Where it is one piece of its record's ring (geometry::split), drawn as a building of its own: each of its
     /// edges' number on that ring, which its primitives and sun samples go by. Empty where it is the ring itself.
     std::vector<std::uint32_t> edges;
     double h = 0.0;        ///< the top
@@ -525,8 +532,6 @@ struct Building {
 
     /// A skillion's top above footprint point p: h - rh * ((p · dirv) - p0) / span.
     [[nodiscard]] double sk_top(const V2& p) const noexcept;
-    /// Whether edge i (from vertex i to i + 1) is a seam.
-    [[nodiscard]] bool seam_at(std::size_t i) const noexcept { return !seam.empty() && seam[i] != 0; }
 };
 
 /// Appends one tile's primitives, faces and n-gons, with the current building's cell, item, sun sample and slots.
@@ -568,6 +573,11 @@ public:
     /// The current building's edges' numbers on its record's ring where it is a piece of one (Building::edges): a
     /// primitive is given its edge on the piece and keeps the ring's, an n-gon its piece's first edge's.
     std::span<const std::uint32_t> edges;
+    /// The current building's edges nothing stands on (Building::off): an n-gon over its ring has no outline along
+    /// one. Empty where it has none.
+    std::span<const std::uint8_t> off;
+    /// The least face of the tile's level, m² (tiles/LeastFace.hpp): a piece under it draws nothing.
+    double least_face = 0.0;
     std::uint32_t sample = 0; ///< the next sun sample, in K8's order
     std::uint32_t near_slot = 0;
     std::uint32_t far_slot = 0;

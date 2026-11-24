@@ -20,6 +20,7 @@
 #include "tests/tiles/support.hpp"
 #include "tiles/Grid.hpp"
 #include "tiles/Payload.hpp"
+#include "tiles/Schema.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "twin/building/BuildingShader.hpp"
 #include "twin/building/BuildingTile.hpp"
@@ -36,6 +37,7 @@
 #include <functional>
 #include <iterator>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
@@ -59,6 +61,16 @@ struct Fixture {
 
     Fixture() { head.frame = tl::Frame{.lat0 = 52.374, .lon0 = 4.884, .kx = 67'908.9, .kz = 111'318.8}; }
 };
+
+/// The seams of a tile's first building's ring at level 0, as stage T reads them from its marks (geometry::seams_at).
+[[nodiscard]] std::vector<std::uint8_t> seams_of(const tl::Tile& tile) {
+    const tl::RingView r = tile.layer(tl::LayerId::building)->ring(tl::building::ring, 0);
+    std::vector<std::uint32_t> every(r.size());
+    std::iota(every.begin(), every.end(), 0U);
+    std::vector<std::uint8_t> out;
+    gm::seams_at(r, every, out);
+    return out;
+}
 
 /// A colour as 0xRRGGBB.
 [[nodiscard]] std::uint32_t hex_of(gm::Rgba c) {
@@ -446,9 +458,12 @@ TEST_CASE("buildings: a courtyard's seams draw nothing, and a pitched roof over 
     // then the block's north-west, north-east and south-east corners)
     const std::int32_t cs = s0 + 900;
     const std::int32_t cw = w0 + 1470;
+    // its keep codes the cut's (keep_seams): the seam there and the seam back marked as a courtyard's
+    namespace keep = tl::keep;
     const atlas::test::Ring block{.lat = {s0, cs, cs, cs + 900, cs + 900, cs, s0, s0 + 2700, s0 + 2700, s0},
                                   .lon = {w0, cw, cw + 1470, cw + 1470, cw, cw, w0, w0, w0 + 4410, w0 + 4410},
-                                  .keep = {}};
+                                  .keep = {keep::seam_court, keep::all, keep::all, keep::all, keep::all,
+                                           keep::seam_court, keep::all, keep::all, keep::all, keep::all}};
     atlas::test::TileBytes t;
     atlas::test::LayerBytes b;
     b.id = static_cast<std::uint8_t>(tl::LayerId::building);
@@ -457,6 +472,7 @@ TEST_CASE("buildings: a courtyard's seams draw nothing, and a pitched roof over 
         {"index", tl::Codec::delta, col::delta({0})},
         {"id", tl::Codec::delta, col::delta({400})},
         {"ring", tl::Codec::geom, col::geom({block})},
+        {"ring.keep", tl::Codec::keep, col::keep({block})},
         {"h", tl::Codec::centi, col::centi({15.0})},
         {"min", tl::Codec::centi, col::centi({0.0})},
         {"roof_h", tl::Codec::centi, col::centi({5.0})},
@@ -478,14 +494,14 @@ TEST_CASE("buildings: a courtyard's seams draw nothing, and a pitched roof over 
     const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
     const Checked c = check_tile(g, st);
     CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
-    // the ring's seams, as stage T finds them: the two edges between the block and its courtyard
+    // the ring's seams, as stage T reads them from its marks: the two edges between the block and its courtyard
     std::vector<gm::V2> ring;
     ring.reserve(block.lat.size());
     for (std::size_t k = 0; k < block.lat.size(); ++k)
         ring.emplace_back(f.head.frame.x(block.lon[k]), f.head.frame.z(block.lat[k]));
-    const std::vector<std::uint8_t> seams = gm::seams(ring);
+    const std::vector<std::uint8_t> seams = seams_of(*tile);
     ATLAS_REQUIRE(seams.size() == ring.size());
-    CHECK(std::ranges::count(seams, std::uint8_t{1}) == 2);
+    CHECK(std::ranges::count(seams, gm::seam_kind::court) == 2);
     // walls on every edge but the seams, each its one far cell; a flat top, no gable or slope
     std::set<std::uint32_t> walled;
     std::map<gm::PrimKind, int> kinds;
@@ -538,14 +554,16 @@ TEST_CASE("buildings: a ring of two pieces is roofed piece by piece, the house g
     ring.reserve(both.lat.size());
     for (std::size_t k = 0; k < both.lat.size(); ++k)
         ring.emplace_back(f.head.frame.x(both.lon[k]), f.head.frame.z(both.lat[k]));
-    const std::vector<std::uint8_t> seams = gm::seams(ring);
-    CHECK(seams == std::vector<std::uint8_t>{1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
-    const std::vector<std::vector<std::uint32_t>> pieces = gm::pieces_of(ring, seams);
-    ATLAS_REQUIRE(pieces.size() == 2);
-    CHECK(pieces[0] == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 6, 7, 14, 15});
-    CHECK(pieces[1] == std::vector<std::uint32_t>{9, 10, 11, 12});
-    CHECK(gm::has_courtyard(pieces[0], seams));
-    CHECK_FALSE(gm::has_courtyard(pieces[1], seams));
+    const std::vector<std::uint8_t> seams = seams_of(*tile);
+    CHECK(seams == std::vector<std::uint8_t>{2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0});
+    const gm::Split parts = gm::split(ring, seams, 0.0);
+    ATLAS_REQUIRE(parts.pieces.size() == 2);
+    CHECK(parts.pieces[0].edges == std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 6, 7, 14, 15});
+    CHECK(parts.pieces[1].edges == std::vector<std::uint32_t>{9, 10, 11, 12});
+    CHECK(parts.pieces[0].courtyard);
+    CHECK_FALSE(parts.pieces[1].courtyard);
+    CHECK(parts.pieces[0].drawn);
+    CHECK(parts.pieces[1].drawn);
     // walls on every edge but the four seams; the house's reach its eaves at 10 m, the block's its top at 15 m
     std::map<std::uint32_t, double> wall_top;
     std::map<gm::PrimKind, std::set<std::uint32_t>> edges;
@@ -590,6 +608,79 @@ TEST_CASE("buildings: a ring of two pieces is roofed piece by piece, the house g
         CHECK(!pitched.empty());
         for (const std::uint32_t e : pitched) CHECK_MESSAGE((e >= 9 && e <= 12), "a roof on edge ", e);
     }
+}
+
+TEST_CASE("buildings: a damaged tile, its ring's marks not pairing, is drawn as the ring is: one flat piece, nothing "
+          "else, held to K8's samples") {
+    // the ring of two pieces, the seam between them marked there and not back
+    atlas::test::TileBytes t = atlas::test::building::pieces_tile("gabled", atlas::test::building::unpaired_ring());
+    const atlas::test::Ring both = atlas::test::building::unpaired_ring();
+    Fixture f;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, marks that do not pair");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    std::vector<gm::V2> ring;
+    ring.reserve(both.lat.size());
+    for (std::size_t k = 0; k < both.lat.size(); ++k)
+        ring.emplace_back(f.head.frame.x(both.lon[k]), f.head.frame.z(both.lat[k]));
+    const std::vector<std::uint8_t> seams = seams_of(*tile);
+    CHECK(seams == std::vector<std::uint8_t>{2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0});
+    const gm::Split parts = gm::split(ring, seams, 0.0);
+    CHECK_FALSE(parts.paired);
+    ATLAS_REQUIRE(parts.pieces.size() == 1);
+    CHECK(parts.pieces[0].edges.size() == ring.size());
+    CHECK(parts.pieces[0].courtyard);
+    CHECK(parts.pieces[0].drawn);
+    for (unsigned level = 0; level < tl::keep::tolerances.size(); ++level) {
+        CAPTURE(level);
+        const gm::TileBuildings g = gm::build_buildings(
+            {.tile = &*tile, .head = &f.head, .level = static_cast<std::uint8_t>(level), .region = {}});
+        const atlas::sun::SunTile st =
+            atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, static_cast<std::uint8_t>(level), {});
+        const Checked c = check_tile(g, st);
+        CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+        // a wall on every edge its marks leave, each to the building's top; one flat top over the ring, and no roof
+        std::set<std::uint32_t> walls;
+        std::map<gm::PrimKind, std::set<std::uint32_t>> edges;
+        for (const auto* list : {&g.edged, &g.plain}) {
+            for (const gm::Prim& p : *list) {
+                edges[p.kind].insert(p.edge);
+                if (p.kind != gm::PrimKind::cell) continue;
+                walls.insert(p.edge);
+                for (const gm::V3& v : p.p) CHECK(v.y <= 15.0);
+            }
+        }
+        CHECK(walls == std::set<std::uint32_t>{1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15});
+        CHECK(edges[gm::PrimKind::top] == std::set<std::uint32_t>{0});
+        CHECK(edges.size() == 2); // walls' cells and the top
+    }
+}
+
+TEST_CASE("buildings: a houseboat whose ring has seams gets no hull and no cabin wall on one, held to K8's samples") {
+    // the ring of two pieces as a houseboat's: none such is mapped on the canal ring or in Paris (seams_test.cpp), and
+    // nothing in the cleaning keeps a boat from one
+    atlas::test::TileBytes t = atlas::test::building::pieces_tile("flat", atlas::test::building::pieces_ring(), true);
+    Fixture f;
+    atlas::Arena arena(1U << 20U, atlas::Growth::grows, "buildings test, a houseboat with seams");
+    tl::TileDecoder decoder;
+    const std::vector<std::byte> raw = t.encode();
+    auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+    const gm::TileBuildings g = gm::build_buildings({.tile = &*tile, .head = &f.head, .level = 0, .region = {}});
+    const atlas::sun::SunTile st = atlas::sun::make_tile(*tile, f.head, atlas::sun::Region{}, 0, {});
+    const Checked c = check_tile(g, st);
+    CHECK_MESSAGE(c.wrong == 0, c.first_wrong);
+    std::map<gm::PrimKind, std::set<std::uint32_t>> edges;
+    for (const auto* list : {&g.edged, &g.plain}) {
+        for (const gm::Prim& p : *list) edges[p.kind].insert(p.edge);
+    }
+    // a side of the hull and of the cabin on every edge but the four seams (0 and 5 to the courtyard, 8 and 13
+    // between the pieces)
+    const std::set<std::uint32_t> sides{1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 14, 15};
+    CHECK(edges[gm::PrimKind::hull_wall] == sides);
+    CHECK(edges[gm::PrimKind::cabin_wall] == sides);
 }
 
 TEST_CASE("buildings: a guessed roof's shape, drawn while Atlas's guesses are on, and the plain box in its place, "

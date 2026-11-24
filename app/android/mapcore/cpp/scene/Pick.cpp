@@ -6,6 +6,7 @@
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Seams.hpp"
 #include "style/Palette.hpp"
+#include "tiles/LeastFace.hpp"
 #include "tiles/Store.hpp"
 #include "tiles/layers/Buildings.hpp"
 
@@ -58,24 +59,19 @@ struct Met {
 };
 
 /// The least distance along the ray (eye + t dir, t > 0, dir of unit length) at which it meets the prism of `ring` from
-/// `base` to `top`: a wall (each edge's face between them), or its lid at `top` from above; none where it meets
-/// neither.
-[[nodiscard]] Met meets(std::span<const P2> ring, double base, double top, const view::Vec3& eye,
-                        const view::Vec3& dir) noexcept {
+/// `base` to `top`: a wall (each edge's face between them, but an edge nothing stands on: `off`, geometry::Split's,
+/// empty where a wall stands on each), or its lid at `top` from above; none where it meets neither.
+[[nodiscard]] Met meets(std::span<const P2> ring, std::span<const std::uint8_t> off, double base, double top,
+                        const view::Vec3& eye, const view::Vec3& dir) noexcept {
     Met best;
     if (dir.y < 0.0) {
         const double t = (top - eye.y) / dir.y;
         if (t > 0.0 && inside(ring, eye.x + (t * dir.x), eye.z + (t * dir.z))) best = {.t = t, .lid = true, .y = top};
     }
-    // a seam (geometry/Seams.hpp: a courtyard's or a piece's join) is no wall
-    static_assert(sizeof(P2) == 2 * sizeof(double), "P2 is x then z, two doubles");
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): P2 is two doubles, x then z
-    const std::vector<std::uint8_t> seam =
-        geometry::seams_xz({reinterpret_cast<const double*>(ring.data()), 2 * ring.size()});
-    for (std::size_t i = 0; i < ring.size(); ++i) {
-        if (!seam.empty() && seam[i] != 0) continue;
-        const P2& a = ring[i];
-        const P2& b = ring[(i + 1) % ring.size()];
+    for (const geometry::WallEdge<P2> w : geometry::walls_of(ring, off)) { // a seam is no wall
+        const std::size_t i = w.edge;
+        const P2& a = w.a;
+        const P2& b = w.b;
         // eye.xz + t dir.xz = a + s (b - a), by the cross products of the street's vectors
         const double ex = b.x - a.x;
         const double ez = b.z - a.z;
@@ -100,25 +96,25 @@ struct PieceMet {
     bool courtyard = false;
 };
 
-/// The piece of `ring` that `m` met: the one that holds its edge, or for the lid the one over (x, z). The ring itself
-/// where it has no seams.
-[[nodiscard]] PieceMet piece_met(std::span<const P2> ring, const Met& m, double x, double z) {
+/// The piece of `ring` that `m` met, of its pieces `parts` (geometry::split's; null: a ring without seams, itself):
+/// the drawn one that holds its edge, or for the lid the drawn one over (x, z).
+[[nodiscard]] PieceMet piece_met(std::span<const P2> ring, const geometry::Split* parts, const Met& m, double x,
+                                 double z) {
     PieceMet out;
-    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): P2 is two doubles, x then z
-    const std::span<const double> xz{reinterpret_cast<const double*>(ring.data()), 2 * ring.size()};
-    const std::vector<std::uint8_t> seam = geometry::seams_xz(xz);
     const auto whole = [&](bool courtyard) {
         out.poly.clear();
         for (const P2& q : ring) out.poly.emplace_back(q.x, q.z);
         out.edge = m.lid ? 0 : m.edge;
         out.courtyard = courtyard;
     };
-    if (seam.empty()) {
+    if (parts == nullptr) {
         whole(false);
         return out;
     }
     std::vector<P2> piece;
-    for (const std::vector<std::uint32_t>& edges : geometry::pieces_xz(xz, seam)) {
+    for (const geometry::Piece& part : parts->pieces) {
+        if (!part.drawn) continue;
+        const std::vector<std::uint32_t>& edges = part.edges;
         if (m.lid) {
             piece.clear();
             for (const std::uint32_t e : edges) piece.push_back(ring[e]);
@@ -129,26 +125,23 @@ struct PieceMet {
             out.edge = static_cast<std::size_t>(at - edges.begin());
         }
         for (const std::uint32_t e : edges) out.poly.emplace_back(ring[e].x, ring[e].z);
-        out.courtyard = geometry::has_courtyard(edges, seam);
+        out.courtyard = part.courtyard;
         return out;
     }
-    whole(true); // no piece's (the lid, met on a seam's line): the ring's, flat
+    whole(true); // no piece's (the lid, met on a seam's line or over a piece not drawn): the ring's, flat
     return out;
 }
-
-/// The roof shapes geometry/Walls.cpp gives their roof's height (its `pitched`): any other, or one of them without a
-/// height, is drawn as a flat top.
-constexpr std::array<std::string_view, 5> pitched = {"gabled", "pyramidal", "hipped", "skillion", "mansard"};
 
 /// A roof's shape as geometry/Walls.cpp draws it (a quadruple saltbox hipped).
 [[nodiscard]] std::string_view shape_of(std::string_view shape) noexcept {
     return shape == "quadruple_saltbox" ? std::string_view{"hipped"} : shape;
 }
 
-/// The roof's height as geometry/Walls.cpp lays it out: the tiles' roof_h where the shape is pitched, else 0 (a flat
-/// top).
+/// The roof's height as geometry/Walls.cpp lays it out: the tiles' roof_h where the shape is one it draws pitched
+/// (geometry::pitched_shapes), else 0 (a flat top).
 [[nodiscard]] double pitched_height(const PickRoof& roof) noexcept {
-    return std::ranges::find(pitched, shape_of(roof.shape)) != pitched.end() ? roof.roof_h : 0.0;
+    return std::ranges::find(geometry::pitched_shapes, roof.shape) != geometry::pitched_shapes.end() ? roof.roof_h
+                                                                                                     : 0.0;
 }
 
 /// The grid's integer of `degrees` (degrees x 1e7), the box's edge rounded outward by `out` (-1 or 1).
@@ -237,6 +230,7 @@ std::optional<Picked> pick_building(const tiles::Store& store, std::span<const P
     Arena arena(std::size_t{4} << 20U, Growth::grows, "a pick's tile");
     std::vector<std::byte> raw;
     std::vector<P2> ring;
+    std::vector<std::uint8_t> seam;                  // its seams by its marks (geometry::seams_at)
     std::unordered_map<std::int64_t, bool> outlines; // a tile's outlines: whether each is a relation
     for (const PickPack& pack : packs) {
         for (const tiles::StoreHit& hit : store.reaching(pack.z, box)) {
@@ -268,7 +262,16 @@ std::optional<Picked> pick_building(const tiles::Store& store, std::span<const P
                         const double lon = tl::Frame::degrees(r.lon[k]);
                         ring.push_back({.x = ground.x(lat, lon), .z = ground.z(lat, lon)});
                     }
-                    const Met m = meets(ring, base, *top, eye, dir);
+                    // a ring with seams, split once (geometry/Seams.hpp): the edges nothing stands on, the pieces
+                    geometry::seams_at(r, seam);
+                    static_assert(sizeof(P2) == 2 * sizeof(double), "P2 is x then z, two doubles");
+                    const geometry::Split parts =
+                        seam.empty()
+                            ? geometry::Split{}
+                            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): P2 is two doubles
+                            : geometry::split_xz({reinterpret_cast<const double*>(ring.data()), 2 * ring.size()}, seam,
+                                                 tl::least_face(tile->header.level));
+                    const Met m = meets(ring, parts.off, base, *top, eye, dir);
                     const double t = m.t;
                     if (t == none || (best && t >= best->distance)) continue;
                     const std::int64_t id = l->integer(tl::building::id, i);
@@ -289,7 +292,8 @@ std::optional<Picked> pick_building(const tiles::Store& store, std::span<const P
                         .direction = l->string(tl::building::tag_roof_direction, i).value_or(std::string_view{})};
                     // the face is its piece's (a ring with seams is drawn piece by piece): under the building's roof
                     // where the piece has no courtyard, flat where it has one
-                    const PieceMet piece = piece_met(ring, m, eye.x + (t * dir.x), eye.z + (t * dir.z));
+                    const PieceMet piece =
+                        piece_met(ring, seam.empty() ? nullptr : &parts, m, eye.x + (t * dir.x), eye.z + (t * dir.z));
                     const bool flat = piece.courtyard || piece.poly.size() < 3 || pitched_height(roof) == 0.0;
                     p.roof = m.lid || (!flat && !in_walls_colour(piece.poly, piece.edge, m.s, m.y, *top, roof));
                     const auto word = [&](std::uint8_t column) {

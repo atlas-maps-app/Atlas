@@ -4,6 +4,7 @@
 #pragma once
 
 #include "tests/tiles/support.hpp"
+#include "tiles/Schema.hpp"
 #include "tiles/layers/Buildings.hpp"
 
 #include <array>
@@ -113,8 +114,10 @@ inline constexpr std::uint32_t tile_features = 10;
 /// north-west and north-east corners), a seam from that corner to a 10 × 20 m house 10 m east of the block (points 9
 /// to 12, clockwise on the map from its north-west corner) and back (13, 14), and the block's south-east corner.
 /// Edges 0 and 5 join the courtyard to its block; 8 and 13 join the two pieces. The house's walls are edges 9 to 12,
-/// the short ones (9 north, 11 south) across its ridge.
+/// the short ones (9 north, 11 south) across its ridge. Its keep codes are the cut's (load/Cut.cpp's keep_seams): each
+/// seam marked on the corner it starts at, with its kind; every corner kept at every level.
 [[nodiscard]] inline Ring pieces_ring() {
+    namespace keep = atlas::tiles::keep;
     const std::int32_t cs = s0 + 900;
     const std::int32_t cw = w0 + 1470;
     const std::int32_t hw = w0 + 5880;
@@ -122,11 +125,23 @@ inline constexpr std::uint32_t tile_features = 10;
                     s0 + 1800, s0 + 2700, s0},
             .lon = {w0, cw, cw + 1470, cw + 1470, cw, cw, w0, w0, w0 + 4410, hw, hw + 1470, hw + 1470, hw, hw,
                     w0 + 4410, w0 + 4410},
-            .keep = {}};
+            .keep = {keep::seam_court, keep::all, keep::all, keep::all, keep::all, keep::seam_court, keep::all,
+                     keep::all, keep::seam_piece, keep::all, keep::all, keep::all, keep::all, keep::seam_piece,
+                     keep::all, keep::all}};
+}
+
+/// That ring as a damaged tile holds it: the seam between its two pieces marked there (edge 8) and not back (edge
+/// 13), so its marks do not pair.
+[[nodiscard]] inline Ring unpaired_ring() {
+    Ring r = pieces_ring();
+    r.keep[13] = atlas::tiles::keep::all;
+    return r;
 }
 
 /// The tile of that one building (way 400): 15 m tall under a roof of `roof`'s shape, 5 m high, in the red tiles' slot.
-[[nodiscard]] inline TileBytes pieces_tile(std::string_view roof = "gabled") {
+/// With `boat`, a houseboat of that ring (its flag and its tag).
+[[nodiscard]] inline TileBytes pieces_tile(std::string_view roof = "gabled", const Ring& ring = pieces_ring(),
+                                           bool boat = false) {
     namespace tl = atlas::tiles;
     namespace col = atlas::test::columns;
     TileBytes t;
@@ -136,7 +151,8 @@ inline constexpr std::uint32_t tile_features = 10;
     b.columns = {
         {"index", tl::Codec::delta, col::delta({0})},
         {"id", tl::Codec::delta, col::delta({400})},
-        {"ring", tl::Codec::geom, col::geom({pieces_ring()})},
+        {"ring", tl::Codec::geom, col::geom({ring})},
+        {"ring.keep", tl::Codec::keep, col::keep({ring})},
         {"h", tl::Codec::centi, col::centi({15.0})},
         {"min", tl::Codec::centi, col::centi({0.0})},
         {"roof_h", tl::Codec::centi, col::centi({5.0})},
@@ -144,9 +160,9 @@ inline constexpr std::uint32_t tile_features = 10;
         {"roof", tl::Codec::str, col::str(t, {roof})},
         {"wall_rgb", tl::Codec::varu, col::varu({0x8E5A46})},
         {"roof_rgb", tl::Codec::varu, col::varu({0x9E5038})},
-        {"flags", tl::Codec::varu, col::varu({0})},
+        {"flags", tl::Codec::varu, col::varu({boat ? tl::building::flag_houseboat : 0})},
         {"roof_slot", tl::Codec::varu, col::varu({80})},
-        {"tag:building", tl::Codec::str, col::str(t, {"apartments"})},
+        {"tag:building", tl::Codec::str, col::str(t, {boat ? "houseboat" : "apartments"})},
     };
     t.layers = {b};
     return t;

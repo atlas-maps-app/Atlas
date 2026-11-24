@@ -6,10 +6,22 @@
 // fuzz_varint) stay. The repository keeps them in fuzz/corpus/<target>/ (about 40 KB), which CI's fuzz job starts from:
 //   ATLAS_TILES_DIR=<bundled packs> ATLAS_TILES_SEEDS=<cpp>/fuzz/corpus atlas_tests -tc='tiles: the fuzz*'
 // With ATLAS_TILES_WHOLE also set, the Westerkerk's whole pack joins fuzz_container's seeds (for local runs).
+//
+// fuzz_payload has one seed more, a damaged tile: one building whose ring's seam marks do not pair
+// (tests/building/fixture.hpp's unpaired_ring). Its own case below holds what it reads as, and writes it alone where
+// only ATLAS_TILES_SEEDS is set.
+#include "base/arena.hpp"
+#include "geometry/Seams.hpp"
+#include "load/Window.hpp"
 #include "tests/base/require.hpp"
+#include "tests/building/fixture.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
 #include "tiles/ExpandedCache.hpp"
+#include "tiles/Payload.hpp"
+#include "tiles/Schema.hpp"
+#include "tiles/Simplify.hpp"
+#include "tiles/layers/Buildings.hpp"
 
 #include <doctest/doctest.h>
 
@@ -97,6 +109,52 @@ std::vector<std::byte> synthetic_tile() {
     return t.encode();
 }
 
+/// The damaged tile: a building of two pieces whose seam between them is marked there and not back.
+std::vector<std::byte> unpaired_tile() {
+    return atlas::test::building::pieces_tile("gabled", atlas::test::building::unpaired_ring()).encode();
+}
+
+TEST_CASE("tiles: a tile whose seams' marks do not pair reads as one flat piece at every level, nothing else (a seed "
+          "of fuzz_payload's, written when ATLAS_TILES_SEEDS is set)") {
+    namespace gm = atlas::geometry;
+    const std::vector<std::byte> raw = unpaired_tile();
+    atlas::Arena arena(1U << 16U, atlas::Growth::grows, "seeds test");
+    TileDecoder decoder;
+    const auto tile = decoder.decode(raw, arena);
+    ATLAS_REQUIRE(tile.has_value(), describe(tile.error()));
+    const Layer* l = tile->layer(LayerId::building);
+    ATLAS_REQUIRE(l != nullptr);
+    ATLAS_REQUIRE(l->count == 1);
+    const RingView ring = l->ring(building::ring, 0);
+    const Frame frame{.lat0 = 52.374, .lon0 = 4.884, .kx = 67'908.9, .kz = 111'318.8};
+    // what a pack build counts of it, and fails on
+    atlas::load::SeamMarks marks;
+    atlas::load::count_marks(ring, frame, marks);
+    CHECK(marks.court == 2);
+    CHECK(marks.piece == 1);
+    CHECK(marks.unpaired == 1);
+    std::vector<std::uint32_t> kept(ring.size());
+    std::vector<std::uint8_t> seam;
+    for (unsigned level = 0; level < keep::tolerances.size(); ++level) {
+        CAPTURE(level);
+        const Simplified s = simplify(ring, level, frame, kept);
+        const std::span<const std::uint32_t> at = std::span<const std::uint32_t>(kept).first(s.count);
+        gm::seams_at(ring, at, seam);
+        ATLAS_REQUIRE(seam.size() == at.size());
+        std::vector<gm::V2> poly;
+        for (const std::uint32_t v : at) poly.emplace_back(frame.x(ring.lon[v]), frame.z(ring.lat[v]));
+        const gm::Split parts = gm::split(poly, seam, 0.0);
+        CHECK_FALSE(parts.paired);
+        ATLAS_REQUIRE(parts.pieces.size() == 1);
+        CHECK(parts.pieces[0].edges.size() == at.size());
+        CHECK(parts.pieces[0].courtyard);
+        CHECK(parts.pieces[0].drawn);
+        CHECK(std::ranges::count(parts.off, std::uint8_t{1}) == 3); // its three marked edges, and no other
+    }
+    const std::string out = atlas::test::environment("ATLAS_TILES_SEEDS");
+    if (!out.empty()) seed(fs::path(out) / "fuzz_payload", raw);
+}
+
 TEST_CASE("tiles: the fuzz targets' seed corpora (written when ATLAS_TILES_SEEDS is set)") {
     const std::string out = atlas::test::environment("ATLAS_TILES_SEEDS");
     const std::string packs = atlas::test::environment("ATLAS_TILES_DIR");
@@ -137,6 +195,7 @@ TEST_CASE("tiles: the fuzz targets' seed corpora (written when ATLAS_TILES_SEEDS
         if (raw.size() < 8'192) seed(root / "fuzz_payload", raw);
     }
     seed(root / "fuzz_payload", synthetic_tile());
+    seed(root / "fuzz_payload", unpaired_tile());
 
     // fuzz_container: packs of one and of three small tiles in each mode, an element pack, the Westerkerk's whole pack
     constexpr std::array<std::uint8_t, 2> levels = {14, 12};

@@ -71,13 +71,19 @@ inline constexpr std::size_t layer_entry_bytes = 16;
 /// Keep codes (rendertiles' Keep): how many of the ladder's positive tolerances a vertex survives `simplify` at.
 namespace keep {
 /// The ladder, metres: 0 (no simplification), every tolerance regions.py's GENERALISE names and the live map's bands,
-/// 1.5 m for L13, and 4, 16 and 25 m for the far levels. Codes 14 and 15 are spare.
+/// 1.5 m for L13, and 4, 16 and 25 m for the far levels. Codes 14 and 15 are a seam's marks, below.
 inline constexpr std::array<double, 14> tolerances = {0.0, 0.15, 0.2, 0.3, 0.4, 0.5,  0.6,
                                                       0.7, 0.8,  0.9, 1.5, 4.0, 16.0, 25.0};
 /// The code of a vertex that survives every tolerance (a ring's anchors, clip points, and every vertex of a small
 /// ring).
 inline constexpr std::uint8_t all = 13;
-/// The largest code a tile may hold (14 and 15 are spare, but valid).
+/// A seam's marks (load/Clean.hpp, geometry/Seams.hpp): the corner survives every tolerance, as `all` does, and the
+/// edge from it to the next corner is a seam, between two pieces of its footprint or to a courtyard of its piece. A
+/// seam's other end is kept at every tolerance too (`all`, or the mark of the seam that starts there), so at every
+/// level the corner after a marked one is its seam's other end. A ring without a mark has no seam.
+inline constexpr std::uint8_t seam_piece = 14;
+inline constexpr std::uint8_t seam_court = 15;
+/// The largest code a tile may hold.
 inline constexpr std::uint8_t max_code = 15;
 /// `simplify` leaves rings of fewer points than this as they are.
 inline constexpr std::size_t min_points = 6;

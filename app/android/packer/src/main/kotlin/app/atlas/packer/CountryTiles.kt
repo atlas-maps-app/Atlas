@@ -114,6 +114,9 @@ object CountryTiles {
         val levelMillis: Long = 0,
         /** The cells whose levels the tool could not build, with why ("10/x/y: why"), left without them. */
         val levelsFailed: List<String> = emptyList(),
+        /** The seams marked in the levels' tiles, between pieces and to courtyards (as [Buildings.seams] and [Buildings.courts]). */
+        val levelSeams: Long = 0,
+        val levelCourts: Long = 0,
         /** What stage P counted of the built windows' buildings, summed ([Buildings.plus]). */
         val buildings: Buildings = Buildings(),
         /** The windows whose cleaning left a count the yardstick wants 0 ([Buildings.uneasy]), "14/x/y: the counts". */
@@ -191,27 +194,43 @@ object CountryTiles {
         /** Where [windows] is, "14/x/y", and the tiles whose [windows] pass the most a frame draws ([TILE_WINDOWS]). */
         val windowsAt: String = "",
         val past: Long = 0,
+        /**
+         * The seams marked in the window's tile, or in every window's (the core's `tiles/Schema.hpp`, keep::seam_piece and
+         * keep::seam_court): those between two pieces of a footprint, and those that join a courtyard to its piece. A seam is
+         * marked there and back, so both are even.
+         */
+        val seams: Long = 0,
+        val courts: Long = 0,
+        /** Rings of the tile whose marks do not pair up there and back: 0, as the tool fails a window that holds one. */
+        val unpaired: Long = 0,
     ) {
         /** The yardstick's counts that should be 0 and are not, "pairs 1, unsettled 1", or null where all are 0. */
         val uneasy: String?
-            get() = listOf("pairs" to pairs, "uncovered" to uncovered, "unsettled" to unsettled, "unmeasured" to unmeasured)
+            get() = listOf("pairs" to pairs, "uncovered" to uncovered, "unsettled" to unsettled, "unmeasured" to unmeasured, "unpaired" to unpaired)
                 .filter { it.second != 0L }.takeIf { it.isNotEmpty() }?.joinToString { "${it.first} ${it.second}" }
 
         operator fun plus(o: Buildings) = Buildings(
             footprints + o.footprints, pairs + o.pairs, uncovered + o.uncovered, unsettled + o.unsettled, unmeasured + o.unmeasured,
             flat + o.flat, hidden + o.hidden, doubles + o.doubles, records + o.records,
             maxOf(windows, o.windows), if (o.windows > windows) o.windowsAt else windowsAt, past + o.past,
+            seams + o.seams, courts + o.courts, unpaired + o.unpaired,
         )
 
         companion object {
             /** The counts a line of the tool names, in its order. */
-            val NAMES = listOf("footprints", "pairs", "uncovered", "unsettled", "unmeasured", "flat", "hidden", "doubles", "buildings", "windows")
+            val NAMES = listOf(
+                "footprints", "pairs", "uncovered", "unsettled", "unmeasured", "flat", "hidden", "doubles", "buildings", "windows",
+                "seams", "courts", "unpaired",
+            )
 
             /** The counts of window 14/[x]/[y] from its line's `name=count` words, all of [NAMES] in their order, or null. */
             fun of(words: List<String>, x: Int, y: Int): Buildings? {
                 if (words.size != NAMES.size) return null
                 val n = words.mapIndexed { i, w -> w.removePrefix(NAMES[i] + "=").takeIf { w.startsWith(NAMES[i] + "=") }?.toLongOrNull() ?: return null }
-                return Buildings(n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9], "$LEVEL/$x/$y", if (n[9] > TILE_WINDOWS) 1 else 0)
+                return Buildings(
+                    n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7], n[8], n[9], "$LEVEL/$x/$y", if (n[9] > TILE_WINDOWS) 1 else 0,
+                    n[10], n[11], n[12],
+                )
             }
         }
     }
@@ -225,7 +244,8 @@ object CountryTiles {
             "(${b.records} in the tiles), ${b.pairs} overlapping pairs, ${b.uncovered} outlines uncovered, ${b.unsettled} unsettled, " +
             "${b.unmeasured} unmeasured, ${b.flat} flat roofs, ${b.hidden} hidden, ${b.doubles} doubles; " +
             "at most ${b.windows} windows in a tile" + (if (b.windowsAt.isEmpty()) "" else " (${b.windowsAt})") +
-            ", ${b.past} tiles that can pass the ${TILE_WINDOWS} a frame draws"
+            ", ${b.past} tiles that can pass the ${TILE_WINDOWS} a frame draws; " +
+            "${b.seams} seams between pieces and ${b.courts} to courtyards marked in the tiles, ${b.unpaired} rings whose marks do not pair"
 
     /** The report's lines for [r]. */
     fun report(r: Result, out: (String) -> Unit) {
@@ -241,7 +261,8 @@ object CountryTiles {
         )
         out(
             "  the levels: ${r.levels} tiles of the frame cells' L13 and L12, ${r.levelBytes} bytes (${percent(r.levelBytes, r.tilesBytes)} of the file), " +
-                "built in ${r.levelMillis / 1000} s" + if (r.levelsFailed.isEmpty()) "" else "; ${r.levelsFailed.size} cells without them",
+                "built in ${r.levelMillis / 1000} s; ${r.levelSeams} seams between pieces and ${r.levelCourts} to courtyards marked in them" +
+                if (r.levelsFailed.isEmpty()) "" else "; ${r.levelsFailed.size} cells without them",
         )
         out("${r.index.name}: ${r.index.length()} bytes with the country's style, the core's windows of version ${r.version}")
         out(
@@ -318,6 +339,8 @@ object CountryTiles {
         var levelBytes = 0L
         var levelMillis = 0L
         val levelsFailed = ArrayList<String>()
+        var levelSeams = 0L
+        var levelCourts = 0L
         var buildings = Buildings()
         val uneasy = ArrayList<String>()
         try {
@@ -407,6 +430,8 @@ object CountryTiles {
                                     log("levels not built: $name: ${tiles.failed}")
                                 } else {
                                     for (t in tiles.tiles) {
+                                        levelSeams += t.seams
+                                        levelCourts += t.courts
                                         ahead.addLast(pool.submit(Callable { packLevel(File(made, "${t.z}-${t.x}-${t.y}.atlas"), t) }))
                                         if (ahead.size >= threads * 4) take(result(ahead.removeFirst()))
                                     }
@@ -453,7 +478,7 @@ object CountryTiles {
         return Result(
             tiles, tilesIndex, windows.date, version!!, windows.size, drawn, features, coreBytes, offset, chunkRaw, chunkBytes, styleRaw, styleBytes,
             jsonBytes, batchJsonBytes, ms(), unzipMillis, buildMillis, packMillis, failed.toList(),
-            levels, levelBytes, levelMillis, levelsFailed.toList(), buildings, uneasy.toList(),
+            levels, levelBytes, levelMillis, levelsFailed.toList(), levelSeams, levelCourts, buildings, uneasy.toList(),
         )
     }
 
@@ -584,8 +609,8 @@ object CountryTiles {
         )
     }
 
-    /** A level's tile the core's tool said it built: its key, its features and its pack's bytes. */
-    private class LevelTile(val z: Int, val x: Int, val y: Int, val features: Long, val bytes: Long)
+    /** A level's tile the core's tool said it built: its key, its features, its pack's bytes, and the seams marked in it by kind. */
+    private class LevelTile(val z: Int, val x: Int, val y: Int, val features: Long, val bytes: Long, val seams: Long, val courts: Long)
 
     /** What the core's tool said of a frame cell's levels: the tiles it built, or why it could not. */
     private class Levels(val tiles: List<LevelTile>, val failed: String?)
@@ -593,7 +618,8 @@ object CountryTiles {
     /**
      * The levels of the frame cell whose windows' packs (as the core wrote them) are [packs], built by the core's tool
      * into [out] on [threads] threads through the list [list]: what it said (`z x y <features> <bytes> <raw> <buildings>
-     * <trees>` a tile, then `cell x y <tiles> <ms>` or `cell x y failed <why>`). Throws where it failed otherwise.
+     * <trees> <seams> <courts> <unpaired>` a tile, the last 0 as the tool fails a cell with a ring whose marks do not pair;
+     * then `cell x y <tiles> <ms>` or `cell x y failed <why>`). Throws where it failed otherwise.
      */
     private fun buildLevels(core: File, packs: List<File>, list: File, out: File, threads: Int): Levels {
         list.writeText(packs.joinToString("") { f -> f.name.removeSuffix(".atlas").split('-').let { "${it[1]} ${it[2]} ${f.path}\n" } })
@@ -613,10 +639,10 @@ object CountryTiles {
                 continue
             }
             val n = v.map { it.toLongOrNull() }
-            if (v.size != 8 || n.any { it == null } || n[0]!! !in TilesIndex.LEVELS.map { it.toLong() }) {
-                throw IOException("${core.name} levels printed '$line', not z x y features bytes raw buildings trees")
+            if (v.size != 11 || n.any { it == null } || n[0]!! !in TilesIndex.LEVELS.map { it.toLong() } || n[10] != 0L) {
+                throw IOException("${core.name} levels printed '$line', not z x y features bytes raw buildings trees seams courts 0")
             }
-            tiles += LevelTile(n[0]!!.toInt(), n[1]!!.toInt(), n[2]!!.toInt(), n[3]!!, n[4]!!)
+            tiles += LevelTile(n[0]!!.toInt(), n[1]!!.toInt(), n[2]!!.toInt(), n[3]!!, n[4]!!, n[8]!!, n[9]!!)
         }
         if (!ended) throw IOException("${core.name} levels (exit $code) said nothing of its cell")
         if ((code == 0) != (failed == null)) throw IOException("${core.name} levels exited $code for a cell that " + if (code == 0) "failed" else "was built")

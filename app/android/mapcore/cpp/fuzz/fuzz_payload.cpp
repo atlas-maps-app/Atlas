@@ -1,14 +1,20 @@
 // Fuzzes the tile decoder (tiles/Payload.hpp, Columns.hpp, Values.hpp) with raw tile bytes: decoding must never read
 // past its input or fail an invariant, and every tile it accepts must hold together: each layer's cell ranges cover its
 // features in order, every column's arrays have the lengths its codec promises, every accessor stays in bounds, the
-// canonical dump hashes to canonical_hash, simplifying every ring at every level keeps vertices in order, and a tile
-// with features reaches a box that holds every cell's and passes the check against a chunk of its own key and reach.
-// Seeds: raw tiles of the bundled packs (fuzz/corpus/fuzz_payload, made by tests/tiles/seeds_test.cpp).
+// canonical dump hashes to canonical_hash, simplifying every ring at every level keeps vertices in order, a ring's
+// seams by its marks split it into pieces that hold each edge once at most (marks that do not pair: the ring as one
+// flat piece, nothing else), and a tile with features reaches a box that holds every cell's and passes the check
+// against a chunk of its own key and reach.
+// Seeds: raw tiles of the bundled packs and a tile whose marks do not pair (fuzz/corpus/fuzz_payload, made by
+// tests/tiles/seeds_test.cpp).
 #include "base/arena.hpp"
 #include "base/assert.hpp"
+#include "geometry/Seams.hpp"
 #include "tiles/Checksums.hpp"
 #include "tiles/Dump.hpp"
+#include "tiles/LeastFace.hpp"
 #include "tiles/Payload.hpp"
+#include "tiles/Schema.hpp"
 #include "tiles/Simplify.hpp"
 
 #include <cstddef>
@@ -20,7 +26,41 @@ namespace {
 
 using namespace atlas::tiles;
 
-void check_layer(const Layer& l, std::size_t cells) {
+/// A ring's pieces by its marks (geometry/Seams.hpp), as stage T splits it at a level: `kept` its corners there.
+void check_pieces(const RingView& ring, std::span<const std::uint32_t> kept, const Frame& frame, double least_face) {
+    namespace gm = atlas::geometry;
+    std::vector<std::uint8_t> seam;
+    gm::seams_at(ring, kept, seam);
+    const std::size_t n = kept.size();
+    ATLAS_ASSERT(seam.empty() || seam.size() == n, "a kind for each kept corner's edge, or none");
+    std::vector<double> xz;
+    xz.reserve(2 * n);
+    for (const std::uint32_t v : kept) {
+        xz.push_back(frame.x(ring.lon[v]));
+        xz.push_back(frame.z(ring.lat[v]));
+    }
+    const gm::Split s = gm::split_xz(xz, seam, least_face);
+    ATLAS_ASSERT(seam.empty() ? s.off.empty() : s.off.size() == n, "an edge's flag where the ring has seams");
+    ATLAS_ASSERT(!seam.empty() || (s.paired && s.pieces.size() == 1 && s.pieces[0].drawn && !s.pieces[0].courtyard),
+                 "a ring without marks is itself");
+    std::vector<std::uint8_t> held(n, 0);
+    for (const gm::Piece& p : s.pieces) {
+        for (const std::uint32_t e : p.edges) {
+            ATLAS_ASSERT(e < n && held[e] == 0, "an edge in one piece");
+            held[e] = 1;
+            ATLAS_ASSERT(p.drawn || s.off[e] != 0, "nothing stands on a piece not drawn");
+        }
+    }
+    for (std::size_t e = 0; e < s.off.size(); ++e) {
+        ATLAS_ASSERT(s.off[e] != 0 || (seam[e] == gm::seam_kind::none && held[e] != 0),
+                     "what stands, stands on a piece's own edge and on no seam");
+    }
+    ATLAS_ASSERT(s.paired || (s.pieces.size() == 1 && s.pieces[0].edges.size() == n && s.pieces[0].courtyard &&
+                              s.pieces[0].drawn),
+                 "marks that do not pair: the ring as one flat piece, nothing else");
+}
+
+void check_layer(const Layer& l, std::size_t cells, double least_face) {
     ATLAS_ASSERT(l.cell_first.size() == cells + 1 && l.cell_first[0] == 0 && l.cell_first[cells] == l.count,
                  "cell ranges");
     for (std::size_t c = 0; c < cells; ++c) ATLAS_ASSERT(l.cell_first[c] <= l.cell_first[c + 1], "cells in order");
@@ -72,6 +112,7 @@ void check_layer(const Layer& l, std::size_t cells) {
                     ATLAS_ASSERT(s2.count <= ring.size(), "simplify keeps at most the ring");
                     for (std::size_t k = 1; k < s2.count; ++k)
                         ATLAS_ASSERT(kept[k - 1] < kept[k], "kept vertices in order");
+                    check_pieces(ring, std::span<const std::uint32_t>(kept).first(s2.count), frame, least_face);
                 }
                 break;
             }
@@ -106,7 +147,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     }
     const std::size_t cells = std::size_t{tile->header.cells_per_side} * tile->header.cells_per_side;
     ATLAS_ASSERT(tile->cells.size() == cells, "a cell per cell");
-    for (const Layer& l : tile->layers) check_layer(l, cells);
+    for (const Layer& l : tile->layers) check_layer(l, cells, least_face(tile->header.level));
     const std::string dump = canonical_dump(*tile);
     ATLAS_ASSERT(canonical_hash(*tile) == Sha256::of(as_bytes(dump)), "the dump's hash");
     if (const auto reach = reach_of(*tile)) {

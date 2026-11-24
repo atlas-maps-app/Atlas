@@ -44,7 +44,9 @@
 // (uncovered_outlines), `unsettled`, `unmeasured`, `flat` (flat_roofs), `hidden` and `doubles`; then of its tile alone
 // (load::buildings_of), `buildings` (its buildings and parts) and `windows`, the most windows stage T's walls can give
 // them (load::most_windows), which can pass the most a tile holds (tiles::building::most_tile_windows) only where stage
-// T cuts some. The exit code: 0 every window built; 1 any failed; 2 a usage error.
+// T cuts some; then the seams marked on its buildings' rings (load::SeamMarks): `seams` those between two pieces,
+// `courts` those to a courtyard, and `unpaired`, the rings whose marks do not pair, which is 0, as a window whose tile
+// holds one has failed. The exit code: 0 every window built; 1 any failed; 2 a usage error.
 //
 //   atlas_stagep levels <list> <out-dir> [threads]
 //
@@ -52,8 +54,9 @@
 // frame cells of the windows <list> names, a line each (`x y path`: an L14 window's column and row, and its pack as
 // `windows` built it), each level's tile into <out-dir>/<z>-<x>-<y>.atlas, a frame cell on each of [threads] threads.
 // Once all are built, a line on stdout a level's tile, cell by cell in order of x, then y: `z x y <features> <bytes>
-// <raw bytes> <buildings> <trees>`, then the cell's `cell x y <tiles> <ms>`; or `cell x y failed <why>`. The exit code:
-// 0 every cell built; 1 any failed; 2 a usage error.
+// <raw bytes> <buildings> <trees> <seams> <courts> <unpaired>` (the last three as `windows` counts them, in the level's
+// tile), then the cell's `cell x y <tiles> <ms>`; or `cell x y failed <why>` (a tile with a ring whose marks do not
+// pair fails its cell). The exit code: 0 every cell built; 1 any failed; 2 a usage error.
 //
 //   atlas_stagep tags
 //
@@ -470,13 +473,18 @@ struct ListedWindow {
                 w.line = std::format("{} failed {}", name, held.error().what);
                 continue;
             }
+            if (held->seams.unpaired != 0) {
+                w.line = std::format("{} failed its tile holds {} rings whose seams' marks do not pair", name,
+                                     held->seams.unpaired);
+                continue;
+            }
             const load::BuildingCounts& c = built->counts;
-            w.line =
-                std::format("{} {} {} {:.0f} footprints={} pairs={} uncovered={} unsettled={} unmeasured={} flat={} "
-                            "hidden={} doubles={} buildings={} windows={}",
-                            name, built->features, built->pack.size(), ms, built->footprints, c.overlapping_pairs,
-                            c.uncovered_outlines, c.unsettled, c.unmeasured, c.flat_roofs, c.hidden, c.doubles,
-                            held->records, held->most_windows);
+            w.line = std::format(
+                "{} {} {} {:.0f} footprints={} pairs={} uncovered={} unsettled={} unmeasured={} flat={} "
+                "hidden={} doubles={} buildings={} windows={} seams={} courts={} unpaired={}",
+                name, built->features, built->pack.size(), ms, built->footprints, c.overlapping_pairs,
+                c.uncovered_outlines, c.unsettled, c.unmeasured, c.flat_roofs, c.hidden, c.doubles, held->records,
+                held->most_windows, held->seams.piece, held->seams.court, held->seams.unpaired);
             w.built = true;
         }
     };
@@ -576,8 +584,9 @@ struct ListedWindow {
                     written = false;
                     break;
                 }
-                c.lines.push_back(std::format("{} {} {} {} {} {} {} {}", b.key.z, b.key.x, b.key.y, b.features,
-                                              b.pack.size(), b.raw, b.buildings, b.trees));
+                c.lines.push_back(std::format("{} {} {} {} {} {} {} {} {} {} {}", b.key.z, b.key.x, b.key.y, b.features,
+                                              b.pack.size(), b.raw, b.buildings, b.trees, b.seams.piece, b.seams.court,
+                                              b.seams.unpaired));
             }
             if (written) c.lines.push_back(std::format("{} {} {:.0f}", name, built->size(), ms));
             c.built = written;

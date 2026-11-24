@@ -3,6 +3,7 @@
 #include "base/assert.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Seams.hpp"
+#include "tiles/LeastFace.hpp"
 #include "tiles/Simplify.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "tiles/layers/Ground.hpp"
@@ -18,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 
 namespace atlas::sun {
@@ -38,11 +40,12 @@ struct V2 {
     constexpr V2(double px, double pz) noexcept : x(px), z(pz) {}
 };
 
-/// geometry::seams of a ring of these V2s (two doubles, x then z, as geometry's).
-[[nodiscard]] std::vector<std::uint8_t> seams_of(std::span<const V2> poly) {
-    static_assert(sizeof(V2) == 2 * sizeof(double), "V2 is x then z, two doubles");
+/// geometry::split of a ring of these V2s (two doubles, x then z, as geometry's).
+[[nodiscard]] geometry::Split split_of(std::span<const V2> poly, std::span<const std::uint8_t> seam,
+                                       double least_face) {
+    static_assert(std::is_standard_layout_v<V2> && sizeof(V2) == 2 * sizeof(double), "V2 is x then z, two doubles");
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): V2 is two doubles, x then z
-    return geometry::seams_xz({reinterpret_cast<const double*>(poly.data()), 2 * poly.size()});
+    return geometry::split_xz({reinterpret_cast<const double*>(poly.data()), 2 * poly.size()}, seam, least_face);
 }
 
 /// A point or a direction in space (the port's V3).
@@ -485,13 +488,15 @@ struct Values {
     return v.has_value() && *v == s;
 }
 
-/// A ring at the level, in metres in the pack's frame.
+/// A ring at the level, in metres in the pack's frame, and where `seam` is given its seams there by its marks
+/// (geometry::seams_at; empty where it has none).
 void ring_at(const tl::RingView& ring, std::uint8_t level, const tl::Frame& frame, std::vector<std::uint32_t>& kept,
-             std::vector<V2>& out) {
+             std::vector<V2>& out, std::vector<std::uint8_t>* seam = nullptr) {
     kept.resize(ring.size());
     const tl::Simplified s = tl::simplify(ring, level, frame, kept);
     out.clear();
     for (std::size_t k = 0; k < s.count; ++k) out.emplace_back(frame.x(ring.lon[kept[k]]), frame.z(ring.lat[kept[k]]));
+    if (seam != nullptr) geometry::seams_at(ring, std::span<const std::uint32_t>(kept).first(s.count), *seam);
 }
 
 /// A tile's variants at `level` (none at level 0), by their base feature's layer and source order.
@@ -512,15 +517,17 @@ using Variants = std::unordered_map<std::uint64_t, std::uint32_t>;
 }
 
 /// Record `i` of the building or part layer `l` (`layer_id`) as the scene at the level holds it: its values, its
-/// variant's where it has one at the level, and its ring at the level in metres in the pack's frame, into `poly`.
+/// variant's where it has one at the level, and its ring at the level in metres in the pack's frame, into `poly`, its
+/// seams there into `seam`.
 [[nodiscard]] Values record_at(const tl::Tile& tile, const tl::Layer& l, tl::LayerId layer_id, std::uint32_t i,
                                const Variants& variants, std::uint8_t level, const tl::Frame& frame,
-                               std::vector<std::uint32_t>& kept, std::vector<V2>& poly) {
+                               std::vector<std::uint32_t>& kept, std::vector<V2>& poly,
+                               std::vector<std::uint8_t>& seam) {
     const auto index = static_cast<std::uint64_t>(l.integer(tl::building::index, i));
     const auto it = variants.find((static_cast<std::uint64_t>(layer_id) << 56U) | index);
     const tl::Layer* var = tile.layer(tl::LayerId::variant);
     const Values v = it != variants.end() ? values_of(*var, variant_slots, it->second) : values_of(l, record_slots, i);
-    ring_at(l.ring(tl::building::ring, i), level, frame, kept, poly);
+    ring_at(l.ring(tl::building::ring, i), level, frame, kept, poly, &seam);
     return v;
 }
 
@@ -555,21 +562,24 @@ class BuildingSamples {
 public:
     /// `lean`: a frame cell's level's tile, whose walls are their one cell each, without a kit's band or windows
     /// (geometry::Builder's lean). `windows_before`: the tile's windows before this record's (its window group's
-    /// samples), which its own follow.
+    /// samples), which its own follow. `least_face`: its tile's level's (tiles/LeastFace.hpp).
     BuildingSamples(TileSamples& out, const Region& region, Source source, std::uint32_t record, std::uint32_t solid,
-                    bool lean = false, std::uint32_t windows_before = 0) noexcept
+                    bool lean = false, std::uint32_t windows_before = 0, double least_face = 0.0) noexcept
         : out_(out), region_(region), source_(source), record_(record), solid_(solid), lean_(lean),
-          windows_before_(windows_before) {}
+          windows_before_(windows_before), least_face_(least_face) {}
 
-    /// Everything the renders can draw of the building with `v` over footprint `poly`.
-    void all(const Values& v, std::span<const V2> poly) {
+    /// Everything the renders can draw of the building with `v` over footprint `poly`, whose seams are `seam` (empty:
+    /// none).
+    void all(const Values& v, std::span<const V2> poly, std::span<const std::uint8_t> seam) {
         if (v.hidden) return;                 // an outline drawn by its parts, or what is below the ground: never drawn
         if (!v.has_h || poly.empty()) return; // draw_building reads h: a building without one is not drawn
-        if ((v.flags & tl::building::flag_houseboat) != 0) houseboat(v, poly);
-        building(v, poly);
+        // a ring with seams, split once: its pieces for the walls and the roofs, its edges nothing stands on for both
+        const geometry::Split parts = seam.empty() ? geometry::Split{} : split_of(poly, seam, least_face_);
+        if ((v.flags & tl::building::flag_houseboat) != 0) houseboat(v, poly, parts.off);
+        building(v, poly, seam.empty() ? nullptr : &parts);
         if (is_mirror(v, poly)) {
             mirror = out_.size();
-            reflection(v, poly);
+            reflection(v, poly, !seam.empty(), parts.off);
         }
     }
 
@@ -618,45 +628,45 @@ private:
         return l;
     }
 
-    /// _draw_building's walls, windows and roof (the lens off). A ring without seams as it is; one with seams piece by
-    /// piece, as geometry/Walls.cpp's draw has it (geometry/Seams.hpp): every piece's walls in the ring's order, then
-    /// every piece's roof, a piece without a courtyard under the building's roof by itself, one with a courtyard
-    /// flat; a sample keeps its edge's number on the ring.
-    void building(const Values& v, std::span<const V2> poly) {
+    /// _draw_building's walls, windows and roof (the lens off). A ring without seams as it is (`parts` null); one
+    /// with seams piece by piece, as geometry/Walls.cpp's draw has it (geometry/Seams.hpp's split): every drawn
+    /// piece's walls in the ring's order, then every piece's roof, a piece without a courtyard under the building's
+    /// roof by itself, one with a courtyard flat; a sample keeps its edge's number on the ring.
+    void building(const Values& v, std::span<const V2> poly, const geometry::Split* parts) {
         std::optional<std::string_view> roof = v.roof;
         if (is(roof, "quadruple_saltbox")) roof = "hipped"; // closest shape this renderer draws
         const double rh = geometry::drawn_pitched(roof, v.roof_h, false) ? v.roof_h : 0.0;
-        const std::vector<std::uint8_t> seam = seams_of(poly);
-        if (seam.empty()) {
+        if (parts == nullptr) {
             const Laid l = lay(v, poly, roof, rh);
             walls(v, poly, {}, l);
             roof_of(v, poly, l);
             return;
         }
-        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): V2 is two doubles, x then z
-        const auto edges = geometry::pieces_xz({reinterpret_cast<const double*>(poly.data()), 2 * poly.size()}, seam);
         struct Piece {
+            std::span<const std::uint32_t> edges;
             std::vector<V2> poly;
-            std::vector<std::uint8_t> seam;
+            std::vector<std::uint8_t> off;
             Laid laid;
         };
-        std::vector<Piece> pieces(edges.size());
-        for (std::size_t k = 0; k < edges.size(); ++k) {
-            Piece& p = pieces[k];
-            p.poly.reserve(edges[k].size());
-            for (const std::uint32_t e : edges[k]) p.poly.push_back(poly[e]);
-            const bool courtyard = geometry::has_courtyard(edges[k], seam);
-            if (courtyard) {
-                p.seam.reserve(edges[k].size());
-                for (const std::uint32_t e : edges[k]) p.seam.push_back(seam[e]);
+        std::vector<Piece> pieces;
+        pieces.reserve(parts->pieces.size());
+        for (const geometry::Piece& part : parts->pieces) {
+            if (!part.drawn) continue;
+            Piece& p = pieces.emplace_back();
+            p.edges = part.edges;
+            p.poly.reserve(p.edges.size());
+            for (const std::uint32_t e : p.edges) p.poly.push_back(poly[e]);
+            if (part.courtyard) {
+                p.off.reserve(p.edges.size());
+                for (const std::uint32_t e : p.edges) p.off.push_back(parts->off[e]);
             }
-            p.laid = lay(v, p.poly, roof, courtyard || p.poly.size() < 3 ? 0.0 : rh);
-            edges_ = edges[k];
-            walls(v, p.poly, p.seam, p.laid);
+            p.laid = lay(v, p.poly, roof, part.courtyard || p.poly.size() < 3 ? 0.0 : rh);
+            edges_ = p.edges;
+            walls(v, p.poly, p.off, p.laid);
         }
-        for (std::size_t k = 0; k < edges.size(); ++k) {
-            edges_ = edges[k];
-            roof_of(v, pieces[k].poly, pieces[k].laid);
+        for (const Piece& p : pieces) {
+            edges_ = p.edges;
+            roof_of(v, p.poly, p.laid);
         }
         edges_ = {};
     }
@@ -672,7 +682,8 @@ private:
         }
     }
 
-    /// The walls of a ring laid as `l`, and their windows: a seam (`seam`, empty where the ring has none) draws
+    /// The walls of a ring laid as `l`, and their windows: an edge nothing stands on (`seam`: geometry::Split's off
+    /// for the ring's edges, empty where a wall stands on each) draws
     /// nothing.
     void walls(const Values& v, std::span<const V2> poly, std::span<const std::uint8_t> seam, const Laid& l) {
         const double h = v.h;
@@ -687,20 +698,20 @@ private:
         const double p0 = l.p0;
         const double span = l.span;
         const auto sk_top = [&](const V2& p) { return h - ((rh * (((p.x * dirv.x) + (p.z * dirv.z)) - p0)) / span); };
-        const std::size_t n = poly.size();
         const bool windowed = !lean_ && !part && !is(v.btype, "houseboat") && !v.no_win && v.has_levels;
         // a kit's stucco ground floor (trad_wall's band, drawn with weather), on a building that stands on the street
         // (not a part, nor a houseboat: a boat with weather)
         const bool band = !lean_ && region_.kit_band && (v.flags & tl::building::flag_kit) != 0 &&
                           (v.flags & tl::building::flag_kit_band) != 0 &&
                           (v.flags & tl::building::flag_houseboat) == 0 && !part && y0 <= 0.5;
-        for (std::size_t i = 0; i < n; ++i) {
-            const V2 a = poly[i];
-            const V2 bb = poly[(i + 1) % n];
+        for (const geometry::WallEdge<V2> w : geometry::walls_of(poly, seam)) {
+            const std::size_t i = w.edge;
+            const V2 a = w.a;
+            const V2 bb = w.b;
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
+            if (elen < 0.3) continue;
             const V3 nrm = vnorm({ez, 0.0, -ex});
             const std::uint32_t face = out_.add_face(nrm.x, nrm.y, nrm.z);
             const auto e = static_cast<std::uint32_t>(i);
@@ -1018,7 +1029,7 @@ private:
     }
 
     /// Amsterdam.drawHouseboat's walls: the hull at the waterline and the set-back cabin.
-    void houseboat(const Values& v, std::span<const V2> poly) {
+    void houseboat(const Values& v, std::span<const V2> poly, std::span<const std::uint8_t> off) {
         const double wy = region_.water_y;
         const V2 ce = centroid(poly);
         const double lo = wy - 0.15;
@@ -1027,15 +1038,15 @@ private:
         std::vector<V2> cab;
         cab.reserve(poly.size());
         for (const V2& p : poly) cab.emplace_back(ce.x + ((p.x - ce.x) * 0.84), ce.z + ((p.z - ce.z) * 0.8));
-        boat_walls(Kind::hull, poly, lo, deck);
-        boat_walls(Kind::cabin, cab, deck, top);
+        boat_walls(Kind::hull, poly, off, lo, deck);
+        boat_walls(Kind::cabin, cab, off, deck, top); // the cabin's corners are the hull's, drawn in: the same edges
     }
 
-    void boat_walls(Kind kind, std::span<const V2> pp, double y0, double y1) {
-        const std::size_t m = pp.size();
-        for (std::size_t i = 0; i < m; ++i) {
-            const V2 a = pp[i];
-            const V2 c = pp[(i + 1) % m];
+    void boat_walls(Kind kind, std::span<const V2> pp, std::span<const std::uint8_t> off, double y0, double y1) {
+        for (const geometry::WallEdge<V2> w : geometry::walls_of(pp, off)) {
+            const std::size_t i = w.edge;
+            const V2 a = w.a;
+            const V2 c = w.b;
             const double ex = c.x - a.x;
             const double ez = c.z - a.z;
             const double elen = pm::hypot(ex, ez);
@@ -1049,22 +1060,22 @@ private:
 
     /// Amsterdam.reflections: each wall of a building within 16 m of a quay, lit by the sample at the real wall's
     /// middle.
-    void reflection(const Values& v, std::span<const V2> poly) {
+    /// `seamed`: its ring has seams (its roof mirrors flat); `off`: the ring's edges nothing stands on (the split's).
+    void reflection(const Values& v, std::span<const V2> poly, bool seamed, std::span<const std::uint8_t> seam) {
         const double wy = region_.water_y;
         const bool boat = is(v.btype, "houseboat");
         const double y0 = boat ? wy + 0.3 : v.min;
         const double h = boat ? (v.h + wy) + 0.3 : v.h;
-        const std::vector<std::uint8_t> seam = seams_of(poly);
-        const double rh = in(v.roof, reflected) && v.roof_h != 0.0 && seam.empty() ? v.roof_h : 0.0;
+        const double rh = in(v.roof, reflected) && v.roof_h != 0.0 && !seamed ? v.roof_h : 0.0;
         const double top = h - rh;
-        const std::size_t n = poly.size();
-        for (std::size_t i = 0; i < n; ++i) {
-            const V2 a = poly[i];
-            const V2 bb = poly[(i + 1) % n];
+        for (const geometry::WallEdge<V2> w : geometry::walls_of(poly, seam)) {
+            const std::size_t i = w.edge;
+            const V2 a = w.a;
+            const V2 bb = w.b;
             const double ex = bb.x - a.x;
             const double ez = bb.z - a.z;
             const double elen = pm::hypot(ex, ez);
-            if (elen < 0.3 || (!seam.empty() && seam[i] != 0)) continue;
+            if (elen < 0.3) continue;
             const V3 nrm = vnorm({ez, 0.0, -ex});
             add(Kind::reflection, static_cast<std::uint32_t>(i), 0,
                 {((a.x + bb.x) / 2) + (nrm.x * .2), (y0 + top) / 2, ((a.z + bb.z) / 2) + (nrm.z * .2)},
@@ -1079,6 +1090,7 @@ private:
     std::uint32_t solid_;
     bool lean_;
     std::uint32_t windows_before_;
+    double least_face_;
     /// Where a piece of the record's ring is being sampled: each of its edges' number on the ring.
     std::span<const std::uint32_t> edges_;
 };
@@ -1398,11 +1410,13 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
     const Variants variants = variants_at(tile, level);
     std::vector<std::uint32_t> kept;
     std::vector<V2> poly;
+    std::vector<std::uint8_t> seam;
+    const double least_face = tl::least_face(tile.header.level);
     for (const auto [layer_id, source] : record_layers) {
         const tl::Layer* l = tile.layer(layer_id);
         if (l == nullptr) continue;
         for (std::uint32_t i = 0; i < l->count; ++i) {
-            const Values v = record_at(tile, *l, layer_id, i, variants, level, frame, kept, poly);
+            const Values v = record_at(tile, *l, layer_id, i, variants, level, frame, kept, poly, seam);
             if (!is_solid(source, v, poly)) continue;
             for (const V2& p : poly) {
                 c.solids.x.push_back(p.x);
@@ -1414,9 +1428,10 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
             c.solids.source.push_back(source);
             c.solids.record.push_back(i);
             if (!is_mirror(v, poly)) continue;
-            // the reflections' values: rh where the roof's shape is one they draw, the longest edge (the last of
-            // the longest, as max over (dist, k) picks it)
-            const std::vector<std::uint8_t> seam = seams_of(poly);
+            // the reflections' values: rh where the roof's shape is one they draw, the longest edge a wall stands
+            // on (the last of the longest, as max over (dist, k) picks it)
+            std::vector<std::uint8_t> off;
+            if (!seam.empty()) off = split_of(poly, seam, least_face).off;
             Mirror m{.solid = c.solids.size() - 1,
                      .source = source,
                      .record = i,
@@ -1433,16 +1448,15 @@ TileCasters solids_of(const tiles::Tile& tile, const tiles::Frame& frame, std::u
                      .part = v.part_tag,
                      .shape_guessed = v.shape_guessed};
             double longest = -1.0;
-            const std::size_t n = poly.size();
-            for (std::size_t k = 0; k < n; ++k) {
-                if (!seam.empty() && seam[k] != 0) continue;
-                const double d = dist(poly[k], poly[(k + 1) % n]);
+            for (const geometry::WallEdge<V2> w : geometry::walls_of(poly, off)) {
+                const double d = dist(w.a, w.b);
                 if (d >= longest) {
                     longest = d;
-                    m.longest = static_cast<std::uint32_t>(k);
+                    m.longest = static_cast<std::uint32_t>(w.edge);
                 }
             }
-            c.mirrors.push_back(m);
+            m.off = std::move(off);
+            c.mirrors.push_back(std::move(m));
         }
     }
     if (const tl::Layer* trees = tile.layer(tl::LayerId::tree)) {
@@ -1473,6 +1487,8 @@ TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, con
     const Variants variants = variants_at(tile, level);
     std::vector<std::uint32_t> kept;
     std::vector<V2> poly;
+    std::vector<std::uint8_t> seam;
+    const double least_face = tl::least_face(tile.header.level);
     TileSamples& windows = start.windows;
     std::vector<std::uint32_t> reflections;
     std::uint32_t next_solid = 0;
@@ -1481,7 +1497,7 @@ TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, con
         const tl::Layer* l = tile.layer(layer_id);
         if (l == nullptr) continue;
         for (std::uint32_t i = 0; i < l->count; ++i) {
-            const Values v = record_at(tile, *l, layer_id, i, variants, level, frame, kept, poly);
+            const Values v = record_at(tile, *l, layer_id, i, variants, level, frame, kept, poly, seam);
             // its solid, solids_of's next: the same records in the same order
             std::uint32_t solid = no_solid;
             if (is_solid(source, v, poly)) {
@@ -1489,8 +1505,8 @@ TileStart start_tile(const tiles::Tile& tile, const tiles::RenderHead& head, con
                 ATLAS_ASSERT(st.solids.source[solid] == source && st.solids.record[solid] == i,
                              "solids_of lists the solids in make_tile's order");
             }
-            BuildingSamples b(st.samples, region, source, i, solid, lean, windows.size());
-            b.all(v, poly);
+            BuildingSamples b(st.samples, region, source, i, solid, lean, windows.size(), least_face);
+            b.all(v, poly, seam);
             append(windows, b.windows);
             if (b.mirror != no_face) reflections.push_back(b.mirror);
         }

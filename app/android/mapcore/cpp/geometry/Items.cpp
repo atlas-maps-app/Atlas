@@ -3,7 +3,9 @@
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "load/Real.hpp"
+#include "tiles/LeastFace.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "tiles/layers/Lines.hpp"
 #include "tiles/layers/Points.hpp"
@@ -361,18 +363,20 @@ void lines(const tl::Layer& layer, const tl::Frame& frame, std::uint16_t kind, T
     return guessed && std::ranges::any_of(*guessed, [&](std::uint32_t s) { return layer.strings[s] == "height"; });
 }
 
-/// The point of `ring`'s outline nearest (x, z), and how far it lies.
+/// The point of `ring`'s outline nearest (x, z), and how far it lies: of the edges a wall stands on (`off`:
+/// geometry/Seams.hpp's split, a seam is no edge of the outline).
 struct Nearest {
     double x = 0;
     double z = 0;
     double d = std::numeric_limits<double>::infinity();
 };
 
-[[nodiscard]] Nearest nearest(std::span<const V2> ring, double x, double z) noexcept {
+[[nodiscard]] Nearest nearest(std::span<const V2> ring, std::span<const std::uint8_t> off, double x,
+                              double z) noexcept {
     Nearest best;
-    for (std::size_t k = 0; k < ring.size(); ++k) {
-        const V2& a = ring[k];
-        const V2& b = ring[(k + 1) % ring.size()];
+    for (const WallEdge<V2> w : walls_of(ring, off)) {
+        const V2& a = w.a;
+        const V2& b = w.b;
         const double dx = b.x - a.x;
         const double dz = b.z - a.z;
         const double length2 = (dx * dx) + (dz * dz);
@@ -425,6 +429,8 @@ void roofs(const tl::Tile& tile, const tl::Frame& frame, TileRegionItems& out) {
     std::ranges::sort(by_x, {}, tower_x);
     std::vector<Roof> found(towers.size());
     std::vector<V2> ring;
+    std::vector<std::uint8_t> seam;
+    const double least = tl::least_face(tile.header.level);
     for (const tl::LayerId id : {tl::LayerId::building, tl::LayerId::part}) {
         const tl::Layer* layer = tile.layer(id);
         if (layer == nullptr) continue;
@@ -449,6 +455,9 @@ void roofs(const tl::Tile& tile, const tl::Frame& frame, TileRegionItems& out) {
             ring.clear();
             for (std::size_t k = 0; k < r.size(); ++k) ring.emplace_back(frame.x(r.lon[k]), frame.z(r.lat[k]));
             if (std::abs(signed_area(ring)) < roof_least) continue;
+            // its outline: the edges its walls stand on, by its marks
+            seams_at(r, seam);
+            const Split parts = seam.empty() ? Split{} : split(ring, seam, least);
             const double eaves = *top - layer->decimal(tl::building::roof_h, i).value_or(0.0);
             for (auto at = from; at != to; ++at) {
                 const std::size_t m = *at;
@@ -463,7 +472,7 @@ void roofs(const tl::Tile& tile, const tl::Frame& frame, TileRegionItems& out) {
                     }
                     continue;
                 }
-                const Nearest p = nearest(ring, it.x, it.z);
+                const Nearest p = nearest(ring, parts.off, it.x, it.z);
                 if (!(p.d < f.near) || p.d <= 0) continue;
                 const double x = p.x + ((p.x - it.x) / p.d * roof_inset);
                 const double z = p.z + ((p.z - it.z) / p.d * roof_inset);

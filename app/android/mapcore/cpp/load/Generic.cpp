@@ -3,8 +3,8 @@
 #include "base/pymath/PyMath.hpp"
 #include "base/pymath/PyRandom.hpp"
 #include "geometry/RoofShapes.hpp"
-#include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Clean.hpp"
 #include "load/Real.hpp"
 #include "text/Case.hpp"
 #include "text/Utf8.hpp"
@@ -697,7 +697,7 @@ bool trad_look(Building& b, const Tradition& p, std::string_view kind, const std
     }
     const bool part = t.has("building:part");
     const std::vector<V2>& poly = b.poly;
-    const std::vector<std::uint8_t> seam = geometry::seams(poly); // a seam is no side
+    const std::vector<std::uint8_t> seam = seams(poly); // a seam is no side
     double longest = 0.0;
     for (std::size_t i = 0; i < poly.size(); ++i) {
         if (!seam.empty() && seam[i] != 0) continue;
@@ -982,7 +982,7 @@ void party_walls(Scene& s, double tol) {
     }
     std::unordered_map<std::uint64_t, std::vector<Edge>> grid;
     std::vector<std::vector<std::uint8_t>> seams(bs.size()); // a seam is no wall
-    for (std::size_t k = 0; k < bs.size(); ++k) seams[k] = geometry::seams(bs[k]->poly);
+    for (std::size_t k = 0; k < bs.size(); ++k) seams[k] = load::seams(bs[k]->poly);
     const auto seam = [&](std::size_t k, std::size_t i) { return !seams[k].empty() && seams[k][i] != 0; };
     for (std::size_t k = 0; k < bs.size(); ++k) {
         const std::vector<V2>& p = bs[k]->poly;

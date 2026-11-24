@@ -9,6 +9,7 @@
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Clean.hpp"
 #include "load/Cut.hpp"
 #include "load/Generic.hpp"
 #include "load/Real.hpp"
@@ -93,14 +94,15 @@ std::string seamed_roofs(const osm::Document& doc, const load::RegionConfig& reg
         for (const load::Building& b : *list) {
             const double roof_h = b.roof_h.value_or(0.0);
             if (b.hidden || !gm::drawn_pitched(b.roof, roof_h, false)) continue;
-            const std::vector<std::uint8_t> seam = gm::seams(b.poly);
+            const std::vector<std::uint8_t> seam = load::seam_kinds(b.poly);
             if (seam.empty()) continue;
             bool courtyard = false;
             bool alone = false;
             std::uint32_t with_courtyard = 0;
             std::uint32_t by_itself = 0;
-            for (const std::vector<std::uint32_t>& piece : gm::pieces_of(b.poly, seam)) {
-                if (gm::has_courtyard(piece, seam)) {
+            for (const gm::Piece& part : gm::split(b.poly, seam, 0.0).pieces) {
+                const std::vector<std::uint32_t>& piece = part.edges;
+                if (part.courtyard) {
                     courtyard = true;
                     ++with_courtyard;
                     continue;

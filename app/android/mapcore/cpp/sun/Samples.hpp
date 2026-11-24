@@ -185,6 +185,9 @@ struct Mirror {
     /// The loader guessed its roof's shape: while the user's palette has Atlas's guesses off, the plain box mirrors in
     /// its place (walls up to h, no gable).
     bool shape_guessed = false;
+    /// Its footprint's edges nothing stands on at the level (geometry/Seams.hpp's split: a seam, or an edge of a piece
+    /// not drawn there): no mirrored wall and no sample. Empty where a wall stands on every edge.
+    std::vector<std::uint8_t> off;
 };
 
 /// A bridge's deck over the water (waterLayer's decks): a bridge road (its centreline, half width plus 0.8 m) or a

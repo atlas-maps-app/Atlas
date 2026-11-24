@@ -65,9 +65,13 @@ inline constexpr double window_margin = 200.0;
 /// each building's wall and roof slots (wall_slot and roof_slot: the user's palette's slots their colours go with),
 /// which core-p12's tiles lack, so their buildings keep today's colours whatever the palette; core-p14 the buildings
 /// that can be there (load/Clean.hpp): courtyards cut out, an outline drawn less its parts, overlapping footprints
-/// clipped, what is underground and a relation's ring that is a building's own way left out, and a building's numbers
-/// bounded, where core-p13 roofed the courtyards, hid a whole outline for one part and drew the rest as mapped.
-inline constexpr std::string_view stage_p_version = "core-p14";
+/// clipped, what is underground hidden, a relation's ring that is a building's own way loaded once, and a building's
+/// numbers bounded, where core-p13 roofed the courtyards, hid a whole outline for one part and drew the rest as
+/// mapped; core-p15 each seam of a footprint's ring marked in the tile, on the corner it starts at and with its kind
+/// (tiles/Schema.hpp's keep::seam_piece and seam_court), which core-p14's tiles left stage T to find again by the
+/// ring's geometry at every level, and a door's and a shopfront's wall chosen with the street on the side the ring's
+/// turn says is outside, which core-p14 took from the ring's corner mean.
+inline constexpr std::string_view stage_p_version = "core-p15";
 
 /// Whether a window of `country` draws the renders' New looks instead of its tradition's kit, and every pack there
 /// lights with TONE (frame/MapFrame.hpp's with_pack): the Netherlands, as the bundled Westerkerk draws.
@@ -161,10 +165,26 @@ build_window(std::span<const std::byte> json, const tiles::TileKey& tile, const 
 /// (TileBuildings::windows_cut), which it counts alone, and a pack's build (stage P) cannot.
 [[nodiscard]] std::uint64_t most_windows(const tiles::Tile& tile, const tiles::Frame& frame);
 
+/// The seams a tile's rings carry as marks (tiles/Schema.hpp's keep::seam_piece and keep::seam_court), counted where
+/// a pack is built, so that a count holds the marks' order and not a reading of the code: `piece` and `court` are the
+/// marked edges of each kind (a seam is marked there and back, so both are even), `unpaired` the rings whose marks do
+/// not pair up there and back as stage T reads them (geometry::split). None is unpaired where nothing between the
+/// cut's marking (load/Cut.cpp's keep_seams) and the tile turned a ring round, started it at another corner or
+/// dropped a corner of a seam; the pack's build fails a tile that holds one.
+struct SeamMarks {
+    std::uint64_t piece = 0;
+    std::uint64_t court = 0;
+    std::uint32_t unpaired = 0;
+};
+
+/// Adds to `out` the marks of `ring`, a building's or a part's as a tile holds it, read whole in `frame`.
+void count_marks(const tiles::RingView& ring, const tiles::Frame& frame, SeamMarks& out);
+
 /// What a window's pack holds of buildings, for the pack's build to print (stagep's `windows`).
 struct PackBuildings {
     std::uint32_t records = 0;      ///< the buildings and parts of its tile
     std::uint64_t most_windows = 0; ///< most_windows of its tile
+    SeamMarks seams;                ///< the seams marked on their rings
 };
 
 /// The buildings of the window's tile in `pack`, a pack as build_window writes it (none where it has no tile).

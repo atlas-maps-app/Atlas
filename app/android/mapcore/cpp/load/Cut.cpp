@@ -5,6 +5,7 @@
 #include "geometry/RoofShapes.hpp"
 #include "geometry/Seams.hpp"
 #include "geometry/StreetWall.hpp"
+#include "load/Clean.hpp"
 #include "load/Keep.hpp"
 #include "load/Real.hpp"
 #include "load/Tables.hpp"
@@ -337,7 +338,7 @@ public:
         for (const Building& b : s.buildings) {
             if (b.underground || b.tags.is("building", "houseboat")) continue; // what is below lines no quay
             const std::size_t n = b.poly.size();
-            const std::vector<std::uint8_t> seam = geometry::seams(b.poly); // a seam is no wall
+            const std::vector<std::uint8_t> seam = seams(b.poly); // a seam is no wall
             for (std::size_t i = 0; i < n; ++i) {
                 if (!seam.empty() && seam[i] != 0) continue;
                 const V2& c = b.poly[i];
@@ -1044,20 +1045,33 @@ private:
         out.reserve(list.size());
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             out.push_back(keyed_ring(list[i].poly, [&] { return std::format("{} {} ({})", label, i, list[i].id); }));
-            if (!out.back().keep.empty()) keep_seams(list[i].poly, out.back().keep);
+            keep_seams(list[i].poly, out.back().keep);
         }
     }
 
-    /// A ring with seams keeps the ends of each at every level, so that each seam runs there and back at each.
+    /// A ring with seams keeps the ends of each at every level, so that each seam runs there and back at each, and
+    /// says on the corner a seam starts at that it does, and of which kind (tl::keep::seam_piece, seam_court): what
+    /// stage T reads its seams from, at every level. A plan without codes gives such a ring its own, every corner
+    /// kept. A ring whose doubled edges do not pair up there and back is none the cleaning made (a mapped ring that
+    /// runs along itself): it keeps their ends and carries no mark, a ring without seams to stage T.
     static void keep_seams(std::span<const V2> ring, std::vector<std::uint8_t>& keep) {
-        const std::vector<std::uint8_t> seam = geometry::seams(ring);
+        namespace kind = geometry::seam_kind;
+        const std::vector<std::uint8_t> seam = seam_kinds(ring);
         if (seam.empty()) return;
         const std::size_t n = ring.size();
+        const bool paired = geometry::split(ring, seam, 0.0).paired;
+        if (keep.empty()) {
+            if (!paired) return;
+            keep.assign(n, tl::keep::all);
+        }
         for (std::size_t i = 0; i < n; ++i) {
-            if (seam[i] != 0) {
-                keep[i] = tl::keep::all;
-                keep[(i + 1) % n] = tl::keep::all;
-            }
+            if (seam[i] == kind::none) continue;
+            keep[i] = std::max(keep[i], tl::keep::all);
+            keep[(i + 1) % n] = std::max(keep[(i + 1) % n], tl::keep::all);
+        }
+        if (!paired) return;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (seam[i] != kind::none) keep[i] = seam[i] == kind::court ? tl::keep::seam_court : tl::keep::seam_piece;
         }
     }
 
@@ -1268,7 +1282,7 @@ private:
         std::optional<std::uint32_t> best;
         double least = 0.0;
         const std::size_t n = poly.size();
-        const std::vector<std::uint8_t> seam = geometry::seams(poly); // a seam opens onto nothing
+        const std::vector<std::uint8_t> seam = seams(poly); // a seam opens onto nothing
         for (std::size_t i = 0; i < n; ++i) {
             if (!seam.empty() && seam[i] != 0) continue;
             const V2 a = poly[i];
@@ -1905,8 +1919,16 @@ private:
         const GridLine& ring = part ? parts_[p.index] : buildings_[p.index];
         lf.integer(c::index, f, p.index);
         lf.integer(c::id, f, b.id);
-        if (plan_.keep) {
+        // A building's and a part's ring is filed whole in its one tile (place_buildings), corner for corner as the
+        // scene has it: no clip puts a point on a seam, and nothing turns it, starts it elsewhere or drops a corner
+        // after its marks were set (rings_of, the cut's first step).
+        ATLAS_ASSERT(ring.lat.size() == b.poly.size(), "a footprint's ring in the tile has each of its corners, once");
+        if (!ring.keep.empty()) {
             lf.ring(c::ring, f, ring.lat, ring.lon, std::span<const std::uint8_t>(ring.keep));
+        } else if (coded_[part ? 1 : 0]) {
+            // a plan without codes whose layer holds a ring with seams: every other ring's corners kept as well
+            all_.assign(ring.lat.size(), tl::keep::all);
+            lf.ring(c::ring, f, ring.lat, ring.lon, std::span<const std::uint8_t>(all_));
         } else {
             lf.ring(c::ring, f, ring.lat, ring.lon);
         }
@@ -2199,6 +2221,13 @@ private:
         });
         tl::TileFill tile(key.z, key.x, key.y);
         std::vector<bool> filled(tile.cells().size(), false);
+        // a layer's rings carry codes all or none (tiles/TileWriter.hpp): a plan without codes writes them for the
+        // buildings' or the parts' layer of a tile where one of its rings has seams (keep_seams)
+        coded_ = {false, false};
+        for (const Pending& p : features) {
+            if (p.source == Source::building) coded_[0] = coded_[0] || !buildings_[p.index].keep.empty();
+            if (p.source == Source::part) coded_[1] = coded_[1] || !parts_[p.index].keep.empty();
+        }
         for (const Pending& p : features) {
             tl::CellFill& cell = tile.cells()[p.cell];
             if (!filled[p.cell]) {
@@ -2244,6 +2273,9 @@ private:
     std::uint8_t z_ = 14;
     std::vector<GridLine> buildings_;
     std::vector<GridLine> parts_;
+    std::array<bool, 2> coded_{false,
+                               false}; ///< whether the tile being written has codes on its buildings' rings, its parts'
+    std::vector<std::uint8_t> all_;    ///< a ring's corners all kept, for one written without codes of its own
     std::vector<tl::GridPoint> building_refs_;
     std::vector<tl::GridPoint> part_refs_;
     std::vector<VariantFeature> variants_;

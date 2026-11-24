@@ -7,6 +7,7 @@
 // data/regions, the canal ring's raw.json loaded whole, with nothing left that cannot be there.
 #include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Clean.hpp"
 #include "load/PoiStyle.hpp"
 #include "load/Real.hpp"
 #include "osm/Overpass.hpp"
@@ -188,7 +189,7 @@ TEST_CASE("load: each kind of record, its values those amsterdam.py's load gives
                                                                   "building:material", "roof:colour"});
     // the house less its part, which stands inside it: its ring and the part's joined by a seam there and back
     CHECK(house.poly.size() == 10);
-    CHECK(std::ranges::count(atlas::geometry::seams(house.poly), std::uint8_t{1}) == 2);
+    CHECK(std::ranges::count(atlas::load::seams(house.poly), std::uint8_t{1}) == 2);
     CHECK(std::fabs(atlas::geometry::signed_area(house.poly) -
                     (atlas::geometry::signed_area(s.parts[0].poly) * ((15.0 * 9.0) / (7.0 * 5.0) - 1.0))) < 1e-6);
     CHECK(same(house.bb.x0, 0.0));
@@ -337,7 +338,7 @@ TEST_CASE("load: nothing that cannot be there") {
     CHECK(!b.guessed.has(load::Guess::roof_shape));
     // its courtyard, from the relation, cut out of it and joined by a seam
     CHECK(b.poly.size() == 10);
-    CHECK(std::ranges::count(atlas::geometry::seams(b.poly), std::uint8_t{1}) == 2);
+    CHECK(std::ranges::count(atlas::load::seams(b.poly), std::uint8_t{1}) == 2);
     CHECK(!b.hidden);
     CHECK(s.counts.courtyards == 1);
     // numbers no building has, taken as unmapped: the height guessed, the storeys from it, the base on the ground
@@ -380,7 +381,7 @@ TEST_CASE("load: a relation before the way that is its ring") {
     CHECK(loaded->counts.doubles_disagree == 0);
     CHECK(loaded->counts.courtyards == 1);
     CHECK(b.poly.size() == 10); // its courtyard cut out of it and joined by a seam
-    CHECK(std::ranges::count(atlas::geometry::seams(b.poly), std::uint8_t{1}) == 2);
+    CHECK(std::ranges::count(atlas::load::seams(b.poly), std::uint8_t{1}) == 2);
 }
 
 TEST_CASE("load: the canal ring's raw.json loaded whole (ATLAS_REGIONS_DIR)") {

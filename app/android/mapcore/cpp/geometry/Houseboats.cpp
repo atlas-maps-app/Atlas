@@ -2,11 +2,15 @@
 #include "geometry/Houseboats.hpp"
 
 #include "base/pymath/PyMath.hpp"
+#include "geometry/Seams.hpp"
 #include "tiles/layers/Buildings.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <span>
 #include <vector>
 
 namespace atlas::geometry {
@@ -19,11 +23,13 @@ namespace {
 /// port lists them (never through quadAt), lit by its sample 0.2 m out from its middle; with `win` (the cabin's) and
 /// over 1.6 m long, its row of k = max(1, int(elen / 1.7)) panes, one path right after the wall (the frame decides the
 /// distance and the panes).
-void boat_walls(Builder& b, std::span<const V2> pp, double y0, double y1, std::uint32_t base, PrimKind kind, bool win) {
-    const std::size_t m = pp.size();
-    for (std::size_t i = 0; i < m; ++i) {
-        const V2 a = pp[i];
-        const V2 c = pp[(i + 1) % m];
+/// `off`: the edges of the boat's ring nothing stands on (geometry/Seams.hpp's split: a seam is no side of a boat).
+void boat_walls(Builder& b, std::span<const V2> pp, std::span<const std::uint8_t> off, double y0, double y1,
+                std::uint32_t base, PrimKind kind, bool win) {
+    for (const WallEdge<V2> w : walls_of(pp, off)) {
+        const std::size_t i = w.edge;
+        const V2 a = w.a;
+        const V2 c = w.b;
         const double ex = c.x - a.x;
         const double ez = c.z - a.z;
         const double elen = hypot(ex, ez);
@@ -86,10 +92,13 @@ void houseboat(Builder& b, const Building& bl, const BuildingRegion& region) {
         cab.emplace_back(ce.x + ((p.x - ce.x) * 0.84), ce.z + ((p.z - ce.z) * 0.8));
         roof.emplace_back(ce.x + ((p.x - ce.x) * 0.88), ce.z + ((p.z - ce.z) * 0.86));
     }
-    boat_walls(b, poly, lo, deck, region.hull, PrimKind::hull_wall, false);
+    // a boat whose ring the cleaning gave seams (none on the canal ring or in Paris: tests/load/seams_test.cpp): no
+    // hull and no cabin wall on one. The cabin's corners are the hull's, drawn in: the same edges
+    const Split parts = bl.seam.empty() ? Split{} : split(poly, bl.seam, b.least_face);
+    boat_walls(b, poly, parts.off, lo, deck, region.hull, PrimKind::hull_wall, false);
     day_top(b, poly, deck, region.deck, PrimKind::deck);
     // its cabin's panes (drawn within 520 m), but on a level's tile, which has no windowed walls (its records lean)
-    boat_walls(b, cab, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall, !b.lean);
+    boat_walls(b, cab, parts.off, deck, top, bl.v.wall_rgb, PrimKind::cabin_wall, !b.lean);
     day_top(b, roof, top, bl.v.roof_rgb, PrimKind::cabin_roof);
 }
 

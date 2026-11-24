@@ -1,6 +1,7 @@
 #include "load/Clean.hpp"
 
 #include "base/assert.hpp"
+#include "geometry/Seams.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/CleanAbi.h"
 #include "tiles/Grid.hpp"
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <optional>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -210,6 +212,41 @@ void clean_buildings(Scene& s, const tiles::Frame& frame) {
     c.sliver_m2 = o.counts.sliver_m2;
     c.dropped_m2 = o.counts.dropped_m2;
     c.pairs_before = o.counts.pairs_before;
+}
+
+static_assert(std::is_standard_layout_v<V2> && sizeof(V2) == 2 * sizeof(double), "V2 is x then z, two doubles");
+
+std::vector<std::uint8_t> seams(std::span<const V2> ring) {
+    std::vector<std::uint8_t> out(ring.size());
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast): V2 is two doubles, x then z
+    if (atlas_clean_seams(reinterpret_cast<const double*>(ring.data()), out.size(), out.data()) == 0) out.clear();
+    return out;
+}
+
+std::vector<std::uint8_t> seam_kinds(std::span<const V2> ring) {
+    std::vector<std::uint8_t> out = seams(ring);
+    if (out.empty()) return out;
+    const std::size_t n = ring.size();
+    const auto in_footprint = [&](double px, double pz) {
+        bool in = false;
+        for (std::size_t i = 0; i < n; ++i) {
+            if (out[i] != 0) continue;
+            const V2& a = ring[i];
+            const V2& b = ring[(i + 1) % n];
+            if ((a.z > pz) != (b.z > pz) && px < a.x + (((pz - a.z) * (b.x - a.x)) / (b.z - a.z))) in = !in;
+        }
+        return in;
+    };
+    std::vector<std::uint8_t> kind(n, geometry::seam_kind::none);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (out[i] == 0) continue;
+        const V2& a = ring[i];
+        const V2& b = ring[(i + 1) % n];
+        // the sum of two doubles is the same either way round, so both ways of a seam have one middle
+        kind[i] =
+            in_footprint((a.x + b.x) / 2, (a.z + b.z) / 2) ? geometry::seam_kind::court : geometry::seam_kind::piece;
+    }
+    return kind;
 }
 
 } // namespace atlas::load

@@ -330,25 +330,26 @@ class CountryTilesTest {
     @Test
     fun theToolsCountsOfEachWindowAreReadInTheirOrderAndSummedOverTheCountry() {
         fun words(vararg n: Long) = CountryTiles.Buildings.NAMES.zip(n.toList()).map { (k, v) -> "$k=$v" }
-        val a = CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800), 1, 2)!!
-        val b = CountryTiles.Buildings.of(words(10, 2, 0, 1, 0, 1, 0, 0, 8, 1_100_000), 3, 4)!!
-        val c = CountryTiles.Buildings.of(words(5, 0, 0, 0, 0, 0, 0, 0, 5, 900), 5, 6)!!
-        // all ten, each named, in their order
-        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20), 1, 2))
-        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800).reversed(), 1, 2))
-        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800).dropLast(1) + "windows=many", 1, 2))
-        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800).dropLast(1) + "window=800", 1, 2))
+        val a = CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800, 4, 6, 0), 1, 2)!!
+        val b = CountryTiles.Buildings.of(words(10, 2, 0, 1, 0, 1, 0, 0, 8, 1_100_000, 0, 2, 1), 3, 4)!!
+        val c = CountryTiles.Buildings.of(words(5, 0, 0, 0, 0, 0, 0, 0, 5, 900, 0, 0, 0), 5, 6)!!
+        // all thirteen, each named, in their order
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800, 4, 6), 1, 2))
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800, 4, 6, 0).reversed(), 1, 2))
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800, 4, 6, 0).dropLast(1) + "unpaired=none", 1, 2))
+        assertNull(CountryTiles.Buildings.of(words(30, 0, 1, 0, 0, 4, 2, 1, 20, 800, 4, 6, 0).dropLast(1) + "unpair=0", 1, 2))
         // the counts summed, the most windows of a tile kept with where it is, and the tiles past what a frame draws
         val sum = CountryTiles.Buildings() + a + b + c
-        assertEquals(CountryTiles.Buildings(45, 2, 1, 1, 0, 5, 2, 1, 33, 1_100_000, "14/3/4", 1), sum)
+        assertEquals(CountryTiles.Buildings(45, 2, 1, 1, 0, 5, 2, 1, 33, 1_100_000, "14/3/4", 1, 4, 8, 1), sum)
         // the counts the yardstick wants 0, where they are not
         assertEquals("uncovered 1", a.uneasy)
-        assertEquals("pairs 2, unsettled 1", b.uneasy)
+        assertEquals("pairs 2, unsettled 1, unpaired 1", b.uneasy)
         assertNull(c.uneasy)
         assertEquals(
             "  the buildings: 45 footprints in the windows' scenes, each with the 200 m about its window (33 in the tiles), 2 overlapping pairs, " +
                 "1 outlines uncovered, 1 unsettled, 0 unmeasured, 5 flat roofs, 2 hidden, 1 doubles; at most 1100000 windows in a tile (14/3/4), " +
-                "1 tiles that can pass the 1048576 a frame draws",
+                "1 tiles that can pass the 1048576 a frame draws; 4 seams between pieces and 8 to courtyards marked in the tiles, " +
+                "1 rings whose marks do not pair",
             CountryTiles.buildingsLine(sum),
         )
     }

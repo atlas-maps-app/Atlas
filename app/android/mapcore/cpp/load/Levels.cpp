@@ -178,6 +178,7 @@ struct LevelRing {
     std::vector<std::int32_t> lat;
     std::vector<std::int32_t> lon;
     std::vector<std::uint8_t> keep;
+    bool small_marked = false; ///< under keep::min_points corners with a seam's mark among them: cannot be
 };
 
 [[nodiscard]] LevelRing ring_at(const tl::RingView& r, std::uint8_t code, const tl::Frame& frame,
@@ -195,8 +196,14 @@ struct LevelRing {
         out.lon.push_back(r.lon[v]);
         out.keep.push_back(r.has_keep ? r.keep[v] : tl::keep::all);
     }
-    // a ring left smaller than simplify touches keeps every vertex at every tolerance, as the format has it
-    if (n < tl::keep::min_points) std::ranges::fill(out.keep, tl::keep::all);
+    // A ring left smaller than simplify touches keeps every vertex at every tolerance, as the format has it. None of
+    // them has a seam's mark: a seam's four corners are kept at every level, so a ring with seams left under six
+    // corners has one corner more, no ring of it has three, its area is nothing, and simplify gave the whole ring
+    // back, of eight corners or more (LevelWriter::marked counts any, which fails the cell).
+    if (n < tl::keep::min_points) {
+        out.small_marked = std::ranges::any_of(out.keep, [](std::uint8_t k) { return k > tl::keep::all; });
+        std::ranges::fill(out.keep, tl::keep::all);
+    }
     return out;
 }
 
@@ -282,6 +289,7 @@ public:
     [[nodiscard]] tl::TileFill& fill() noexcept { return fill_; }
     [[nodiscard]] std::uint32_t buildings_written() const noexcept { return buildings_; }
     [[nodiscard]] std::uint32_t trees() const noexcept { return trees_; }
+    [[nodiscard]] const SeamMarks& seams() const noexcept { return seams_; }
 
 private:
     /// The columns the level leaves out of a building: a shop's places and their hours, a kit's shutters and party
@@ -291,6 +299,12 @@ private:
     static constexpr std::array<std::uint8_t, 8> building_skip{
         tl::building::places, tl::building::place_hours, tl::building::shutter,  tl::building::party,
         tl::building::levels, tl::building::no_win,      tl::building::mat_draw, tl::building::kind};
+
+    /// Counts a written building's ring's marks (count_marks), and a ring that lost them for its size.
+    void marked(const LevelRing& ring) {
+        if (ring.small_marked) ++seams_.unpaired;
+        count_marks({.lat = ring.lat, .lon = ring.lon, .keep = ring.keep, .has_keep = true}, frame_, seams_);
+    }
 
     void write_ring(tl::LayerFill& out, std::uint8_t slot, std::uint32_t f, const LevelRing& ring, bool keep) {
         out.ring(slot, f, ring.lat, ring.lon,
@@ -312,6 +326,7 @@ private:
                 const std::uint32_t f = out.add(cell);
                 copy_columns(*l, i, out, f, building_skip);
                 write_ring(out, tl::building::ring, f, ring, keep);
+                marked(ring);
                 ++buildings_;
             });
         }
@@ -445,6 +460,7 @@ private:
     std::vector<std::int32_t> lon_;
     std::uint32_t buildings_ = 0;
     std::uint32_t trees_ = 0;
+    SeamMarks seams_;
     std::map<const Place*, std::vector<std::int64_t>> large_;
 };
 
@@ -500,6 +516,11 @@ struct CellHead {
     out.raw = raw->size();
     out.buildings = w.buildings_written();
     out.trees = w.trees();
+    out.seams = w.seams();
+    if (out.seams.unpaired != 0) {
+        return std::unexpected(WindowError{std::format("tile {}/{}/{} holds {} rings whose seams' marks do not pair",
+                                                       t.level(), t.x(), t.y(), out.seams.unpaired)});
+    }
     std::vector<tl::PackTile> tiles;
     tiles.push_back({.key = out.key, .raw = std::move(*raw), .count = count, .reach = *reach});
     const std::array<std::uint8_t, 1> levels{t.level()};

@@ -16,12 +16,22 @@ package app.atlas.rendertiles.model
 object Keep {
     /**
      * The ladder, metres: 0 (no simplification); every tolerance `regions.py`'s `GENERALISE` names and the live map's
-     * bands (`Lod.BANDS`); 1.5 m for L13; 4, 16 and 25 m for the far levels. Codes 14 and 15 are spare.
+     * bands (`Lod.BANDS`); 1.5 m for L13; 4, 16 and 25 m for the far levels. Codes 14 and 15 are a seam's marks
+     * ([SEAM_PIECE], [SEAM_COURT]).
      */
     val TOLERANCES: DoubleArray get() = doubleArrayOf(0.0, 0.15, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.5, 4.0, 16.0, 25.0)
 
     /** The code of a vertex that survives every tolerance of the ladder (the ring's anchors, and clip points). */
     const val ALL = 13
+
+    /**
+     * A seam's marks, which the core's cut writes (its `tiles/Schema.hpp`): the vertex survives every tolerance, as
+     * [ALL] does, and the edge from it to the next vertex is a seam of its footprint, between two of its pieces
+     * ([SEAM_PIECE]) or to a courtyard of one ([SEAM_COURT]). The port's own packs carry none: a ring without a mark
+     * has no seam. A reader that compares a code with a ladder index keeps a marked vertex at every one.
+     */
+    const val SEAM_PIECE = 14
+    const val SEAM_COURT = 15
 
     /** `simplify` leaves rings of fewer points than this as they are. */
     const val MIN_POINTS = 6
