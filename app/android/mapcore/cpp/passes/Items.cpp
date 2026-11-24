@@ -60,6 +60,13 @@ static_assert(shaders::ITEM_TOWER == 0 && shaders::ITEM_TURBINE == 1 && shaders:
               shaders::ITEM_MAST == 3 && shaders::ITEM_GANTRY == 4 && shaders::ITEM_CONVEYOR == 5 &&
               shaders::ITEM_POWER == 6 && shaders::ITEM_COASTER == 7 && shaders::ITEM_WOOD == 8 &&
               shaders::ITEM_ROOF_MAST == item_kind_stages);
+// The roof masts' list is the last of the jobs' lists: update takes them after the other kinds' (kind_words_, a list a
+// kind), and record_decide dispatches their stage from `rest`, the first job after the other kinds'. Every kind has its
+// group in geometry::region_item_group, so a kind added after the roof masts lengthens it and stops here.
+static_assert(geometry::region_item_group.size() == item_kind_stages + 1 &&
+                  static_cast<std::size_t>(geometry::RegionItemKind::roof_mast) + 1 ==
+                      geometry::region_item_group.size(),
+              "the roof masts' jobs are the last list: a kind after them needs a list and a stage before theirs");
 
 /// regions.py's POWER_NEAR and POWER_FAR: power lines drawn whole to 1,200 m, faded out by 2,000 m.
 constexpr double power_near = 1200.0;
