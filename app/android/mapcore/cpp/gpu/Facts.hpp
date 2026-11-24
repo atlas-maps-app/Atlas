@@ -30,6 +30,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -85,6 +86,13 @@ inline constexpr Depth default_depth = Depth::eight;
 /// user's Pixel 10 (PowerVR, 25.3) shows none of the flicker and broken blocks of busy frames, such as the overcast
 /// sky's, that it showed only where the display read the frames itself; but heavy frames jiggle more.
 enum class Compression : std::uint8_t { driver, off };
+
+/// Whether lazily allocated memory holds a format's transient samples at configuration A's count (4x), as the device
+/// answered (probe_lazy, gpu/Device.cpp); assumed until it was asked.
+struct LazySamples {
+    bool lazy = true;
+    bool checked = false;
+};
 
 /// What the device does with one of the frame's colour formats (Facts::colour_formats).
 struct ColourFormat {
@@ -210,6 +218,11 @@ struct Facts {
     bool rgba8_input = false; // R8G8B8A8_UNORM as a colour and input attachment (the composite)
     /// The frame's colour formats, in the order the choice takes them: rgb10a2, bgr10a2, rgba8, bgra8.
     std::vector<ColourFormat> colour_formats;
+    /// Whether lazily allocated memory holds configuration A's 4x transient samples in the formats it allocates so
+    /// beside the colour formats (whose answer is ColourFormat::lazy): the depth-stencil's (the main pass's, the
+    /// ripple's) and the one-channel masks' (R8: the soft shadows', the blur check's). Asked as the device opens.
+    LazySamples lazy_depth_stencil;
+    LazySamples lazy_mask;
     FeatureFacts features;
     std::vector<std::string> extensions; // without the ones the host tests hide (Instance::hidden)
     std::vector<std::string> hidden;     // the extensions the host tests hide, which read as absent
@@ -247,7 +260,13 @@ struct Facts {
     SurfaceFacts surface;
 
     [[nodiscard]] bool has_extension(std::string_view extension) const noexcept;
+    /// Whether the device can draw `config`: its sample counts; for A, lazily allocated memory that holds its samples
+    /// (lazy_refused).
     [[nodiscard]] bool supports(FrameConfig config) const noexcept;
+    /// The first format configuration A allocates lazily at its 4x samples that the device was asked about and whose
+    /// samples lazily allocated memory cannot hold: the frame's colour (`colour`), the depth-stencil, the masks' R8 and
+    /// RGBA8 (the glow's, the ripple's). None where each holds or was not asked yet; no other format counts.
+    [[nodiscard]] std::optional<vk::Format> lazy_refused() const noexcept;
     /// What the device does with `format`, if it is one of the frame's colour formats (else nullptr).
     [[nodiscard]] const ColourFormat* colour_format(vk::Format format) const noexcept;
     /// Why the device cannot draw the frame in `format` ("" when it can): not asked of the device yet (a 10-bit format
@@ -323,5 +342,10 @@ struct TilerVerdict {
 /// The configuration the core picks from the facts (D5.3), with the reasons. `msaa2_close` is K6's answer to
 /// configuration B's condition (2x within 0.15 MAD of 4x in both classes); until K6 answers, false.
 void choose_configuration(Facts& facts, bool msaa2_close);
+
+/// After the device was asked whether lazily allocated memory holds A's samples (probe_lazy, as Device::open opens it):
+/// configuration A, chosen before that, chosen again where the memory cannot hold them (lazy_refused), the config's
+/// reason naming the format and the samples; any other choice stays as it was.
+void choose_again_after_probe(Facts& facts, bool msaa2_close);
 
 } // namespace atlas::gpu

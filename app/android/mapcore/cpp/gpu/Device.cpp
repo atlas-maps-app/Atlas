@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <format>
+#include <optional>
 #include <string_view>
 #include <tuple>
 #include <vector>
@@ -36,33 +37,50 @@ namespace {
     return options.present || static_cast<bool>(options.surface);
 }
 
-/// Whether lazily allocated memory holds the samples of configuration A in the colour formats the frame may take (its
-/// colour follows the output, gpu/Facts.hpp), 8-bit or 10-bit ones (`ten`): by the memory types a 4x transient
-/// image of the format may take.
+/// Whether lazily allocated memory holds the samples of configuration A (4x): in the colour formats the frame may take
+/// (its colour follows the output, gpu/Facts.hpp), 8-bit or 10-bit ones (`ten`), and with the 8-bit ones in the other
+/// formats A allocates so, the depth-stencil and the one-channel masks' R8 (Facts::lazy_refused reads the answers): by
+/// the memory types a 4x transient image of the format may take.
 void probe_lazy(const vk::raii::Device& device, Facts& facts, bool ten) {
+    using U = vk::ImageUsageFlagBits;
     std::uint32_t lazy_types = 0;
     for (std::uint32_t i = 0; i < facts.memory.memoryTypeCount; ++i) {
         if (facts.memory.memoryTypes[i].propertyFlags & vk::MemoryPropertyFlagBits::eLazilyAllocated)
             lazy_types |= 1U << i;
     }
-    for (ColourFormat& c : facts.colour_formats) {
-        if (ten_bit(c.format) != ten || c.lazy_checked) continue;
-        if (!c.attachment || !(c.samples & vk::SampleCountFlagBits::e4)) continue;
+    // Whether a 4x transient image of `format` may take lazily allocated memory; nothing where it cannot be made.
+    const auto lazy_at_4x = [&](vk::Format format, vk::ImageUsageFlags usage) -> std::optional<bool> {
         auto image = device.createImage({.imageType = vk::ImageType::e2D,
-                                         .format = c.format,
+                                         .format = format,
                                          .extent = {.width = 64, .height = 64, .depth = 1},
                                          .mipLevels = 1,
                                          .arrayLayers = 1,
                                          .samples = vk::SampleCountFlagBits::e4,
                                          .tiling = vk::ImageTiling::eOptimal,
-                                         .usage = vk::ImageUsageFlagBits::eColorAttachment |
-                                                  vk::ImageUsageFlagBits::eInputAttachment |
-                                                  vk::ImageUsageFlagBits::eTransientAttachment,
+                                         .usage = usage | U::eTransientAttachment,
                                          .initialLayout = vk::ImageLayout::eUndefined});
-        if (!image) continue;
-        c.lazy = (image->getMemoryRequirements().memoryTypeBits & lazy_types) != 0;
+        if (!image) return std::nullopt;
+        return (image->getMemoryRequirements().memoryTypeBits & lazy_types) != 0;
+    };
+    for (ColourFormat& c : facts.colour_formats) {
+        if (ten_bit(c.format) != ten || c.lazy_checked) continue;
+        if (!c.attachment || !(c.samples & vk::SampleCountFlagBits::e4)) continue;
+        const std::optional<bool> lazy = lazy_at_4x(c.format, U::eColorAttachment | U::eInputAttachment);
+        if (!lazy) continue;
+        c.lazy = *lazy;
         c.lazy_checked = true;
     }
+    if (ten) return;
+    const auto ask = [&](LazySamples& out, vk::Format format, vk::ImageUsageFlags usage, vk::SampleCountFlags counts) {
+        if (out.checked || format == vk::Format::eUndefined || !(counts & vk::SampleCountFlagBits::e4)) return;
+        const std::optional<bool> lazy = lazy_at_4x(format, usage);
+        if (!lazy) return;
+        out.lazy = *lazy;
+        out.checked = true;
+    };
+    ask(facts.lazy_depth_stencil, facts.depth_stencil, U::eDepthStencilAttachment | U::eInputAttachment,
+        facts.limits.framebufferDepthSampleCounts & facts.limits.framebufferStencilSampleCounts);
+    ask(facts.lazy_mask, vk::Format::eR8Unorm, U::eColorAttachment, facts.limits.framebufferColorSampleCounts);
 }
 
 } // namespace
@@ -263,6 +281,9 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     // stage asks (check_ten_bit).
     if (facts.lazy_memory) probe_lazy(self->device_, facts, false);
     decide_colour(facts);
+    // Configuration A was chosen before the device was asked whether lazily allocated memory holds its samples: chosen
+    // again where it does not (the config's reason names the format and the samples, VK facts' `config:` line).
+    choose_again_after_probe(facts, options.msaa2_close);
     self->facts_ = std::move(facts);
     // The choice may only use what was enabled.
     if (self->facts_.choice.route == Route::dynamic && !on.local_read) {

@@ -333,13 +333,25 @@ bool Facts::supports(FrameConfig config) const noexcept {
                         (limits.framebufferDepthSampleCounts & samples) &&
                         (limits.framebufferStencilSampleCounts & samples);
     switch (config) {
-    case FrameConfig::a: return counts && lazy_memory;
+    case FrameConfig::a: return counts && lazy_memory && !lazy_refused();
     case FrameConfig::b:
     case FrameConfig::c:
     case FrameConfig::x1: return counts;
     case FrameConfig::d: return false; // FA is not built
     }
     return false;
+}
+
+std::optional<vk::Format> Facts::lazy_refused() const noexcept {
+    const auto refused = [&](vk::Format format) {
+        const ColourFormat* c = colour_format(format);
+        return c != nullptr && c->lazy_checked && !c->lazy;
+    };
+    if (refused(colour.format)) return colour.format;
+    if (lazy_depth_stencil.checked && !lazy_depth_stencil.lazy) return depth_stencil;
+    if (lazy_mask.checked && !lazy_mask.lazy) return vk::Format::eR8Unorm;
+    if (refused(vk::Format::eR8G8B8A8Unorm)) return vk::Format::eR8G8B8A8Unorm;
+    return std::nullopt;
 }
 
 bool Facts::takes_read_without_format() const noexcept {
@@ -570,6 +582,20 @@ TilerVerdict classify_tiler(std::uint32_t vendor_id, bool has_driver_id, vk::Dri
     }
 }
 
+namespace {
+
+/// A format configuration A allocates lazily, as VK facts' other lines name it (`colour:`, `depth.stencil:`).
+[[nodiscard]] std::string lazy_name(vk::Format format) {
+    switch (format) {
+    case vk::Format::eD24UnormS8Uint: return "d24s8";
+    case vk::Format::eD32SfloatS8Uint: return "d32s8";
+    case vk::Format::eR8Unorm: return "r8";
+    default: return colour_name(format);
+    }
+}
+
+} // namespace
+
 void choose_configuration(Facts& facts, bool msaa2_close) {
     const QuirkSet quirks =
         quirks_for(facts.vendor_id, facts.driver_properties, facts.driver_id, facts.device_id, facts.driver_version);
@@ -583,7 +609,13 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
         c.config = FrameConfig::a;
         facts.config_reason = "a tiler with lazily allocated memory: 4x on chip, no memory";
     } else {
-        const std::string why = !facts.tiler ? std::string("not a tiler") : std::string("no lazily allocated memory");
+        const std::optional<vk::Format> refused = facts.lazy_memory ? facts.lazy_refused() : std::nullopt;
+        const std::string why =
+            !facts.tiler ? std::string("not a tiler")
+            : refused
+                ? std::format("lazily allocated memory cannot hold configuration A's {}x samples of {}",
+                              static_cast<int>(Configuration{.config = FrameConfig::a}.samples()), lazy_name(*refused))
+                : std::string("no lazily allocated memory");
         if (msaa2_close && facts.supports(FrameConfig::b)) {
             c.config = FrameConfig::b;
             facts.config_reason = why + ", and 2x is within 0.15 MAD of 4x (K6)";
@@ -641,6 +673,11 @@ void choose_configuration(Facts& facts, bool msaa2_close) {
         c.target = CompositeTarget::direct;
         facts.target_reason = "the 1x image straight from the samples (not a tiler)";
     }
+}
+
+void choose_again_after_probe(Facts& facts, bool msaa2_close) {
+    if (facts.choice.config == FrameConfig::a && !facts.supports(FrameConfig::a))
+        choose_configuration(facts, msaa2_close);
 }
 
 void read_profiles(Facts& facts, const Instance& instance, const vk::raii::PhysicalDevice& device) {
