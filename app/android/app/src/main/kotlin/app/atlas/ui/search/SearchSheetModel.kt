@@ -1270,18 +1270,17 @@ class SearchSheetModel(
         }
     }
 
-    /** Who is searching for the engine: here, now, in the sheet's language, online where the phone may go. */
+    /**
+     * Who is searching for the engine: here, now, in the sheet's language, online where the phone may go. It names no
+     * country for a result's address (`SearchContext.countryAt`, `countryOf`): the sheet asks for an answer
+     * (`SearchEngine.answer`), which writes no line of a place, so nothing would ask for one. The typed search's
+     * context does ([SearchViewModel]).
+     */
     private fun searchContext(limit: Int): SearchContext {
         val c = mutable.value.centre
         val now = ZonedDateTime.now(services.clock)
         val online = !services.config.offline && services.connectivity.online.value
-        return SearchContext(
-            location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone),
-            // each result's address as the country at it writes it (asked off the main thread, as the search is): a
-            // downloaded region's own place's by the region, each region asked once (batch 5 A6)
-            countryAt = { p -> HereContext.country(services, p) },
-            countryOf = { r -> HereContext.regionOf(services, r) },
-        )
+        return SearchContext(location = c, lang = lang, now = now, online = online, limit = limit, hours = HereContext.hours(services, c, now.zone))
     }
 
     /** The official bathing waters around [c], asked online once per kind of water entered; the results rank again with them. */

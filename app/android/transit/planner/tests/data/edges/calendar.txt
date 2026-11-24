@@ -2,3 +2,4 @@ service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,e
 ALL,1,1,1,1,1,1,1,20270326,20270329
 SAT,0,0,0,0,0,1,0,20270326,20270329
 SUN,0,0,0,0,0,0,1,20270326,20270329
+FRI,0,0,0,0,1,0,0,20270326,20270329

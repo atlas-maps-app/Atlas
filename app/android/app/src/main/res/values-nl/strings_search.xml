@@ -428,7 +428,7 @@
     <string name="search_route_via">via %1$s</string>
     <string name="place_wiki_open">Lees het artikel</string>
     <string name="place_wiki_none">Het artikel is nu niet te lezen</string>
-    <string name="place_wiki_off">Wikipedia staat uit bij Gegevensbronnen &amp; sleutels</string>
+    <string name="place_wiki_off">Wikipedia staat uit bij %1$s</string>
     <string name="place_wiki_minutes">%1$d minuten lezen</string>
     <string name="place_wiki_licence">Tekst van Wikipedia, CC BY-SA</string>
 </resources>

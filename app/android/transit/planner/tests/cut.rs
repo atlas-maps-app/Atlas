@@ -9,8 +9,8 @@
 //! platform; and no file a little wrong, and no query, panics.
 
 use atlas_transit::geo::distance_mm;
-use atlas_transit::reference::{Reference, impossible};
-use atlas_transit::{Area, How, Journey, Leg, Mode, Place, Planner, Query, Timetable, What, Wish, fuzz};
+use atlas_transit::reference::{Reference, impossible, places};
+use atlas_transit::{Answer, Area, How, Journey, Leg, Mode, Place, Planner, Query, Timetable, What, Wish, fuzz};
 
 fn bytes(name: &str) -> Vec<u8> {
     std::fs::read(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap()
@@ -48,9 +48,10 @@ fn the_file_is_sound() {
 fn the_planner_and_the_scan_agree() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut compared, mut latest, mut arriving, mut stepped, mut most_later) = (0, 0, 0, 0, 0);
     let (mut as_late, mut later_with_more) = (0, 0);
+    let (mut moments, mut on_foot, mut fewer) = (0, 0, 0);
     for (day, time, seed) in [(0, 8 * 3600, 1u64), (0, 17 * 3600 + 1800, 2), (1, 23 * 3600, 3), (0, 600, 4)] {
         let scan = Reference::new(&p, day, time as i32 - 86_400, time as i32 + 2 * 86_400);
         for (i, (a, z)) in pairs(&tt, 40, seed).into_iter().enumerate() {
@@ -67,8 +68,14 @@ fn the_planner_and_the_scan_agree() {
             // as far as the query's own horizon
             q.limits.patient = i % 2 == 0;
             let one = ask(&mut p, &q);
+            // The answer whole, by the scan that counts rides: every option by its arrival and its rides (the
+            // ones with fewer rides than the fastest too), each leaving as late as it can, and the walk all the
+            // way where the two points are near enough.
+            assert_eq!(scan.moment_differs(&p, &q, &one), None, "{q:?}");
+            (moments, fewer) = (moments + 1, fewer + one.iter().filter(|j| j.rides > 0).count().saturating_sub(1));
             if one.iter().any(|j| j.rides == 0) {
-                continue; // on foot all the way: the scan knows rides only
+                on_foot += 1;
+                continue; // (what follows asks the scans that know rides only)
             }
             let later = p.plan(&q).later;
             (stepped, most_later) = (stepped + if later > 12 { one.len() } else { 0 }, most_later.max(later));
@@ -87,21 +94,30 @@ fn the_planner_and_the_scan_agree() {
                 (back.arrive_by, back.time) = (true, arrive as u32);
                 let got = ask(&mut p, &back);
                 assert_eq!(got.iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "{back:?}");
+                assert_eq!(scan.moment_differs(&p, &back, &got), None, "{back:?}");
+                moments += 1;
             }
-            // each option leaves as late as any way to its arrival with no more rides: asked back from there
+            // each option leaves as late as any way to its arrival with no more rides: asked back from there, with
+            // no more rides than it has (the scan that counts rides knows the cap)
             for j in one.iter() {
                 let mut back = q.clone();
                 (back.arrive_by, back.time, back.max_rides) = (true, j.arrive as u32, j.rides);
-                assert_eq!(ask(&mut p, &back).iter().map(|k| k.depart).max(), Some(j.depart), "{q:?}\n{j:?}");
-                // The scan's latest departure for that arrival can't be held equal to the option's: the scan
-                // knows no cap on rides, and a way with more rides may leave later. What can be held: asked back
-                // with rides enough, the planner's latest departure is the scan's; and where that is later than
-                // the option's, every way that leaves later than the option has more rides than it.
+                let capped = ask(&mut p, &back);
+                assert_eq!(capped.iter().map(|k| k.depart).max(), Some(j.depart), "{q:?}\n{j:?}");
+                assert_eq!(scan.moment_differs(&p, &back, &capped), None, "{back:?}");
+                // The scan's latest departure for that arrival knows no cap on rides, and a way with more rides
+                // may leave later than the option. Asked back with rides enough, the planner's latest departure
+                // is the scan's. And where that is later than the option's, the scan that counts rides says of
+                // every way that leaves after the option and arrives no later that it has more rides: the
+                // planner is not asked.
                 back.max_rides = 16;
                 let any = ask(&mut p, &back);
                 let scanned = scan.latest_departure(&p, &back, j.arrive);
                 assert_eq!(any.iter().map(|k| k.depart).max(), scanned, "{back:?}\n{j:?}");
                 assert!(any.iter().all(|k| k.depart <= j.depart || k.rides > j.rides), "{back:?}\n{j:?}");
+                let after = scan.ways(&p, &q, j.depart + 1, j.arrive);
+                assert!(after.iter().all(|w| w.2 > j.rides), "{q:?}\n{j:?}\n{after:?}");
+                assert_eq!(after.is_empty(), scanned == Some(j.depart), "{q:?}\n{j:?}\n{after:?}");
                 (latest, as_late, later_with_more) = (latest + 1, as_late + (scanned == Some(j.depart)) as u32, later_with_more + (scanned > Some(j.depart)) as u32);
             }
             let mut window = q.clone();
@@ -129,13 +145,17 @@ fn the_planner_and_the_scan_agree() {
                 if !got.iter().any(|j| j.rides == 0) {
                     assert_eq!(got.iter().map(|j| j.arrive).min(), scan.earliest_arrival(&p, &never, time as i32), "{never:?}");
                 }
+                assert_eq!(scan.moment_differs(&p, &never, &got), None, "{never:?}");
+                moments += 1;
             }
             compared += 1;
         }
     }
     println!("{compared} pairs compared, {latest} options asked back ({stepped} of them from an answer that stepped through its later moments, the most {most_later}), {arriving} options of windows asked to arrive in");
-    println!("of the options asked back, {as_late} leave when the scan's latest way to their arrival does, and for {later_with_more} the scan's leaves later, with more rides");
+    println!("of the options asked back, {as_late} leave when the scan's latest way to their arrival does, and for {later_with_more} the scan's leaves later, with more rides by the scan's own count");
+    println!("{moments} answers for one moment held whole to the scan that counts rides: {on_foot} with a walk all the way, {fewer} options beside an answer's first");
     assert_eq!(as_late + later_with_more, latest);
+    assert!(moments > 500 && on_foot >= 4 && fewer > 30 && later_with_more > 10, "{moments} {on_foot} {fewer} {later_with_more}");
     // (the options asked back are the proof that stepping through the later moments finds the latest: enough of
     // them come from an answer that stepped)
     assert!(compared > 100 && latest > 100 && arriving > 100 && stepped > 40, "{compared} {latest} {arriving} {stepped}");
@@ -148,7 +168,7 @@ fn the_planner_and_the_scan_agree() {
 fn the_feeds_rules_are_held_to_the_best_answer() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
     // a trip of a rule's side through its stop, running on a day of the file: (trip, where along it, the day)
     let trip_through = |stop: u32, trip: u32, line: u32, boarding: bool| -> Option<(u32, u32, i32)> {
@@ -190,10 +210,15 @@ fn the_feeds_rules_are_held_to_the_best_answer() {
         }
         let earliest = scan.earliest_arrival(&p, &q, time as i32);
         assert_eq!(one.iter().map(|j| j.arrive).min(), earliest, "rule {i} {r:?}: {q:?}");
+        // and every option by its rides, each leaving as late as it can: the scan that counts rides holds to the
+        // rules arrival by arrival too
+        assert_eq!(scan.moment_differs(&p, &q, &one), None, "rule {i} {r:?}: {q:?}");
         if let Some(arrive) = earliest {
             let mut back = q.clone();
             (back.arrive_by, back.time) = (true, arrive as u32);
-            assert_eq!(ask(&mut p, &back).iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "rule {i} {r:?}: {back:?}");
+            let got = ask(&mut p, &back);
+            assert_eq!(got.iter().map(|j| j.depart).max(), scan.latest_departure(&p, &back, arrive), "rule {i} {r:?}: {back:?}");
+            assert_eq!(scan.moment_differs(&p, &back, &got), None, "rule {i} {r:?}: {back:?}");
         }
         let mut window = q.clone();
         window.window = 1800;
@@ -234,7 +259,7 @@ fn the_feeds_rules_are_held_to_the_best_answer() {
 fn a_patient_search_gives_what_the_whole_search_gives() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut options, mut sooner) = (0, 0);
     for (i, (a, z)) in pairs(&tt, 600, 21).into_iter().enumerate() {
         let time = [8 * 3600, 22 * 3600 + 1800, 13 * 3600, 5 * 3600, 23 * 3600 + 2400][i % 5] + 131 * (i as u32 % 9);
@@ -261,7 +286,7 @@ fn with_the_feeds_rules_every_journey_can_be_made() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
     assert_eq!(tt.rules(), 160);
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut journeys = 0;
     for (a, z) in pairs(&tt, 150, 5) {
         let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600);
@@ -278,7 +303,7 @@ fn with_the_feeds_rules_every_journey_can_be_made() {
 fn wishes_close_and_cost_what_they_say() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let rail = |tt: &Timetable, j: &Journey| j.legs.iter().filter(|l| matches!(l, Leg::Ride { route, .. } if Mode::of(tt.line_type(tt.route(*route).line)) == Mode::Rail)).count() as u32;
     let (mut both, mut with_rail) = (0, 0);
     for (a, z) in pairs(&tt, 120, 6) {
@@ -333,7 +358,7 @@ fn option(j: &Journey, q: &Query) -> (i32, i32, u32, u32) {
 fn two_windows_give_what_one_over_both_gives() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let said = |js: &[Journey]| {
         let mut v: Vec<(i32, i32, u32, u32)> = js.iter().filter(|j| j.rides > 0).map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect();
         v.sort_unstable();
@@ -379,7 +404,7 @@ fn two_windows_give_what_one_over_both_gives() {
 fn two_windows_between_points_give_the_rides_one_over_both_gives() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (stops, mut rng) = (served(&tt), fuzz::Rng(41));
     let rides = |js: &[Journey]| {
         let mut v: Vec<(i32, i32, u32, u32)> = js.iter().filter(|j| j.rides > 0).map(|j| (j.depart, j.arrive, j.rides, j.penalty)).collect();
@@ -387,7 +412,8 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
         v
     };
     let on_foot = |js: &[Journey]| js.iter().filter(|j| j.rides == 0).map(|j| (j.depart, j.arrive)).collect::<Vec<_>>();
-    let (mut cuts, mut options, mut slower) = (0, 0, 0);
+    let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
+    let (mut cuts, mut options, mut slower, mut too_far, mut held) = (0, 0, 0, 0, 0);
     for i in 0..200usize {
         // two stops 600 m to 1.9 km apart, and a point beside each
         let a = stops[rng.below(stops.len() as u64) as usize];
@@ -407,7 +433,22 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
         }
         let all = ask(&mut p, &q);
         let (whole, walk) = (rides(&all), on_foot(&all));
+        // Whether one can walk all the way is the scan's to say, from the coordinates by its own distance: where
+        // the points are near enough by any measure the walk must be there, where they are too far apart by any
+        // it must not be (reference::places), and the window's rides are the scan's best pairs, less those that
+        // take no less time than the walk (window_differs).
+        let read = places(&p, &q);
+        assert_eq!(read.wrong, None, "pair {i}: {q:?}");
+        match read.on_foot {
+            None => assert!(walk.is_empty(), "pair {i}: a walk between points too far apart: {q:?}"),
+            Some((least, most, must)) => assert!(walk.len() == 1 && (least as i32..=most as i32).contains(&(walk[0].1 - walk[0].0)) || walk.is_empty() && !must, "pair {i}: {walk:?} where the scan has {least} to {most} s: {q:?}"),
+        }
+        if q.wishes.is_empty() {
+            assert_eq!(scans[q.day as usize].window_differs(&p, &q, &all), None, "pair {i}: {q:?}");
+            held += 1;
+        }
         if walk.is_empty() {
+            too_far += 1;
             continue; // further apart than twice the reach
         }
         // the walk is there once, from the asked moment
@@ -415,9 +456,8 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
         assert_eq!(walk, [if q.arrive_by { (q.time as i32 - secs, q.time as i32) } else { (q.time as i32, q.time as i32 + secs) }], "pair {i}: {q:?}");
         // what the walk leaves out: of the rides the same query finds between the two points' stops with their
         // seconds on foot (where nobody walks all the way), exactly those that take no less time than the walk
-        let ends = p.ends(&q);
         let mut by_stops = q.clone();
-        (by_stops.from, by_stops.to) = (Place::Walks(ends.from), Place::Walks(ends.to));
+        (by_stops.from, by_stops.to) = (Place::Walks(read.from), Place::Walks(read.to));
         let without = rides(&ask(&mut p, &by_stops));
         assert_eq!(whole, without.iter().copied().filter(|o| o.1 - o.0 < secs).collect::<Vec<_>>(), "pair {i}: {q:?}");
         slower += without.len() - whole.len();
@@ -440,8 +480,8 @@ fn two_windows_between_points_give_the_rides_one_over_both_gives() {
             options += whole.len();
         }
     }
-    println!("{cuts} cuts, {options} options, {slower} rides no faster than the walk");
-    assert!(cuts > 150 && options > 600 && slower > 100, "{cuts} {options} {slower}");
+    println!("{cuts} cuts, {options} options, {slower} rides no faster than the walk; {too_far} pairs too far apart to walk, {held} windows held to the scan");
+    assert!(cuts > 150 && options > 600 && slower > 100 && too_far > 10 && held > 100, "{cuts} {options} {slower} {too_far} {held}");
 }
 
 /// The search that weighs wishes gives what the rule leaves of every option: asked without weighing (and so as far
@@ -463,7 +503,7 @@ fn weighing_with_the_bag_a_query_has() {
 fn weighing_with_a_bag_of(bag: u32) {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut options, mut left_out) = (0, 0);
     for (i, (a, z)) in pairs(&tt, 240, 8).into_iter().enumerate() {
         let mut q = Query::new(Place::Stop(a), Place::Stop(z), (i % 2) as i32, 6 * 3600 + 613 * i as u32);
@@ -508,19 +548,23 @@ fn weighing_with_a_bag_of(bag: u32) {
     assert!(options > 400 && left_out > 50, "{options} {left_out}");
 }
 
-/// Wishes that cost, held to a second opinion of their own: the scan that carries a cost beside the time
-/// (`Reference::cheapest`), which works out what a wish costs from the wish list, a wish and a ride at a time.
-/// Wishes of every kind, avoided and preferred, alone and several at once; leaving at a moment with every option
-/// and weighed, and arriving by one with every option. And every journey's cost is what the scan's own reading of
-/// its legs comes to (`impossible`).
+/// Wishes that cost, held to a second opinion of their own: the scan that carries a cost and a count of rides beside
+/// the time (`Reference::ways`, `ways_back`), which works out what a wish costs from the wish list, a wish and a ride
+/// at a time. Wishes of every kind, avoided and preferred, alone and several at once; leaving at a moment and
+/// arriving by one, with every option and weighed; a third of the pairs are points, and where two are near enough
+/// the walk all the way is judged with the rest. Every answer that is not cut short is judged
+/// (`moment_differs`): every option by its time, its cost and its rides, each leaving as late as it can. And every
+/// journey's cost is what the scan's own reading of its legs comes to (`impossible`).
 #[test]
 fn wishes_with_a_cost_are_held_to_the_scan() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scans = [Reference::new(&p, 0, -86_400, 3 * 86_400), Reference::new(&p, 1, -86_400, 3 * 86_400)];
     let stops = served(&tt);
     let (mut asked, mut cut, mut options, mut several, mut costly, mut differ) = (0, 0, 0, 0, 0, Vec::new());
+    // the judged, by what they are: leaving at and arriving by, with every option and weighed; and those with a walk
+    let (mut judged, mut walked) = ([0u32; 4], 0);
     for (i, (a, z)) in pairs(&tt, 180, 81).into_iter().enumerate() {
         let day = i % 2;
         let place = |s: u32| if i % 3 == 0 { Place::Point { lat: tt.stop(s).lat + 1500, lon: tt.stop(s).lon - 1000 } } else { Place::Stop(s) };
@@ -558,7 +602,7 @@ fn wishes_with_a_cost_are_held_to_the_scan() {
                 wish(What::Area { area: Area::Circle { lat: mid.lat, lon: mid.lon, radius_m: 500 }, through: true }, How::Prefer(15)),
             ],
         };
-        for (by, weigh) in [(false, false), (false, true), (true, false)] {
+        for (by, weigh) in [(false, false), (false, true), (true, false), (true, true)] {
             let mut q = q.clone();
             (q.arrive_by, q.weigh) = (by, weigh);
             if by {
@@ -572,9 +616,11 @@ fn wishes_with_a_cost_are_held_to_the_scan() {
             for j in got.journeys.iter() {
                 assert_eq!(impossible(&p, &q, j), None, "{q:?}\n{j:?}");
             }
-            if let Some(how) = scans[day].costs_differ(&p, &q, &got.journeys) {
+            if let Some(how) = scans[day].moment_differs(&p, &q, &got.journeys) {
                 differ.push(format!("pair {i} ({a} to {z}), arriving by {by}, weighed {weigh}: {how}"));
             }
+            judged[by as usize * 2 + weigh as usize] += 1;
+            walked += got.journeys.iter().any(|j| j.rides == 0) as u32;
             let mut costs: Vec<u32> = got.journeys.iter().map(|j| j.penalty).collect();
             costs.sort_unstable();
             costs.dedup();
@@ -582,8 +628,10 @@ fn wishes_with_a_cost_are_held_to_the_scan() {
         }
     }
     println!("{asked} answers with wishes held to the scan with a cost ({cut} cut short and left out): {options} options, {costly} answers with a cost, {several} with options of several costs");
+    println!("judged, every one of them: {judged:?} leaving at and arriving by, each with every option and weighed; {walked} with a walk all the way");
     assert!(differ.is_empty(), "{} differ:\n{}", differ.len(), differ[..differ.len().min(12)].join("\n"));
-    assert!(asked > 450 && costly > 200 && several > 60, "{asked} {costly} {several}");
+    assert_eq!(judged.iter().sum::<u32>(), asked);
+    assert!(asked > 600 && costly > 250 && several > 80 && judged.iter().all(|n| *n > 150) && walked > 20, "{asked} {costly} {several} {judged:?} {walked}");
 }
 
 /// Where trips of one route differ in cost, a boarding goes on to each later trip that is cheaper than those before
@@ -594,7 +642,7 @@ fn wishes_with_a_cost_are_held_to_the_scan() {
 fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let scan = Reference::new(&p, 0, -86_400, 3 * 86_400);
     let mut routes: Vec<u32> = (0..tt.routes()).collect();
     routes.sort_by_key(|r| (core::cmp::Reverse(tt.route(*r).trips), *r));
@@ -619,7 +667,7 @@ fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
             asked += 1;
             if got.cut_short {
                 said += 1;
-            } else if let Some(how) = scan.costs_differ(&p, &q, &got.journeys) {
+            } else if let Some(how) = scan.moment_differs(&p, &q, &got.journeys) {
                 silent.push(format!("route {r} from its stop {pos}: {how}"));
             } else {
                 whole += 1;
@@ -629,6 +677,35 @@ fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
     println!("{asked} questions with 40 trips in a row avoided: {whole} answers are whole, {said} say they are not, {} lack an option and do not say so", silent.len());
     assert!(silent.is_empty(), "{} answers that lack an option and do not say so:\n{}", silent.len(), silent[..silent.len().min(8)].join("\n"));
     assert!(asked >= 10 && whole >= 10, "{asked} {whole}");
+    // Reading on for a cheaper trip is counted in steps like the rest, and where the steps run out there the
+    // answer says that too: 63 trips in a row avoided along each of those routes, a window of two hours, and
+    // the fewest steps a query may have.
+    let (mut asked, mut reading, mut by_steps) = (0, 0, 0);
+    for &r in routes.iter().take(12) {
+        let route = tt.route(r);
+        let running: Vec<u32> = (route.first_trip..route.first_trip + route.trips).filter(|t| tt.runs(tt.trip(*t).service, 0)).collect();
+        if running.len() < 80 {
+            continue;
+        }
+        for pos in 0..route.stops - 1 {
+            let (from, to) = (tt.pattern_stop(route.first_stop + pos).stop, tt.pattern_stop(route.first_stop + route.stops - 1).stop);
+            let mut q = Query::new(Place::Stop(from), Place::Stop(to), 0, tt.time(tt.trip_times(running[4]), pos).1.saturating_sub(120));
+            (q.max_rides, q.window, q.limits.options, q.limits.bag, q.weigh) = (16, 7200, 1024, 16, false);
+            q.wishes = running[4..67].iter().map(|t| Wish { what: What::Trip(*t), how: How::Avoid(60) }).collect();
+            for steps in [30_000, 60_000, 120_000, 250_000, 500_000] {
+                q.limits.steps = steps;
+                let got = p.plan(&q);
+                asked += 1;
+                by_steps += (got.cut_by & Answer::STEPS != 0) as u32;
+                if got.cut_by & Answer::CHEAPER != 0 {
+                    reading += 1;
+                    assert!(got.cut_short && got.cut_by & Answer::STEPS != 0, "{q:?}");
+                }
+            }
+        }
+    }
+    println!("{asked} questions along those routes with 63 trips avoided and few steps: {by_steps} met the cap on steps, {reading} of those while reading on for a cheaper trip");
+    assert!(by_steps >= 20 && reading >= 1, "{asked} {by_steps} {reading}");
 }
 
 /// A stop keeps so many labels a round and no more ([`atlas_transit::Limits::bag`]); the one that goes when a bag
@@ -638,7 +715,7 @@ fn more_costly_trips_in_a_row_than_a_boarding_looks_at() {
 fn a_full_bag_says_so() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut asked, mut lost, mut said, mut silent, mut sixteen) = ([0u32; 4], [0u32; 4], [0u32; 4], Vec::new(), 0);
     for (i, (a, z)) in pairs(&tt, 240, 71).into_iter().enumerate() {
         let (sa, sz) = (tt.stop(a), tt.stop(z));
@@ -666,6 +743,8 @@ fn a_full_bag_says_so() {
             let got = p.plan(&q);
             asked[k] += 1;
             said[k] += got.cut_short as u32;
+            // (the bag is the one cap these can meet)
+            assert_eq!(got.cut_by, if got.cut_short { Answer::BAG } else { 0 }, "pair {i} with a bag of {bag}");
             if options(&got.journeys) != options(&whole.journeys) {
                 lost[k] += 1;
                 if !got.cut_short {
@@ -679,13 +758,72 @@ fn a_full_bag_says_so() {
     assert!(asked[0] > 200 && lost[0] > 20, "{asked:?} {lost:?}");
 }
 
+/// A plan can be told to stop. It asks every `LOOK_EVERY` steps whether to go on; told no, it ends where it next
+/// reads its steps, gives what it has, and says that it was stopped: by a bit of its own, and by no cap's, since
+/// it met none. It does not ask again. The same question asked afterwards is answered whole.
+#[test]
+fn a_plan_told_to_stop_ends_soon_and_says_so() {
+    use atlas_transit::plan::LOOK_EVERY;
+    use std::cell::Cell;
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt).unwrap();
+    let stops = served(&tt);
+    let (mut long, mut most_after) = (0, 0u64);
+    for (i, (a, z)) in pairs(&tt, 12, 311).into_iter().enumerate() {
+        // two hours with wishes that cost, and every option asked for: the longest kind of plan
+        let (sa, sz) = (tt.stop(a), tt.stop(z));
+        let mut q = Query::new(Place::Point { lat: sa.lat + 2500, lon: sa.lon - 1500 }, Place::Point { lat: sz.lat - 1500, lon: sz.lon + 2500 }, 0, 7 * 3600 + 900 * i as u32);
+        (q.window, q.weigh, q.arrive_by, q.limits.options) = (7200, i % 2 == 0, i % 3 == 1, 1024);
+        q.wishes = vec![Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) }, Wish { what: What::Stop { stop: stops[i * 7 % stops.len()], through: true }, how: How::Avoid(300) }];
+        let whole = p.plan(&q);
+        assert_eq!((whole.cut_short, whole.cut_by), (false, 0), "pair {i}");
+        // never told to stop: asked all along, and the same answer
+        let asked = Cell::new(0u64);
+        let again = p.plan_while(&q, &|| {
+            asked.set(asked.get() + 1);
+            true
+        });
+        assert_eq!((&again.journeys, again.steps, again.cut_by), (&whole.journeys, whole.steps, 0), "pair {i}");
+        assert!(asked.get() >= whole.steps / LOOK_EVERY / 8 && asked.get() <= whole.steps / LOOK_EVERY + 1, "pair {i}: asked {} times in {} steps", asked.get(), whole.steps);
+        if whole.steps < 200 * LOOK_EVERY {
+            continue;
+        }
+        long += 1;
+        for looks in [0u64, 1, 7, 60] {
+            let asked = Cell::new(0u64);
+            let got = p.plan_while(&q, &|| {
+                asked.set(asked.get() + 1);
+                asked.get() <= looks
+            });
+            // asked `looks` times and once more, and not again
+            assert_eq!(asked.get(), looks + 1, "pair {i}, told to stop at look {looks}");
+            assert_eq!((got.cut_short, got.cut_by), (true, Answer::STOPPED), "pair {i}, told to stop at look {looks}");
+            // it ended soon: within the steps to the look that said no, and what a loop under way still counts
+            let after = got.steps.saturating_sub((looks + 1) * LOOK_EVERY);
+            most_after = most_after.max(after);
+            assert!(got.steps >= (looks + 1) * LOOK_EVERY && got.steps < whole.steps / 2, "pair {i}, told to stop at look {looks}: {} steps of {}", got.steps, whole.steps);
+            // and what it has can be made
+            for j in got.journeys.iter() {
+                assert_eq!(impossible(&p, &q, j), None, "pair {i}, told to stop at look {looks}\n{j:?}");
+            }
+        }
+        // asked afterwards: whole again
+        let after = p.plan(&q);
+        assert_eq!((&after.journeys, after.steps, after.cut_by), (&whole.journeys, whole.steps, 0), "pair {i}");
+    }
+    println!("{long} long plans told to stop: at most {most_after} steps after the look that said no");
+    // (29,587 here: what the loops under way count before each reads that the search is over)
+    assert!(long >= 6 && most_after < 64 * LOOK_EVERY, "{long} long plans, {most_after} steps after");
+}
+
 /// The answers to a fixed set of questions, folded into one number: the same on every platform, or something in the
 /// search depends on the machine.
 #[test]
 fn the_answers_are_the_same_everywhere() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let mut sum = 0xcbf2_9ce4_8422_2325u64;
     let mut fold = |v: u64| sum = (sum ^ v).wrapping_mul(0x100_0000_01b3);
     let (mut journeys, mut one_moment, mut stepped, mut most_later, mut asked_back) = (0, 0, 0, 0, 0);
@@ -759,25 +897,31 @@ fn nothing_panics_on_files_a_little_wrong_or_queries_at_their_edges() {
 fn a_search_stops_at_its_caps() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (a, z) = pairs(&tt, 1, 8)[0];
     let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600);
     q.window = 7200;
     let whole = p.plan(&q);
-    assert!(!whole.cut_short && whole.searches > 3);
+    assert!(!whole.cut_short && whole.cut_by == 0 && whole.searches > 3);
+    // and each says which cap it was
     q.limits.steps = 10_000;
     let cut = p.plan(&q);
     assert!(cut.cut_short && cut.steps < 200_000, "{}", cut.steps);
+    assert_eq!(cut.cut_by, Answer::STEPS);
     q.limits = Default::default();
     q.limits.labels = 1024;
-    assert!(p.plan(&q).cut_short);
+    let cut = p.plan(&q);
+    assert!(cut.cut_short);
+    assert_eq!(cut.cut_by, Answer::LABELS);
     q.limits = Default::default();
     q.limits.departures = 2;
     let few = p.plan(&q);
     assert!(few.cut_short && few.searches <= 3);
+    assert_eq!(few.cut_by, Answer::MOMENTS);
     q.limits = Default::default();
     q.limits.options = 1;
-    assert_eq!(p.plan(&q).journeys.len(), 1);
+    let one = p.plan(&q);
+    assert_eq!((one.journeys.len(), one.cut_short, one.cut_by), (1, true, Answer::OPTIONS));
 }
 
 /// Whatever cap a search meets, and wherever in it, the answer says so: an answer that is not the whole one is
@@ -788,7 +932,7 @@ fn a_search_stops_at_its_caps() {
 fn an_answer_that_is_not_whole_says_so() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut asked, mut short, mut silent) = (0, 0, Vec::new());
     for (i, (a, z)) in pairs(&tt, 90, 51).into_iter().enumerate() {
         let mut q = Query::new(Place::Stop(a), Place::Stop(z), 0, 8 * 3600 + 311 * i as u32);
@@ -822,12 +966,13 @@ fn an_answer_that_is_not_whole_says_so() {
 /// Asked for one moment, the search for a later departure is held to the query's limits like any other: it takes
 /// no more searches than `departures`, says so where that stops it short (an option then leaves sooner than it
 /// need, and makes the same arrival), and looks for no journey that `options` leaves out. Of more options than
-/// that the fastest stay, which is settled before any is searched again: leaving later changes no arrival.
+/// that the fastest stay (weighed: with their cost added), which is settled before any is searched again: leaving
+/// later changes no arrival.
 #[test]
 fn the_search_for_a_later_departure_is_held_to_the_limits() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut for_all, mut for_one, mut stopped, mut most, mut asked) = (0, 0, 0, 0, 0);
     for (i, (a, z)) in pairs(&tt, 120, 61).into_iter().enumerate() {
         // from a stop, or from a point with every stop within a kilometre: many moments at which something leaves
@@ -864,15 +1009,22 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
         }
         if got.journeys != whole.journeys {
             assert!(got.cut_short, "pair {i}: an option leaves sooner than it need and the answer does not say so: {q:?}");
+            assert_eq!(got.cut_by, Answer::MOMENTS, "pair {i}: {q:?}");
             stopped += 1;
         }
-        // one option: the fastest, leaving as late as it can, and no search for any other
+        // one option: the fastest, leaving as late as it can, and no search for any other. Weighed, the fastest
+        // is the one that is in first with its cost added
         let mut one = q.clone();
         one.limits.options = 1;
         let got = p.plan(&one);
-        let fastest = whole.journeys.iter().min_by_key(|j| end(j)).unwrap();
+        let first = |j: &Journey| {
+            let (at, rides, cost) = end(j);
+            if q.weigh { (at as i64 + cost as i64, at as i64, rides as i64) } else { (at as i64, rides as i64, cost as i64) }
+        };
+        let fastest = whole.journeys.iter().min_by_key(|j| first(j)).unwrap();
         assert_eq!(got.journeys, [fastest.clone()], "pair {i}: {q:?}");
         assert_eq!(got.cut_short, whole.journeys.len() > 1, "pair {i}: {q:?}");
+        assert_eq!(got.cut_by, if got.cut_short { Answer::OPTIONS } else { 0 }, "pair {i}: {q:?}");
         // (for a single pair it may take a search more than for all: how far apart the moments tried lie depends
         // on the journeys looked for)
         (for_all, for_one, most, asked) = (for_all + whole.searches, for_one + got.searches, most.max(whole.searches), asked + 1);
@@ -880,6 +1032,55 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
     println!("{asked} pairs: {for_all} searches for every option (the most {most}), {for_one} for one; {stopped} stopped short by departures");
     // (on Utrecht a pair has one to eight options at one moment, most of them one or two: a third fewer searches)
     assert!(asked > 100 && stopped > 10 && most > 20 && for_one * 5 < for_all * 4, "{asked} {stopped} {most} {for_one} {for_all}");
+}
+
+/// The cap on the searches for a later departure is said where it cut, and nowhere else. A try for a later moment
+/// needs a search only when something can still be reached from that moment; an answer capped at exactly as many
+/// searches as the whole one took has made every one of them, tried the rest without, and is whole: the same
+/// journeys, and not cut short.
+#[test]
+fn a_cap_on_later_departures_is_said_only_where_it_cut() {
+    let b = bytes("utrecht-20261117.tt");
+    let tt = Timetable::open(&b).unwrap();
+    let mut p = Planner::new(tt).unwrap();
+    let (mut asked, mut whole_at_cap, mut wrongly, mut cut) = (0, 0, Vec::new(), 0);
+    for (i, (a, z)) in pairs(&tt, 120, 61).into_iter().enumerate() {
+        let place = |s: u32| if i % 3 == 0 { Place::Stop(s) } else { Place::Point { lat: tt.stop(s).lat + 1500, lon: tt.stop(s).lon - 2500 } };
+        let mut q = Query::new(place(a), place(z), 0, [8 * 3600, 17 * 3600 + 900][i % 2] + 67 * i as u32);
+        q.arrive_by = i % 5 == 1;
+        if i % 4 < 2 {
+            q.wishes.push(Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) });
+            q.weigh = i % 4 == 0;
+        }
+        let whole = p.plan(&q);
+        assert!(!whole.cut_short, "{q:?}");
+        if whole.journeys.is_empty() {
+            continue;
+        }
+        asked += 1;
+        for cap in 1..=whole.searches.min(40) {
+            let mut capped = q.clone();
+            capped.limits.departures = cap;
+            let got = p.plan(&capped);
+            assert!(got.searches <= whole.searches, "pair {i}, cap {cap}: {q:?}");
+            if got.searches == whole.searches {
+                // every search the whole answer made was made: nothing was left out
+                assert_eq!(got.journeys, whole.journeys, "pair {i}, cap {cap}: {q:?}");
+                whole_at_cap += 1;
+                if got.cut_short {
+                    wrongly.push(format!("pair {i}, cap {cap} of {} searches", whole.searches));
+                }
+            } else {
+                // a search was left out, and the answer says so
+                assert!(got.cut_short, "pair {i}, cap {cap}: {} searches of {} and not said: {q:?}", got.searches, whole.searches);
+                assert_eq!(got.cut_by, Answer::MOMENTS, "pair {i}, cap {cap}: {q:?}");
+                cut += 1;
+            }
+        }
+    }
+    println!("{asked} pairs: {whole_at_cap} capped answers whole, {} of them said to be cut short; {cut} cut", wrongly.len());
+    assert!(wrongly.is_empty(), "{} whole answers said to be cut short, of {whole_at_cap}:\n{}", wrongly.len(), wrongly[..wrongly.len().min(12)].join("\n"));
+    assert!(asked > 100 && whole_at_cap > 250 && cut > 500, "{asked} {whole_at_cap} {cut}");
 }
 
 /// Late in the evening a window's last connections take long: the next ride from a change may be an hour off, or
@@ -892,7 +1093,7 @@ fn the_search_for_a_later_departure_is_held_to_the_limits() {
 fn a_late_window_has_its_last_connections() {
     let b = bytes("utrecht-20261117.tt");
     let tt = Timetable::open(&b).unwrap();
-    let mut p = Planner::new(tt);
+    let mut p = Planner::new(tt).unwrap();
     let (mut compared, mut past, mut shown, mut arriving) = (0, 0, 0, 0);
     for (day, time, window, seed, by) in [
         (0, 22 * 3600, 7200, 11u64, false),

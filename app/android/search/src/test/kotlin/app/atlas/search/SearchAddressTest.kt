@@ -6,6 +6,7 @@ import app.atlas.model.OsmType
 import app.atlas.model.Place
 import app.atlas.places.OpeningHoursContext
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.ZoneId
@@ -30,5 +31,29 @@ class SearchAddressTest {
         val r = runBlocking { SearchEngine(MemoryPlaces(listOf(bakery), country = null)).search("chez lucien", ctx) }
         val hit = r.items.filterIsInstance<SearchItem.PlaceResult>().first { it.hit.record.name() == "Chez Lucien" }
         assertTrue(hit.subtitle.orEmpty(), hit.subtitle.orEmpty().contains("12 Rue de Rivoli, 75004 Paris"))
+    }
+
+    /**
+     * An answer for the sheet over the map writes no line of a place ([SearchEngine.answer]: "without the field's
+     * lines"), so it asks no country for an address, and the sheet's own context names none (`SearchSheetModel`).
+     * Should an answer come to write a line, this fails: the sheet must then name the country as the typed search does.
+     */
+    @Test
+    fun anAnswerWritesNoLineAndAsksNoCountry() {
+        val bakery = Place(OsmId(OsmType.NODE, 7001L), paris, mapOf("name" to "Chez Lucien", "shop" to "bakery",
+            "addr:street" to "Rue de Rivoli", "addr:housenumber" to "12", "addr:postcode" to "75004", "addr:city" to "Paris"))
+        val asked = java.util.concurrent.atomic.AtomicInteger()
+        val ctx = SearchContext(location = paris, lang = "en", now = ZonedDateTime.of(2026, 10, 13, 18, 0, 0, 0, zone), hours = OpeningHoursContext.forPlace("DE", zone),
+            countryAt = { asked.incrementAndGet(); "FR" }, countryOf = { asked.incrementAndGet(); "FR" })
+        val engine = SearchEngine(MemoryPlaces(listOf(bakery), country = null))
+        val answer = runBlocking { engine.answer("bakery", ctx) }!!
+        // the bakery is in the answer, as a hit of the query and not as a line
+        assertEquals(listOf("Chez Lucien"), answer.items.filterIsInstance<SearchItem.Structured>().single().results.first().hits.map { it.record.name() })
+        assertTrue(answer.items.toString(), answer.items.none { it is SearchItem.PlaceResult })
+        assertEquals("a country asked for an address nobody writes", 0, asked.get())
+        // the field's search of the same word writes the line, and asks
+        val typed = runBlocking { engine.search("bakery", ctx) }
+        assertTrue(typed.items.toString(), typed.items.any { it is SearchItem.PlaceResult })
+        assertTrue("the typed search asks the country", asked.get() > 0)
     }
 }

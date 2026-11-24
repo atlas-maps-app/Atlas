@@ -23,7 +23,7 @@
 
 use atlas_transit::file::{LineText, OperatorText, StopText, TripText};
 use atlas_transit::reference::{Reference, impossible};
-use atlas_transit::{Area, How, Journey, Leg, Mode, NONE, Place, Planner, Query, Spot, Timetable, What, Wish, fuzz};
+use atlas_transit::{Answer, Area, How, IndexTooLarge, Journey, Leg, Mode, NONE, Place, Planner, Query, Spot, Timetable, What, Wish, fuzz};
 use std::fmt::Write as _;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -163,9 +163,15 @@ fn info(tt: &Timetable, bytes: usize, read_ms: f64, open_ms: f64) {
         tt.rules()
     );
     println!("stop times it stands for: {}", tt.stop_times());
+    println!("a planner's index: {} bytes", Planner::index_bytes(tt));
     for (k, v) in tt.meta_lines() {
         println!("  {k} = {v}");
     }
+}
+
+/// Why no planner was made, in words.
+fn too_large(e: IndexTooLarge) -> String {
+    format!("no planner: its index would take {} bytes of memory, and {} are allowed", grouped(e.bytes), grouped(e.limit))
 }
 
 /// A count with its thousands apart.
@@ -479,7 +485,7 @@ fn print_journey(tt: &Timetable, j: &Journey) {
 fn plan(tt: &Timetable, args: &[String]) -> Result<(), String> {
     let q = query_of(tt, args)?;
     let t0 = Instant::now();
-    let mut planner = Planner::new(*tt);
+    let mut planner = Planner::new(*tt).map_err(too_large)?;
     let ready = ms(t0);
     let t0 = Instant::now();
     let a = planner.plan(&q);
@@ -505,7 +511,7 @@ fn plan(tt: &Timetable, args: &[String]) -> Result<(), String> {
         a.searches,
         a.labels,
         a.steps,
-        if a.cut_short { "; CUT SHORT by a cap" } else { "" }
+        if a.cut_short { format!("; CUT SHORT by a cap: {}", caps(a.cut_by)) } else { String::new() }
     );
     if args.iter().any(|a| a == "--scan") {
         let t0 = Instant::now();
@@ -580,7 +586,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
     let path = args.first().ok_or("fixed: the journeys' file")?;
     let write = args.iter().any(|a| a == "--write");
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut planner = Planner::new(*tt);
+    let mut planner = Planner::new(*tt).map_err(too_large)?;
     let mut reference: Option<(i32, Reference)> = None;
     let (mut out, mut wrong, mut count, mut answered) = (String::new(), 0, 0, 0);
     let mut same_feed = true;
@@ -659,7 +665,7 @@ fn fixed(tt: &Timetable, args: &[String]) -> Result<ExitCode, String> {
             bad.push(format!("the file keeps {kept}, the scan says {theirs}"));
         }
         if a.cut_short {
-            bad.push("the planner was cut short by a cap".into());
+            bad.push(format!("the planner was cut short by a cap: {}", caps(a.cut_by)));
         }
         if !bad.is_empty() {
             wrong += 1;
@@ -717,6 +723,29 @@ fn option_of(j: &Journey, window: u32, back: bool) -> (i32, i32, u32, u32) {
     }
 }
 
+/// The caps an answer met, by name ([`Answer::cut_by`]).
+fn caps(by: u32) -> String {
+    let names: Vec<&str> = Answer::CAPS.iter().filter(|c| by & c.0 != 0).map(|c| c.1).collect();
+    if names.is_empty() { "none".into() } else { names.join(", ") }
+}
+
+/// How many answers met each cap, as they are counted and then said.
+#[derive(Default)]
+struct Caps([u32; Answer::CAPS.len()]);
+
+impl Caps {
+    fn count(&mut self, a: &Answer) {
+        for (k, cap) in Answer::CAPS.iter().enumerate() {
+            self.0[k] += (a.cut_by & cap.0 != 0) as u32;
+        }
+    }
+
+    fn said(&self) -> String {
+        let met: Vec<String> = Answer::CAPS.iter().zip(self.0.iter()).filter(|(_, n)| **n > 0).map(|(cap, n)| format!("{} {n}", cap.1)).collect();
+        if met.is_empty() { "none".into() } else { met.join(", ") }
+    }
+}
+
 fn percentile(v: &mut [f64], p: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     if v.is_empty() { 0.0 } else { v[((v.len() - 1) as f64 * p) as usize] }
@@ -729,7 +758,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     let at = parse_clock(option(args, "--time").unwrap_or("08:00"))?;
     let points = args.iter().any(|a| a == "--points");
     let t0 = Instant::now();
-    let mut planner = Planner::new(*tt);
+    let mut planner = Planner::new(*tt).map_err(too_large)?;
     let ready = ms(t0);
     let t0 = Instant::now();
     let scan = Reference::new(&planner, day, at as i32 - 86_400, at as i32 + 2 * 86_400);
@@ -745,6 +774,10 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
     let (mut wish_cut, mut wish_options, mut every_options) = ([0u32; 3], [0usize; 3], [0usize; 3]);
     let (mut wish_wrong, mut compared, mut unsure) = (0, 0, 0);
     let (mut cost_wrong, mut cost_compared) = (0, 0);
+    let (mut moment_wrong, mut moments, mut walked) = (0, 0, 0);
+    // which cap cut an answer short: single departures, windows, the three wished searches, and the same with
+    // every option
+    let mut by_cap: [Caps; 8] = Default::default();
     let every = !args.iter().any(|a| a == "--quick");
     let rules = !args.iter().any(|a| a == "--no-rules");
     let mut most = 0usize;
@@ -764,14 +797,30 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             slowest = (ms(t0), format!("pair {i} ({a} to {b}), {} options in {} searches and {} steps", one.journeys.len(), one.searches, one.steps));
         }
         cut[0] += one.cut_short as u32;
+        by_cap[0].count(&one);
         // the scan is asked as the planner was: as far as the query's own horizon, holding to the feed's rules
         let t0 = Instant::now();
         let scanned = scan.earliest_with_rides(&planner, &q, at as i32);
         t_scan.push(ms(t0));
         let theirs = scanned.map(|s| s.0);
         let ours = one.journeys.iter().map(|j| j.arrive).min();
-        // a journey on foot all the way is the planner's alone: the scan knows rides only
+        // a journey on foot all the way: the scan's earliest arrival knows rides only, and the answer is judged
+        // whole below (`moment_differs`)
         let on_foot = one.journeys.iter().any(|j| j.rides == 0);
+        walked += on_foot as u32;
+        // One moment's answer whole, by the scan that carries a cost and counts rides: every option by its time,
+        // its cost and its rides, each leaving as late as it can, and the walk all the way where there is one.
+        // With --quick only the answers the comparisons below pass over: those with a walk.
+        let mut whole = |planner: &Planner, asked: &Query, answer: &Answer, what: &str| {
+            if (every || on_foot) && !answer.cut_short {
+                moments += 1;
+                if let Some(how) = scan.moment_differs(planner, asked, &answer.journeys) {
+                    moment_wrong += 1;
+                    println!("MOMENT pair {i} ({a} to {b}) {what}: {how}");
+                }
+            }
+        };
+        whole(&planner, &q, &one, "leaving at");
         for j in one.journeys.iter() {
             if let Some(why) = impossible(&planner, &q, j) {
                 wrong += 1;
@@ -828,6 +877,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             let got = planner.plan(&back);
             t_back.push(ms(t0));
             let (ours, theirs) = (got.journeys.iter().map(|j| j.depart).max(), scan.latest_departure(&planner, &back, arrive));
+            whole(&planner, &back, &got, "arriving by");
             for j in got.journeys.iter() {
                 if let Some(why) = impossible(&planner, &back, j) {
                     wrong += 1;
@@ -846,6 +896,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let got = planner.plan(&window);
         t_window.push(ms(t0));
         cut[1] += got.cut_short as u32;
+        by_cap[1].count(&got);
         options += got.journeys.len();
         for j in got.journeys.iter() {
             if let Some(why) = impossible(&planner, &window, j) {
@@ -853,7 +904,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 println!("WRONG  pair {i} ({a} to {b}) over two hours: a journey that can't be made: {why}");
             }
         }
-        if let Some(how) = scan.window_differs(&planner, &window, &got.journeys).filter(|_| !on_foot) {
+        if let Some(how) = scan.window_differs(&planner, &window, &got.journeys) {
             wrong += 1;
             println!("WRONG  pair {i} ({a} to {b}) over two hours from {}: {how}", clock(at as i32));
         }
@@ -861,6 +912,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         let mut never = q.clone();
         never.wishes.push(Wish { what: What::Mode(Mode::Rail), how: How::Never });
         let got = planner.plan(&never);
+        whole(&planner, &never, &got, "never by rail");
         let scanned = scan.earliest_with_rides(&planner, &never, at as i32);
         let (ours, theirs) = (got.journeys.iter().map(|j| j.arrive).min(), scanned.map(|s| s.0));
         if ours != theirs && !on_foot {
@@ -885,6 +937,7 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
             let got = planner.plan(&wished);
             t_wish[k].push(ms(t0));
             wish_cut[k] += got.cut_short as u32;
+            by_cap[2 + k].count(&got);
             wish_options[k] += got.journeys.len();
             most = most.max(got.journeys.len());
             for j in got.journeys.iter() {
@@ -905,15 +958,17 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
                 let full = planner.plan(&all);
                 t_every[k].push(ms(t0));
                 every_options[k] += full.journeys.len();
+                by_cap[5 + k].count(&full);
                 if full.cut_short || got.cut_short {
                     unsure += 1;
                 } else {
                     compared += 1;
-                    // one moment: the scan that carries a cost has its own word on both answers
+                    // one moment: the scan that carries a cost and counts rides has its own word on both answers,
+                    // the walk all the way among them
                     if wished.window == 0 {
                         cost_compared += 1;
                         for (which, asked, journeys) in [("weighed", &wished, &got.journeys), ("every option", &all, &full.journeys)] {
-                            if let Some(how) = scan.costs_differ(&planner, asked, journeys) {
+                            if let Some(how) = scan.moment_differs(&planner, asked, journeys) {
                                 cost_wrong += 1;
                                 println!("COST   pair {i} ({a} to {b}) with wishes {k}, {which}: {how}");
                             }
@@ -978,9 +1033,15 @@ fn bench(tt: &Timetable, args: &[String], open_ms: f64) -> Result<ExitCode, Stri
         "with wishes: cut short {} single departures, {} and {} windows (the most options one gave: {most}); for {later} pairs avoiding rail offers both a way by rail and one without",
         wish_cut[0], wish_cut[1], wish_cut[2]
     );
+    let kinds = ["single departures", "two hours", "one departure, rail avoided", "two hours, rail avoided", "two hours, buses avoided and Intercity preferred"];
+    println!("which cap, by how many answers: {}", kinds.iter().enumerate().map(|(k, name)| format!("{name}: {}", by_cap[k].said())).collect::<Vec<_>>().join("; "));
+    if every {
+        println!("  and with every option: {}", kinds[2..].iter().enumerate().map(|(k, name)| format!("{name}: {}", by_cap[5 + k].said())).collect::<Vec<_>>().join("; "));
+    }
     if every {
         println!("{wish_wrong} of {compared} wished searches differ from every option weighed afterwards ({unsure} not compared: a cap cut one short)");
-        println!("{cost_wrong} answers of {cost_compared} single departures with a wish (weighed, and every option) differ from the scan that carries a cost");
+        println!("{cost_wrong} answers of {cost_compared} single departures with a wish (weighed, and every option) differ from the scan that carries a cost and counts rides");
     }
-    Ok(if wrong == 0 && wish_wrong == 0 && cost_wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
+    println!("{moment_wrong} of {moments} answers for one moment (leaving at, arriving by, never by rail{}) differ from the scan's ways by time, cost and rides; {walked} pairs have a walk all the way", if every { "" } else { ": those with a walk all the way only" });
+    Ok(if wrong == 0 && wish_wrong == 0 && cost_wrong == 0 && moment_wrong == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

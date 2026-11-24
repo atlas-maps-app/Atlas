@@ -123,7 +123,7 @@ pub fn query(tt: &Timetable, rng: &mut Rng) -> Query {
     q.change_s = [None, Some(0), Some(rng.word())][rng.below(3) as usize];
     q.rules = rng.below(4) != 0;
     q.weigh = rng.below(4) != 0;
-    q.limits = Limits { labels: 20_000, steps: 400_000, departures: [64, 1, rng.word()][rng.below(3) as usize], bag: rng.below(6) as u32, options: 1 + rng.below(8) as u32, horizon: [86_400, 0, rng.word()][rng.below(3) as usize], patient: rng.below(3) != 0 };
+    q.limits = Limits { labels: 20_000, steps: 400_000, departures: [64, 1, rng.word()][rng.below(3) as usize], bag: rng.below(6) as u32, options: 1 + rng.below(8) as u32, horizon: [86_400, 0, rng.word()][rng.below(3) as usize], patient: rng.below(3) != 0, index: Limits::default().index };
     for _ in 0..rng.below(4) {
         let how = match rng.below(3) {
             0 => How::Never,
@@ -155,7 +155,7 @@ pub fn query(tt: &Timetable, rng: &mut Rng) -> Query {
 /// work can't be optimised away; what matters is that it returns.
 pub fn file(bytes: &[u8], rng: &mut Rng, queries: u32) -> u64 {
     let Ok(tt) = Timetable::open(bytes) else { return 0 };
-    let mut planner = Planner::new(tt);
+    let Ok(mut planner) = Planner::new(tt) else { return 0 };
     let mut found = 1;
     for _ in 0..queries {
         let q = query(&tt, rng);

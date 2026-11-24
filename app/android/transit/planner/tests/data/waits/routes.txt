@@ -1,0 +1,3 @@
+route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_color,route_text_color,route_url
+K1,WA,K1,Druk A - Druk B,,3,,,
+K2,WA,K2,Druk C - Druk Z,,3,,,
