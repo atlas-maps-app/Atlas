@@ -524,7 +524,7 @@ TEST_CASE("load: a building mapped with a height alone takes its levels from it,
             const std::int64_t id = buildings->integer(tl::building::id, i);
             CAPTURE(id);
             const std::optional<std::int64_t> levels = buildings->nullable_integer(tl::building::levels, i);
-            REQUIRE(levels.has_value());
+            ATLAS_REQUIRE(levels.has_value(), "a tower without its levels");
             CHECK(*levels == want[id]);
             CHECK(*levels <= tl::building::most_levels);
             ++seen;
