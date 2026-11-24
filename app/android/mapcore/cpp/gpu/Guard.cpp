@@ -460,12 +460,7 @@ void Guard::write_marker(bool synced) const {
     text += std::format("driver {}\nversion {}\nbuild {}\nattempt {}\npid {}\nstart {}\n",
                         system_keyed ? std::string_view("unknown") : std::string_view(driver_),
                         system_keyed || version_.empty() ? system_ : version_, build_, attempt_, pid_, start_ms_);
-    // MEASURE (budgetcheck-measure): what one marker's write takes
-    const auto started = std::chrono::steady_clock::now();
     write_synced(dir_ / "guard", text, synced);
-    log::info("vk measure guard marker {} in {:.3f} ms ({} calls under way)", synced ? "synced" : "unsynced",
-              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
-              calls.size());
 }
 
 bool Guard::planted_making(std::string_view name, bool pipeline) const {
@@ -519,11 +514,10 @@ void Guard::note(std::string what, bool planted) {
 }
 
 void Guard::before(const PipelineLabel& label) {
-    // MEASURE (budgetcheck-measure): how long a pipeline's announcement waits for the guard's mutex
+    // MEASURE (budgetcheck-measure): a pipeline's announcement, its wait for the mutex and its note (the synced marker)
     const auto asked = std::chrono::steady_clock::now();
     const std::scoped_lock lock(mutex_);
-    log::info("vk measure guard lock for pipeline {} after {:.3f} ms", label.name,
-              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count());
+    const auto held = std::chrono::steady_clock::now();
     // Outside the pipelines and colour stages no stage names a pipeline: the call is the stage's alone, and its after
     // still comes.
     if (current_ != Stage::pipelines && !colour_) {
@@ -531,15 +525,24 @@ void Guard::before(const PipelineLabel& label) {
         return;
     }
     note("pipeline " + clean(describe(label)), planted_making(label.name, true) && plant_here());
+    log::info("vk measure guard before {} ({}): lock {:.3f} ms, note {:.3f} ms", label.name, label.module,
+              std::chrono::duration<double, std::milli>(held - asked).count(),
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - held).count());
 }
 
 void Guard::before_module(std::string_view module) {
+    // MEASURE (budgetcheck-measure): as before's
+    const auto asked = std::chrono::steady_clock::now();
     const std::scoped_lock lock(mutex_);
+    const auto held = std::chrono::steady_clock::now();
     if (current_ != Stage::pipelines && !colour_) {
         note({}, false);
         return;
     }
     note("module " + clean(module), planted_making(module, false) && plant_here());
+    log::info("vk measure guard before module {}: lock {:.3f} ms, note {:.3f} ms", module,
+              std::chrono::duration<double, std::milli>(held - asked).count(),
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - held).count());
 }
 
 void Guard::before_release(const Release& release) {

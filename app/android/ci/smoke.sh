@@ -515,17 +515,24 @@ vk_background() {
 }
 
 vk_phase() {
-  # MEASURE (budgetcheck-measure): the app's map started twice, cold (no pipeline cache) then warm, and the guard's
-  # and the items' times at each start
+  # MEASURE (budgetcheck-measure): the app's map started twice, cold (no pipeline cache) then warm; at each start the
+  # items' prepare, each of its announcements (module item_draw) and every announcement's wait and note summed
   fresh_state
   local m
   for m in measurecold measurewarm; do
     vk_launch $m
     wait_line $m 180 "vk first frame" || echo "MEASURE: no first frame within 180 s ($m)"
     sleep 5
-    echo "== MEASURE $m"
-    since_marker $m | grep -E 'AtlasMap: vk (measure|passes prepared|first frame)' | sed 's/.*AtlasMap: //' | head -400
-    since_marker $m | grep -E 'AtlasMap: vk measure' > "$OUT/$m.txt" || true
+    since_marker $m | grep -E 'AtlasMap: vk (measure|passes prepared)' | sed 's/.*AtlasMap: //' > "$OUT/$m.txt" || true
+    echo "== MEASURE $m: $(wc -l < "$OUT/$m.txt") lines"
+    grep -E '^vk (measure items prepared|passes prepared)' "$OUT/$m.txt" || echo "MEASURE: no prepare line ($m)"
+    grep -E '^vk measure guard before (.*\(item_draw\)|module item_draw):' "$OUT/$m.txt" || true
+    for which in all items; do
+      if [ $which = all ]; then sel='^vk measure guard before'; else sel='^vk measure guard before (.*\(item_draw\)|module item_draw):'; fi
+      grep -E "$sel" "$OUT/$m.txt" | sed 's/.*: lock \([0-9.]*\) ms, note \([0-9.]*\) ms.*/\1 \2/' | sort -k2 -g |
+        awk -v w="$which" '{ l += $1; if ($1 > lm) lm = $1; v[NR] = $2; s += $2 }
+          END { if (NR) printf "MEASURE %s: %d announcements, lock %.1f ms in all (most %.1f), note %.1f ms in all, median %.2f, p90 %.2f, most %.2f\n", w, NR, l, lm, s, v[int((NR + 1) / 2)], v[int(NR * 0.9 + 0.5)], v[NR] }'
+    done
   done
   # VK facts through the guest's Vulkan (the emulator's lavapipe): there must be a device.
   fresh_state
