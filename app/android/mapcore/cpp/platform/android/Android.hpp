@@ -8,6 +8,7 @@
 
 #if defined(__ANDROID__)
 
+#include "frame/TimedTask.hpp"
 #include "scene/WorkerHints.hpp"
 
 #include <android/native_window.h>
@@ -103,7 +104,9 @@ public:
     /// Asks Choreographer for the next vsync; `on_vsync` gets it on the render thread (render thread only).
     void request_vsync(std::function<void(const Vsync&)> on_vsync);
     /// The render thread's one timer: runs `task` on it at `at_ns` (now_ns's clock), in place of a task set before that
-    /// has not run; at once where that time has passed, or where the thread has no timer (render thread only).
+    /// has not run; at once where that time has passed. Where the thread has no timer descriptor, or setting it failed,
+    /// the loop's own poll waits until that time instead (frame::TimedTask: to the millisecond, rounded up), so the
+    /// task still runs once at its time (render thread only).
     void set_timer(std::int64_t at_ns, std::function<void()> task);
     /// Calls off the timer's task, where one is set and has not run (render thread only).
     void cancel_timer() noexcept;
@@ -127,6 +130,7 @@ private:
     int wake_fd_ = -1;
     int timer_fd_ = -1; // the timer (a timerfd); -1 where none could be made
     std::function<void()> timer_task_;
+    frame::TimedTask polled_; // the timer's task without the descriptor (refused, or its set failed): the poll waits
     std::atomic<std::thread::id> thread_id_;
     std::atomic<pid_t> tid_{0};
     std::atomic<bool> stopping_{false};

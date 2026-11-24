@@ -102,15 +102,20 @@ void RenderLoop::loop(const std::stop_token& stop) {
     if (timer_fd_ >= 0) {
         ALooper_addFd(looper_, timer_fd_, ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT, &RenderLoop::on_timer, this);
     } else {
-        log::warn("vk render thread: no timer (timerfd refused), so its tasks run at once");
+        log::warn("vk render thread: no timer (timerfd refused), so its poll waits for its tasks, to the millisecond");
     }
     choreographer_ = AChoreographer_getInstance();
     if (on_start_) on_start_();
     while (!stop.stop_requested()) {
-        (void)ALooper_pollOnce(-1, nullptr, nullptr, nullptr);
+        // Without the timer descriptor (refused, or its set failed) the poll's own wait ends at the timer's time, and
+        // its task runs after the poll that reached it; a wake before (a posted task, a vsync) waits again for the
+        // rest.
+        (void)ALooper_pollOnce(polled_.timeout_ms(now_ns()), nullptr, nullptr, nullptr);
+        if (const std::function<void()> task = polled_.take(now_ns()); task && !stopping_) task();
     }
     drain_tasks();
     timer_task_ = nullptr;
+    polled_.cancel();
     if (on_stop_) on_stop_();
     if (timer_fd_ >= 0) ALooper_removeFd(looper_, timer_fd_);
     ALooper_removeFd(looper_, wake_fd_);
@@ -137,20 +142,24 @@ int RenderLoop::on_timer(int fd, int /*events*/, void* data) {
 
 void RenderLoop::set_timer(std::int64_t at_ns, std::function<void()> task) {
     if (timer_fd_ < 0) {
-        post(std::move(task));
+        polled_.set(at_ns, std::move(task));
         return;
     }
+    polled_.cancel();
     timer_task_ = std::move(task);
     // A time that has passed expires at once; 0 would call the timer off.
     const std::int64_t at = std::max<std::int64_t>(at_ns, 1);
     itimerspec when{};
     when.it_value.tv_sec = static_cast<decltype(when.it_value.tv_sec)>(at / 1'000'000'000);
     when.it_value.tv_nsec = static_cast<decltype(when.it_value.tv_nsec)>(at % 1'000'000'000);
-    if (::timerfd_settime(timer_fd_, TFD_TIMER_ABSTIME, &when, nullptr) != 0) post(std::exchange(timer_task_, nullptr));
+    // the set failed: the poll waits for it (a stale expiry of the descriptor finds no task)
+    if (::timerfd_settime(timer_fd_, TFD_TIMER_ABSTIME, &when, nullptr) != 0)
+        polled_.set(at_ns, std::exchange(timer_task_, nullptr));
 }
 
 void RenderLoop::cancel_timer() noexcept {
     timer_task_ = nullptr;
+    polled_.cancel();
     if (timer_fd_ < 0) return;
     const itimerspec off{};
     (void)::timerfd_settime(timer_fd_, 0, &off, nullptr);
