@@ -273,7 +273,7 @@ struct MakeOptions {
 [[nodiscard]] std::vector<std::uint8_t> keep_tables_bytes();
 
 /// The frame's fields kept on disk (cacheDir/fields): one file a size, written whole by a rename, its head and checksum
-/// checked when it is mapped; the least recently written dropped past a budget.
+/// checked when it is mapped; the least recently written dropped past a budget, never the one just written.
 class FieldDisk {
 public:
     explicit FieldDisk(std::filesystem::path dir, std::uint64_t budget = std::uint64_t{96} << 20U);
@@ -288,7 +288,9 @@ public:
     [[nodiscard]] std::filesystem::path path(FieldSize size) const;
 
 private:
-    void trim() const;
+    /// Drops the least recently written files while the folder holds more than the budget, never `written` (the file
+    /// just written, which stays even alone past the budget, and whatever a clock set back says of its age).
+    void trim(const std::filesystem::path& written) const;
 
     std::filesystem::path dir_;
     std::uint64_t budget_;

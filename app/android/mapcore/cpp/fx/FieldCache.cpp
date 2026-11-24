@@ -507,11 +507,11 @@ bool FieldDisk::write(const ScreenFields& fields) const {
         fs::remove(tmp, ec);
         return false;
     }
-    trim();
+    trim(p);
     return true;
 }
 
-void FieldDisk::trim() const {
+void FieldDisk::trim(const fs::path& written) const {
     struct File {
         fs::path path;
         fs::file_time_type when;
@@ -532,7 +532,8 @@ void FieldDisk::trim() const {
     if (total <= budget_) return;
     std::ranges::sort(files, [](const File& a, const File& b) { return a.when < b.when; });
     for (const File& f : files) {
-        if (total <= budget_ || files.size() < 2) break;
+        if (total <= budget_) break;
+        if (f.path.filename() == written.filename()) continue; // the file just written stays, even alone
         std::error_code e3;
         if (fs::remove(f.path, e3)) total -= f.size;
     }

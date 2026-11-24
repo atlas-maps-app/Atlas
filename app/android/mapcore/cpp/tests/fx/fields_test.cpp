@@ -244,6 +244,50 @@ TEST_CASE("fields kept on disk come back mapped, the same bytes; a damaged or fo
     fs::remove_all(dir, ec);
 }
 
+TEST_CASE(
+    "the budget's trim never drops the file just written: past a budget of one file, or alone past a smaller one") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(ATLAS_TEST_SCRATCH) / "fields-trim";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    const FieldSize a = size_of(200, 300, 1.0);
+    const FieldSize b = size_of(200, 301, 1.0);
+    const auto fields_a = make_fields(a, MakeOptions{.threads = 2});
+    const auto fields_b = make_fields(b, MakeOptions{.threads = 2});
+    // each file's bytes, from a folder without a budget to speak of
+    std::uintmax_t bytes = 0;
+    {
+        const FieldDisk sized(dir);
+        REQUIRE(sized.write(*fields_a));
+        REQUIRE(sized.write(*fields_b));
+        bytes = std::max(fs::file_size(sized.path(a)), fs::file_size(sized.path(b)));
+    }
+    fs::remove_all(dir, ec);
+    // A budget for one file: A written, its time set an hour ahead (a clock set back since), then B: B is kept, A goes.
+    {
+        const FieldDisk disk(dir, bytes);
+        REQUIRE(disk.write(*fields_a));
+        fs::last_write_time(disk.path(a), fs::file_time_type::clock::now() + std::chrono::hours(1), ec);
+        REQUIRE_FALSE(ec);
+        REQUIRE(disk.write(*fields_b));
+        CHECK(fs::exists(disk.path(b)));
+        CHECK_FALSE(fs::exists(disk.path(a)));
+        CHECK(disk.read(b) != nullptr);
+    }
+    fs::remove_all(dir, ec);
+    // A budget below one file: A written and kept alone, then B: B is kept, alone.
+    {
+        const FieldDisk disk(dir, bytes / 2);
+        REQUIRE(disk.write(*fields_a));
+        CHECK(fs::exists(disk.path(a)));
+        REQUIRE(disk.write(*fields_b));
+        CHECK(fs::exists(disk.path(b)));
+        CHECK_FALSE(fs::exists(disk.path(a)));
+        CHECK(disk.read(b) != nullptr);
+    }
+    fs::remove_all(dir, ec);
+}
+
 TEST_CASE("the worker publishes the latest size asked for, from disk the second time") {
     namespace fs = std::filesystem;
     const fs::path dir = fs::path(ATLAS_TEST_SCRATCH) / "fields-worker";
