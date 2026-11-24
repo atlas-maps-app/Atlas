@@ -3,7 +3,9 @@ package app.atlas.mapview
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -27,7 +29,7 @@ import org.robolectric.annotation.GraphicsMode
  * the phone cannot run the core (the debug switch atlas.vk.off, a refused start) T2's honest state stands in the map's
  * place, and the gestures still move the camera; while the core starts, the map waits with its paper alone, no
  * "Loading"; with no core in the process after all, the map says so (no other map draws: today's map left the phone
- * on 5 November).
+ * on 5 November). The paper is the moment's: the night's at a night start from its first draw, while the core starts.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -39,12 +41,21 @@ class AtlasMapCoreTest {
     @After
     fun noCoreAgain() = MapEngine.coreStateForTests(CoreState.None)
 
-    private fun show(state: MapState, moves: MutableList<CameraPosition> = ArrayList()) {
+    private fun show(state: MapState, moves: MutableList<CameraPosition> = ArrayList(), theme: Theme = Theme.DAY) {
         compose.setContent {
-            AtlasMap(state, Modifier.fillMaxSize(), MapStyle(theme = Theme.DAY), onCameraMove = { c, _ -> moves += c })
+            AtlasMap(state, Modifier.fillMaxSize(), MapStyle(theme = theme), onCameraMove = { c, _ -> moves += c })
         }
         compose.waitForIdle()
     }
+
+    /** The colour drawn at the middle of the map, as hex (the paper's, where it is up and nothing is over it). */
+    private fun middle(): String {
+        val b = compose.onRoot().captureToImage().asAndroidBitmap()
+        return "%08X".format(b.getPixel(b.width / 2, b.height / 2))
+    }
+
+    private val dayPaper = "%08X".format(MapController.DAY_EARTH)
+    private val nightPaper = "%08X".format(MapController.NIGHT_EARTH)
 
     private fun stateDescription(): String =
         compose.onAllNodes(hasContentDescription("Map")).fetchSemanticsNodes().single().config.getOrNull(SemanticsProperties.StateDescription) ?: ""
@@ -91,5 +102,33 @@ class AtlasMapCoreTest {
         compose.waitForIdle()
         assertEquals(MapStatus.NoData(MapController.NO_CORE), state.status)
         compose.onNodeWithText(VK_HONEST).assertDoesNotExist()
+    }
+
+    @Test
+    fun aNightStartDrawsNoDaysPaper() {
+        MapEngine.coreStateForTests(CoreState.Starting)
+        val state = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 30.0, 40.0)).apply { time = Fixtures.night }
+        // the first frame alone, before the map's effects ran (no update yet: the paper is worked out at its draw)
+        compose.mainClock.autoAdvance = false
+        compose.setContent { AtlasMap(state, Modifier.fillMaxSize(), MapStyle(theme = Theme.AUTO)) }
+        assertEquals("the first draw at a winter night", nightPaper, middle())
+        compose.mainClock.autoAdvance = true
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.waitForIdle()
+        assertEquals("once the map's effects ran", nightPaper, middle())
+    }
+
+    @Test
+    fun aMomentThatTurnsDayToNightWithThePaperUpDrawsTheCanvasAgain() {
+        MapEngine.coreStateForTests(CoreState.Starting)
+        val state = MapState(CameraPosition(Fixtures.westermarkt, 16.0, 30.0, 40.0)).apply { time = Fixtures.afternoon }
+        show(state, theme = Theme.AUTO)
+        assertEquals("an April afternoon", dayPaper, middle())
+        state.time = Fixtures.night
+        compose.waitForIdle()
+        assertEquals("the moment turned to a winter night", nightPaper, middle())
+        state.time = Fixtures.afternoon
+        compose.waitForIdle()
+        assertEquals("and back to the day", dayPaper, middle())
     }
 }

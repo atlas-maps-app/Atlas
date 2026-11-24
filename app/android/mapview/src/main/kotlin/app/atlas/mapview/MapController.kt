@@ -29,6 +29,7 @@ import app.atlas.mapview.vk.CoreMap
 import app.atlas.mapview.vk.MapCameraSource
 import app.atlas.mapview.vk.MapPlace
 import app.atlas.mapview.vk.PackList
+import app.atlas.mapview.vk.PaperNight
 import app.atlas.mapview.vk.Windows
 import app.atlas.model.Place
 import app.atlas.render.live.LiveView
@@ -230,8 +231,12 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         set(value) {
             if (value == field) return
             field = value
-            // No core after all (none in this process), or one on its way: the map says what it is.
-            if (core == null && !closed) noteStatus()
+            // No core after all (none in this process), or one on its way: the map says what it is, and its paper
+            // takes the moment's night or the day's again (draw)
+            if (core == null && !closed) {
+                noteStatus()
+                canvasTick.intValue++
+            }
         }
 
     /** T2's honest state's reason while the phone cannot draw the map (MapEngine.core is off): no map is drawn. Null otherwise. */
@@ -956,12 +961,40 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (v.isEmpty) return null
         val lv = liveView(state.camera, v)
         val held = c.packs.choose(lv.lat, lv.lon)
-        val render = held?.takeIf { it.kind == app.atlas.mapcore.MapCore.PackRef.RENDER }
-        val lat = render?.frame?.lat0 ?: (Math.round(lv.lat * PLACE_STEPS) / PLACE_STEPS).coerceIn(-90.0, 90.0)
-        val lon = render?.frame?.lon0 ?: (Math.round(lv.lon * PLACE_STEPS) / PLACE_STEPS).coerceIn(-180.0, 180.0)
+        val at = litAt(held, lv.lat, lv.lon)
         val zone = MapEngine.weather?.zone(LatLon(lv.lat, lv.lon)) ?: held?.zone
             ?: java.time.ZoneOffset.ofHours(Math.round(lv.lon / 15.0).toInt().coerceIn(-12, 14))
-        return LitPlace(lat, lon, zone)
+        return LitPlace(at.lat, at.lon, zone)
+    }
+
+    /** [litPlace]'s place, without its clock, for a target at [lat], [lon] that the pack [held] holds (or none). */
+    private fun litAt(held: PackList.Pack?, lat: Double, lon: Double): LatLon {
+        val render = held?.takeIf { it.kind == app.atlas.mapcore.MapCore.PackRef.RENDER }
+        return LatLon(
+            render?.frame?.lat0 ?: (Math.round(lat * PLACE_STEPS) / PLACE_STEPS).coerceIn(-90.0, 90.0),
+            render?.frame?.lon0 ?: (Math.round(lon * PLACE_STEPS) / PLACE_STEPS).coerceIn(-180.0, 180.0),
+        )
+    }
+
+    /** The moment and place the start's paper's night was last worked out for ([paperNight]), and its answer. */
+    private var paperFor: Pair<Moment, LatLon>? = null
+    private var paperIsNight = false
+
+    /**
+     * Whether the start's paper is the night's: the night flag the core's theme block will carry for the moment at the
+     * place it lights ([PaperNight], as CoreMoment writes it), worked out on the main thread with no core, so a night
+     * start draws no day's paper before the core has the moment, or while it starts. Read by [draw] only while the
+     * paper is up; the sun is worked out again only when the moment's step or the place changed (one sun position,
+     * PaperNightTest measures it), otherwise a pack chosen and a comparison.
+     */
+    private fun paperNight(c: CoreMap?): Boolean {
+        val t = state.camera.target
+        val at = momentOf(style, state.time, t, forecast = false) to litAt(c?.packs?.choose(t.lat, t.lon), t.lat, t.lon)
+        if (at != paperFor) {
+            paperFor = at
+            paperIsNight = PaperNight.of(at.first, at.second.lat, at.second.lon)
+        }
+        return paperIsNight
     }
 
     /**
@@ -970,7 +1003,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
      * step is drawn with the next frame (Bridge's moment() asks Kotlin's camera, which at rest has not moved); a new
      * Tone or palette is the user's, so once the core has the theme the camera is published again and the map draws it
      * at once, at rest too. A moment that turned day to night or back draws the canvas again ([draw] reads
-     * [CoreMap.night] for the start's paper and its own overlays). [back], where given, runs on the main thread once
+     * [CoreMap.night] for its overlays: the markers', the tilt readout's; the start's paper is the moment's own, from its
+     * first draw, [paperNight]). [back], where given, runs on the main thread once
      * the moment came back, taken or not, or once the one already on its way did; returns whether it waits for one
      * (false: none is due, the core has it).
      */
@@ -996,8 +1030,8 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             main.post {
                 if (momentBacks[key] === backs) momentBacks.remove(key)
                 if (core === c && !closed) {
-                    // while the start's paper waits for the core's picture nothing else draws it again (stepCover), and
-                    // at a night start its first draw came before the core had the moment: the day's paper until the fade
+                    // the overlays take the core's night (draw): while the start's paper waits for the core's picture
+                    // nothing else draws them again (stepCover)
                     if (ok && c.night != nightBefore) canvasTick.intValue++
                     // only a moment the core took is recorded as its; one that failed goes again at the next update,
                     // and once at rest
@@ -1057,11 +1091,14 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         return LiveView(cam.target.lat, cam.target.lon, cam.zoom, cam.bearing, cam.pitch, wDp, hDp, principalY * hDp / v.height)
     }
 
-    /** The moment to draw for [style] at [time]: the live one (the clock and the forecast) unless the style fixes one. */
-    private fun momentOf(s: MapStyle, time: Instant?, at: LatLon): Moment = when (s.theme) {
+    /**
+     * The moment to draw for [style] at [time]: the live one (the clock and the forecast) unless the style fixes one.
+     * Without the [forecast] for the paper's night ([paperNight]), which the forecast never makes.
+     */
+    private fun momentOf(s: MapStyle, time: Instant?, at: LatLon, forecast: Boolean = true): Moment = when (s.theme) {
         Theme.DAY -> Moment.Named("sunny")
         Theme.NIGHT -> Moment.Named("night")
-        Theme.AUTO, Theme.CHART -> Moment.Live(quantise(time ?: Instant.now()), MapEngine.weather?.hours(at))
+        Theme.AUTO, Theme.CHART -> Moment.Live(quantise(time ?: Instant.now()), if (forecast) MapEngine.weather?.hours(at) else null)
     }
 
     /**
@@ -1203,7 +1240,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
 
     /**
      * Draws the start's paper over the core while it covers it ([CoreMap.cover]: the paper alone, until the core's first
-     * picture is complete), and the overlays the core does not draw over all of it.
+     * picture is complete; the night's at a night moment, [paperNight], where a core draws or starts: with none in this
+     * process, the JVM's tests and previews, the day's, so their pictures do not follow the wall clock), and the
+     * overlays the core does not draw over all of it.
      */
     fun draw(canvas: Canvas) {
         val v = viewport()
@@ -1213,7 +1252,7 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
         if (cover > 0f) {
             val layered = cover < 1f && !v.isEmpty
             if (layered) canvas.saveLayerAlpha(0f, 0f, v.width.toFloat(), v.height.toFloat(), (cover * 255f).roundToInt())
-            canvas.drawColor(if (night) NIGHT_EARTH else DAY_EARTH)
+            canvas.drawColor(if ((c != null || coreExpected) && paperNight(c)) NIGHT_EARTH else DAY_EARTH)
             if (layered) canvas.restore()
         }
         if (!v.isEmpty) {
