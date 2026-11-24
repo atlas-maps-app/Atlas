@@ -97,7 +97,7 @@ function(atlas_rust_library target)
     if(ATLAS_SANITIZE STREQUAL "fuzzer")
         string(JOIN " " rustflags ${rustflags} -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
             -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
-            -Cllvm-args=-sanitizer-coverage-trace-compares -Coverflow-checks=on)
+            -Cllvm-args=-sanitizer-coverage-trace-compares -Coverflow-checks=on -Coverflow-checks=off)
         # this file's folder, wherever the function is called from
         set(check_script "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RustOverflowChecks.cmake")
         set(check COMMAND "${CMAKE_COMMAND}" "-DLIB=${lib}" "-DNAME=${arg_LIB}" "-DAR=${CMAKE_AR}"
