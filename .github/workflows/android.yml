@@ -806,10 +806,13 @@ jobs:
       - name: The core's host build
         run: ./gradlew :mapcorecheck:coreHost --stacktrace
       - name: The look
+        # -Datlas.online=true: the tool asks GitHub for the published packs' list and their tiles, as the phone does.
+        # Under the unit tests' guard (the root build.gradle.kts: a test looks up no name but this machine's) the list
+        # would not come, every country's window would be marked "none", and the job would stay green with less drawn.
         env:
           VIEWS: ${{ inputs.look }}
         run: >-
-          ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.phonelook.out="$GITHUB_WORKSPACE/look"
+          ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.online=true -Datlas.phonelook.out="$GITHUB_WORKSPACE/look"
           -Datlas.phonelook.views="$VIEWS" -Datlas.phonelook.elements="$GITHUB_WORKSPACE/cache/packs/regions/grachten.atlas"
           --stacktrace
       - name: What was drawn
