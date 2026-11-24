@@ -24,7 +24,8 @@ required-features = ["std"]
 #   test's are allowed (../clippy.toml).
 # - the ones that come unwritten: an index or a slice out of bounds, and an integer overflow (where the checks are on,
 #   as in the fuzz build) or a division by zero: clippy's indexing_slicing and arithmetic_side_effects name them, and
-#   CI's tidy job lists every one in the library, in its log and its summary.
+#   CI's tidy job lists every one in the library, in its log and its summary, and holds their count to the one kept
+#   below.
 [lints.clippy]
 panic = "deny"
 unwrap_used = "deny"
@@ -34,6 +35,13 @@ unimplemented = "deny"
 unreachable = "deny"
 unwrap_in_result = "deny"
 panic_in_result_fn = "deny"
+
+# The places in the library where a panic can come unwritten, by lint, as CI's lint counts them
+# (.github/scripts/rust-lint.sh): more fails, and so does fewer, which asks for the count here to be lowered with the
+# change that took a place away.
+[package.metadata.atlas.unwritten_panics]
+indexing_slicing = 295
+arithmetic_side_effects = 157
 
 [profile.release]
 # small and whole: one unit, LTO over the crate and the standard library it calls, no unwinding (a panic aborts, as

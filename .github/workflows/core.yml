@@ -815,13 +815,14 @@ jobs:
           rm -rf ~/.cache/atlas-tidy && mkdir -p ~/.cache && mv "$keep" ~/.cache/atlas-tidy
           echo "kept=$(find ~/.cache/atlas-tidy -type f | wc -l)" >> "$GITHUB_OUTPUT"
           exit "$status"
-      # ---- rustfmt and clippy on the core's Rust, in the tidy job's first shard beside clang-format: the format of
-      # mapcore/rust/rustfmt.toml, clippy's lints with every warning an error (each crate's [lints] refuse a panic
-      # written as one), and every place a panic can come unwritten, listed in the log and counted in the summary
-      # (.github/scripts/rust-lint.sh). It runs whatever clang-tidy found.
+      # ---- rustfmt and clippy on the core's Rust, in the tidy job's first shard beside clang-format, on every crate
+      # under mapcore/rust (the script finds them, and fails on none): each crate's rust-version the pin's, the format
+      # of mapcore/rust/rustfmt.toml, clippy's lints with every warning an error (each crate's [lints] refuse a panic
+      # written as one), and every place a panic can come unwritten, listed in the log, counted in the summary and
+      # held to the count its Cargo.toml keeps (.github/scripts/rust-lint.sh). It runs whatever clang-tidy found.
       - name: rustfmt and clippy
         if: ${{ !cancelled() && matrix.task == 'tidy' && env.SHARD == '1' }}
-        run: .github/scripts/rust-lint.sh app/android/mapcore/rust/clean
+        run: .github/scripts/rust-lint.sh
       - name: Keep the clean units' keys
         if: ${{ !cancelled() && steps.tidy.outputs.kept > 0 && env.KEEP_CACHES == 'true' }}
         uses: actions/cache/save@v6
