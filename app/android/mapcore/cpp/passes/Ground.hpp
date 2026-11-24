@@ -35,6 +35,7 @@
 #include "gpu/Descriptors.hpp"
 #include "gpu/Memory.hpp"
 #include "passes/LightMap.hpp"
+#include "passes/LinePieces.hpp"
 #include "scene/Pick.hpp"
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
@@ -1063,6 +1064,9 @@ public:
     /// The tests' look at the lines: the runs the last frame's words hold (at most 2^18, a segment's instance word's
     /// bits of its run), 0 before the first frame.
     [[nodiscard]] std::uint32_t line_runs() const noexcept;
+    /// The pair polylines (a sett road's courses) the last frame's lines left out, of more lines than a run holds:
+    /// they are never cut into pieces (passes/Lines.cpp's write_lines), as the other polylines are.
+    [[nodiscard]] std::uint32_t lines_left_out() const noexcept;
     /// Whether this frame draws the canopy through its filter (canopy_fs): it is drawn, and the fields are bound in
     /// full mode; else its union is black at .55, as a frame without filters draws it.
     [[nodiscard]] bool canopy_filtered(const frame::FrameState& state) const noexcept;
@@ -1105,6 +1109,10 @@ public:
     /// The tests' look at the soft shadows' kept result: how many results the mask has made (its box, grid, union and
     /// blur run) since the pass was made; a frame whose mask is the last one's makes none, and dispatches nothing.
     [[nodiscard]] std::uint64_t mask_makes() const noexcept { return mask_made_; }
+    /// The tests' switch: from the next frame on, the lines (but a pair polyline) drawn in runs of at most `most`
+    /// segments (2 to run_segments_most, passes/LinePieces.hpp), as a polyline longer than an instance word's segments
+    /// is cut, so a test holds a line in pieces to the line whole.
+    void cut_lines_at(std::uint32_t most) noexcept { lines_most_ = most; }
 #endif
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
@@ -1559,6 +1567,8 @@ private:
 #if defined(ATLAS_TESTS)
     bool mask_always_ = false;    // make_mask_always
     std::uint64_t mask_made_ = 0; // mask_makes
+    /// cut_lines_at's
+    std::uint32_t lines_most_ = run_segments_most;
 #endif
     /// What the soft shadows' last result was made of (key_shadow_mask), whether this frame's is that one, and the
     /// entry this frame's lies in (SoftShadows::slots).
@@ -1879,6 +1889,7 @@ struct Ground::Words {
     std::uint32_t theme = 0;                  ///< the theme colours'
     std::uint32_t runs = 0;                   ///< the lines' runs'
     std::uint32_t run_count = 0;              ///< and how many (at most 2^18: write_lines)
+    std::uint32_t lines_left_out = 0;         ///< the pair polylines of more lines than a run holds, left out
     std::array<std::uint32_t, 2> instances{}; ///< the over and marks phases' segments: first word and count, packed
     std::array<std::uint32_t, 2> instance_count{};
     std::uint32_t woods_split = 0;      ///< the over phase's segments before the woods' shadows' slot

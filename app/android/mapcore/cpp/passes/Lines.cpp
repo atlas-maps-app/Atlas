@@ -12,7 +12,9 @@
 // become runs (a polyline each, its tile, its points' first word in the lines heap, its height, width, colour and
 // painter slot) and the runs' segments instances, in the renders' order: draw_over's in the over phase, the marks in
 // theirs. One instanced draw each: every segment a quad whose coverage the line stage finds as RefRaster does
-// (shaders/ground/ground.slang).
+// (shaders/ground/ground.slang). A polyline of more segments than an instance word holds (16,384: a national park's
+// edge, which stage P files whole) is drawn in pieces, a run each, its joins and dashes running on across a cut
+// (passes/LinePieces.hpp); a sett road's courses that many are left out (lines_left_out).
 //
 // In the app's map (GroundFrame::grounded) a line px wide (a big road's edge and lane lines, a runway's centre line, a
 // taxiway's line, a stand's lead-in) is a painted line on the ground instead: its run holds its metres (LINE_METRES)
@@ -34,15 +36,19 @@
 #include "frame/FrameLayout.hpp"
 #include "gen/layouts.hpp"
 #include "passes/Ground.hpp"
+#include "passes/LinePieces.hpp"
 #include "scene/Residency.hpp"
 #include "twin/ground/LineShader.hpp"
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace atlas::passes {
 
@@ -210,8 +216,16 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
                           .b = th.shadow.b,
                           .a = static_cast<std::uint8_t>(std::lround(printed(th.shadow_opacity * 0.9, 2) * 255.0))};
     // an instance word holds 18 bits of its run (and 14 of its segment): the runs past them are left out, never
-    // wrapped onto another run's words
+    // wrapped onto another run's words; a polyline of more segments than a run holds is drawn in pieces, a run each
+    // (passes/LinePieces.hpp), but a pair polyline, which is left out
     constexpr std::uint32_t max_runs = 1U << 18U;
+#if defined(ATLAS_TESTS)
+    const std::uint32_t most = lines_most_;
+#else
+    constexpr std::uint32_t most = run_segments_most;
+#endif
+    std::uint32_t left_out = 0;
+    std::vector<std::uint32_t> whole; // a dashed polyline's table, cut into its pieces' slices
     for (const Drawn& d : drawn) {
         if (run >= max_runs) break;
         if (!d.marks && !woods_split && d.slot > woods_slot) {
@@ -225,20 +239,29 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             const DrawnTile& tile = frame_.tiles[d.tile];
             const geo::GroundTile& g = *tile.ground;
             const std::uint32_t polyline = g.tracks[e.track].polyline;
-            const std::uint32_t n = e.post ? 1 : e.count - 1;
-            if (n == 0 || n > 0x4000) continue;
-            words.push_back(d.tile);
-            words.push_back((tile.pass->ranges[1].offset / 4) + g.layout.points.first + g.polyline_words[polyline] +
-                            (3 * e.first));
-            words.push_back(e.count);
-            words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(g.polylines[polyline].y)));
-            words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(e.width)));
-            words.push_back(shade.packed());
-            words.push_back(d.slot);
-            words.push_back(shaders::LINE_SHADOW | shaders::LINE_CAP_ROUND | (e.post ? shaders::LINE_POST : 0U) |
-                            (frame_.grounded ? shaders::LINE_METRES : 0U));
-            for (std::uint32_t k = 0; k < n; ++k) segments[0].push_back((run << 14U) | k);
-            ++run;
+            const std::uint32_t at =
+                (tile.pass->ranges[1].offset / 4) + g.layout.points.first + g.polyline_words[polyline];
+            // a post: its one point; a stretch: its segments in pieces, each its points' (x, z, height) from its own
+            // first, the joins across a cut the stretch's
+            const std::uint32_t n = e.count < 2 ? 0 : e.count - 1;
+            LinePiece piece = e.post ? LinePiece{.from = 0, .points = e.count, .first = 0, .segments = 1}
+                                     : next_line_piece({}, n, most);
+            for (; piece.segments > 0 && run < max_runs;
+                 piece = e.post ? LinePiece{} : next_line_piece(piece, n, most)) {
+                words.push_back(d.tile);
+                words.push_back(at + (3 * (e.first + piece.from)));
+                words.push_back(piece.points);
+                words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(g.polylines[polyline].y)));
+                words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(e.width)));
+                words.push_back(shade.packed());
+                words.push_back(d.slot);
+                words.push_back(shaders::LINE_SHADOW | shaders::LINE_CAP_ROUND | (e.post ? shaders::LINE_POST : 0U) |
+                                (frame_.grounded ? shaders::LINE_METRES : 0U));
+                for (std::uint32_t k = 0; k < piece.segments; ++k) {
+                    segments[0].push_back((run << 14U) | (piece.first + k));
+                }
+                ++run;
+            }
             continue;
         }
         const DrawnTile& tile = frame_.tiles[d.tile];
@@ -258,14 +281,14 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
             const geo::Polyline& pl = g.polylines[p];
             // its segments: a polyline's between its points, a pair polyline's lines
             const std::uint32_t n = pl.pairs ? pl.count / 2 : (pl.count < 2 ? 0 : pl.count - 1);
-            if (n == 0 || n > 0x4000) continue;
-            words.push_back(d.tile);
-            words.push_back(base + g.polyline_words[p]);
-            words.push_back(pl.count);
-            words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(pl.y)));
-            words.push_back(std::bit_cast<std::uint32_t>(width));
-            words.push_back(rgba_of(s.paint, frame_.night));
-            words.push_back(d.slot);
+            if (n == 0) continue;
+            // a pair polyline is never cut: each of its lines looks back at the lines before it in its run (the line
+            // stage's sett_before), and its reaches lie after its points (first + 2 · count + its line); one of more
+            // lines than a run holds (a sett road's courses along 9.8 km of one way) is left out, counted
+            if (pl.pairs && n > run_segments_most) {
+                ++left_out;
+                continue;
+            }
             // butt caps, miter joins (limit 4): the SVG's defaults; a sett road's courses: lines of their own, the
             // path's opacity a layer (the paint's alpha); a park's edge dashed along the screen
             std::uint32_t flags = (pl.pairs ? shaders::LINE_PAIRS | shaders::LINE_LAYER : 0U) | in_metres;
@@ -282,16 +305,48 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
                              mirror < (std::int64_t{1} << (31U - shaders::LINE_DASH_SHIFT)));
                 flags |= static_cast<std::uint32_t>(static_cast<std::int32_t>(mirror)) << shaders::LINE_DASH_SHIFT;
             }
-            if (s.dash[0] > 0 && placer) {
-                flags |= shaders::LINE_DASH;
-                dashed.emplace_back(words.size(), tables.size());
-                dash_table(*placer, tile, std::span(g.points).subspan(pl.first, pl.count), pl.y, s.dash, tables);
+            const bool dash = s.dash[0] > 0 && placer;
+            if (dash) flags |= shaders::LINE_DASH;
+            // in pieces where it is longer than a run holds, each its own words (the mirror's offset is the same for
+            // every piece, both lines as long) and its slice of the line's one dash table, so the dashes run on across
+            // a cut; within it, one run of the whole line
+            const bool cut = !pl.pairs && n > most;
+            if (dash && cut) {
+                whole.clear();
+                dash_table(*placer, tile, std::span(g.points).subspan(pl.first, pl.count), pl.y, s.dash, whole);
             }
-            words.push_back(flags);
-            for (std::uint32_t k = 0; k < n; ++k) segments[d.marks ? 1U : 0U].push_back((run << 14U) | k);
-            ++run;
+            LinePiece piece = cut ? next_line_piece({}, n, most)
+                                  : LinePiece{.from = 0, .points = pl.count, .first = 0, .segments = n};
+            for (; piece.segments > 0 && run < max_runs; piece = cut ? next_line_piece(piece, n, most) : LinePiece{}) {
+                words.push_back(d.tile);
+                words.push_back(base + g.polyline_words[p] + (2 * piece.from));
+                words.push_back(piece.points);
+                words.push_back(std::bit_cast<std::uint32_t>(static_cast<float>(pl.y)));
+                words.push_back(std::bit_cast<std::uint32_t>(width));
+                words.push_back(rgba_of(s.paint, frame_.night));
+                words.push_back(d.slot);
+                if (dash) {
+                    dashed.emplace_back(words.size(), tables.size());
+                    if (cut) {
+                        // the dash and the period, then its points' places
+                        tables.insert(tables.end(), whole.begin(), whole.begin() + 2);
+                        const auto from = static_cast<std::ptrdiff_t>(piece.from) + 2;
+                        tables.insert(tables.end(), whole.begin() + from,
+                                      whole.begin() + from + static_cast<std::ptrdiff_t>(piece.points));
+                    } else {
+                        dash_table(*placer, tile, std::span(g.points).subspan(pl.first, pl.count), pl.y, s.dash,
+                                   tables);
+                    }
+                }
+                words.push_back(flags);
+                for (std::uint32_t k = 0; k < piece.segments; ++k) {
+                    segments[d.marks ? 1U : 0U].push_back((run << 14U) | (piece.first + k));
+                }
+                ++run;
+            }
         }
     }
+    words_->lines_left_out = left_out;
     // a quay wall's courses: a run a path, each of its lines a pair of its own points in the words (three f32 each:
     // the draw's GROUND_COURSES), butt-ended, at its path's slot, in its joints' colour at the path's opacity (its
     // lines lie apart, a course from each other: they blend as one layer would)
@@ -338,6 +393,8 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
 }
 
 std::uint32_t Ground::line_runs() const noexcept { return words_ != nullptr ? words_->run_count : 0; }
+
+std::uint32_t Ground::lines_left_out() const noexcept { return words_ != nullptr ? words_->lines_left_out : 0; }
 
 void Ground::record_lines(const frame::Recording& r, std::uint32_t phase) {
     const std::size_t k = phase == phase_over ? 0 : 1;
