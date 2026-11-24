@@ -822,7 +822,7 @@ private:
     }
 
     void ask_vsync() {
-        if (!requested_ || hidden_) return; // hidden: held until the window shows (set_hidden)
+        if (!requested_) return; // PLANTED: hidden_ not read (part 2b point 4's red run)
         loop_->request_vsync([this](const platform::Vsync& v) { on_vsync(v); });
     }
 
@@ -872,7 +872,7 @@ private:
     }
 
     void on_vsync(const platform::Vsync& v) {
-        if (!requested_ || source_ == nullptr || hidden_) return; // one asked before the window hid: held
+        if (!requested_ || source_ == nullptr) return; // PLANTED: hidden_ not read (part 2b point 4's red run)
         if (!session_->drawing()) {
             session_->note_not_drawing(); // the panel's health: a frame was due, with none to draw
             return;
