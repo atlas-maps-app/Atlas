@@ -15,6 +15,7 @@
 // in its data). ATLAS_SESSION_FULL=1 takes the colour stage over every configuration, as VK bench does (the layer
 // run's order, which notes the guard's marker at every driver call: every call is behind one, and named only while it
 // runs).
+#include "base/durable.hpp"
 #include "gpu/Guard.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "standin/City.hpp"
@@ -34,6 +35,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -526,6 +528,32 @@ TEST_CASE("the frames stage's marker names the frame drawn now, after a switch w
     }
 }
 
+namespace {
+
+/// Forgets the steps base/durable.hpp's replace() took so far.
+void gpu_durable_clear() {
+    atlas::durable::Steps& s = atlas::durable::steps();
+    const std::scoped_lock lock(s.mutex);
+    s.taken.clear();
+}
+
+/// Whether replace() put `file` in place since the last clear as it should: its temporary file synced, renamed over
+/// it, then its folder synced.
+[[nodiscard]] bool gpu_durable_wrote(const fs::path& file) {
+    atlas::durable::Steps& s = atlas::durable::steps();
+    const std::scoped_lock lock(s.mutex);
+    const std::string path = file.string();
+    const std::string rename = std::format("rename {}", path);
+    const std::string sync_file = std::format("sync {}.tmp", path);
+    const std::string sync_folder = std::format("sync {}", atlas::durable::folder_of(path));
+    for (std::size_t i = 1; i + 1 < s.taken.size(); ++i) {
+        if (s.taken[i] == rename) return s.taken[i - 1] == sync_file && s.taken[i + 1] == sync_folder;
+    }
+    return false;
+}
+
+} // namespace
+
 TEST_CASE("the pipeline cache is written back only where a pipeline was made through it since its last write") {
     // A trim at each level from TRIM_MEMORY_UI_HIDDEN on (BACKGROUND, MODERATE and COMPLETE come as the system makes
     // ready to kill cached processes), the close and the session's first 120 frames ask for a write: each writes only
@@ -552,9 +580,12 @@ TEST_CASE("the pipeline cache is written back only where a pipeline was made thr
         CHECK_FALSE(fs::exists(file));
         CHECK(marked(dir).empty());
         // Another configuration's pipelines: written back as soon as they are made (the write that first holds a VK
-        // bench cell's pipelines is the cell's, under its marker), and nothing is new after it.
+        // bench cell's pipelines is the cell's, under its marker), and nothing is new after it. The file synced before
+        // its rename and its folder after it (base/durable.hpp).
+        gpu_durable_clear();
         ATLAS_REQUIRE(session.bench(1, configurations[1], pills).empty());
         CHECK(fs::exists(file));
+        CHECK(gpu_durable_wrote(file));
         fs::remove(file);
         session.save_cache();
         CHECK_FALSE(fs::exists(file));

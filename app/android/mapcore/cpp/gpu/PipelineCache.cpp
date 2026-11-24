@@ -1,6 +1,7 @@
 // The pipeline cache on disk (gpu/PipelineCache.hpp).
 #include "gpu/PipelineCache.hpp"
 
+#include "base/durable.hpp"
 #include "base/log.hpp"
 
 #include <algorithm>
@@ -29,7 +30,8 @@ namespace {
     return out;
 }
 
-/// Writes `bytes` to `path` through `path.tmp`, synced, then renamed: a crash leaves the old file or the new one.
+/// Writes `bytes` to `path` through `path.tmp`, synced, renamed, its folder synced (base/durable.hpp): a crash or a
+/// power cut leaves the old file or the new one.
 [[nodiscard]] bool write_file(const std::filesystem::path& path, std::span<const std::byte> head,
                               std::span<const std::byte> body) {
     std::error_code ec;
@@ -49,13 +51,12 @@ namespace {
                 done += static_cast<std::size_t>(n);
         }
     }
-    ok = ok && ::fsync(fd) == 0;
-    ok = ::close(fd) == 0 && ok;
-    if (!ok || ::rename(tmp.c_str(), path.c_str()) != 0) {
+    if (!ok) {
+        (void)::close(fd);
         (void)::unlink(tmp.c_str());
         return false;
     }
-    return true;
+    return durable::replace(fd, tmp.string(), path.string()) == 0;
 }
 
 } // namespace

@@ -1,5 +1,6 @@
 #include "tiles/ExpandedCache.hpp"
 
+#include "base/durable.hpp"
 #include "tiles/Bytes.hpp"
 
 #include <algorithm>
@@ -276,19 +277,20 @@ Result<void> ExpandedCache::set_pinned(std::span<const CacheKey> keys) {
         text += '\n';
     }
     const std::scoped_lock lock(mutex_);
-    // the file first, beside its place and renamed: a set the next start would not find is not taken
+    // the file first, beside its place, synced and renamed, its folder synced (base/durable.hpp): a set the next start
+    // would not find is not taken, and after a power cut the next start finds the old pins or these, whole
     const std::string path = std::format("{}/{}", directory_, pins_file);
     const std::string temp = std::format("{}{}{}-{}", path, temp_marker, ::getpid(), ++writes_);
     const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     if (fd < 0) return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(errno)));
-    const bool written = write_all(fd, std::as_bytes(std::span(text)));
-    const int write_errno = errno;
-    const bool closed = ::close(fd) == 0;
-    if (!written || !closed || ::rename(temp.c_str(), path.c_str()) != 0) {
-        const int e = !written ? write_errno : errno;
+    if (!write_all(fd, std::as_bytes(std::span(text)))) {
+        const int e = errno;
+        (void)::close(fd);
         (void)::unlink(temp.c_str());
         return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(e)));
     }
+    if (const int e = durable::replace(fd, temp, path); e != 0)
+        return std::unexpected(error(Fault::io, Site::cache, static_cast<std::uint64_t>(e)));
     pinned_ = std::move(names);
     pinned_total_ = 0;
     for (const auto& [name, info] : index_) {

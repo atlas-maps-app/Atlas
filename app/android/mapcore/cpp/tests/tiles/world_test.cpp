@@ -11,6 +11,7 @@
 // ground leaves a piece of a cell bare or crosses a cell's edge is caught. With ATLAS_WORLD_DIR naming the packer's
 // output folder (world.idx, its parts and world-globe.atlas), its packs are checked so and each level's tiles, features
 // and bytes printed, a line a level: `world level <z> ...`.
+#include "base/durable.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/PackStyle.hpp"
 #include "passes/Ground.hpp"
@@ -50,6 +51,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <mutex>
 #include <numbers>
 #include <optional>
 #include <span>
@@ -1353,6 +1355,38 @@ TEST_CASE("passes: the world's palette is the theme's land, water and roads, and
     theme.flags |= atlas::style::theme_flag::night;
     CHECK(atlas::passes::World::day_palette_of(theme, nullptr) ==
           atlas::passes::World::palette_of(theme, true, nullptr));
+}
+
+TEST_CASE("tiles: the cache's pins are synced before their rename and their folder after it") {
+    // base/durable.hpp: after a power cut the next start finds the old pins or the new ones, whole, and evicts no kept
+    // country's world for want of them
+    TempDir dir;
+    const std::string folder = dir.path() + "/cache";
+    auto opened = ExpandedCache::open(folder, std::size_t{1} << 20U);
+    ATLAS_REQUIRE(opened);
+    const std::array<CacheKey, 1> pins{
+        CacheKey{.kind = CacheKind::chunk, .source = Sha256::of(as_bytes(std::string_view("chunk 0")))}};
+    atlas::durable::Steps& steps = atlas::durable::steps();
+    {
+        const std::scoped_lock lock(steps.mutex);
+        steps.taken.clear();
+    }
+    ATLAS_REQUIRE((*opened)->set_pinned(pins));
+    std::vector<std::string> taken;
+    {
+        const std::scoped_lock lock(steps.mutex);
+        taken = steps.taken;
+    }
+    ATLAS_REQUIRE(taken.size() == 3);
+    CHECK_MESSAGE(taken[0].starts_with("sync " + folder + "/pinned.tmp-"), taken[0]);
+    CHECK(taken[1] == "rename " + folder + "/pinned");
+    CHECK(taken[2] == "sync " + folder);
+    (*opened).reset();
+    // what the pins' file holds is what it held before: their names, one a line
+    auto again = ExpandedCache::open(folder, std::size_t{1} << 20U);
+    ATLAS_REQUIRE(again);
+    CHECK((*again)->pins() == 1);
+    CHECK((*again)->pinned(pins[0]));
 }
 
 TEST_CASE("tiles: the cache keeps its pinned entries whatever their age, out of its budget, across a restart") {
