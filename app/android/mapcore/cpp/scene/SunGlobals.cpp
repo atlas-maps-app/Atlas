@@ -698,7 +698,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         // taken: its quay walls hold where the decks near them are the ones they were made against; else it is made
         // again from its chunk, as a whole build makes it
         const tiles::Sha256Digest near = sun::near_digest(part.quays, decks, digests);
-        continue; // planted: the decks' check left out
+        if (near == part.near || keep) continue; // planted: the decks' check left out (keep: reachable to the compiler)
         const auto tile = decode_from(b.pack, part.key, p.chunks().find(part.key));
         if (!tile) return nullptr;
         part.tile =
