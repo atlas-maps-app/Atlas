@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <limits>
@@ -510,6 +511,17 @@ gpu::Result<void> Items::prepare(const frame::PassContext& context) {
     release();
     // none in the owner mode: the likeness harness's owner maps draw no region items yet
     if (context.owners) return {};
+    // MEASURE (budgetcheck-measure): the items' prepare, its nine kinds' stages with the rest
+    struct Timed {
+        std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
+        Timed() = default;
+        Timed(const Timed&) = delete;
+        Timed& operator=(const Timed&) = delete;
+        ~Timed() {
+            log::info("vk measure items prepared in {:.1f} ms",
+                      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+        }
+    } const timed;
     device_ = &context.device;
     const vk::raii::Device& d = context.device.handle();
     ATLAS_GPU_LET(module, frame::make_module(context, "item_draw", spirv::item_draw));

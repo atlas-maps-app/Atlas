@@ -460,7 +460,12 @@ void Guard::write_marker(bool synced) const {
     text += std::format("driver {}\nversion {}\nbuild {}\nattempt {}\npid {}\nstart {}\n",
                         system_keyed ? std::string_view("unknown") : std::string_view(driver_),
                         system_keyed || version_.empty() ? system_ : version_, build_, attempt_, pid_, start_ms_);
+    // MEASURE (budgetcheck-measure): what one marker's write takes
+    const auto started = std::chrono::steady_clock::now();
     write_synced(dir_ / "guard", text, synced);
+    log::info("vk measure guard marker {} in {:.3f} ms ({} calls under way)", synced ? "synced" : "unsynced",
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count(),
+              calls.size());
 }
 
 bool Guard::planted_making(std::string_view name, bool pipeline) const {
@@ -514,7 +519,11 @@ void Guard::note(std::string what, bool planted) {
 }
 
 void Guard::before(const PipelineLabel& label) {
+    // MEASURE (budgetcheck-measure): how long a pipeline's announcement waits for the guard's mutex
+    const auto asked = std::chrono::steady_clock::now();
     const std::scoped_lock lock(mutex_);
+    log::info("vk measure guard lock for pipeline {} after {:.3f} ms", label.name,
+              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count());
     // Outside the pipelines and colour stages no stage names a pipeline: the call is the stage's alone, and its after
     // still comes.
     if (current_ != Stage::pipelines && !colour_) {

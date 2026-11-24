@@ -515,6 +515,18 @@ vk_background() {
 }
 
 vk_phase() {
+  # MEASURE (budgetcheck-measure): the app's map started twice, cold (no pipeline cache) then warm, and the guard's
+  # and the items' times at each start
+  fresh_state
+  local m
+  for m in measurecold measurewarm; do
+    vk_launch $m
+    wait_line $m 180 "vk first frame" || echo "MEASURE: no first frame within 180 s ($m)"
+    sleep 5
+    echo "== MEASURE $m"
+    since_marker $m | grep -E 'AtlasMap: vk (measure|passes prepared|first frame)' | sed 's/.*AtlasMap: //' | head -400
+    since_marker $m | grep -E 'AtlasMap: vk measure' > "$OUT/$m.txt" || true
+  done
   # VK facts through the guest's Vulkan (the emulator's lavapipe): there must be a device.
   fresh_state
   vk_launch vkfacts --es atlas.screen vkfacts
