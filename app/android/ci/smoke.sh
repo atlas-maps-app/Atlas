@@ -1104,6 +1104,11 @@ hidden_kept() {
 # window would be built on the phone, so the Netherlands is republished at this core (packs.yml) and the job run again,
 # and the nightly tags no alpha before. The lines go to map-tiles.txt (the core's version and the tiles published, each
 # window and the first frame), the screen to map-tiles.png.
+# Why the phone could not read the published list of packs (map_tiles), or nothing: the phases after it that need the
+# list, or the phone's connection it came over, are left out with one FAILED line each that names it, so the part ends
+# with its failure well inside the job's 60 minutes (Android 45257232732, 23 November: the world's five waits after it
+# ran 45 minutes into the job's limit, and the run said "cancelled").
+NO_LIST=
 map_tiles() {
   local wait=${MAP_TILES_WAIT:-180} line
   adb shell mv /data/local/tmp/atlas /data/local/tmp/atlas.aside 2>/dev/null
@@ -1113,6 +1118,7 @@ map_tiles() {
   line=$(since_marker maptiles | grep -m1 -o 'vk windows: .*' | tr -d '\r')
   if [ -z "$line" ]; then
     echo "MAP FAILED: the published list of packs was not read within $wait s"; FAIL=1
+    NO_LIST="the published list of packs was not read within $wait s (map_tiles)"
   elif [[ $line == *"its own: none"* ]]; then
     echo "map: $line"
     echo "MAP FAILED: packs-latest holds no tiles of this core: republish the Netherlands at this core (packs.yml), then run this job again"
@@ -1162,6 +1168,11 @@ fi
 WORLD_LATEST=https://github.com/atlas-maps-app/Atlas/releases/download/world-latest
 world_phase() {
   local release km next line rest at drawn finest wanted bare land held chunks n k r
+  if [ -n "$NO_LIST" ]; then
+    echo "WORLD FAILED: left out, as $NO_LIST: the phone fetches the world over the same connection, and its view beyond the border reads the Netherlands' tiles' index through the list"
+    FAIL=1
+    return
+  fi
   release=$(curl -sfL --retry 5 --retry-all-errors --max-time 60 "$WORLD_LATEST/world.json" |
     python3 -I -c 'import json, sys; print(json.load(sys.stdin)["release"])' 2>/dev/null)
   if [ -z "$release" ]; then
@@ -1176,7 +1187,12 @@ world_phase() {
     echo "world: ${line#vk world: }"
     [[ $line == *" of $release on the phone" ]] || { echo "WORLD FAILED: the phone took another release than world-latest's $release"; FAIL=1; }
   else
-    echo "WORLD FAILED: world.idx and the globe were not on the phone within 300 s"; FAIL=1
+    echo "WORLD FAILED: world.idx and the globe were not on the phone within 300 s: the world's views are left out, as each waits on them"
+    FAIL=1
+    since_marker world | grep -E 'AtlasMap: vk (world|script|windows|first frame|map)' | sed 's/.*AtlasMap: //' > "$OUT/world.txt"
+    vk_crashes world; vk_anr world
+    adb shell am force-stop $PKG
+    return
   fi
   for km in 25 100; do
     if [ "$km" = 25 ]; then next="world out to 100 km"; else next="world under out to 12 km"; fi
