@@ -3,7 +3,8 @@
 // so does the blur whose group memory is poisoned before each tile (shadow_blur_poison.slang), so the blur reads no
 // word a tile does not write; and none of it under the validation layer's synchronization or (with
 // VK_KHRONOS_VALIDATION_GPUAV_ENABLE=1) its GPU-assisted checks says a word. What differs the check names by its
-// blocks: how many, whether they hold any of the pattern, how much of it lies on their edges.
+// blocks: how many, whether they hold any of the pattern, how much of it lies on their edges. Under configuration A, a
+// mask whose samples lazily allocated memory refuses takes ordinary memory and blurs the same.
 #if !defined(__ANDROID__)
 
 #include "passes/BlurCheck.hpp"
@@ -35,6 +36,33 @@ TEST_CASE("blur check: the device blurs the shadows' mask as the CPU's twin does
         CHECK(line.starts_with("shadow.blur: exact"));
         CHECK(check->runs.size() == 5U);
     }
+}
+
+TEST_CASE("blur check: under configuration A, a mask whose samples lazily allocated memory refuses takes ordinary "
+          "memory and blurs as before") {
+    // The masks' passes ask for lazily allocated memory under A and take ordinary memory where it refuses their
+    // samples (passes/Shadows.cpp, LitGlow.cpp, Ripple.cpp, BlurCheck.cpp), so supports(A) does not count them. A
+    // device without lazily allocated memory (lavapipe, the emulator) refuses every one: the blur check's R8 mask, the
+    // device's choice set to A, is such a mask.
+    auto session = test::open_session();
+    if (!session) return;
+    gpu::Device& device = *session->device;
+    if (device.facts().lazy_memory) {
+        MESSAGE("the device has lazily allocated memory: nothing here refuses the mask");
+        return;
+    }
+    device.facts().choice.config = gpu::FrameConfig::a;
+    auto cache = gpu::PipelineCache::open(device.handle(), device.facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const auto check = passes::blur_check(device, *cache);
+    ATLAS_REQUIRE(check.has_value(), check.error().text());
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    const std::string line = passes::blur_line(*check);
+    MESSAGE(line);
+    CHECK_FALSE(check->lazy);
+    CHECK(check->exact());
+    CHECK(line.starts_with("shadow.blur: exact"));
+    CHECK(line.find("lazily allocated") == std::string::npos);
 }
 
 TEST_CASE("blur check: what differs is named by its blocks, their pattern and their edges") {

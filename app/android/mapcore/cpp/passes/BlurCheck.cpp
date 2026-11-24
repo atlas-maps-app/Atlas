@@ -119,7 +119,7 @@ gpu::Result<BlurCheck> blur_check(const gpu::Device& device, const gpu::Pipeline
     const vk::raii::PipelineCache& pc = cache.handle();
     using U = vk::ImageUsageFlagBits;
     using B = vk::BufferUsageFlagBits;
-    BlurCheck out{.lazy = device.facts().choice.lazy()};
+    BlurCheck out;
     const vk::Extent2D extent{.width = blur_check_side, .height = blur_check_side};
     auto image = [&](vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage, gpu::MemoryUse use) {
         return device.memory().image({.imageType = vk::ImageType::e2D,
@@ -144,11 +144,14 @@ gpu::Result<BlurCheck> blur_check(const gpu::Device& device, const gpu::Pipeline
                      "the blur check's view");
         return std::move(v);
     };
-    // the mask's samples as the frame keeps them: lazily allocated where its are
+    // the mask's samples as the frame keeps them: lazily allocated where its are, else, or where that memory refuses
+    // them, in ordinary memory; the check says which it took
+    const bool lazy = device.facts().choice.lazy();
     const vk::ImageUsageFlags transient = U::eColorAttachment | U::eTransientAttachment;
-    auto samples = image(vk::SampleCountFlagBits::e4, transient, out.lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
-    if (!samples && out.lazy) samples = image(vk::SampleCountFlagBits::e4, transient, gpu::MemoryUse::gpu);
+    auto samples = image(vk::SampleCountFlagBits::e4, transient, lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
+    if (!samples && lazy) samples = image(vk::SampleCountFlagBits::e4, transient, gpu::MemoryUse::gpu);
     if (!samples) return std::unexpected(samples.error());
+    out.lazy = samples->lazy();
     ATLAS_GPU_LET(samples_view, view_of(*samples));
     ATLAS_GPU_LET(mask,
                   image(vk::SampleCountFlagBits::e1,

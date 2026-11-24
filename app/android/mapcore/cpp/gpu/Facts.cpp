@@ -349,8 +349,6 @@ std::optional<vk::Format> Facts::lazy_refused() const noexcept {
     };
     if (refused(colour.format)) return colour.format;
     if (lazy_depth_stencil.checked && !lazy_depth_stencil.lazy) return depth_stencil;
-    if (lazy_mask.checked && !lazy_mask.lazy) return vk::Format::eR8Unorm;
-    if (refused(vk::Format::eR8G8B8A8Unorm)) return vk::Format::eR8G8B8A8Unorm;
     return std::nullopt;
 }
 
@@ -592,6 +590,21 @@ namespace {
     case vk::Format::eR8Unorm: return "r8";
     default: return colour_name(format);
     }
+}
+
+/// VK facts' `lazily.allocated.samples:`, what lazily allocated memory holds of configuration A's 4x transient samples
+/// as the device answered (probe_lazy): the frame's colour and its depth-stencil, which A needs (lazy_refused), then
+/// the masks' R8 and RGBA8, which take ordinary memory where it refuses them.
+[[nodiscard]] std::string lazy_samples_text(const Facts& f) {
+    if (!f.lazy_memory) return "none (no lazily allocated memory)";
+    const auto answer = [](bool lazy, bool checked) { return checked ? yes_no(lazy) : std::string("not asked"); };
+    const ColourFormat* c = f.colour_format(f.colour.format);
+    return std::format(
+        "4x, transient: colour {} {}, depth.stencil {} {}; the masks (ordinary memory where refused): r8 "
+        "{}, rgba8 {}",
+        colour_name(f.colour.format), c != nullptr ? answer(c->lazy, c->lazy_checked) : "not asked",
+        lazy_name(f.depth_stencil), answer(f.lazy_depth_stencil.lazy, f.lazy_depth_stencil.checked),
+        answer(f.lazy_mask_r8.lazy, f.lazy_mask_r8.checked), answer(f.lazy_mask_rgba8.lazy, f.lazy_mask_rgba8.checked));
 }
 
 } // namespace
@@ -837,6 +850,7 @@ std::vector<std::string> facts_lines(const Facts& f) {
                                           ? "the driver's; the Map look's switch can turn it off"
                                           : "the driver's; no switch (no VK_EXT_image_compression_control_swapchain)");
     line("lazily.allocated.memory: {}", yes_no(f.lazy_memory));
+    line("lazily.allocated.samples: {}", lazy_samples_text(f));
     line("host.visible.device.local: {}", yes_no(f.host_visible_device_local));
     // A device for offscreen work says so (it needs no VK_KHR_swapchain); the phone's device presents.
     line(

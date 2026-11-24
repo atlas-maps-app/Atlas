@@ -42,6 +42,7 @@ TEST_CASE("the device opens on the host's Vulkan and prints its facts") {
                                "hardware: ",
                                "tiler: ",
                                "lazily.allocated.memory: ",
+                               "lazily.allocated.samples: ",
                                "requirements: all met (offscreen)",
                                "config: ",
                                "route: ",
@@ -69,6 +70,7 @@ TEST_CASE("the device opens on the host's Vulkan and prints its facts") {
         CHECK_FALSE(facts.hardware);
         CHECK_FALSE(facts.tiler);
         CHECK_FALSE(facts.lazy_memory);
+        CHECK(has_line(lines, "lazily.allocated.samples: none (no lazily allocated memory)"));
         CHECK(facts.choice.config == gpu::FrameConfig::c);
         CHECK(facts.colour.format == vk::Format::eR8G8B8A8Unorm);
         CHECK(facts.deepest.format == vk::Format::eA2B10G10R10UnormPack32);

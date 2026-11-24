@@ -61,7 +61,7 @@ struct BlurRun {
 
 /// What the check found.
 struct BlurCheck {
-    bool lazy = false;   ///< the mask's samples in lazily allocated memory, as the frame's
+    bool lazy = false;   ///< the mask's samples in lazily allocated memory: where the frame's are and it holds them
     BlurCompare mask;    ///< the mask drawn by the frame's pass against the pattern
     BlurCompare cleared; ///< the mask drawn with it cleared first
     std::vector<BlurRun> runs;

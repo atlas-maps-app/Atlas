@@ -218,11 +218,16 @@ struct Facts {
     bool rgba8_input = false; // R8G8B8A8_UNORM as a colour and input attachment (the composite)
     /// The frame's colour formats, in the order the choice takes them: rgb10a2, bgr10a2, rgba8, bgra8.
     std::vector<ColourFormat> colour_formats;
-    /// Whether lazily allocated memory holds configuration A's 4x transient samples in the formats it allocates so
-    /// beside the colour formats (whose answer is ColourFormat::lazy): the depth-stencil's (the main pass's, the
-    /// ripple's) and the one-channel masks' (R8: the soft shadows', the blur check's). Asked as the device opens.
+    /// Whether lazily allocated memory holds configuration A's 4x transient samples of the depth-stencil, which the
+    /// main pass allocates so with no other memory to take (beside the frame's colour, whose answer is
+    /// ColourFormat::lazy). Asked as the device opens; lazy_refused reads it.
     LazySamples lazy_depth_stencil;
-    LazySamples lazy_mask;
+    /// The same of the masks' formats, as their passes ask for them (a colour attachment, transient): R8 (the soft
+    /// shadows', the blur check's) and RGBA8 (the glow's, the ripple's). Asked as the device opens, for VK facts only
+    /// (`lazily.allocated.samples:`): a mask whose samples lazily allocated memory refuses takes ordinary memory, so
+    /// neither counts in supports(A).
+    LazySamples lazy_mask_r8;
+    LazySamples lazy_mask_rgba8;
     FeatureFacts features;
     std::vector<std::string> extensions; // without the ones the host tests hide (Instance::hidden)
     std::vector<std::string> hidden;     // the extensions the host tests hide, which read as absent
@@ -263,9 +268,10 @@ struct Facts {
     /// Whether the device can draw `config`: its sample counts; for A, lazily allocated memory that holds its samples
     /// (lazy_refused).
     [[nodiscard]] bool supports(FrameConfig config) const noexcept;
-    /// The first format configuration A allocates lazily at its 4x samples that the device was asked about and whose
-    /// samples lazily allocated memory cannot hold: the frame's colour (`colour`), the depth-stencil, the masks' R8 and
-    /// RGBA8 (the glow's, the ripple's). None where each holds or was not asked yet; no other format counts.
+    /// The first format configuration A allocates lazily at its 4x samples, with no other memory to take, that the
+    /// device was asked about and whose samples lazily allocated memory cannot hold: the frame's colour (`colour`),
+    /// then the depth-stencil. None where both hold or were not asked yet; no other format counts (the masks fall back
+    /// to ordinary memory).
     [[nodiscard]] std::optional<vk::Format> lazy_refused() const noexcept;
     /// What the device does with `format`, if it is one of the frame's colour formats (else nullptr).
     [[nodiscard]] const ColourFormat* colour_format(vk::Format format) const noexcept;

@@ -39,8 +39,9 @@ namespace {
 
 /// Whether lazily allocated memory holds the samples of configuration A (4x): in the colour formats the frame may take
 /// (its colour follows the output, gpu/Facts.hpp), 8-bit or 10-bit ones (`ten`), and with the 8-bit ones in the other
-/// formats A allocates so, the depth-stencil and the one-channel masks' R8 (Facts::lazy_refused reads the answers): by
-/// the memory types a 4x transient image of the format may take.
+/// formats A allocates so: the depth-stencil (which Facts::lazy_refused reads with the frame's colour), and the masks'
+/// R8 and RGBA8 as their passes ask for them (VK facts' alone: a mask refused takes ordinary memory). By the memory
+/// types a 4x transient image of the format may take.
 void probe_lazy(const vk::raii::Device& device, Facts& facts, bool ten) {
     using U = vk::ImageUsageFlagBits;
     std::uint32_t lazy_types = 0;
@@ -80,7 +81,9 @@ void probe_lazy(const vk::raii::Device& device, Facts& facts, bool ten) {
     };
     ask(facts.lazy_depth_stencil, facts.depth_stencil, U::eDepthStencilAttachment | U::eInputAttachment,
         facts.limits.framebufferDepthSampleCounts & facts.limits.framebufferStencilSampleCounts);
-    ask(facts.lazy_mask, vk::Format::eR8Unorm, U::eColorAttachment, facts.limits.framebufferColorSampleCounts);
+    ask(facts.lazy_mask_r8, vk::Format::eR8Unorm, U::eColorAttachment, facts.limits.framebufferColorSampleCounts);
+    ask(facts.lazy_mask_rgba8, vk::Format::eR8G8B8A8Unorm, U::eColorAttachment,
+        facts.limits.framebufferColorSampleCounts);
 }
 
 } // namespace
