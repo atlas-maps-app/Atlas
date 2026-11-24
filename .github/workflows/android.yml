@@ -639,10 +639,13 @@ jobs:
           ccache --zero-stats > /dev/null
           ./gradlew :mapcorecheck:coreHost --stacktrace
           ccache --show-stats
+      # atlas.packs.require: the canal ring's pack was fetched above, so a test that reads it fails without it (the
+      # Architect's 7.2: CutValidityTest) rather than leaving its case out
       - name: The JNI tests
         if: steps.core_host.outcome == 'success'
         run: >-
           ./gradlew :mapcorecheck:test -Datlas.likeness.require=true -Datlas.likeness.platform=lavapipe-x86_64
+          -Datlas.packs.require=true
           -Datlas.likeness.report=${{ github.workspace }}/likeness --continue --stacktrace
       # The artifacts Gradle fetched itself, past the caches it restored (apk's): a notice, so a test job that needed a
       # download is seen; none once apk has kept an entry with the tests' artifacts (testDependencies).
