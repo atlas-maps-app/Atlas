@@ -830,6 +830,10 @@ TEST_CASE("load: the canal ring's windows, each cleaned alone, hold nothing that
     CHECK(sum.unsettled == 0);
     CHECK(c.pairs_before == 0);
     CHECK(c.covered + c.hidden == 0);
+    // what a window keeps is the region loaded whole's footprint, ring for ring, and nothing the whole does not draw
+    // (both 0 since 17 November, printed until CI had the regions' data: the Architect's 7.2)
+    CHECK(differ == 0);
+    CHECK(absent == 0);
 }
 
 TEST_CASE("load: a window anywhere: Paris, with its country's tradition (ATLAS_REGIONS_DIR)") {
