@@ -190,15 +190,24 @@ jobs:
           ccache --zero-stats > /dev/null
           ./gradlew assembleDebug assembleBench :app:benchTiles testDependencies --stacktrace
           ccache --show-stats
-      # What the Rust library takes of each libatlasmap.so just linked, by build and ABI (each link writes its line:
-      # mapcore/cpp/cmake/LinkedBytes.cmake), into the log and the run's summary.
-      - name: The Rust library's bytes in each libatlasmap.so
+      # What each Rust library takes of each libatlasmap.so just linked, by build and ABI (each link writes a line an
+      # archive: mapcore/cpp/cmake/LinkedBytes.cmake), into the log and the run's summary. The step above links four:
+      # the debug and bench builds, each for arm64-v8a and x86_64 (mapcore/build.gradle.kts's abiFilters). Each must
+      # have its lines; one missing fails, naming it.
+      - name: The Rust libraries' bytes in each libatlasmap.so
         if: ${{ !cancelled() && steps.apk.outcome == 'success' }}
         run: |
           lines=$(find mapcore/build -name rust-bytes.txt -exec cat {} + | sort -t'(' -k2)
-          if [ -z "$lines" ]; then echo "::error::no build wrote rust-bytes.txt"; exit 1; fi
+          status=0
+          for build in debug bench; do
+            for abi in arm64-v8a x86_64; do
+              grep -qF "of libatlasmap.so ($build, $abi):" <<< "$lines" ||
+                { echo "::error::the $build build for $abi wrote no line of rust-bytes.txt"; status=1; }
+            done
+          done
+          [ "$status" -eq 0 ] || exit 1
           echo "$lines"
-          { echo "### The Rust library's bytes in libatlasmap.so"; echo "$lines" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### The Rust libraries' bytes in libatlasmap.so"; echo "$lines" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
       # The caches' entries, once the build is done: what this run's compilations used (the hits and the new units),
       # and nothing older, so each entry is one build's size however many runs came before. ccache marks a unit used
       # by its file's time.

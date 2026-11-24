@@ -22,6 +22,9 @@
 # cargo is found on the PATH, or where rustup puts it (~/.cargo/bin, or $CARGO_HOME/bin): ATLAS_CARGO.
 include_guard(GLOBAL)
 set(_atlas_rust_cmake "${CMAKE_CURRENT_LIST_DIR}") # this folder, where RustOverflowChecks.cmake is
+# Where cargo builds every crate, for the whole build (a cache entry, so any folder sees it): cmake/LinkedBytes.cmake
+# counts every archive under it that a link takes.
+set(ATLAS_RUST_DIR "${CMAKE_BINARY_DIR}/rust" CACHE INTERNAL "where cargo builds the Rust crates")
 
 function(atlas_rust_library target)
     cmake_parse_arguments(PARSE_ARGV 1 arg "OVERFLOW_CHECKS" "CRATE;LIB;RUSTFLAGS" "CARGO_ARGS")
@@ -60,7 +63,7 @@ function(atlas_rust_library target)
             "a crate builds with is pinned.")
     endif()
 
-    set(cargo_dir "${CMAKE_BINARY_DIR}/rust")
+    set(cargo_dir "${ATLAS_RUST_DIR}")
     set(triple "")
     set(libs "")
     if(CMAKE_SYSTEM_NAME STREQUAL "Android")
