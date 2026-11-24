@@ -211,6 +211,9 @@ struct BuildingTile {
     /// floats the heap holds of the pieces' corners).
     std::vector<BuildingRing> rings;
     std::vector<float> ring_points;
+    /// Per ring point, 1 where the edge from it to its ring's next is no edge of the n-gon (gm::Polygon::off: a seam):
+    /// the frame's pieces flag no outline along it, and the twin strokes none.
+    std::vector<std::uint8_t> ring_off;
     /// Each item's building (its own OSM id, or a part's outline's where the part names one), and its owner: bit 0 a
     /// part (else a building), bit 1 that building is a relation (else a way).
     std::vector<std::int64_t> ids;

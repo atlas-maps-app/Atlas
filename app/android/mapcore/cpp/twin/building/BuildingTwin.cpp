@@ -58,9 +58,11 @@ using Words = std::array<std::uint32_t, 4>;
 /// An n-gon's ring as the frame draws its pieces' corners (the vertex stage's float maths: each point placed and
 /// turned to the camera, the near plane's cut along each edge in the ring's order, the CSS point, snapped at rest),
 /// into `out`: the polygon the port's cam.poly gives face().
+///
+/// With `closed` false the points are a line's, the n-gon's outline between two of its seams: no edge from the last
+/// back to the first. Appends to `out`.
 void project_ring(const shaders::FrameCamera& cam, const shaders::TilePlace& place, std::span<const float> xyz,
-                  std::vector<Point>& out) {
-    out.clear();
+                  std::vector<Point>& out, bool closed = true) {
     const std::size_t n = xyz.size() / 3;
     const float near_z = cam.frame.w;
     const bool rest = shaders::camera_rests(cam);
@@ -75,6 +77,10 @@ void project_ring(const shaders::FrameCamera& cam, const shaders::TilePlace& pla
     };
     for (std::size_t i = 0; i < n; ++i) {
         const hlsl::float3 a = at(i);
+        if (!closed && i + 1 == n) {
+            if (a.z >= near_z) put(a);
+            break;
+        }
         const hlsl::float3 b = at((i + 1) % n);
         const bool ai = a.z >= near_z;
         const bool bi = b.z >= near_z;
@@ -84,6 +90,51 @@ void project_ring(const shaders::FrameCamera& cam, const shaders::TilePlace& pla
             const hlsl::float3 q = {a.x + ((b.x - a.x) * t), a.y + ((b.y - a.y) * t), near_z};
             put(q);
         }
+    }
+}
+
+/// One line of an n-gon's outline: its corners' floats, and whether it comes round to its first.
+struct Loop {
+    std::vector<float> xyz;
+    bool closed = true;
+};
+
+/// The outline of an n-gon whose ring has seams (`off`: passes::BuildingTile::ring_off, 1 where the edge from a point
+/// to the ring's next is none of the n-gon's): the edges the frame's pieces flag, nothing else of the ring. A seam runs
+/// there and back, so the outline goes on from the point it reached: each loop is the edges that follow each other
+/// from a point round to it again, the outer ring's and each courtyard's. Where the edges left do not come round (no
+/// ring the cut wrote), the line is left open.
+void outline_of(std::span<const float> xyz, std::span<const std::uint8_t> off, std::vector<Loop>& out) {
+    out.clear();
+    const std::size_t n = off.size();
+    const auto same = [&](std::size_t i, std::size_t j) {
+        return xyz[3 * i] == xyz[3 * j] && xyz[(3 * i) + 1] == xyz[(3 * j) + 1] && xyz[(3 * i) + 2] == xyz[(3 * j) + 2];
+    };
+    std::vector<std::uint8_t> done(n, 0);
+    for (std::size_t first = 0; first < n; ++first) {
+        if (off[first] != 0 || done[first] != 0) continue;
+        Loop loop;
+        const auto put = [&](std::size_t i) {
+            loop.xyz.insert(loop.xyz.end(), {xyz[3 * i], xyz[(3 * i) + 1], xyz[(3 * i) + 2]});
+        };
+        for (std::size_t e = first;;) {
+            done[e] = 1;
+            put(e);
+            const std::size_t end = (e + 1) % n;
+            // the edge that goes on from where this one ends: the first from there on, round the ring
+            std::size_t next = n;
+            for (std::size_t step = 0, k = end; step < n && next == n; ++step, k = (k + 1) % n) {
+                if (off[k] == 0 && same(k, end)) next = k;
+            }
+            if (next == first) break;
+            if (next == n || done[next] != 0) {
+                put(end);
+                loop.closed = false;
+                break;
+            }
+            e = next;
+        }
+        out.push_back(std::move(loop));
     }
 }
 
@@ -99,6 +150,7 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
     const std::uint32_t mode = block_.info.x;
     items_.assign(b.items, none);
     ring_done_.assign(b.rings.size(), 0);
+    std::vector<Loop> loops; // a seamed n-gon's outline
     // the frame's strokes (its pack's style): the roofs' edge colour (draw_building's `edge`), by day and at night
     const shaders::FrameStrokes& strokes = block_.strokes;
     const std::uint32_t edge =
@@ -202,18 +254,41 @@ void BuildingTwin::tile(const passes::BuildingTile& b, std::span<const std::uint
                     argb_of(shaders::building_colour(light_of(p.face, true), light_of(p.face, false), amount));
                 out_.at(s.slot, group_, item_of(b, p.item));
                 points_.clear();
+                subpaths_.clear();
                 if (ring < b.rings.size()) {
                     const passes::BuildingRing& r = b.rings[ring];
-                    project_ring(cam, place,
-                                 std::span(b.ring_points).subspan(std::size_t{r.first} * 3, std::size_t{r.points} * 3),
-                                 points_);
+                    const std::span<const float> xyz =
+                        std::span(b.ring_points).subspan(std::size_t{r.first} * 3, std::size_t{r.points} * 3);
+                    const std::span<const std::uint8_t> off = std::span(b.ring_off).subspan(r.first, r.points);
+                    if (std::ranges::any_of(off, [](std::uint8_t f) { return f != 0; })) {
+                        // a ring with seams: the n-gon's own edges, as the frame's pieces flag them, each loop of them
+                        // a subpath; no line along a seam. What they fill is what the ring fills
+                        outline_of(xyz, off, loops);
+                        std::vector<std::size_t> ends;
+                        for (const Loop& loop : loops) {
+                            project_ring(cam, place, loop.xyz, points_, loop.closed);
+                            ends.push_back(points_.size());
+                        }
+                        for (std::size_t k = 0, from = 0; k < ends.size(); from = ends[k++]) {
+                            if (ends[k] == from) continue;
+                            subpaths_.push_back(
+                                {.points = std::span<const Point>(points_).subspan(from, ends[k] - from),
+                                 .closed = loops[k].closed});
+                        }
+                    } else {
+                        project_ring(cam, place, xyz, points_);
+                    }
                 } else {
                     for (std::uint32_t c = 0; c < s.count; ++c) {
                         const hlsl::float2 v = shaders::building_corner(s, c);
                         points_.push_back({.x = v.x, .y = v.y});
                     }
                 }
-                out_.path(style_of(p.flags, argb), points_, true);
+                if (subpaths_.empty()) {
+                    out_.path(style_of(p.flags, argb), points_, true);
+                } else {
+                    out_.path(style_of(p.flags, argb), subpaths_);
+                }
                 if (depths_ != nullptr) {
                     depths_->push_back({.shape = s, .edged = edged, .pieces = {}, .tile = tile_});
                     if (ring < b.rings.size()) depths_->back().pieces = pieces_;

@@ -329,8 +329,11 @@ std::vector<std::array<std::uint32_t, 4>> heap_words(const geometry::TileBuildin
     // the n-gons whole, for the twin: their rings in the pieces' floats
     layout.rings.clear();
     layout.ring_points.clear();
+    layout.ring_off.clear();
     for (const gm::Polygon& poly : g.polygons) {
         if (poly.count == 0) continue; // the frame draws nothing of it
+        layout.ring_off.insert(layout.ring_off.end(), poly.off.begin(), poly.off.end());
+        if (poly.off.empty()) layout.ring_off.resize(layout.ring_off.size() + poly.ring.size(), 0);
         layout.rings.push_back({.first = static_cast<std::uint32_t>(layout.ring_points.size() / 3),
                                 .points = static_cast<std::uint32_t>(poly.ring.size()),
                                 .prim = poly.first,
