@@ -21,6 +21,7 @@
 #include "frame/Motion.hpp"
 #include "frame/Pacing.hpp"
 #include "frame/TwinCheck.hpp"
+#include "frame/WakeGate.hpp"
 #include "fx/Fields.hpp"
 #include "fx/GpuFields.hpp"
 #include "gen/spirv/modules.hpp"
@@ -250,7 +251,8 @@ public:
 
     ~Core() {
 #if defined(__ANDROID__)
-        closing_.store(true);
+        // The map's workers outlive this body: once the gate is shut, none posts to the loop freed below.
+        gate_.close();
 #endif
         // Everything the session made goes on the thread it runs on, each behind its stage, then the stand-in, the
         // device and the instance behind the close stage (its last write of the pipeline cache before them).
@@ -449,7 +451,7 @@ public:
     void landing(std::optional<scene::World::Landing> l) {
 #if defined(__ANDROID__)
         loop_->post([this, l] {
-            if (closing_.load()) return;
+            if (gate_.closed()) return;
             map_->set_landing(l);
         });
 #else
@@ -821,12 +823,14 @@ private:
         ask_camera();
     }
 
-    /// A tile of the map's world was published (on a worker, World::set_wake): the next vsync draws it, at rest too.
+    /// A tile of the map's world was published (on a worker, World::set_wake): the next vsync draws it, at rest too;
+    /// nothing once the core closes (frame/WakeGate.hpp).
     void wake() {
-        if (closing_.load()) return;
-        loop_->post([this] {
-            if (closing_.load()) return;
-            ask_frame();
+        gate_.wake([this] {
+            loop_->post([this] {
+                if (gate_.closed()) return;
+                ask_frame();
+            });
         });
     }
 
@@ -875,7 +879,7 @@ private:
         if (due_ns_ != 0 && (at == 0 || due_ns_ < at)) at = due_ns_;
         if (at == 0) return;
         loop_->set_timer(at, [this] {
-            if (closing_.load()) return;
+            if (gate_.closed()) return;
             const std::int64_t now = platform::now_ns();
             if (motion_.drop_ns() != 0 && motion_.drop_ns() <= now && motion_.drop()) session_->set_moving(false);
             if (due_ns_ != 0 && due_ns_ <= now) {
@@ -1037,13 +1041,13 @@ private:
     std::int64_t due_ns_ = 0;          // when a frame is due by itself at rest (now_ns, MapFrame::due_in; 0: none)
     std::uint64_t hidden_updates_ = 0; // the scene's updates without a frame while hidden (update_scene)
     bool camera_warned_ = false;
-    frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
-    int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
-    bool drew_since_rest_ = false;     // a frame went out since the frame loop last rested
-    std::atomic<bool> closing_{false}; // the core is closing: the map's wake posts nothing more
-    frame::Cadence cadence_;           // the display's period, and which vsyncs may draw (at most 60 a second)
-    frame::Warmth warmth_;             // whether the phone runs warm, its headroom read at most once a second
-    frame::Motion motion_;             // whether the map moves, for the window's frame rate (120, or 60 at rest)
+    frame::Due due_;               // whether a vsync draws: a new camera, or the picture changed (ask_frame)
+    int skipped_in_row_ = 0;       // frames the swapchain skipped since the last it showed
+    bool drew_since_rest_ = false; // a frame went out since the frame loop last rested
+    frame::WakeGate gate_;         // shut when the core closes: the map's wake posts nothing more
+    frame::Cadence cadence_;       // the display's period, and which vsyncs may draw (at most 60 a second)
+    frame::Warmth warmth_;         // whether the phone runs warm, its headroom read at most once a second
+    frame::Motion motion_;         // whether the map moves, for the window's frame rate (120, or 60 at rest)
     std::unique_ptr<platform::RenderLoop> loop_;
 #else
     /// Hosts have no frame loop: nothing to ask.
