@@ -39,11 +39,14 @@ inline constexpr double railing_foot = 0.47;
 
 /// The most railing pieces a tile holds. Each piece is a Thing and an item (some 200 bytes), and a railing's pieces
 /// follow its length, which its bridge's lines and width set: without a bound one tile's railings could take any
-/// memory (fuzz_stage_t ran out at 1.8 GB). Eight times the most any tile holds in the eleven regions and the
-/// Netherlands' pack, rounded up, so that no real tile reaches it. A tile's bridges keep their railings in the tile's
-/// order while their pieces fit; from the first bridge whose railings would take the tile past it, the railings still
-/// to come are left out whole, and TileThings::railings_cut counts them.
-inline constexpr std::uint32_t most_tile_railing_pieces = 1U << 18U;
+/// memory (fuzz_stage_t ran out at 1.8 GB). Eight times the most any tile holds, rounded up to a power of two, so that
+/// no real tile reaches it: of the eleven regions' tiles (each region's cut, its windows as the phone builds them, and
+/// the L13 and L12 tiles its windows make), grachten's L12 tile 12/2103/1345 holds the most, 16,178 pieces of 315
+/// bridges (23 November 2026). A level's tile keeps each of its places' features once, so it holds at most sixteen
+/// times the densest window's, 7,533 (14/8415/5383): within the bound too. A tile's bridges keep their railings in
+/// the tile's order while their pieces fit; from the first bridge whose railings would take the tile past it, the
+/// railings still to come are left out whole, and TileThings::railings_cut counts them.
+inline constexpr std::uint32_t most_tile_railing_pieces = 1U << 17U;
 
 /// One thing: a piece of street furniture, or a railing's piece.
 struct Thing {
