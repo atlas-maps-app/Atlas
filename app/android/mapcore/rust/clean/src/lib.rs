@@ -92,6 +92,12 @@ mod runtime {
         let _ = unsafe { write(2, bytes.as_ptr(), bytes.len()) };
     }
 
+    /// Every panic of the library as the core links it comes here: one an index, a slice, an overflow check or a
+    /// call into core or alloc makes, and also a vector's capacity overflow and an allocation that fails (alloc's
+    /// handler panics where there is no standard library). Those two are placed in alloc's own file (for a capacity,
+    /// `…/library/alloc/src/raw_vec/mod.rs`; for an allocation, `…/alloc/src/alloc.rs`), so their message says the
+    /// library failed, not where in it (the tests show a panic's and a capacity's). It writes the message and aborts,
+    /// allocating nothing, so it can take an allocation's failure too.
     #[panic_handler]
     fn panic(info: &core::panic::PanicInfo) -> ! {
         let mut message = [0u8; crate::PANIC_MESSAGE];
@@ -477,5 +483,34 @@ mod tests {
         assert_eq!(out[n], 0);
         let n = panic_message(None, &mut out);
         assert_eq!(&out[..=n], b"atlas_clean: panic\0");
+    }
+
+    #[test]
+    fn a_capacity_overflow_says_alloc_s_file_as_a_phone_shows_it() {
+        // A vector's capacity overflow reaches the panic handler as any panic does, placed in alloc's own file, so the
+        // message a phone's crash report carries names that, not the crate's: printed here beside the panic's above.
+        // An allocation that fails does the same in the library as the core links it (alloc's handler panics where
+        // there is no standard library, in alloc/src/alloc.rs); a host test cannot show it, as the standard library's
+        // own handler aborts without a panic.
+        let this = std::thread::current().id();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let hook = std::panic::take_hook();
+        let into = std::sync::Arc::clone(&seen);
+        std::panic::set_hook(std::boxed::Box::new(move |info| {
+            if std::thread::current().id() == this {
+                *into.lock().unwrap() = info.location().map(|at| (std::string::String::from(at.file()), at.line()));
+            }
+        }));
+        let made = std::panic::catch_unwind(|| Vec::<u8>::with_capacity(usize::MAX).capacity());
+        std::panic::set_hook(hook);
+        assert!(made.is_err());
+        let (file, line) = seen.lock().unwrap().clone().unwrap();
+        let mut out = [0xFFu8; PANIC_MESSAGE];
+        let n = panic_message(Some((file.as_bytes(), line)), &mut out);
+        let message = core::str::from_utf8(&out[..n]).unwrap();
+        std::println!("abort message: {message}");
+        assert!(message.starts_with("atlas_clean: panic at "));
+        assert!(file.contains("library/alloc/src/"), "{file}");
+        assert!(!file.contains("mapcore/rust"), "{file}");
     }
 }

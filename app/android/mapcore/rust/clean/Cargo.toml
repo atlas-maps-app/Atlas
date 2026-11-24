@@ -18,14 +18,16 @@ std = []
 name = "footprints"
 required-features = ["std"]
 
-# Every place a panic can come from, named by clippy (CI's tidy job, .github/scripts/rust-lint.sh; a panic aborts the
-# core's process, src/lib.rs):
-# - the ones written as one (a panic, an unwrap, an expect, a todo): the library has none, and these hold it so. A
-#   test's are allowed (../clippy.toml).
-# - the ones that come unwritten: an index or a slice out of bounds, and an integer overflow (where the checks are on,
-#   as in the fuzz build) or a division by zero: clippy's indexing_slicing and arithmetic_side_effects name them, and
-#   CI's tidy job lists every one in the library, in its log and its summary, and holds their count to the one kept
-#   below.
+# Where a panic can come from in the library (a panic aborts the core's process, src/lib.rs), and what names it:
+# - one written as one (a panic, an unwrap, an expect, a todo): the library has none, and clippy holds it so (the
+#   lints below). A test's are allowed (../clippy.toml).
+# - an index or a slice out of bounds, and an integer overflow (where the checks are on, as in the fuzz build) or a
+#   division by zero, written as an operator: clippy's indexing_slicing and arithmetic_side_effects name each one,
+#   and CI's tidy job lists them in its log and its summary and holds their count to the one kept below
+#   (.github/scripts/rust-lint.sh).
+# - what no lint names: a call into core or alloc that panics on its own, such as Vec::remove past the end (two in
+#   src/clean.rs) and Iterator::sum that overflows under the fuzz build's checks (the i128 areas in src/arrange.rs and
+#   src/clean.rs); a vector's capacity overflow; and an allocation that fails, which reaches the panic handler too.
 [lints.clippy]
 panic = "deny"
 unwrap_used = "deny"
