@@ -453,8 +453,8 @@ object CountryTiles {
             for (f in failed) log("not built, left out: $f")
             if (uneasy.isNotEmpty()) {
                 log(
-                    "the cleaning left counts that should be 0 in ${uneasy.size} windows: " + uneasy.take(20).joinToString("; ") +
-                        if (uneasy.size > 20) "; and ${uneasy.size - 20} more" else "",
+                    // gates-locate2 alone, never landed: every window named, for the locating step
+                    "the cleaning left counts that should be 0 in ${uneasy.size} windows: " + uneasy.joinToString("; "),
                 )
             }
             // the gate: past the windows a frame draws stage T leaves a tile's walls without them (the run's numbers first)
