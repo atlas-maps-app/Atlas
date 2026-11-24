@@ -5275,3 +5275,107 @@ TEST_CASE("the sun's scenes take no part made in another frame: a lane whose pac
                         kept.stats.parts_made, whole.stats.scenes, whole.stats.parts_made));
     (void)session->take_messages();
 }
+
+TEST_CASE("the sun's scenes take a part at the level it was made at alone: a cell's pack gone and come back into its "
+          "lane, its tile built again at a coarser level from farther off, is made again there, its bits those of "
+          "scenes built whole") {
+    // Two of the corner's windows (tests/load/corner.hpp): in the north-east one a round tower, a ring of 32 points
+    // 15 m about, whose points the ladder's coarser tolerances leave out (0.6 m: every other one, so its walls are
+    // fewer), and in the south-east one a building. The south-east cell active and the north-east's beside it from
+    // 300 m (the bands' level 1); the north-east window gone, and its tile with it once it has not been drawn for the
+    // world's forget_seconds; then from 1,200 m (level 6) that window come again, its cell's pack taking the lane it
+    // had (the first one no pack drawn holds, empty since), whose parts are its last scene's on the same ground. Its
+    // tile is built at level 6 now, so the part made at level 1 is not taken.
+    const auto made = test::corner_windows(
+        std::filesystem::path(ATLAS_TEST_SCRATCH) / "world-corner-level",
+        [](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
+            if (window == 1) {
+                std::vector<std::array<double, 2>> ring;
+                for (int k = 0; k <= 32; ++k) {
+                    const double a = pymath::radians(360.0 * (k % 32) / 32.0);
+                    ring.push_back({35.0 + (15.0 * pymath::cos(a)), 40.0 + (15.0 * pymath::sin(a))});
+                }
+                return test::made_way(id, R"("building":"yes","building:levels":"4")", ring, c);
+            }
+            if (window == 3) {
+                return test::made_building(id, R"("building":"yes","building:levels":"4")", 30.0, -80.0, 60.0, -50.0,
+                                           c);
+            }
+            return {};
+        });
+    ATLAS_REQUIRE(made.has_value(), made.error());
+    const test::CornerWindows& m = *made;
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    const auto above = [&m](double distance) {
+        style::CameraState c = home();
+        const std::array<double, 2> target = m.at(30.0, -10.0);
+        c.latitude = target[0];
+        c.longitude = target[1];
+        c.bearing = 0.0;
+        c.pitch = 0.0;
+        c.distance = distance;
+        c.flags = 0;
+        return c;
+    };
+    const style::ThemeBlock afternoon = sun_at(230.0, 22.0);
+    const tiles::TileKey tower = m.places[1];
+    struct Run {
+        HeldSteps steps;
+        bool let_go = false; // the north-east tile gone while its window was
+        scene::SunStats stats;
+    };
+    const auto run = [&](bool keep, Run& out) {
+        auto made_world = corner_world(*session, *cache, keep);
+        ATLAS_REQUIRE(made_world.has_value(), made_world.error());
+        CornerWorld& cw = *made_world;
+        scene::World& w = *cw.world;
+        const auto join = [&w, &m](std::size_t i) {
+            const auto joined = w.store().add(
+                {.id = m.windows[i].first, .kind = tiles::PackKind::window, .path = m.windows[i].second.string()});
+            ATLAS_REQUIRE(joined.has_value(), tiles::describe(joined.error()));
+        };
+        join(3);
+        join(1);
+        w.set_active(m.windows[3].first);
+        cw.settle(above(300.0), afternoon);
+        out.steps.push_back(cw.bits());
+        CHECK(w.store().remove(m.windows[1].first));
+        cw.settle(above(300.0), afternoon);
+        *cw.now = cw.now->load() + scene::WorldOptions{}.forget_seconds + 1.0;
+        cw.settle(above(300.0), afternoon);
+        out.let_go = w.residency().find(tower, m.cells[1]) == nullptr;
+        out.steps.push_back(cw.bits());
+        join(1);
+        cw.settle(above(1'200.0), afternoon);
+        out.steps.push_back(cw.bits());
+        out.stats = w.sun()->stats();
+    };
+
+    Run kept;
+    Run whole;
+    run(true, kept);
+    run(false, whole);
+    const std::size_t tiles = hold_steps(kept.steps, whole.steps);
+    // the north-east tile let go of, then built at another level, with other samples (fewer walls)
+    CHECK(whole.let_go);
+    CHECK(kept.let_go);
+    ATLAS_REQUIRE(whole.steps.size() == 3);
+    CHECK(whole.steps[0].contains(tower.packed()));
+    CHECK(whole.steps[2].contains(tower.packed()));
+    if (whole.steps[0].contains(tower.packed()) && whole.steps[2].contains(tower.packed())) {
+        CHECK(whole.steps[2].at(tower.packed()).count != whole.steps[0].at(tower.packed()).count);
+    }
+    CHECK(kept.stats.failed == 0);
+    CHECK(whole.stats.failed == 0);
+    MESSAGE(std::format("{} steps, {} resident tiles' bits equal over them; the tower's tile {} samples from 300 m, {} "
+                        "from 1,200 m; kept: {} scenes, {} parts kept, {} made; whole: {} scenes, {} parts made",
+                        whole.steps.size(), tiles,
+                        whole.steps[0].contains(tower.packed()) ? whole.steps[0].at(tower.packed()).count : 0U,
+                        whole.steps[2].contains(tower.packed()) ? whole.steps[2].at(tower.packed()).count : 0U,
+                        kept.stats.scenes, kept.stats.parts_kept, kept.stats.parts_made, whole.stats.scenes,
+                        whole.stats.parts_made));
+    (void)session->take_messages();
+}
