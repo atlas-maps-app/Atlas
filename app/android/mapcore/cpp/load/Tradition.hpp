@@ -150,7 +150,8 @@ public:
     std::vector<std::string_view> window_kinds;
     std::optional<std::vector<std::string_view>> window_materials;
     std::optional<Shutters> shutters;
-    /// The timber boards and the base band (`materials` read), the chimneys (`share`, `kind` read), or null.
+    /// The timber boards and the base band (`materials` read, and what the pack's style reads of them asked for: the
+    /// boards' `spacing` and `corner`, the band's `h` and `colour`), the chimneys (`share`, `kind` read), or null.
     tiles::Value boards;
     std::vector<std::string_view> board_materials;
     tiles::Value base_band;

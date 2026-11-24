@@ -1,7 +1,10 @@
 // A building tradition, typed (load/Tradition.hpp).
 #include "load/Tradition.hpp"
 
+#include "tiles/Style.hpp"
+
 #include <array>
+#include <cmath>
 #include <format>
 #include <limits>
 
@@ -41,6 +44,20 @@ struct TraditionReader {
         const auto n = v.number();
         if (!n) return fail(at, "not a number");
         out = *n;
+        return true;
+    }
+
+    /// A finite number, as the pack's style reads one (tiles/Style.cpp).
+    bool finite(const Value& v, const std::string& at) {
+        const auto n = v.number();
+        if (!n || !std::isfinite(*n)) return fail(at, "not a finite number");
+        return true;
+    }
+
+    /// A colour, as the pack's style reads one (`#RRGGBB` or `#RGB`, tiles::style_rgb).
+    bool colour(const Value& v, const std::string& at) {
+        const auto s = v.string();
+        if (!s || !tiles::style_rgb(*s)) return fail(at, "not a colour");
         return true;
     }
 
@@ -329,13 +346,23 @@ struct TraditionReader {
             if (!need(shutters, "colours", "shutters", c) || !strings(c, "shutters.colours", s.colours, true))
                 return false;
         }
-        const auto materials = [&](std::string_view name, Value& slot, std::vector<std::string_view>& list) {
+        // A kit's detail, handed on whole to the pack, whose style reads a number and a colour of it (tiles/Style.cpp's
+        // kit: the boards' spacing and corner, the base band's h and colour) and refuses the pack without them: each
+        // asked for here, so such a tradition is refused at its build, by the field's name, not on a phone at open.
+        const auto kit_detail = [&](std::string_view name, Value& slot, std::vector<std::string_view>& list,
+                                    std::string_view number_key, std::string_view colour_key) {
             if (!detail(root, name, slot)) return false;
             if (slot.is_null()) return true;
+            const std::string at(name);
             Value m;
-            return need(slot, "materials", std::string(name), m) && strings(m, path(name, "materials"), list, false);
+            Value n;
+            Value c;
+            return need(slot, "materials", at, m) && strings(m, path(name, "materials"), list, false) &&
+                   need(slot, number_key, at, n) && finite(n, path(name, number_key)) &&
+                   need(slot, colour_key, at, c) && colour(c, path(name, colour_key));
         };
-        if (!materials("boards", t.boards, t.board_materials) || !materials("base_band", t.base_band, t.band_materials))
+        if (!kit_detail("boards", t.boards, t.board_materials, "spacing", "corner") ||
+            !kit_detail("base_band", t.base_band, t.band_materials, "h", "colour"))
             return false;
         if (!detail(root, "chimneys", t.chimneys)) return false;
         if (!t.chimneys.is_null()) {

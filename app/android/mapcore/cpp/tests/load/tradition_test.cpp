@@ -144,3 +144,34 @@ TEST_CASE("tradition: what a file cannot hold, refused by its path") {
     REQUIRE_FALSE(bad.has_value());
     CHECK(bad.error().json.has_value());
 }
+
+TEST_CASE("tradition: the boards and the base band without what the pack's style reads of them, refused by the field") {
+    // The pack's style (tiles/Style.cpp's kit) reads the boards' spacing and corner and the base band's h and colour,
+    // and refuses a pack without one: the tradition is refused first, at the pack's build, naming the field.
+    const auto with = [](std::string_view details) {
+        std::string t(minimal);
+        constexpr std::string_view at = R"("floor_h": 3.0,)";
+        t.replace(t.find(at), at.size(), std::string(at) + " " + std::string(details) + ",");
+        const auto read_back = read(t);
+        return read_back ? std::string("read")
+                         : std::string(read_back.error().at) + ": " + std::string(read_back.error().what);
+    };
+    // as no_timber's and gb_terrace's have them
+    CHECK(with(R"("boards": {"materials": ["wood"], "spacing": 0.2, "corner": "#F1EEE6"})") == "read");
+    CHECK(with(R"("base_band": {"materials": ["brick"], "h": 3.3, "colour": "#ECE6DA"})") == "read");
+    // each of the four left out
+    CHECK(with(R"("boards": {"materials": ["wood"], "corner": "#F1EEE6"})") == "boards.spacing: missing");
+    CHECK(with(R"("boards": {"materials": ["wood"], "spacing": 0.2})") == "boards.corner: missing");
+    CHECK(with(R"("base_band": {"materials": ["brick"], "colour": "#ECE6DA"})") == "base_band.h: missing");
+    CHECK(with(R"("base_band": {"materials": ["brick"], "h": 3.3})") == "base_band.colour: missing");
+    // read as the style reads them: a finite number, a colour
+    CHECK(with(R"("boards": {"materials": ["wood"], "spacing": "0.2", "corner": "#F1EEE6"})") ==
+          "boards.spacing: not a finite number");
+    CHECK(with(R"("base_band": {"materials": ["brick"], "h": 1e999, "colour": "#ECE6DA"})") ==
+          "base_band.h: not a finite number");
+    CHECK(with(R"("boards": {"materials": ["wood"], "spacing": 0.2, "corner": "white"})") ==
+          "boards.corner: not a colour");
+    CHECK(with(R"("base_band": {"materials": ["brick"], "h": 3.3, "colour": 12})") == "base_band.colour: not a colour");
+    // a detail Python reads as none asks for nothing
+    CHECK(with(R"("boards": null, "base_band": null)") == "read");
+}
