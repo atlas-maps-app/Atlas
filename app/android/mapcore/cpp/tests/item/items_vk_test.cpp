@@ -183,9 +183,9 @@ struct Redrawn {
 constexpr std::byte record_sentinel{0xA5};
 
 [[nodiscard]] std::optional<Redrawn> redraw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th,
-                                            bool whole) {
+                                            bool whole, bool fill = true) {
     s.items->use_whole(whole);
-    s.items->fill_records(record_sentinel);
+    if (fill) s.items->fill_records(record_sentinel);
     s.builder->set_inputs(
         {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
     auto report = s.renderer->draw(0);
@@ -310,6 +310,18 @@ std::optional<passes::Items::Counts> check_frames(const style::CameraState& cam,
                 // the same moment again through the kinds' stages, then through the stage before the split, each
                 // frame's lists filled with the sentinel first: the same records, byte for byte, none of them left as
                 // the sentinel, and the same pixels; a dispatch a kind with jobs where the whole stage was one
+                {
+                    // PLANT: first as the test did before budgetcheck, without the sentinel
+                    const auto split0 = redraw(s, c, th, false, false);
+                    const auto whole0 = redraw(s, c, th, true, false);
+                    ATLAS_REQUIRE_OR_RETURN(std::nullopt, split0.has_value() && whole0.has_value());
+                    MESSAGE(name << ": PLANT without the sentinel: faces "
+                                 << (split0->records.faces == whole0->records.faces ? "agree" : "differ") << ", parts "
+                                 << (split0->records.parts == whole0->records.parts ? "agree" : "differ")
+                                 << ", translucent "
+                                 << (split0->records.sides == whole0->records.sides ? "agree" : "differ") << ", pixels "
+                                 << (split0->pixels == whole0->pixels ? "agree" : "differ"));
+                }
                 const auto split = redraw(s, c, th, false);
                 const auto whole = redraw(s, c, th, true);
                 ATLAS_REQUIRE_OR_RETURN(std::nullopt, split.has_value() && whole.has_value());

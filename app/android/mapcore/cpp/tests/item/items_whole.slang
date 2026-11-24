@@ -17,6 +17,10 @@ void items_cs(uint3 group : SV_GroupID, uint3 thread : SV_GroupThreadID) {
                          item_jobs[at + 4u]);
     ItemWords w = item_words(points_heap[j.item], points_heap[j.item + 1u], points_heap[j.item + 2u]);
     uint kind = j.flags & ITEM_JOB_KIND;
+    // PLANT (budgetcheck-plant, never on budgetcheck): the towers taken out, their records left alone
+    if (kind == ITEM_TOWER) {
+        return;
+    }
     // every record of the job's starts empty
     uint faces = item_face_count(kind, uint(w.extra));
     for (uint i = 0u; i < faces; ++i) {
