@@ -338,6 +338,9 @@ if(ATLAS_TESTS)
         ATLAS_STYLE_DIR="${ATLAS_MAPCORE_DIR}/style" ATLAS_TESTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     add_executable(atlas_tests ${_test_sources} ${ATLAS_EXTRA_TEST_SOURCES} ${_core_objects})
     target_link_libraries(atlas_tests PRIVATE atlas_core_requirements atlas_doctest)
+    # MEASURE (budgetcheck-measure, never to land): ci-builds.md's sizes, in each host job's build log
+    add_custom_command(TARGET atlas_tests POST_BUILD COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/cmake/measure_size.sh"
+                       "$<TARGET_FILE:atlas_tests>" "${CMAKE_BINARY_DIR}" VERBATIM)
     add_dependencies(atlas_tests atlas_core_shaders)
     if(_test_vulkan_sources)
         atlas_vulkan_objects(atlas_tests_vulkan ${_test_vulkan_sources})
