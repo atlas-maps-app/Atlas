@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/Doors.hpp"
+#include "geometry/Seams.hpp"
 #include "geometry/StreetWall.hpp"
 #include "geometry/Trees.hpp"
 #include "tiles/layers/Buildings.hpp"
@@ -113,6 +114,7 @@ TileShopfronts build_shopfronts(const ShopfrontInput& in) {
     for (std::uint32_t i = 0; i < buildings->count; ++i)
         building_of.emplace(buildings->integer(tl::building::index, i), i);
     std::vector<V2> ring;
+    std::vector<std::uint8_t> seam;
     // each distinct opening_hours once
     std::unordered_map<std::string, std::uint32_t> hours_at;
     const auto hours_of = [&](std::uint32_t i) {
@@ -175,7 +177,8 @@ TileShopfronts build_shopfronts(const ShopfrontInput& in) {
             s.category == ShopCategory::food && seats(things->string(tl::thing::tag_outdoor_seating, i).value_or(""));
         // its items, each cut at its node and filed in its building's cell: the board as a door's (its building's
         // centroid at half its height, less 0.03), its blade and its tables at their own points
-        const V2 c = centroid(ring);
+        seams_at(r, seam);
+        const V2 c = corner_mean(ring, seam);
         const double h = buildings->decimal(tl::building::h, at->second).value_or(0.0);
         const std::uint8_t cell = buildings->cell_of(at->second);
         const std::uint64_t owner = scene::owner_key(owner_node, static_cast<std::uint64_t>(s.id));

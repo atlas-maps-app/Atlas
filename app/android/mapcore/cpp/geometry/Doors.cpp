@@ -2,6 +2,7 @@
 
 #include "base/pymath/PyMath.hpp"
 #include "geometry/RoofShapes.hpp"
+#include "geometry/Seams.hpp"
 #include "geometry/StreetWall.hpp"
 #include "geometry/Trees.hpp"
 #include "tiles/layers/Buildings.hpp"
@@ -37,6 +38,7 @@ TileDoors build_doors(const DoorInput& in) {
     for (std::uint32_t i = 0; i < buildings->count; ++i)
         building_of.emplace(buildings->integer(tl::building::index, i), i);
     std::vector<V2> ring;
+    std::vector<std::uint8_t> seam;
     for (std::uint32_t i = 0; i < things->count; ++i) {
         // facade_details: an address (`num`), not a business (`biz`: a place style other than a service's)
         if (!things->boolean(tl::thing::door, i).value_or(false)) continue;
@@ -69,7 +71,9 @@ TileDoors build_doors(const DoorInput& in) {
         d.number = things->nullable_integer(tl::thing::door_number, i);
         // its item: cb = cam.cam((cx, b['h'] / 2, cz)), depth = cb[2] - 0.03; no least depth (facade_details' items
         // join the gather's after its cut), the radius cut at the node (`far(n['x'], n['z'])`)
-        const V2 c = centroid(ring);
+        // (its building's point: geometry::corner_mean, as its building's item has it)
+        seams_at(r, seam);
+        const V2 c = corner_mean(ring, seam);
         const double h = buildings->decimal(tl::building::h, at->second).value_or(0.0);
         const double reach = pymath::hypot(d.qx - c.x, d.qz - c.z) + pymath::fabs(h / 2) + door_reach;
         out.items.push_back(

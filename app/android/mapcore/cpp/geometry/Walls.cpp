@@ -947,8 +947,8 @@ void walk(const BuildingInput& in, const Records& records, const tl::Layer* var,
                 }
             }
             // the item: Amsterdam.gatherItems' sort point (the footprint's centroid at h / 2, a part's between its base
-            // and its top, with its offset), its radius cut at the centroid
-            const V2 c = centroid(bl.poly);
+            // and its top, with its offset), its radius cut at the centroid: its corners' mean, a seam's ends once
+            const V2 c = corner_mean(bl.poly, bl.seam);
             const double hv = bl.v.h != 0.0 ? bl.v.h : 0.0;
             const double sy = source == Source::building ? hv / 2 : (bl.v.min + hv) / 2;
             const double offset = source == Source::building ? 0.0 : -(0.01 * bl.v.min);
@@ -1136,7 +1136,7 @@ std::optional<TileBuildings> build_house(const BuildingInput& in, std::int64_t i
             near_slots = Builder::slot(b.near_slot);
             far_slots = Builder::slot(b.far_slot);
         }
-        const V2 c = centroid(bl.poly);
+        const V2 c = corner_mean(bl.poly, bl.seam);
         BuildingItem item{.spec = {.x = c.x,
                                    .y = bl.h / 2,
                                    .z = c.z,

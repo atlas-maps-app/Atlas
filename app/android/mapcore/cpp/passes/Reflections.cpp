@@ -544,7 +544,7 @@ void prepare_reflections(geo::GroundTile& g) {
         const double y0 = m.boat ? wy + 0.3 : m.min;
         const double h = m.boat ? (m.h + wy) + 0.3 : m.h;
         const double top = h - m.rh;
-        const geo::V2 c = geo::centroid(poly);
+        const geo::V2 c = geo::corner_mean(poly, m.off); // as its building's item: a seam's ends once
         std::array<double, 4> box{0, 0, 0, 0};
         for (std::size_t i = 0; i < poly.size(); ++i) {
             const geo::V2& q = poly[i];

@@ -1286,7 +1286,9 @@ private:
     /// first corner's index in the ring; the first of the least score.
     [[nodiscard]] std::optional<std::uint32_t> street_wall(const Building& b, double x, double z) {
         const std::vector<V2>& poly = b.poly;
-        const V2 centre = geometry::centroid(poly);
+        // which side of a wall is the street's: the ring's turn says it for every edge, a courtyard's too. (The
+        // renders took the side away from the ring's corner mean, which a courtyard's walls and a bend's face.)
+        const double turn = geometry::signed_area(poly) < 0 ? -1.0 : 1.0;
         std::optional<std::uint32_t> best;
         double least = 0.0;
         const std::size_t n = poly.size();
@@ -1297,15 +1299,9 @@ private:
             const V2 c = poly[(i + 1) % n];
             const std::optional<geometry::StreetWall> w = geometry::street_wall_at(a, c, x, z);
             if (!w) continue;
-            // its normal outward, by the centroid
-            double nx = w->uz / w->length;
-            double nz = -w->ux / w->length;
-            const double mx = (a.x + c.x) / 2;
-            const double mz = (a.z + c.z) / 2;
-            if ((nx * (mx - centre.x)) + (nz * (mz - centre.z)) < 0) {
-                nx = -nx;
-                nz = -nz;
-            }
+            // its normal outward: to the right of a ring that turns with a positive area
+            const double nx = turn * w->uz / w->length;
+            const double nz = -turn * w->ux / w->length;
             const double out_d = road_dist(w->qx + (nx * 3.5), w->qz + (nz * 3.5));
             const double score =
                 pymath::hypot(w->qx - x, w->qz - z) + (1.5 * pymath::min(out_d, 25.0)) + (w->length < 2.5 ? 40.0 : 0.0);
