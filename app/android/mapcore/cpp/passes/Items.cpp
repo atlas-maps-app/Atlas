@@ -944,6 +944,15 @@ void Items::update(const frame::FrameState& state) {
         std::memcpy(fades_[slot].bytes().data(), fade_words_.data(), fade_words_.size() * sizeof(std::uint32_t));
         fades_[slot].flush();
     }
+#if defined(ATLAS_TESTS)
+    if (testing_.readable && sentinel_) {
+        // the tests' (fill_records): every record this frame's stages are to write starts as the sentinel
+        for (const gpu::Buffer* list : {&faces_[slot], &parts_[slot], &sides_[slot]}) {
+            std::ranges::fill(list->bytes(), *sentinel_);
+            list->flush();
+        }
+    }
+#endif
     slot_ = slot;
     counts_ = {.jobs = jobs, .masts = masts, .faces = faces, .parts = parts, .sides = sides, .kinds = kinds};
 }

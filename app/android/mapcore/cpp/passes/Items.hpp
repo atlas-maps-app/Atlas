@@ -29,6 +29,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -152,6 +153,10 @@ public:
     };
     void set_testing(Testing testing) { testing_ = std::move(testing); }
     void use_whole(bool on) noexcept { use_whole_ = on; }
+    /// While `sentinel` is set (Testing::readable), each frame fills its slot's records' lists with that byte before
+    /// its stages write them, so records() shows a record no stage wrote as the sentinel, not as what the slot's frame
+    /// before left there.
+    void fill_records(std::optional<std::byte> sentinel) noexcept { sentinel_ = sentinel; }
     /// The tests': the records the last frame's stages wrote, the faces', the opaque parts' and the translucent ones'
     /// as their lists hold them (Testing::readable; read once that frame has finished).
     struct Records {
@@ -236,6 +241,7 @@ private:
     vk::raii::Pipeline whole_{nullptr};
     Testing testing_;
     bool use_whole_ = false;
+    std::optional<std::byte> sentinel_;
 #endif
 };
 

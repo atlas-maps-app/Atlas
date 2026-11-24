@@ -16,8 +16,9 @@
 // blend: lavapipe blends in fixed point); the samples averaged as the composite averages them. The twin's elements are
 // held to the port's by L1; here its records are the GPU's. And each frame drawn again at its moment, once through the
 // kinds' stages and once through the stage before they were split (tests/item/items_whole.slang's items_cs, the bytes
-// the user's phone ran to alpha 38): the records the two write are the same, byte for byte, and so are their pixels
-// (the audit of 17 November, change 7).
+// the user's phone ran to alpha 38), the records' lists filled with a sentinel before each: the records the two write
+// are the same, byte for byte, as many as the counts, none left as the sentinel, and so are their pixels (the audit of
+// 17 November, change 7; the review of 23 November, finding 1).
 #if !defined(__ANDROID__)
 
 #include "base/arena.hpp"
@@ -176,13 +177,20 @@ struct Redrawn {
     double offscreen_ms = 0;
 };
 
+/// The byte every record of a redrawn frame's lists starts as (Items::fill_records): frames N and N + 2 share the
+/// pass's slot, so without it a record one stage leaves alone would keep what the other stage wrote there at the same
+/// moment two frames before.
+constexpr std::byte record_sentinel{0xA5};
+
 [[nodiscard]] std::optional<Redrawn> redraw(Scene& s, const style::CameraState& cam, const style::ThemeBlock& th,
                                             bool whole) {
     s.items->use_whole(whole);
+    s.items->fill_records(record_sentinel);
     s.builder->set_inputs(
         {.camera = cam, .theme = th, .seconds = s.now, .mode = frame::Mode::structural, .scene = s.world.get()});
     auto report = s.renderer->draw(0);
     s.renderer->drain();
+    s.items->fill_records(std::nullopt);
     s.items->use_whole(false);
     if (!report) {
         FAIL("a frame failed: " << report.error().text());
@@ -205,6 +213,16 @@ struct Redrawn {
     const gpu::GpuTimes& t = s.renderer->frames().last_times();
     if (t.valid && t.frame == report->number) r.offscreen_ms = t.offscreen_ns / 1e6;
     return r;
+}
+
+/// The records of `list` no stage wrote: those still the sentinel, byte for byte.
+[[nodiscard]] std::size_t sentinels(std::span<const std::byte> list) {
+    constexpr std::size_t record = std::size_t{sh::ITEM_RECORD_VECTORS} * 16;
+    std::size_t n = 0;
+    for (std::size_t at = 0; at + record <= list.size(); at += record) {
+        if (std::ranges::all_of(list.subspan(at, record), [](std::byte b) { return b == record_sentinel; })) ++n;
+    }
+    return n;
 }
 
 /// "towers 1, cranes 1, ...": a frame's dispatches by kind; their number in all.
@@ -289,9 +307,9 @@ std::optional<passes::Items::Counts> check_frames(const style::CameraState& cam,
                 if (!first) first = counts;
                 CHECK_MESSAGE(r.wrong == 0, name << ": " << r.first);
                 CHECK(static_cast<double>(r.boundary + r.tied) <= 0.01 * static_cast<double>(r.pixels));
-                // the same moment again through the kinds' stages, then through the stage before the split: the same
-                // records, byte for byte, and the same pixels; a dispatch a kind with jobs where the whole stage was
-                // one
+                // the same moment again through the kinds' stages, then through the stage before the split, each
+                // frame's lists filled with the sentinel first: the same records, byte for byte, none of them left as
+                // the sentinel, and the same pixels; a dispatch a kind with jobs where the whole stage was one
                 const auto split = redraw(s, c, th, false);
                 const auto whole = redraw(s, c, th, true);
                 ATLAS_REQUIRE_OR_RETURN(std::nullopt, split.has_value() && whole.has_value());
@@ -315,6 +333,16 @@ std::optional<passes::Items::Counts> check_frames(const style::CameraState& cam,
                 CHECK(split_n == kinds);
                 CHECK(whole_n == (again.jobs > again.masts ? 1U : 0U) + (again.masts > 0 ? 1U : 0U));
                 CHECK(split->records.faces.size() == std::size_t{again.faces} * sh::ITEM_RECORD_VECTORS * 16);
+                CHECK(split->records.parts.size() == std::size_t{again.parts} * sh::ITEM_RECORD_VECTORS * 16);
+                CHECK(split->records.sides.size() == std::size_t{again.sides} * sh::ITEM_RECORD_VECTORS * 16);
+                for (const Redrawn* redrawn : {&*split, &*whole}) {
+                    const char* stage = redrawn == &*split ? "the kinds' stages" : "the whole stage";
+                    const passes::Items::Records& written = redrawn->records;
+                    CHECK_MESSAGE(sentinels(written.faces) == 0, name << ": " << stage << " left faces unwritten");
+                    CHECK_MESSAGE(sentinels(written.parts) == 0, name << ": " << stage << " left parts unwritten");
+                    CHECK_MESSAGE(sentinels(written.sides) == 0,
+                                  name << ": " << stage << " left translucent records unwritten");
+                }
                 for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, name << ": " << m);
                 s.renderer.reset();
             }
