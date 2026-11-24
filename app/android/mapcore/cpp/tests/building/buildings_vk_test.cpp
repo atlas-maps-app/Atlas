@@ -35,6 +35,7 @@
 #include "gpu/Frames.hpp"
 #include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "load/Window.hpp"
 #include "passes/Composite.hpp"
 #include "passes/House.hpp"
 #include "passes/Walls.hpp"
@@ -47,11 +48,15 @@
 #include "style/Palette.hpp"
 #include "style/Theme.hpp"
 #include "sun/Buckets.hpp"
+#include "tests/base/require.hpp"
 #include "tests/building/fixture.hpp"
 #include "tests/fx/stroke_area.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
+#include "tests/load/seamed_document.hpp"
+#include "tests/load/westerkerk.hpp"
 #include "tests/tiles/support.hpp"
 #include "tiles/Container.hpp"
+#include "tiles/Grid.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/layers/Buildings.hpp"
 #include "twin/Twin.hpp"
@@ -70,12 +75,15 @@
 #include <ctime>
 #include <filesystem>
 #include <format>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -3108,6 +3116,78 @@ TEST_CASE("buildings: a guessed roof's shape drawn as the plain box in its place
     }
     std::error_code ignored;
     std::filesystem::remove(path, ignored);
+}
+
+namespace {
+
+/// A window built by the core's stage P as the phone builds one, from Overpass's answer `data` for `key`, its pack
+/// written to the tests' scratch folder under `name` ("" where it does not build).
+[[nodiscard]] std::string window_pack(std::string_view data, const tiles::TileKey& key, const std::string& name) {
+    const auto built = load::build_window(std::as_bytes(std::span(data.data(), data.size())), key, load::place_of(key));
+    ATLAS_REQUIRE_OR_RETURN(std::string(), built.has_value(), built.error().what);
+    const std::filesystem::path folder = std::filesystem::path(ATLAS_TEST_SCRATCH) / "buildings-test-seams";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / (name + ".atlas");
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(built->pack.data()), // NOLINT: the pack's bytes as chars
+              static_cast<std::streamsize>(built->pack.size()));
+    return file.string();
+}
+
+} // namespace
+
+TEST_CASE("buildings: footprints with seams, as the core's own stage P cuts them, drawn on the host's Vulkan, pixel "
+          "for pixel the exact shapes of their twin: a block round its courtyards, a church cut by its parts and a "
+          "houseboat (the Westerkerk's pack)") {
+    // the pack the app's own is (tests/load/westerkerk.hpp): its buildings cleaned, their seams marked in the tile
+    const std::string path = test::westerkerk_core_pack();
+    ATLAS_REQUIRE(!path.empty(), "the Westerkerk's pack is made");
+    const std::array<PackFile, 1> packs{PackFile{.id = "amsterdam", .path = path}};
+    const double d = 1080.0 / 412.0;
+    // relation 3580415, a block round two courtyards: a seam to each, its flat top stroked along its walls alone
+    check_frames(camera(52.37628, 4.88611, 30.0, 50.0, 230.0, 1080, 2400, d), "seams, a courtyard block", packs,
+                 sunny(), 50);
+    // way 99205257, the Westerkerk: its outline less its parts, in pieces
+    check_frames(camera(52.37449, 4.88401, 30.0, 50.0, 260.0, 1080, 2400, d), "seams, a church cut by its parts", packs,
+                 sunny(), 50);
+    // way 266561179, a houseboat on the Prinsengracht: a ring without a seam, a hull and a cabin on every edge
+    check_frames(camera(52.37632, 4.88444, 30.0, 50.0, 160.0, 1080, 2400, d), "seams, a houseboat", packs, sunny(), 20);
+}
+
+TEST_CASE("buildings: a ring of two pieces, and a ring whose pieces a band's simplified ring keeps, drawn from windows "
+          "the core builds, pixel for pixel the exact shapes of their twin") {
+    const double d = 1080.0 / 412.0;
+    {
+        // the document made by hand (tests/load/seamed_document.hpp), at its outline that a part cuts in two: 145 m
+        // east and 15 m north of its origin, close up (the ring whole)
+        const std::string path = window_pack(test::seamed::document(), test::seamed::window(), "by-hand");
+        ATLAS_REQUIRE(!path.empty());
+        const std::array<PackFile, 1> packs{PackFile{.id = "by-hand", .path = path}};
+        const double lat = test::seamed::lat0 + (15.0 * test::seamed::north);
+        const double lon = test::seamed::lon0 + (145.0 * test::seamed::east);
+        check_frames(camera(lat, lon, 20.0, 50.0, 230.0, 1080, 2400, d), "seams, a ring of two pieces", packs, sunny(),
+                     3);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    {
+        // the Pontsteiger (relation 13123696 with its part, way 995816141; tests/load/data/pontsteiger.json, the
+        // Netherlands' data of 18 November 2026), one of the rings whose pieces the bands read otherwise while stage T
+        // found a ring's seams again by its geometry (the engine audit's count 3): from 300 m, the live map's first
+        // band, its ring simplified at 0.15 m
+        const std::string file = std::string(ATLAS_TESTS_DIR) + "/load/data/pontsteiger.json";
+        std::ifstream in(file, std::ios::binary);
+        const std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        ATLAS_REQUIRE(!data.empty(), file);
+        const tiles::TileKey key = tiles::tile_of(14, 523'931'800, 48'864'100);
+        const std::string path = window_pack(data, key, "pontsteiger");
+        ATLAS_REQUIRE(!path.empty());
+        const std::array<PackFile, 1> packs{PackFile{.id = "pontsteiger", .path = path}};
+        check_frames(camera(52.39318, 4.88641, 30.0, 50.0, 300.0, 1080, 2400, d), "seams, a ring at a band", packs,
+                     sunny(), 2);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
 }
 
 #endif
