@@ -20,6 +20,10 @@ class CutValidityTest {
     fun theCanalRingHoldsNothingThatCannotBeThere() {
         val grachten = AnchorCases.grachten()
         if (grachten == null) {
+            // where the job fetched it (android.yml's mapcorecheck: -Datlas.packs.require=true), its absence is a failure
+            check(System.getProperty("atlas.packs.require") != "true") {
+                "the canal ring's pack is not at ${AnchorCases.grachtenPack.path}, and this run's packs must be there (atlas.packs.require)"
+            }
             println("cut: the canal ring's pack is not on this machine")
             return
         }

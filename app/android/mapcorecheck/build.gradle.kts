@@ -317,6 +317,9 @@ tasks.test {
     providers.systemProperty("atlas.windows").orNull?.let { systemProperty("atlas.windows", it) }
     // and where load/ZooWoodsTest keeps the windows about Artis it builds with and without their woods
     providers.systemProperty("atlas.zoowoods.out").orNull?.let { systemProperty("atlas.zoowoods.out", it) }
+    // whether the element packs this run's tests read must be there (load/CutValidityTest's canal ring): a job that
+    // fetched them says so (android.yml's mapcorecheck), and a test then fails without its pack instead of leaving it out
+    providers.systemProperty("atlas.packs.require").orNull?.let { systemProperty("atlas.packs.require", it) }
 
     // The engine's references (MT/likeness): the report (each frame as a PNG, a proposal of their hashes) goes to
     // atlas.likeness.report; the platform they are held on and whether every frame must be drawn pass through.
