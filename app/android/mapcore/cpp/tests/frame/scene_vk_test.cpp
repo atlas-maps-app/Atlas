@@ -3402,6 +3402,7 @@ struct HeldBits {
                  .quays = {},
                  .reflections = {}};
     if (b.quays) {
+        out.quays.reserve(b.quays->size());
         for (const sun::QuayPiece& q : *b.quays) {
             out.quays.emplace_back(q.record, q.ax, q.az, q.bx, q.bz, q.sample, q.bands, q.columns);
         }
@@ -4907,6 +4908,7 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
     };
     const style::ThemeBlock afternoon = sun_at(220.0, 24.0);
     std::vector<Step> route;
+    route.reserve(9);
     for (int s = 0; s < 6; ++s) {
         route.push_back({.latitude = 52.3660 + (s * (250.0 / 111250.0)), .distance = 300.0, .theme = afternoon});
     }
@@ -5015,7 +5017,7 @@ struct CornerWorld {
     }
 
     /// Each drawn pack's resident tiles' bits, the active one's and its neighbour's (one at most here), by tile.
-    [[nodiscard]] std::map<std::uint64_t, HeldBits> bits() {
+    [[nodiscard]] std::map<std::uint64_t, HeldBits> bits() const {
         std::map<std::uint64_t, HeldBits> out;
         scene::World& w = *world;
         if (w.active() != nullptr) {
@@ -5291,6 +5293,7 @@ TEST_CASE("the sun's scenes take a part at the level it was made at alone: a cel
         [](std::size_t window, std::int64_t& id, const test::CornerWindows& c) -> std::string {
             if (window == 1) {
                 std::vector<std::array<double, 2>> ring;
+                ring.reserve(33);
                 for (int k = 0; k <= 32; ++k) {
                     const double a = pymath::radians(360.0 * (k % 32) / 32.0);
                     ring.push_back({35.0 + (15.0 * pymath::cos(a)), 40.0 + (15.0 * pymath::sin(a))});
