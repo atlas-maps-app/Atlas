@@ -149,6 +149,13 @@ fun AtlasMap(
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
+    // CI's hidden pass with the window kept (HiddenScript; MainActivity's atlas.vk.script, debug and bench builds)
+    LaunchedEffect(controller) {
+        if (MapEngine.script == HiddenScript.NAME) {
+            MapEngine.script = null
+            HiddenScript.run(controller, state)
+        }
+    }
     // The core (K11): what MapEngine.core says draws, the chrome's shapes over the map (K11b) told whether the core
     // frosts under them (it does on its SurfaceView, where its picture is the one seen).
     val coreState = MapEngine.core

@@ -936,6 +936,7 @@ map_phase() {
   adb exec-out screencap -p > "$OUT/map-swipe.png"
   hidden_check
   since_marker mapwarm | grep -E 'AtlasMap: (vk (first frame|map|tiles|config|path|surface|window|honest|swipe|hidden)|vk frame )' | sed 's/.*AtlasMap: //' > "$OUT/map.txt"
+  hidden_kept
   # Away from the core's tiles (its own cover, and the map's line) and back to its picture.
   vk_launch mapaway --es atlas.screen home --ez atlas.ci true --es atlas.vk.script away
   wait_line mapaway 420 "vk script done" || { echo "MAP FAILED: the away script did not finish within 420 s"; FAIL=1; }
@@ -985,41 +986,112 @@ map_phase() {
 # within HIDDEN_BACK_S seconds (60: where the surface went at the stop the core makes its pipelines again first, 9 s
 # and over 10 s on the emulator), the same process (no second `vk first frame`). Called in the map phase, after the
 # swipe. The two lines themselves have 30 s each: the render thread logs them, behind whatever it is at.
+# The app's pid now, or nothing where it has none.
+app_pid() { adb shell pidof $PKG | tr -d '\r' | awk '{print $1}'; }
+
+# The hidden phase (ENGINE.md's audit, B1) on the warm home: hidden_once under its launch's marker, and where the system
+# killed the cached process in the background meanwhile (its pid before and after: a new process is no return), once
+# more on a launch of its own; killed twice is red, as the phase could not run.
 hidden_check() {
-  local hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-60} frames back delay firsts surface i
+  hidden_once mapwarm && return
+  vk_launch maphidden --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true
+  wait_line maphidden 60 "vk first frame" || { echo "MAP FAILED: no 'vk first frame' within 60 s (maphidden)"; FAIL=1; return; }
+  vk_rest maphidden 4 60 || { echo "MAP FAILED: the home drew on for 60 s after its first frame (maphidden)"; FAIL=1; }
+  hidden_once maphidden && return
+  echo "MAP FAILED: the system killed the cached process in the background twice: the hidden phase could not run"
+  FAIL=1
+}
+
+# The home key, $HIDDEN_S s in the background, and back, since marker $1: no frame while hidden, the first frame back
+# within $HIDDEN_BACK_S s, no new start. 1 where the system killed the process meanwhile (nothing else checked).
+hidden_once() {
+  local m=$1 hidden=${HIDDEN_S:-75} wait=${HIDDEN_BACK_S:-60} frames back delay firsts surface i before after
+  before=$(app_pid)
   adb shell input keyevent KEYCODE_HOME
-  if ! wait_line mapwarm 30 "vk hidden: on"; then
+  if ! wait_line "$m" 30 "vk hidden: on"; then
     echo "MAP FAILED: no 'vk hidden: on' within 30 s of the home key (the core was not told the app went to the background)"
     FAIL=1
-    return
+    return 0
   fi
   sleep "$hidden"
+  after=$(app_pid)
+  if [ -z "$after" ] || [ "$after" != "$before" ]; then
+    echo "map: the system killed the cached process during the $hidden s in the background (pid ${before:-none}, then ${after:-none}): no return to check"
+    return 1
+  fi
   adb shell am start -W -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n $PKG/.MainActivity > /dev/null
-  wait_line mapwarm 30 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 30 s of the return"; FAIL=1; }
+  after=$(app_pid)
+  if [ "$after" != "$before" ]; then
+    echo "map: the system killed the cached process at the return (pid ${before:-none}, then ${after:-none}): no return to check"
+    return 1
+  fi
+  wait_line "$m" 30 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 30 s of the return"; FAIL=1; }
   # The first frame back: at once where the surface outlived the stop; where it did not, once the core has made its
   # pipelines again for the new one (9 s and over 10 s on the emulator, 18 November), so up to $wait s; then 2 s more.
   for i in $(seq 1 "$wait"); do
-    since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk frame ' && break
+    since_marker "$m" | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk frame ' && break
     sleep 1
   done
   sleep 2
-  frames=$(since_marker mapwarm | sed -n '/AtlasMap: vk hidden: on/,/AtlasMap: vk hidden: off/p' | grep -c 'AtlasMap: vk frame ')
-  back=$(since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -c 'AtlasMap: vk frame ')
-  delay=$(since_marker mapwarm | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
+  frames=$(since_marker "$m" | sed -n '/AtlasMap: vk hidden: on/,/AtlasMap: vk hidden: off/p' | grep -c 'AtlasMap: vk frame ')
+  back=$(since_marker "$m" | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -c 'AtlasMap: vk frame ')
+  delay=$(since_marker "$m" | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
     /AtlasMap: vk hidden: off/ { off = t($2) } off && /AtlasMap: vk frame / { d = t($2) - off; if (d < 0) d += 86400; printf "%.1f", d; exit }')
-  firsts=$(since_marker mapwarm | grep -c 'AtlasMap: vk first frame ')
+  firsts=$(since_marker "$m" | grep -c 'AtlasMap: vk first frame ')
   # A window whose surface did not outlive the stop comes back with a new one, and the core makes its pipelines again
   # for it (Session::release_window) before the first frame: say which, as that is the delay's cause.
-  if since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk window: surface created'; then
+  if since_marker "$m" | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk window: surface created'; then
     surface="a new surface (the old one went at the stop), the pipelines made again"
   else
     surface="the surface kept"
   fi
-  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames, the first ${delay:-none} s after 'vk hidden: off', $surface; $(since_marker mapwarm | grep -o 'vk hidden: off.*' | tail -1)"
+  echo "map: hidden for $hidden s: $frames frames drawn; back: $back frames, the first ${delay:-none} s after 'vk hidden: off', $surface; $(since_marker "$m" | grep -o 'vk hidden: off.*' | tail -1)"
   [ "$frames" -eq 0 ] || { echo "MAP FAILED: the core drew $frames frames while the app was hidden (none, ENGINE.md's audit B1)"; FAIL=1; }
   [ "$back" -gt 0 ] || { echo "MAP FAILED: no frame within $wait s of the return from the background"; FAIL=1; }
   [ "$firsts" -le 1 ] || { echo "MAP FAILED: the return started the map again ($firsts 'vk first frame' lines)"; FAIL=1; }
   adb exec-out screencap -p > "$OUT/map-hidden-back.png"
+  return 0
+}
+
+# The hidden phase with the surface kept (the review of hidden, part 2b's point 4). On the emulator the home key's stop
+# destroys the surface before the core hears `vk hidden: on`, so the pass above draws no frame whatever the core's
+# hiding does. Here the map hides the core itself while the activity stays resumed (atlas.vk.script hidden: mapview's
+# HiddenScript, once the home's first picture is final, for 20 s), and the phase swipes it meanwhile, which asks for
+# frames: none may come between `vk hidden: on` and `off`. Shown again, the core's first frame (its `vk hidden: back`
+# line) is at the camera the swipe left (the script's `shown again` line) and begins within a frame's time of `off`: the
+# home's own (the median of its last three before the hide) and a refresh, on the core's clock.
+hidden_kept() {
+  local frames frame_ms bound back begun own from left drew
+  vk_launch mapkept --es atlas.screen home --ez atlas.ci true --ez atlas.vk.ci true --es atlas.vk.script hidden
+  if ! wait_line mapkept 300 "vk hidden: on"; then
+    echo "MAP FAILED: the hidden script did not hide the core within 300 s ($(since_marker mapkept | grep -o 'vk script: .*' | tail -1))"
+    FAIL=1
+    return
+  fi
+  frame_ms=$(vk_frame_ms mapkept)
+  adb shell input swipe 540 1500 540 900 300
+  wait_line mapkept 60 "vk hidden: off" || { echo "MAP FAILED: no 'vk hidden: off' within 60 s of the hide (the hidden script)"; FAIL=1; return; }
+  wait_line mapkept 30 "vk hidden: back" || { echo "MAP FAILED: no frame within 30 s of 'vk hidden: off' with the surface kept"; FAIL=1; }
+  frames=$(since_marker mapkept | sed -n '/AtlasMap: vk hidden: on/,/AtlasMap: vk hidden: off/p' | grep -c 'AtlasMap: vk frame ')
+  from=$(since_marker mapkept | grep -m1 -o 'vk script: hidden for .*' | sed 's/.* at //' | tr -d '\r')
+  left=$(since_marker mapkept | grep -m1 -o 'vk script: shown again, .*' | sed 's/.* at //' | tr -d '\r')
+  back=$(since_marker mapkept | grep -m1 -o 'vk hidden: back, .*' | tr -d '\r')
+  drew=$(echo "$back" | sed -n 's/.* at \([-0-9.]*,[-0-9.]*\),.*//p')
+  begun=$(echo "$back" | sed -n 's/.*, begun \([0-9.]*\) ms after off.*//p')
+  own=$(echo "$back" | sed -n 's/.*, its own \([0-9.]*\) ms.*//p')
+  # a frame's time: the home's own at the median of its last three before the hide (the larger of CPU and GPU), and the
+  # refresh a vsync may wait for (60 Hz on the emulator)
+  bound=$((frame_ms + 17))
+  echo "map: hidden with the surface kept: $frames frames drawn while hidden, the swipe took the camera from ${from:-?} to ${left:-?}; back: the first frame begun ${begun:-never} ms after 'vk hidden: off' (at most $bound: the home's frames $frame_ms ms at the median, and a refresh), its own ${own:-?} ms, at ${drew:-?}"
+  [ "$frames" -eq 0 ] || { echo "MAP FAILED: the core drew $frames frames while hidden with its surface kept (none, ENGINE.md's audit B1)"; FAIL=1; }
+  [ -n "$left" ] && [ "$from" != "$left" ] || { echo "MAP FAILED: the swipe did not move the camera while hidden (${from:-?} to ${left:-?})"; FAIL=1; }
+  echo "${drew:-x} ${left:-y}" | awk '{ split($1, a, ","); split($2, b, ","); d1 = a[1] - b[1]; d2 = a[2] - b[2]
+    exit !($1 != "x" && $2 != "y" && d1 * d1 < 1e-10 && d2 * d2 < 1e-10) }' ||
+    { echo "MAP FAILED: the first frame back is not at the camera the swipe left (${drew:-none} against ${left:-none})"; FAIL=1; }
+  [ -n "$begun" ] && awk -v b="$begun" -v m="$bound" 'BEGIN { exit !(b <= m) }' ||
+    { echo "MAP FAILED: the first frame back began ${begun:-never} ms after 'vk hidden: off' (at most $bound, a frame's time)"; FAIL=1; }
+  since_marker mapkept | grep -E 'AtlasMap: vk (hidden|script)' | sed 's/.*AtlasMap: //' > "$OUT/map-hidden-kept.txt"
+  vk_crashes mapkept; vk_anr mapkept
 }
 
 # The phone's own way to its map (ENGINE.md step 3, one pack per country), which nothing above takes: CI's runs draw the

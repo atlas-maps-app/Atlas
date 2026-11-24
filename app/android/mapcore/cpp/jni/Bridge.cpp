@@ -730,6 +730,7 @@ public:
             }
             // `vk hidden: off` and the scene's updates meanwhile (ci/smoke.sh's hidden phase reads it)
             log::info("vk hidden: off after {} updates of the scene", hidden_updates_);
+            back_ns_ = platform::now_ns();
             // the return's own frame (Due::changed: at rest too), so that it hangs on nothing asked before or since
             due_.changed();
             requested_ = true;
@@ -985,6 +986,15 @@ private:
         if (!d.drawn) return;
         drew_since_rest_ = true;
         const FrameRecord& r = d.record;
+        if (back_ns_ != 0) {
+            // the first frame since the core was shown again: the camera it drew, when it began after `vk hidden: off`
+            // and what it took, on the records' clock (ci/smoke.sh's hidden pass with the surface kept compares the
+            // camera with the one the app's swipe left while hidden, and the wait with a frame's time)
+            log::info("vk hidden: back, frame {} at {:.6f},{:.6f}, begun {:.1f} ms after off, its own {:.1f} ms",
+                      r.frame, camera.latitude, camera.longitude, static_cast<double>(r.start_ns - back_ns_) / 1e6,
+                      static_cast<double>(r.end_ns - r.start_ns) / 1e6);
+            back_ns_ = 0;
+        }
         // ADPF hears the render thread's own work: the frame's time less its waits for the slot's previous frame (the
         // GPU) and the swapchain's image (the display), as Android's own render thread leaves out its dequeue. With
         // them in, a frame the GPU or the display held told ADPF the CPU missed its 16.7 ms, and its clocks rose for
@@ -1036,6 +1046,7 @@ private:
     bool hidden_ = false;              // the app's window hidden: no vsync asked, what asks held (set_hidden)
     std::int64_t due_ns_ = 0;          // when a frame is due by itself at rest (now_ns, MapFrame::due_in; 0: none)
     std::uint64_t hidden_updates_ = 0; // the scene's updates without a frame while hidden (update_scene)
+    std::int64_t back_ns_ = 0;         // shown again at (CLOCK_MONOTONIC), the first frame still to come; else 0
     bool camera_warned_ = false;
     frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
     int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
