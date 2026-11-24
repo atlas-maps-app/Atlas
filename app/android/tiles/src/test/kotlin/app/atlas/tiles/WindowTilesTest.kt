@@ -357,7 +357,7 @@ class WindowTilesTest {
     fun eachIndexThatComesIntoMemoryIsToldOnce() {
         val list = listOf(publish("netherlands", country(), date))
         val told = java.util.Collections.synchronizedList(ArrayList<String>())
-        val tiles = WindowTiles({ list }, dir, indexRead = { told += it })
+        val tiles = WindowTiles({ list }, dir, indexRead = { told += it }, client = tilesClient)
         val (lat, lon) = middle(westerkerk.first, westerkerk.second)
         assertNull(tiles.level("netherlands", version, lat, lon))
         assertEquals(emptyList<String>(), told)
@@ -367,7 +367,7 @@ class WindowTilesTest {
         tiles.window(14, westerkerk.first, westerkerk.second, version)
         assertEquals("from memory, told nothing more", listOf("netherlands"), told)
         val byWindow = java.util.Collections.synchronizedList(ArrayList<String>())
-        WindowTiles({ list }, tempDir("towindow"), indexRead = { byWindow += it }).window(14, westerkerk.first, westerkerk.second, version)
+        WindowTiles({ list }, tempDir("towindow"), indexRead = { byWindow += it }, client = tilesClient).window(14, westerkerk.first, westerkerk.second, version)
         assertEquals("a window read it", listOf("netherlands"), byWindow)
     }
 
