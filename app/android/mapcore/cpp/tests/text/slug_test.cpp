@@ -461,13 +461,13 @@ TEST_CASE("the glyph atlas holds every glyph of Latin, Greek and Cyrillic of the
         char32_t first;
         char32_t last;
     };
-    constexpr std::array<Block, 7> blocks = {{{0x0020, 0x007E},
-                                              {0x00A0, 0x00FF},
-                                              {0x0100, 0x017F},
-                                              {0x0180, 0x024F},
-                                              {0x1E00, 0x1EFF},
-                                              {0x0370, 0x03FF},
-                                              {0x0400, 0x04FF}}};
+    constexpr std::array<Block, 7> blocks = {{{.first = 0x0020, .last = 0x007E},
+                                              {.first = 0x00A0, .last = 0x00FF},
+                                              {.first = 0x0100, .last = 0x017F},
+                                              {.first = 0x0180, .last = 0x024F},
+                                              {.first = 0x1E00, .last = 0x1EFF},
+                                              {.first = 0x0370, .last = 0x03FF},
+                                              {.first = 0x0400, .last = 0x04FF}}};
     const text::Fonts* fonts = bundled_fonts();
     ATLAS_REQUIRE(fonts != nullptr);
     slug::GlyphAtlas glyphs;
