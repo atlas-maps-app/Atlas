@@ -1076,9 +1076,9 @@ hidden_kept() {
   from=$(since_marker mapkept | grep -m1 -o 'vk script: hidden for .*' | sed 's/.* at //' | tr -d '\r')
   left=$(since_marker mapkept | grep -m1 -o 'vk script: shown again, .*' | sed 's/.* at //' | tr -d '\r')
   back=$(since_marker mapkept | grep -m1 -o 'vk hidden: back, .*' | tr -d '\r')
-  drew=$(echo "$back" | sed -n 's/.* at \([-0-9.]*,[-0-9.]*\),.*//p')
-  begun=$(echo "$back" | sed -n 's/.*, begun \([0-9.]*\) ms after off.*//p')
-  own=$(echo "$back" | sed -n 's/.*, its own \([0-9.]*\) ms.*//p')
+  drew=$(echo "$back" | sed -n 's/.* at \([-0-9.]*,[-0-9.]*\),.*/\1/p')
+  begun=$(echo "$back" | sed -n 's/.*, begun \([0-9.]*\) ms after off.*/\1/p')
+  own=$(echo "$back" | sed -n 's/.*, its own \([0-9.]*\) ms.*/\1/p')
   # a frame's time: the home's own at the median of its last three before the hide (the larger of CPU and GPU), and the
   # refresh a vsync may wait for (60 Hz on the emulator)
   bound=$((frame_ms + 17))
