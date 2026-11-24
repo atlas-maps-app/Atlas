@@ -20,6 +20,8 @@
 #include "passes/LinePieces.hpp"
 #include "scene/Cover.hpp"
 #include "scene/World.hpp"
+#include "style/CameraState.hpp"
+#include "style/Theme.hpp"
 #include "tests/base/require.hpp"
 #include "tests/gpu/gpu_fixture.hpp"
 #include "tests/ground/ground_draw.hpp"
@@ -164,14 +166,15 @@ std::optional<EdgeDraw> draw_edge(const test::Session& session, const std::strin
                                     .target = gpu::CompositeTarget::resolve};
     auto renderer = gpu::Renderer::create(device, **output, **builder, config);
     if (!renderer) return std::nullopt;
+    // sunny without the clouds' shadows, which move with the clock
+    style::ThemeBlock theme = test::sunny();
+    theme.flags &= ~style::theme_flag::cloud_shadows;
+    theme.cloud_shadows = 0;
     bool settled = false;
     for (int f = 0; f < 61 && !settled; ++f) {
         now = static_cast<double>(f) * 0.25;
-        (*builder)->set_inputs({.camera = camera,
-                                .theme = test::sunny(),
-                                .seconds = now,
-                                .mode = frame::Mode::structural,
-                                .scene = world->get()});
+        (*builder)->set_inputs(
+            {.camera = camera, .theme = theme, .seconds = now, .mode = frame::Mode::structural, .scene = world->get()});
         if (!(*renderer)->draw(0)) return std::nullopt;
         (*renderer)->drain();
         (*world)->residency().wait_idle();
@@ -180,6 +183,10 @@ std::optional<EdgeDraw> draw_edge(const test::Session& session, const std::strin
                   std::ranges::all_of(cover.tiles(), [](const scene::CoverTile& t) { return t.fade >= 1.0F; });
     }
     if (!settled) return std::nullopt;
+    // the last frame at one moment, whichever frame the tile settled by, so two draws differ by their lines alone
+    now = 16.0;
+    (*builder)->set_inputs(
+        {.camera = camera, .theme = theme, .seconds = now, .mode = frame::Mode::structural, .scene = world->get()});
     if (!(*renderer)->draw(0)) return std::nullopt;
     (*renderer)->drain();
     auto packed = (*output)->read_packed((*output)->latest());
