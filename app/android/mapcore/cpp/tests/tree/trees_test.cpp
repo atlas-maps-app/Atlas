@@ -553,7 +553,7 @@ TEST_CASE("things: a bridge's width that no road has reads as an unmapped one fo
     };
     std::vector<std::string> ways;
     for (std::size_t i = 0; i < widths.size(); ++i) {
-        const double lat = 52.3700 + (0.0012 * static_cast<double>(i));
+        const double lat = 52.3640 + (0.0012 * static_cast<double>(i)); // the tile: 52.3622 to 52.3756
         ways.push_back(bridge_way(200 + static_cast<std::int64_t>(i), widths[i].first,
                                   {{lat, 4.8800}, {lat, 4.8812}, {lat + 0.00054, 4.8812}}));
     }
