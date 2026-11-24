@@ -75,6 +75,9 @@ defaults:
 
 env:
   CP: app/android/mapcore/cpp
+  # The regions' OpenStreetMap extracts the host jobs unpack for ATLAS_REGIONS_DIR: packs-renders'
+  # regions-osm-extracts.tar.gz (tools/regions/pack.py's, published with the user's yes of 23 Nov 2026).
+  REGIONS_SHA256: 06b28bfa071a21425216aa90968a752cf064aa8225ce50693b29e208f821323f
   LLVM: '21' # the major version of NDK r30's clang: 21.0.0, based on r574158c (measured by K0)
   # The lavapipe images by digest (ghcr.io/<owner>/atlas-lavapipe@sha256:...), from the image job's summary. Until the
   # arm64 one is set, the arm64 runner builds and runs every test except the Vulkan ones, and says so.
@@ -488,6 +491,32 @@ jobs:
             echo "::error::no world from world-latest: the world's cases skip, and this job fails once its tests have run"
             echo "missing=the world from world-latest" >> "$GITHUB_OUTPUT"
           fi
+      # The regions' cases (load/window_test, load/regions_test, building/geometry_test, frame/scene_vk_test and others):
+      # ATLAS_REGIONS_DIR, the eleven regions' OpenStreetMap extracts (packs-renders' regions-osm-extracts.tar.gz, made by
+      # tools/regions/pack.py, by its SHA-256), each raw.json unpacked beside its region.json in the checkout's
+      # data/regions. Without them, as without the render packs, the job runs its tests and then fails.
+      - uses: actions/cache@v6
+        if: startsWith(matrix.task, 'host-')
+        with:
+          path: ${{ runner.temp }}/regions-osm-extracts.tar.gz
+          key: regions-osm-extracts-${{ env.REGIONS_SHA256 }}
+      - name: The regions' extracts, from packs-renders
+        id: regions
+        if: startsWith(matrix.task, 'host-')
+        working-directory: .
+        run: |
+          f="$RUNNER_TEMP/regions-osm-extracts.tar.gz"
+          [ -f "$f" ] || curl -fsSL --retry 5 --retry-all-errors -o "$f" \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/packs-renders/regions-osm-extracts.tar.gz" || rm -f "$f"
+          if [ -f "$f" ] && echo "$REGIONS_SHA256  $f" | sha256sum -c --quiet - &&
+            tar -xzf "$f" -C data/regions --wildcards '*/raw.json'; then
+            echo "ATLAS_REGIONS_DIR=$GITHUB_WORKSPACE/data/regions" >> "$RUNNER_TEMP/vulkan.env"
+            ls -la data/regions/*/raw.json
+          else
+            rm -f "$f" # nothing of a bad download is cached
+            echo "::error::no regions' extracts from packs-renders: the regions' cases skip, and this job fails once its tests have run"
+            echo "missing=the regions' extracts from packs-renders" >> "$GITHUB_OUTPUT"
+          fi
       # Each test entry runs under GNU time, so its peak memory is in its output (core-tests sums them up): what tells
       # how many entries a runner can run at once, TSan's above all.
       - name: Build (${{ matrix.task }})
@@ -576,12 +605,13 @@ jobs:
           fi
       # The data the tests read, when a step above found it missing: the tests ran without it, and the job fails.
       - name: The tests' data
-        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && (steps.packs.outputs.missing != '' || steps.world.outputs.missing != '') }}
+        if: ${{ !cancelled() && startsWith(matrix.task, 'host-') && (steps.packs.outputs.missing != '' || steps.world.outputs.missing != '' || steps.regions.outputs.missing != '') }}
         env:
           PACKS: ${{ steps.packs.outputs.missing }}
           WORLD: ${{ steps.world.outputs.missing }}
+          REGIONS: ${{ steps.regions.outputs.missing }}
         run: |
-          missing=$(printf '%s\n' "$PACKS" "$WORLD" | sed '/^$/d' | paste -sd ';' - | sed 's/;/; /g')
+          missing=$(printf '%s\n' "$PACKS" "$WORLD" "$REGIONS" | sed '/^$/d' | paste -sd ';' - | sed 's/;/; /g')
           echo "::error::the tests ran without their data ($missing): the cases that need it skipped"
           exit 1
       # The test entries' JUnit files and the shard's plan, for core-tests.
