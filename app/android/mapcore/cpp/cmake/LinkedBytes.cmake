@@ -5,7 +5,8 @@
 # RUST_DIR, where cargo builds every crate (cmake/Rust.cmake: ATLAS_RUST_DIR), so a crate added is counted with no
 # word here or in the caller. Counted: the sections a phone loads (code, read-only data, data, unwind tables). Left
 # out: the debug sections, which the APK's library is stripped of, and .bss/.tbss, which take no bytes in the file.
-# Prints one line an archive, and writes them to OUT (CI's summary reads it). Fails where the map lists nothing of one.
+# Prints one line an archive, then one of the map's own cost (its bytes, and the milliseconds this read and count of it
+# took), and writes them to OUT (CI's summary reads it). Fails where the map lists nothing of one.
 #
 # The core's Android builds run it after libatlasmap.so links (cpp/CMakeLists.txt): the cost the Rust trial measured
 # once by hand (+192 KB on arm64), now printed by every build.
@@ -14,6 +15,7 @@ foreach(_var MAP RUST_DIR WHAT OUT)
         message(FATAL_ERROR "LinkedBytes.cmake: -D${_var}=… is missing")
     endif()
 endforeach()
+string(TIMESTAMP _began "%s%f" UTC) # microseconds
 # an input section's line: VMA, LMA, size, align (hex but the align), then <path>/<archive>(<member>):(<section>)
 file(STRINGS "${MAP}" _lines REGEX "\\.a\\([^)]*\\):\\(")
 set(_archives "")
@@ -54,4 +56,9 @@ foreach(_archive IN LISTS _archives)
     message(STATUS "${_line}")
     string(APPEND _said "${_line}\n")
 endforeach()
-file(WRITE "${OUT}" "${_said}")
+string(TIMESTAMP _ended "%s%f" UTC)
+math(EXPR _ms "(${_ended} - ${_began}) / 1000")
+file(SIZE "${MAP}" _map_bytes)
+set(_line "Rust: lld's map of ${WHAT}: ${_map_bytes} bytes, read and counted in ${_ms} ms")
+message(STATUS "${_line}")
+file(WRITE "${OUT}" "${_said}${_line}\n")

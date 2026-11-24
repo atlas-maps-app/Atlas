@@ -193,7 +193,8 @@ jobs:
       # What each Rust library takes of each libatlasmap.so just linked, by build and ABI (each link writes a line an
       # archive: mapcore/cpp/cmake/LinkedBytes.cmake), into the log and the run's summary. The step above links four:
       # the debug and bench builds, each for arm64-v8a and x86_64 (mapcore/build.gradle.kts's abiFilters). Each must
-      # have its lines; one missing fails, naming it.
+      # have its lines, an archive's and the map's cost (its bytes, and the time the count took); one missing fails,
+      # naming it.
       - name: The Rust libraries' bytes in each libatlasmap.so
         if: ${{ !cancelled() && steps.apk.outcome == 'success' }}
         run: |
@@ -201,7 +202,7 @@ jobs:
           status=0
           for build in debug bench; do
             for abi in arm64-v8a x86_64; do
-              grep -qF "of libatlasmap.so ($build, $abi):" <<< "$lines" ||
+              grep -F "of libatlasmap.so ($build, $abi):" <<< "$lines" | grep -q "^Rust: lib" ||
                 { echo "::error::the $build build for $abi wrote no line of rust-bytes.txt"; status=1; }
             done
           done
