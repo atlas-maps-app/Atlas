@@ -5,13 +5,15 @@
 // same bytes each time, with nothing that cannot be there, and its head and style are still the packer's. Where
 // ATLAS_REGIONS_DIR names the renderer's data/regions, the canal ring's raw.json is loaded as a region (whole, and at
 // each tolerance its pack's views and bands load it at, for the variants) and cut, and every tile of its render pack
-// is cut too, with nothing that cannot be there.
+// is cut too, with nothing that cannot be there. A tower mapped with a height alone takes its levels from it, at most
+// load::max_levels, the most stage T draws.
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/Amsterdam.hpp"
 #include "load/Cut.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
+#include "load/Tradition.hpp"
 #include "osm/Overpass.hpp"
 #include "tests/base/require.hpp"
 #include "tests/tiles/support.hpp"
@@ -25,6 +27,7 @@
 #include "tiles/SectionWriter.hpp"
 #include "tiles/Source.hpp"
 #include "tiles/TileWriter.hpp"
+#include "tiles/layers/Buildings.hpp"
 #include "tiles/layers/Points.hpp"
 #include "tiles/layers/Water.hpp"
 
@@ -38,12 +41,15 @@
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -463,4 +469,66 @@ TEST_CASE("load: the input whose road grid ran CI's fuzz_load out of memory cuts
                             tiles ? std::format("{} tiles", tiles->size()) : tiles.error().what));
         CHECK(seconds < 30.0);
     }
+}
+
+TEST_CASE("load: a building mapped with a height alone takes its levels from it, at most load::max_levels, the most "
+          "stage T draws") {
+    // a tradition's look (guess_tags: levels = round((h - roof_h) / floor_h) where only a height is mapped), its roofs
+    // flat and its storeys 3 m: 450 m is 150 levels, 900 m would be 300, past what a building holds
+    // (tl::building::most_levels, where stage T reads a record's levels as unmapped and draws no windows)
+    const auto tradition = load::read_tradition(std::as_bytes(std::span(std::string_view(R"(
+{"name": "n", "says": "s", "floor_h": 3.0, "levels": {"default": 2}, "walls": {"default": [["brick", "#8E5A46", 1]]},
+ "roof": {"default": {"shapes": [["flat", 1]], "material": "metal", "colours": ["#737E88"]}}})"))));
+    ATLAS_REQUIRE(tradition.has_value());
+    std::string data = R"({"elements": [)";
+    const std::array<std::pair<std::string_view, std::int64_t>, 2> towers = {{{"450", 150}, {"900", 200}}};
+    for (std::size_t i = 0; i < towers.size(); ++i) {
+        // a 24 m square near the Westerkerk, each a little east of the last
+        const double lon = 4.8800 + (0.0010 * static_cast<double>(i));
+        data += std::format(
+            R"({}{{"type": "way", "id": {}, "tags": {{"building": "office", "height": "{}"}}, "geometry": [)"
+            R"({{"lat": 52.3700, "lon": {:.4f}}}, {{"lat": 52.3700, "lon": {:.4f}}}, {{"lat": 52.37022, "lon": {:.4f}}},)"
+            R"( {{"lat": 52.37022, "lon": {:.4f}}}, {{"lat": 52.3700, "lon": {:.4f}}}]}})",
+            i == 0 ? "" : ",\n", 900 + i, towers.at(i).first, lon, lon + 0.00035, lon + 0.00035, lon, lon);
+    }
+    data += "]}";
+    const auto doc = atlas::osm::read_overpass(std::as_bytes(std::span(data.data(), data.size())));
+    ATLAS_REQUIRE(doc.has_value());
+    const load::RegionConfig config{.name = "test",
+                                    .frame = load::westerkerk_frame(),
+                                    .bbox = {52.36, 4.87, 52.39, 4.92},
+                                    .tradition = *tradition,
+                                    .palette = load::amsterdam_palette()};
+    const auto scene = load::load_region(*doc, config);
+    ATLAS_REQUIRE(scene.has_value());
+    REQUIRE(scene->buildings.size() == towers.size());
+    std::map<std::int64_t, std::int64_t> want;
+    for (std::size_t i = 0; i < towers.size(); ++i) want[900 + static_cast<std::int64_t>(i)] = towers.at(i).second;
+    for (const load::Building& b : scene->buildings) {
+        CAPTURE(b.id);
+        CHECK(b.levels == want[b.id]);
+    }
+    // and the cut writes them so: within what stage T draws
+    const auto cut = load::cut_region(*scene, config.frame, {});
+    ATLAS_REQUIRE(cut.has_value(), cut.error().what);
+    std::size_t seen = 0;
+    for (const tl::TileFill& t : *cut) {
+        auto raw = tl::encode_tile(t);
+        ATLAS_REQUIRE(raw.has_value(), tl::describe(raw.error()));
+        tl::TileDecoder decoder;
+        atlas::Arena arena(8U << 20U, atlas::Growth::grows, "cut test, the towers");
+        const auto tile = decoder.decode(*raw, arena);
+        ATLAS_REQUIRE(tile.has_value(), tl::describe(tile.error()));
+        const tl::Layer* buildings = tile->layer(tl::LayerId::building);
+        for (std::uint32_t i = 0; buildings != nullptr && i < buildings->count; ++i) {
+            const std::int64_t id = buildings->integer(tl::building::id, i);
+            CAPTURE(id);
+            const std::optional<std::int64_t> levels = buildings->nullable_integer(tl::building::levels, i);
+            REQUIRE(levels.has_value());
+            CHECK(*levels == want[id]);
+            CHECK(*levels <= tl::building::most_levels);
+            ++seen;
+        }
+    }
+    CHECK(seen >= towers.size());
 }

@@ -496,12 +496,14 @@ constexpr std::array<std::string_view, 5> says_kind = {"home", "office", "hotel"
 /// `x or 0` of an optional float: 0 where None or zero.
 [[nodiscard]] double or0(std::optional<double> v) noexcept { return v.has_value() && *v != 0.0 ? *v : 0.0; }
 
-/// `max(1, int(round(floors)))` as the port's Int, its low 32 bits: the levels of a height. 1 where round() cannot
-/// take it: a tag's height or roof levels past any Long's floors, infinite or NaN (CI's fuzz_load, 14 and 16 Nov 2026:
-/// a `height` of 7e26 m ended the process here), as guess_tags's levels_from_height takes them.
+/// `max(1, int(round(floors)))`, at most max_levels: the levels of a height. A height past max_levels storeys is a real
+/// height, so it takes the most a building holds (the most stage T draws, tl::building::most_levels, past which it
+/// reads a record's levels as unmapped and draws no windows) where the port's Int took its low 32 bits. 1 where
+/// round() cannot take it: a tag's height or roof levels past any Long's floors, infinite or NaN (CI's fuzz_load, 14
+/// and 16 Nov 2026: a `height` of 7e26 m ended the process here), as guess_tags's levels_from_height takes them.
 [[nodiscard]] std::int32_t levels_of(double floors) noexcept {
     const auto rounded = pymath::checked::round(floors);
-    return rounded ? static_cast<std::int32_t>(std::max<std::int64_t>(1, *rounded)) : 1;
+    return rounded ? static_cast<std::int32_t>(std::clamp<std::int64_t>(*rounded, 1, max_levels)) : 1;
 }
 
 /// One cell of a grid of `cell`-metre squares, as `(int(x // cell), int(z // cell))`.
