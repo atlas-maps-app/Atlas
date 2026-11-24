@@ -58,10 +58,11 @@ internal fun WikiReader(url: String, load: suspend () -> WikipediaArticle?, onDi
             val article = read?.getOrNull()
             when {
                 read == null -> Looking()
-                // Wikipedia switched off in Data sources & keys: said in the user's language, not the gate's own sentence
+                // Wikipedia switched off: said in the user's language, naming the Settings row as it names itself, not the
+                // gate's own sentence
                 article == null -> StateMessage(
                     "ui-book", stringResource(R.string.place_wiki_none), Modifier.padding(16.dp),
-                    text = read?.exceptionOrNull()?.let { if (it is SwitchedOffException) stringResource(R.string.place_wiki_off) else it.message },
+                    text = read?.exceptionOrNull()?.let { if (it is SwitchedOffException) stringResource(R.string.place_wiki_off, stringResource(R.string.mine_settings_data)) else it.message },
                     action = { PrimaryButton(stringResource(R.string.place_wiki_read), { runCatching { uri.openUri(url) } }) },
                 )
                 else -> Article(article) { runCatching { uri.openUri(article.url) } }

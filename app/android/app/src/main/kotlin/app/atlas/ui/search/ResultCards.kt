@@ -49,6 +49,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -283,6 +284,7 @@ internal var SemanticsPropertyReceiver.pictureMark by PictureMark
 /**
  * A chain's fascia, as its shop front shows it: its sign's colour edge to edge, lit from above and darker at its foot,
  * its logo large on it in its lettering's colour ([BrandSigns]); a chain with no logo its name, as a shop front says it.
+ * The drawn name is the picture, as a logo is: not said, since the card's own line says the name.
  */
 @Composable
 private fun Fascia(chain: Brand, modifier: Modifier) {
@@ -294,7 +296,7 @@ private fun Fascia(chain: Brand, modifier: Modifier) {
         val slug = chain.logoSlug?.takeIf { Symbols.has("logo-$it") }
         if (slug != null) Symbol("logo-$slug", tint = BrandSigns.ink(chain), size = 76.dp)
         else Text(
-            brandName(chain), Modifier.padding(horizontal = 24.dp), style = indexTitle(34f).copy(textAlign = TextAlign.Center),
+            brandName(chain), Modifier.padding(horizontal = 24.dp).clearAndSetSemantics { }, style = indexTitle(34f).copy(textAlign = TextAlign.Center),
             color = BrandSigns.ink(chain), maxLines = 2, autoSize = TextAutoSize.StepBased(minFontSize = 20.sp, maxFontSize = 34.sp),
         )
     }

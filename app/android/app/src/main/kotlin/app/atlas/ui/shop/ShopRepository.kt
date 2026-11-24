@@ -33,7 +33,7 @@ internal class ShopRepository(private val services: Services, prices: OpenPrices
     val priceNotes = PriceNotes(File(services.dirs.files, "shop/prices.tsv"))
 
     /** Open Prices (Open Food Facts), the open price database. */
-    val openPrices: OpenPrices = prices ?: OpenPrices(if (services.config.offline) null else services.http)
+    val openPrices: OpenPrices = prices ?: OpenPrices(if (services.config.offline) null else services.http(app.atlas.ui.mine.SourcesModel.OPEN_PRICES.id))
 
     /** Prices Open Prices knows around a point, loaded once per point and basket. */
     val prices: PriceBook = PriceBook(openPrices)

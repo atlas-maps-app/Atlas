@@ -1,0 +1,39 @@
+# The planner behind a C interface (src/lib.rs; include/atlas_transit.h is its other side), as a static library that
+# an app's own shared library links: libatlastransit.so, beside the core's. No crate but the planner, by its path: a
+# crate from the network is a fetch, and nothing is fetched without the user's word. The library is core and alloc
+# alone; what a Rust library that stands by itself must bring is here (memory from the C library's malloc, a panic
+# that aborts), and so is every line of unsafe code: the planner forbids it.
+[package]
+name = "atlas_transit_abi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.100"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+atlas_transit = { path = "../planner", default-features = false }
+
+# The tests are the crate's own (src/tests.rs), with the standard library, the planner's scan and its fuzzing driver.
+[dev-dependencies]
+atlas_transit = { path = "../planner" }
+
+[profile.release]
+# small and whole, as the core's Rust is: one unit, LTO over the planner and what it calls of core and alloc, no
+# unwinding (a panic aborts), no debug info. Built for size it was no slower than for speed on the country's file.
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false
+strip = "debuginfo"
+incremental = false
+
+[profile.dev]
+panic = "abort"
+
+# The tests search a real city's timetable, as the planner's do: optimised, with a debug build's checks left on.
+[profile.test]
+opt-level = 2

@@ -32,7 +32,7 @@ class ServicesTest {
         assertNotNull(s.settings)
         assertNotNull(s.keys)
         assertFalse(s.connectivity.online.value)
-        assertNotNull(s.http)
+        assertNotNull(s.http(app.atlas.providers.Overpass.INFO.id))
         assertNotNull(s.localData)
         assertNotNull(s.overpass)
         assertNotNull(s.weather)

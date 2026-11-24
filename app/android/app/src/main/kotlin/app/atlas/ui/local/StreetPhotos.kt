@@ -50,9 +50,11 @@ class PanoramaxSource(private val services: Services) : StreetPhotoSource {
     override suspend fun near(at: LatLon): StreetPhotoImage? = withContext(Dispatchers.IO) {
         if (!services.local.online()) return@withContext null
         try {
-            val photo = StreetPhotos.parse(services.http.text(StreetPhotos.searchUrl(at))) ?: return@withContext null
-            // the photo from the instance that keeps it (nl.panoramax.xyz, for one), asked as Atlas asks every server
-            val bytes = services.http.execute(services.http.request(photo.imageUrl).header("Accept", "image/*").build()).requireOk().body
+            val http = services.http(app.atlas.ui.mine.SourcesModel.PANORAMAX.id)
+            val photo = StreetPhotos.parse(http.text(StreetPhotos.searchUrl(at))) ?: return@withContext null
+            // the photo from the instance that keeps it (nl.panoramax.xyz, for one), asked as Atlas asks every server: no
+            // list names the instance's host, so Panoramax's view is what holds it to Panoramax's switch
+            val bytes = http.execute(http.request(photo.imageUrl).header("Accept", "image/*").build()).requireOk().body
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             var sample = 1

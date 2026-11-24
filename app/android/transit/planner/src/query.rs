@@ -178,7 +178,8 @@ pub struct Limits {
     /// label went from it, an option may have gone with it: the answer says [`crate::Answer::cut_short`].
     pub bag: u32,
     /// Journeys returned. Of more: over a window those nearest the asked moment; asked for one moment the fastest
-    /// (the earliest arrivals; arriving by, the latest departures).
+    /// (the earliest arrivals; arriving by, the latest departures; and where wishes are weighed, each with its
+    /// cost added to the arrival, or taken off the departure).
     pub options: u32,
     /// How long after the asked moment a journey may still be under way, in seconds.
     pub horizon: u32,
@@ -191,11 +192,15 @@ pub struct Limits {
     /// wishes that cost and every option asked for ([`Query::weigh`] off) a search is never patient: the option
     /// that follows them best may be the slowest.
     pub patient: bool,
+    /// The most bytes a planner's index may take ([`crate::Planner::index_bytes`] says what a file's takes). Read
+    /// once, where a planner is made ([`crate::Planner::within`]), and by no search. The default lets every
+    /// timetable through that is one (a country's takes 4 to 6 MB) and refuses only the absurd.
+    pub index: u64,
 }
 
 impl Default for Limits {
     fn default() -> Limits {
-        Limits { labels: 2_000_000, steps: 100_000_000, departures: 2048, bag: 8, options: 64, horizon: 86_400, patient: true }
+        Limits { labels: 2_000_000, steps: 100_000_000, departures: 2048, bag: 8, options: 64, horizon: 86_400, patient: true, index: 256 << 20 }
     }
 }
 

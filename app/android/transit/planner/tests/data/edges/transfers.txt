@@ -7,3 +7,6 @@ TB,TC,,,T1a,T2a,2,480
 TB,TC,,,T1b,T2c,2,120
 ZB,ZC,,,Z1a,Z2a,4,
 NB,NC,N1,N2,,,1,
+GB,GC,G1,G2,,,1,
+DB,DC,D1,D2,,,1,
+HS,HS,H1,H2,,,1,

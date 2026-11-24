@@ -1,0 +1,40 @@
+the interface: 2, and the header's: 2
+thirty bytes of something else: not opened, reason 1
+half the file: not opened, reason 3
+the file, its index held to a hundred bytes: not opened, reason 6
+the file: opened, reason 0
+from 20270326, 4 days, 56 stops, 38 lines, 61 trips; Europe/Amsterdam
+27 March 2027 is day 1, 30 February is no day, day 3 is 20270329
+Wacht at 07:55: 1 journey(s)
+  08:00 to 08:30, 2 ride(s), 120 s on foot, cost 0
+    08:00 Wacht A ride to 08:10 Wacht B: trip W1a of line W1 to "WB"
+    08:10 Wacht B walk to 08:12 Wacht C
+    08:12 Wacht C ride to 08:30 Wacht Z: trip W2a of line W2 to "WZ"
+Wacht at 07:55, by the eight numbers a query needs: 1 journey(s)
+  08:00 to 08:30, 2 ride(s), 120 s on foot, cost 0
+    08:00 Wacht A ride to 08:10 Wacht B: trip W1a of line W1 to "WB"
+    08:10 Wacht B walk to 08:12 Wacht C
+    08:12 Wacht C ride to 08:30 Wacht Z: trip W2a of line W2 to "WZ"
+Wacht arriving by 08:29: 0 journey(s)
+Lijn at 07:55, the 08:11 avoided by forty minutes: 2 journey(s)
+  08:00 to 08:25, 2 ride(s), 60 s on foot, cost 2400
+    08:00 Lijn A ride to 08:10 Lijn B: trip N1a of line N1 to "NB"
+    08:10 Lijn B walk to 08:11 Lijn C
+    08:11 Lijn C ride to 08:25 Lijn Z: trip N2a of line N2 to "NZ"
+  08:20 to 08:55, 2 ride(s), 660 s on foot, cost 0
+    08:20 Lijn A ride to 08:30 Lijn B: trip N1b of line N1 to "NB"
+    08:30 Lijn B walk to 08:41 Lijn C
+    08:41 Lijn C ride to 08:55 Lijn Z: trip N2b of line N2 to "NZ"
+the same, one option: 1 journey(s), cut short
+  08:20 to 08:55, 2 ride(s), 660 s on foot, cost 0
+    08:20 Lijn A ride to 08:30 Lijn B: trip N1b of line N1 to "NB"
+    08:30 Lijn B walk to 08:41 Lijn C
+    08:41 Lijn C ride to 08:55 Lijn Z: trip N2b of line N2 to "NZ"
+the same, the wish cut off: refused
+the same, a wish of no known kind: refused
+Lopen at 08:00, between two points: 2 journey(s)
+  08:00 to 08:26, 0 ride(s), 1560 s on foot, cost 0
+    08:00 the origin walk to 08:26 the destination
+  08:05 to 08:15, 1 ride(s), 0 s on foot, cost 0
+    08:05 Lopen A ride to 08:15 Lopen Z: trip P2a of line P2 to "PZ"
+closed

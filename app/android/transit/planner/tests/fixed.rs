@@ -11,7 +11,12 @@
 //!
 //! Asked for like that without the file, it fails. On a file of another feed the planner is still held to the scan,
 //! journey by journey. What runs everywhere is the check that the journeys' file itself is whole.
+//!
+//! The same file holds two things more that no hand-written feed can: a point with more stops around it than a
+//! search begins at (4,096) says that its answer was cut short, and by what; and one of the longest plans there
+//! are, told to stop, ends soon, wherever it is.
 
+use atlas_transit::{Answer, Place, Planner, Query, Timetable};
 use std::process::Command;
 
 const JOURNEYS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/journeys-nl-9696.tsv");
@@ -24,6 +29,77 @@ fn the_fixed_journeys_agree_with_the_scan() {
     let said = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{said}{}", String::from_utf8_lossy(&out.stderr));
     assert!(said.contains("fixed journeys:"), "{said}");
+}
+
+/// From a point in Utrecht to a point in Amsterdam: with the reach a query has by default the stops around each
+/// are few and nothing is cut; with a reach of 50 km each point has more stops around it than a search begins at,
+/// the nearest stay, and the answer says that it was cut short by that and by nothing else.
+#[test]
+#[ignore = "needs the whole country's file: ATLAS_TRANSIT_FILE=<file> cargo test --test fixed -- --ignored"]
+fn a_point_with_more_stops_around_it_than_a_search_begins_at_says_so() {
+    let file = std::env::var("ATLAS_TRANSIT_FILE").expect("ATLAS_TRANSIT_FILE names no timetable file of the Netherlands");
+    let bytes = std::fs::read(&file).unwrap();
+    let tt = Timetable::open(&bytes).unwrap();
+    let mut planner = Planner::new(tt).unwrap();
+    let (utrecht, amsterdam) = (Place::Point { lat: 520_894_000, lon: 51_101_000 }, Place::Point { lat: 523_791_000, lon: 49_003_000 });
+    let mut q = Query::new(utrecht, amsterdam, tt.day_of(20261117).unwrap_or(1), 8 * 3600);
+    let near = planner.plan(&q);
+    assert!(!near.cut_short && near.cut_by == 0 && !near.journeys.is_empty(), "{} {}", near.cut_by, near.journeys.len());
+    q.reach_m = 50_000;
+    let wide = planner.plan(&q);
+    assert!(wide.cut_short && wide.cut_by == Answer::PLACE && !wide.journeys.is_empty(), "{} {}", wide.cut_by, wide.journeys.len());
+    // The nearest stops stay, so the wide reach is in no later than the narrow one; and within twice that reach
+    // one can walk all the way, ten hours here, which is an option of no rides beside the train.
+    let first = |a: &Answer| a.journeys.iter().map(|j| j.arrive).min().unwrap();
+    assert!(first(&wide) <= first(&near), "{} {}", first(&wide), first(&near));
+    assert!(wide.journeys.iter().any(|j| j.rides == 0) && near.journeys.iter().all(|j| j.rides > 0));
+    println!("{file}: reach 1 km, {} options, the first in at {}; reach 50 km, {} options, the first in at {}, cut short by a place of too many stops", near.journeys.len(), first(&near), wide.journeys.len(), first(&wide));
+}
+
+/// Across the country, a window of two hours with wishes that cost: one of the longest plans there are. Told to
+/// stop it ends soon wherever it is, in steps and on the clock, and says that it was stopped; tests/cut.rs holds
+/// the same on Utrecht's day, and this says the numbers a phone's user waits for.
+#[test]
+#[ignore = "needs the whole country's file: ATLAS_TRANSIT_FILE=<file> cargo test --test fixed -- --ignored"]
+fn a_long_plan_told_to_stop_ends_soon() {
+    use atlas_transit::plan::LOOK_EVERY;
+    use atlas_transit::{How, Mode, What, Wish};
+    use std::cell::Cell;
+    use std::time::Instant;
+    let file = std::env::var("ATLAS_TRANSIT_FILE").expect("ATLAS_TRANSIT_FILE names no timetable file of the Netherlands");
+    let bytes = std::fs::read(&file).unwrap();
+    let tt = Timetable::open(&bytes).unwrap();
+    let mut planner = Planner::new(tt).unwrap();
+    let (utrecht, groningen) = (Place::Point { lat: 520_894_000, lon: 51_101_000 }, Place::Point { lat: 532_106_000, lon: 65_644_000 });
+    let mut q = Query::new(utrecht, groningen, tt.day_of(20261117).unwrap_or(1), 8 * 3600);
+    q.window = 7200;
+    q.wishes = vec![Wish { what: What::Mode(Mode::Bus), how: How::Avoid(240) }, Wish { what: What::NoWheelchair, how: How::Avoid(120) }];
+    let t0 = Instant::now();
+    let whole = planner.plan(&q);
+    let took = t0.elapsed();
+    assert!(whole.cut_by & Answer::STOPPED == 0 && whole.steps > 2000 * LOOK_EVERY, "{} steps", whole.steps);
+    let (mut most_after, mut longest_ms) = (0u64, 0f64);
+    let looks = whole.steps / LOOK_EVERY;
+    for at in [0, 1, looks / 100, looks / 10, looks / 4, looks / 2, looks * 3 / 4, looks * 9 / 10] {
+        let (asked, told) = (Cell::new(0u64), Cell::new(None));
+        let got = planner.plan_while(&q, &|| {
+            asked.set(asked.get() + 1);
+            if asked.get() > at {
+                told.set(Some(Instant::now()));
+            }
+            asked.get() <= at
+        });
+        let ms = told.get().expect("never told to stop").elapsed().as_secs_f64() * 1000.0;
+        assert_eq!((got.cut_short, got.cut_by & Answer::STOPPED, got.cut_by & (Answer::STEPS | Answer::CHEAPER), asked.get()), (true, Answer::STOPPED, 0, at + 1), "told to stop at look {at}");
+        let after = got.steps.saturating_sub((at + 1) * LOOK_EVERY);
+        (most_after, longest_ms) = (most_after.max(after), longest_ms.max(ms));
+        println!("told to stop at look {at} of {looks}: {after} steps and {ms:.2} ms after, {} options by then", got.journeys.len());
+    }
+    println!("{file}: the whole plan took {} steps and {:.0} ms; told to stop it ended within {most_after} steps and {longest_ms:.2} ms", whole.steps, took.as_secs_f64() * 1000.0);
+    assert!(most_after < 2_000_000 && longest_ms < 250.0, "{most_after} steps, {longest_ms} ms");
+    // and asked afterwards it is whole again
+    let again = planner.plan(&q);
+    assert_eq!((again.journeys.len(), again.steps, again.cut_by), (whole.journeys.len(), whole.steps, whole.cut_by));
 }
 
 /// The journeys' file is whole: its feed's line, and for each journey a name of its own, two places, a date, a

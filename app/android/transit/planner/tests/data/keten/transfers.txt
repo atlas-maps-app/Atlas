@@ -1,0 +1,12 @@
+from_stop_id,to_stop_id,from_route_id,to_route_id,from_trip_id,to_trip_id,transfer_type,min_transfer_time
+QA,QB,,,Q1a,Q2a,1,
+QC,QD,,,Q2b,Q3a,1,
+RA,RA,,,R1a,R2b,3,
+RC,RD,,,R2b,R3a,1,
+WA,WB,,,W1a,W2a,1,
+WS,WT,,,W2b,W3a,1,
+VA,VB,,,V1a,V2a,1,
+VC,VD,V2,V3,,,1,
+TA,TB,,,T1a,T2a,1,
+TS,TT,,,T2b,T3a,1,
+WX,WX,,,W6a,W2b,3,

@@ -10,7 +10,8 @@ import java.net.URI
 /**
  * Where Atlas's numbers come from, for Data sources & keys, the privacy list and the credits: every source the app asks,
  * the providers' ([Catalogue.ALL]) and those the app's own screens ask, each with the hosts it is asked at. A source the
- * user switches off is asked no more: [blockedBy] holds back every request to its hosts (the app's HTTP client asks it).
+ * user switches off is asked no more: [blockedBy] holds back every request to its hosts, and every request its named view
+ * of the app's HTTP client sends to a host no source lists (the client asks it).
  */
 object SourcesModel {
     /** Tankerkönig, the German fuel price API (the Pump screen reads it with the key entered here). */
@@ -95,13 +96,20 @@ object SourcesModel {
     fun keyed(rows: List<Row>): List<Row> = rows.filter { it.canTakeKey }
 
     /**
-     * The source that holds back a request to [host]: the one the host belongs to ([ProviderInfo.holds]: one of its hosts,
-     * or below its `*.name`), where the user switched it off ([off], by id); null lets the request go. A source asked
+     * The source that holds back a request to [host] asked for the source [named] (a named view's, null where none): the
+     * one the host belongs to ([ProviderInfo.holds]: one of its hosts, or below its `*.name`), where the user switched it
+     * off ([off], by id), whatever the view is named; where no source lists the host, the view's own, where it is off.
+     * Null lets the request go: a host no source lists, asked for no source (the tests' mock servers). A source asked
      * through another's servers (OpenStreetMap's chargers, through Overpass) is held back where it is asked, as those
      * servers serve others too; one without a switch never is.
      */
-    fun blockedBy(host: String, off: Set<String>, all: List<ProviderInfo> = ALL): String? =
-        if (off.isEmpty()) null else all.firstOrNull { it.id in off && it.switchable && it.via == null && it.holds(host) }?.id
+    fun blockedBy(host: String, off: Set<String>, all: List<ProviderInfo> = ALL, named: String? = null): String? {
+        if (off.isEmpty()) return null
+        all.firstOrNull { it.id in off && it.switchable && it.via == null && it.holds(host) }?.let { return it.id }
+        if (named == null || all.any { it.holds(host) }) return null
+        val view = all.firstOrNull { it.id == named } ?: return null
+        return view.id.takeIf { view.switchable && view.via == null && it in off }
+    }
 
     /** A licence in a few characters for a tag: "ODbL", "CC BY 4.0", "open data", "own terms", "per source". */
     fun licenceLabel(licence: String): String {

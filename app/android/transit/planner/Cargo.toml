@@ -9,8 +9,9 @@ edition = "2024"
 rust-version = "1.100"
 publish = false
 
-# An rlib only: in an app it is one crate of the single Rust static library a binary may have (the core's), which
-# brings the allocator and the panic handler. So there is no unsafe code here at all.
+# An rlib only: an app links it through the crate beside it (../abi: a static library of its own behind a C
+# interface, in a shared library apart from the core's), which brings the allocator and the panic handler and holds
+# every line of unsafe code. So there is none here at all.
 
 [features]
 default = ["std"]
