@@ -51,12 +51,6 @@ public:
     virtual void next(const style::CameraState& camera, double seconds) = 0;
     /// The last frame's counts.
     [[nodiscard]] virtual MapCounts counts() const noexcept = 0;
-    /// The map's scene updated for `camera` at `seconds` without a frame (the app hidden and following its location):
-    /// what that camera wants is asked for, and nothing is drawn. Nothing by default.
-    virtual void update_scene(const style::CameraState& camera, double seconds) {
-        (void)camera;
-        (void)seconds;
-    }
 
     /// Whether the worlds made from now on make their noise fields on the GPU (fx/GpuFields.hpp): the session's
     /// verdict, given before each make. Off by default.

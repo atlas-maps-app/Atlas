@@ -556,8 +556,9 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
     /**
      * The app's window hidden ([AtlasMap]'s lifecycle: ON_STOP) or shown again (ON_START; ENGINE.md's audit, B1), as
      * this map tells the core's [MapCore.hiding]: the core is hidden while none of its maps is shown, so it draws no
-     * frame; the minute's tick asks for none, and following puts the camera at each fix at once with the scene's update
-     * alone ([followUpdate]), so the tiles keep coming and the map is there on the return. Shown again: the moment and
+     * frame; the minute's tick asks for none, and following puts the camera at each fix at once and does nothing more
+     * ([followUpdate]): the screens' location stops with the window anyway (their collectors stop at ON_STOP), and the
+     * return's first frame asks for the tiles at the last fix. Shown again: the moment and
      * the windows as they are now, drawn at once; the core is shown once the return's moment has been handed, or at
      * once where none is due ([ShownAgain]), so that the frame back has the return's light. Main thread.
      */
@@ -1556,12 +1557,11 @@ internal class MapController(initial: MapState, private val scope: CoroutineScop
             Follow.NONE -> return
         }
         val v = viewport()
-        // Hidden, no frame shows a glide (and Compose's frames wait for the window): the camera at the fix at once, and
-        // the core's scene updated for it without a frame, so its tiles come while the phone moves.
+        // Hidden, no frame shows a glide (and Compose's frames wait for the window): the camera at the fix at once, for
+        // the return's first frame.
         if (hidden) {
             stopAnimation()
             write(target, byUser = false)
-            core?.core?.updateScene()
             return
         }
         // A fix that moves nothing on the screen by a pixel is no glide of 0.9 s (ENGINE.md's audit, B6): the camera

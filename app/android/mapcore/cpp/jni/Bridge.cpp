@@ -716,43 +716,24 @@ public:
     /// anything asked or not: the hide's rest() took a request pending then with it, and the core is the process's, so
     /// one activity's late stop and destroy hide and show it under another's window (Back at the root and a quick
     /// return, where Back still ends the activity), whose own redraw came before. The workers are not stopped: they
-    /// run dry by themselves, and while hidden and following the location each fix's update_scene gives them the tiles
-    /// the camera wants.
+    /// run dry by themselves, and nothing is updated while hidden (the return's first frame asks for what its camera
+    /// wants).
     void set_hidden(bool hidden) {
         loop_->post([this, hidden] {
             if (hidden == hidden_) return;
             hidden_ = hidden;
             if (hidden) {
                 log::info("vk hidden: on, no frames");
-                hidden_updates_ = 0;
                 rest();
                 return;
             }
-            // `vk hidden: off` and the scene's updates meanwhile (ci/smoke.sh's hidden phase reads it)
-            log::info("vk hidden: off after {} updates of the scene", hidden_updates_);
+            // ci/smoke.sh's hidden phase reads it
+            log::info("vk hidden: off");
             back_ns_ = platform::now_ns();
             // the return's own frame (Due::changed: at rest too), so that it hangs on nothing asked before or since
             due_.changed();
             requested_ = true;
             ask_vsync();
-        });
-    }
-
-    /// While hidden: the map's scene updated for Kotlin's camera now, without a frame (Session::update_scene), so that
-    /// a fix's tiles are asked for and built and the return draws them at once. Shown, the next frame does it.
-    void update_scene() {
-        loop_->post([this] {
-            if (!hidden_ || !map_on_ || source_ == nullptr) return;
-            // the camera written for now (whether it moved since the last frame does not matter: nothing is drawn)
-            (void)render_env_->CallBooleanMethod(source_, camera_mid_, static_cast<jlong>(platform::now_ns()), camera_);
-            if (render_env_->ExceptionCheck() == JNI_TRUE) {
-                render_env_->ExceptionDescribe();
-                render_env_->ExceptionClear();
-                return;
-            }
-            const auto camera = style::read_camera_state(std::span(camera_bytes_, style::camera_state_size));
-            if (!camera) return;
-            if (session_->update_scene(*camera)) ++hidden_updates_;
         });
     }
 
@@ -1043,10 +1024,9 @@ private:
     jmethodID off_mid_ = nullptr; // FrameSource.off, or null
     bool off_told_ = false;
     bool requested_ = false;
-    bool hidden_ = false;              // the app's window hidden: no vsync asked, what asks held (set_hidden)
-    std::int64_t due_ns_ = 0;          // when a frame is due by itself at rest (now_ns, MapFrame::due_in; 0: none)
-    std::uint64_t hidden_updates_ = 0; // the scene's updates without a frame while hidden (update_scene)
-    std::int64_t back_ns_ = 0;         // shown again at (CLOCK_MONOTONIC), the first frame still to come; else 0
+    bool hidden_ = false;      // the app's window hidden: no vsync asked, what asks held (set_hidden)
+    std::int64_t due_ns_ = 0;  // when a frame is due by itself at rest (now_ns, MapFrame::due_in; 0: none)
+    std::int64_t back_ns_ = 0; // shown again at (CLOCK_MONOTONIC), the first frame still to come; else 0
     bool camera_warned_ = false;
     frame::Due due_;                   // whether a vsync draws: a new camera, or the picture changed (ask_frame)
     int skipped_in_row_ = 0;           // frames the swapchain skipped since the last it showed
@@ -1226,10 +1206,6 @@ void native_set_hidden(JNIEnv* /*env*/, jclass /*cls*/, jlong handle, jboolean h
     if (Core* core = core_of(handle); core != nullptr) core->set_hidden(hidden == JNI_TRUE);
 }
 
-void native_update_scene(JNIEnv* /*env*/, jclass /*cls*/, jlong handle) {
-    if (Core* core = core_of(handle); core != nullptr) core->update_scene();
-}
-
 jstring native_bench(JNIEnv* env, jclass /*cls*/, jlong handle, jint mode, jint config, jint route, jint form,
                      jint target, jint flags) {
     Core* core = core_of(handle);
@@ -1257,7 +1233,6 @@ void native_resize(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/, jint /*w*/
 void native_detach(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/) {}
 void native_request_frame(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/) {}
 void native_set_hidden(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/, jboolean /*hidden*/) {}
-void native_update_scene(JNIEnv* /*env*/, jclass /*cls*/, jlong /*handle*/) {}
 jstring native_bench(JNIEnv* env, jclass /*cls*/, jlong /*handle*/, jint /*mode*/, jint /*config*/, jint /*route*/,
                      jint /*form*/, jint /*target*/, jint /*flags*/) {
     return java(env, "hosts have no surfaces");
@@ -2279,8 +2254,8 @@ jstring native_text_fonts(JNIEnv* env, jclass /*cls*/, jobject geist, jobject ge
 
 // ---- end of K13's natives ----
 
-const std::array<JNINativeMethod, 79>& methods() {
-    static const std::array<JNINativeMethod, 79> table{{
+const std::array<JNINativeMethod, 78>& methods() {
+    static const std::array<JNINativeMethod, 78> table{{
         method("abi", "()I", fn(&native_abi)),
         method("layouts", "()Ljava/lang/String;", fn(&native_layouts)),
         method("lastError", "()Ljava/lang/String;", fn(&native_last_error)),
@@ -2297,7 +2272,6 @@ const std::array<JNINativeMethod, 79>& methods() {
         method("detach", "(J)V", fn(&native_detach)),
         method("requestFrame", "(J)V", fn(&native_request_frame)),
         method("setHidden", "(JZ)V", fn(&native_set_hidden)),
-        method("updateScene", "(J)V", fn(&native_update_scene)),
         method("bench", "(JIIIIII)Ljava/lang/String;", fn(&native_bench)),
         method("records", "(JLjava/nio/ByteBuffer;)I", fn(&native_records)),
         method("publishRecords", "(J)V", fn(&native_publish_records)),

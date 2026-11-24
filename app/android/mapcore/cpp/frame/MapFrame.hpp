@@ -252,9 +252,6 @@ public:
     [[nodiscard]] gpu::Content& content() noexcept override { return *builder_; }
     [[nodiscard]] bool ready() const noexcept override { return made() && theme_.has_value(); }
     void next(const style::CameraState& camera, double seconds) override;
-    /// next's inputs for `camera`, then the world's update for them alone (FrameBuilder::update_scene): its tiles
-    /// wanted and built, nothing drawn. Nothing before it is ready.
-    void update_scene(const style::CameraState& camera, double seconds) override;
     [[nodiscard]] standin::MapCounts counts() const noexcept override;
     void set_gpu_noise(bool on) noexcept override { gpu_noise_ = on; }
     [[nodiscard]] bool noise_due(const style::CameraState& camera) const override;

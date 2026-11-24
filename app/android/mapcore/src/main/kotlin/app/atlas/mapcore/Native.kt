@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  */
 object Native {
     /** The façade's ABI; the core refuses to load against a class with another (it reads this field). */
-    const val ABI = 35
+    const val ABI = 36
 
     /** null: not tried yet; "": loaded; otherwise why the core did not load. */
     @Volatile
@@ -175,9 +175,6 @@ object Native {
 
     /** The app's window hidden (true, its ON_STOP) or shown again (false, ON_START): no frame while hidden. */
     @JvmStatic external fun setHidden(handle: Long, hidden: Boolean)
-
-    /** While hidden: the map's scene updated for the source's camera now, without a frame. */
-    @JvmStatic external fun updateScene(handle: Long)
 
     /**
      * VK bench: the stand-in on (mode 1) or off (0) in a configuration; [flags] 1 the core's frosted pills, 2 a

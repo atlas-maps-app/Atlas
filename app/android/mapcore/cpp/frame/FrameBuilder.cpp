@@ -374,14 +374,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     if (cam.width_px == 0 || cam.height_px == 0 || cam.width_dp == 0 || cam.height_dp == 0) return false;
     // the moment: a frame drawn into an output waits for every pass's work ahead for a new one (Pass::ready_for); the
     // twin's, which draws nothing, takes the inputs' at once
-    // update_scene's view keeps the moment shown (and the one the passes are asked about) for the next frame drawn
-    const bool scene_only = output == nullptr && scene_only_;
-    if (!scene_only)
-        state_.theme = take_moment(output == nullptr);
-    else if (shown_)
-        state_.theme = *shown_;
-    else
-        state_.theme = inputs_.theme;
+    state_.theme = take_moment(output == nullptr);
     state_.number = number;
     state_.seconds = inputs_.seconds;
     state_.camera = cam;
@@ -410,8 +403,7 @@ bool FrameBuilder::derive(std::uint64_t number, std::uint32_t slot, const gpu::O
     const view::Device device{.density = cam.density,
                               .width_px = cam.width_px,
                               .height_px = cam.height_px,
-                              .quarter_turns = output != nullptr ? quarter_turns_of(output->transform())
-                                                                 : (scene_only ? quarter_turns_ : 0)};
+                              .quarter_turns = output != nullptr ? quarter_turns_of(output->transform()) : 0};
     // The engine camera: through the active pack's ladder (ViewLadder.place's cfg), else the camera state alone.
     view::LayerSettings settings;
     view::CameraSpec spec;
@@ -792,17 +784,6 @@ void FrameBuilder::owner_map(std::span<const std::uint8_t> rgba, std::span<std::
                                  (std::uint32_t{rgba[(4 * i) + 2]} << 16U);
         out[i] = id == 0 ? 0 : owner_of(id - 1);
     }
-}
-
-void FrameBuilder::update_scene() {
-    FrameScene* scene = inputs_.scene;
-    if (scene == nullptr) return;
-    scene_only_ = true;
-    const bool derived = derive(state_.number, state_.slot, nullptr);
-    scene_only_ = false;
-    if (!derived) return;
-    const trace::Section traced("atlas scene update");
-    scene->update(state_);
 }
 
 void FrameBuilder::emit(twin::Stream& out, std::uint64_t number) {

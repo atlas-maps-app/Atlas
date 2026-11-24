@@ -53,8 +53,9 @@ namespace atlas::jni {
 /// relief on or off) and Native.terrainSources (the sources of the relief drawn, for the credit line); Native.packs and
 /// Native.worldHead take a terrain pack's kind (5). 35: Native.setHidden (the frame loop held while the app's window is
 /// hidden) and Native.updateScene (the map's scene updated without a frame while hidden, at each fix of the location
-/// followed).
-inline constexpr jint abi = 35;
+/// followed). 36: Native.updateScene gone again (nothing called it: the screens' location stops at the window's
+/// ON_STOP, the event that hides; part 2b's point 6).
+inline constexpr jint abi = 36;
 
 /// The Kotlin class whose static natives the library registers.
 inline constexpr const char* native_class = "app/atlas/mapcore/Native";

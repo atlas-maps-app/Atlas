@@ -221,17 +221,11 @@ class MapCore private constructor(handle: Long, private val config: CoreConfig) 
      * Who hides the core: its maps join, say whether their windows are shown, and leave ([CoreHiding]). The core is
      * hidden while it has at least one map and none of them is shown: while hidden it draws no frame and asks no vsync,
      * and what asks for one ([requestFrame], a tile landed) is held until it is shown, then drawn at once. Its workers
-     * are not stopped: they run dry, or build what [updateScene] asks for. Main thread.
+     * are not stopped: they run dry. Main thread.
      */
     val hiding = CoreHiding(::setHidden)
 
     private fun setHidden(hidden: Boolean) = core.call(Unit) { Native.setHidden(it, hidden) }
-
-    /**
-     * While hidden and following the location: the map's scene updated for the source's camera now, without a frame,
-     * so that the tiles of a fix are asked for and built and the map is there on the return. Nothing while shown.
-     */
-    fun updateScene() = core.call(Unit) { Native.updateScene(it) }
 
     /**
      * VK bench (bench and debug builds): the stand-in drawn in [config] by [route] as [form] into [target]; [pills]
