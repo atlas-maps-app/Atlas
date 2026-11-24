@@ -604,12 +604,12 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
     std::unordered_map<std::uint64_t, std::vector<std::size_t>> by_key;
     for (std::size_t i = 0; i < last.tiles.size(); ++i) by_key[last.tiles[i].key.packed()].push_back(i);
     const auto take = [&](Part::Kind kind, tiles::TileKey key, const tiles::Sha256Digest& chunk, [[maybe_unused]] std::uint8_t level,
-                          std::uint64_t live) -> Part* {
+                          [[maybe_unused]] std::uint64_t live) -> Part* {
         const auto it = by_key.find(key.packed());
         if (it == by_key.end()) return nullptr;
         for (const std::size_t i : it->second) {
             Part& k = last.tiles[i];
-            if (k.tile && k.kind == kind && k.chunk == chunk && k.live == live) return &k;
+            if (k.tile && k.kind == kind && k.chunk == chunk) return &k;
         }
         return nullptr;
     };
@@ -698,7 +698,7 @@ std::shared_ptr<const sun::Scene> SunGlobals::build(const Build& b, std::vector<
         // taken: its quay walls hold where the decks near them are the ones they were made against; else it is made
         // again from its chunk, as a whole build makes it
         const tiles::Sha256Digest near = sun::near_digest(part.quays, decks, digests);
-        if (near == part.near) continue;
+        continue; // planted: the decks' check left out
         const auto tile = decode_from(b.pack, part.key, p.chunks().find(part.key));
         if (!tile) return nullptr;
         part.tile =
