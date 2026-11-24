@@ -227,6 +227,17 @@ jobs:
         run: |
           set -euo pipefail
           PBF="$WORK/$ID.osm.pbf"
+          # gates-locate2 alone, never landed: the extract Packs 45283948169 read, Geofabrik's dated file of its size
+          case "$ID" in germany) WANT=4888923108 ;; norway) WANT=1379421155 ;; *) WANT= ;; esac
+          if [ -n "$WANT" ]; then
+            for d in 261123 261122 261124; do
+              u="${REGION_URL%-latest.osm.pbf}-$d.osm.pbf"
+              n=$(curl -fsSI --retry 3 -A "$USER_AGENT" "$u" | tr -d '\r' | awk 'tolower($1) == "content-length:" {print $2}' | tail -1 || true)
+              echo "$u: ${n:-no such file} bytes"
+              if [ "$n" = "$WANT" ]; then PBF_URL=$u; break; fi
+            done
+            if [ "$PBF_URL" = "$REGION_URL" ]; then echo "::error::no dated extract of $WANT bytes"; exit 1; fi
+          fi
           for attempt in 1 2; do
             curl -fsSL --retry 5 --retry-delay 30 -A "$USER_AGENT" -o "$PBF" "$PBF_URL"
             curl -fsSL --retry 5 -A "$USER_AGENT" -o "$PBF.md5" "$PBF_URL.md5"
@@ -425,7 +436,7 @@ jobs:
           [ -s "$WORK/out/$ID.windows.idx" ] || exit 0
           touch "$RUNNER_TEMP/country.txt"
           python3 -I .github/scripts/census-water.py "$RUNNER_TEMP/country.txt" "$WORK/out/$ID.windows" \
-            "$WORK/out/$ID.windows.idx" 40 2>&1 | tee "$RUNNER_TEMP/census.txt"
+            "$WORK/out/$ID.windows.idx" 60 2>&1 | tee "$RUNNER_TEMP/census.txt"
           { echo "### $ID: the windows' water"; echo '```'; cat "$RUNNER_TEMP/census.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           true
 

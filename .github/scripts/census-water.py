@@ -10,9 +10,12 @@ natural=coastline, bay, strait or cape, place=sea or ocean, or natural=water wit
 "islands (their coast)" and "sea and coast", its tags without kinds.py's META keys). Also counted: the windows that
 hold a natural=coastline way at all (where load/Regions.cpp's sea_from_coast can close a sea, and region_water's guard
 can drop it), and of the windows `packer country` did not build (country.txt's "not built" lines) those refused with
-"the water differs", with how many of them hold a large one. A window whose data holds none of the values these tags
-take is not parsed. Four processes, the windows in an order of their own; it stops after [minutes] (40) and says how
-many it read, a sample of the country.
+"the water differs", with how many of them hold a large one. Those are read first and always parsed, so that the time's
+stop never leaves one unread; of them it also says how many hold a coastline way and how many buildings their answers
+hold (ways and relations tagged building=, as the guard's sample is taken from the scene's buildings: under 67, its
+`most` is 2). Any other window whose data holds none of the values these tags take is not parsed. Four processes, the
+other windows in an order of their own; it stops after [minutes] (40) and says how many it read, a sample of the
+country.
 """
 import concurrent.futures
 import gzip
@@ -73,11 +76,11 @@ def start(path):
 
 
 def census(entry):
-    x, y, off, ln = entry
+    x, y, off, ln, full = entry
     DATA.seek(off)
     raw = gzip.decompress(DATA.read(ln))
-    if not any(v in raw for v in VALUES):
-        return x, y, False, None, False
+    if not full and not any(v in raw for v in VALUES):
+        return x, y, False, None, False, None
     els = json.loads(raw).get('elements', [])
     total = compact(els) - 2 - max(0, len(els) - 1)
     large = None
@@ -90,27 +93,34 @@ def census(entry):
             coastline = True
         if total > 0 and compact(el) >= 0.01 * total and large != 'island':
             large = k
-    return x, y, True, large, coastline
+    buildings = sum(1 for el in els if el.get('type') in ('way', 'relation') and 'building' in (el.get('tags') or {})) \
+        if full else None
+    return x, y, True, large, coastline, buildings
 
 
 def main(report, data, idx, minutes=40):
     started = time.time()
-    # in an order of their own, so that a read the time stops is a sample of the whole country, not its west
-    entries = sorted(index(idx), key=lambda e: ((e[0] * 2654435761) ^ (e[1] * 40503)) & 0xFFFFFFFF)
     bad = refused(report) if report else {}
     water = {k for k, why in bad.items() if 'the water differs' in why}
+    # the windows refused for the water first; then the others in an order of their own, so that a read the time stops
+    # is a sample of the whole country, not its west
+    entries = sorted(((x, y, off, ln, (x, y) in water) for x, y, off, ln in index(idx)),
+                     key=lambda e: (not e[4], ((e[0] * 2654435761) ^ (e[1] * 40503)) & 0xFFFFFFFF))
     read = parsed = 0
     large = {'island': [], 'coast': []}
     coastline = 0
     held = set()
+    theirs = {}  # each window refused for the water: (holds a coastline way, its buildings)
     with concurrent.futures.ProcessPoolExecutor(4, initializer=start, initargs=(data,)) as pool:
-        for x, y, p, k, c in pool.map(census, entries, chunksize=32):
+        for x, y, p, k, c, b in pool.map(census, entries, chunksize=32):
             read += 1
             parsed += p
             coastline += c
             if k:
                 large[k].append(f'14/{x}/{y}')
                 held.add((x, y))
+            if (x, y) in water:
+                theirs[(x, y)] = (c, b)
             if time.time() - started > minutes * 60:
                 print(f'stopped after {minutes} min', flush=True)
                 pool.shutdown(wait=False, cancel_futures=True)
@@ -124,6 +134,15 @@ def main(report, data, idx, minutes=40):
             print(f'  {k}: ' + ', '.join(large[k][:20]) + (f', and {len(large[k]) - 20} more' if len(large[k]) > 20 else ''))
     print(f'not built: {len(bad)}, {len(water)} of them refused with "the water differs", '
           f'{len(water & held)} of those holding a large one')
+    if water:
+        counts = sorted(b for _, b in theirs.values())
+        print(f'  of the {len(water)} refused for the water: {len(theirs)} read, '
+              f'{sum(1 for c, _ in theirs.values() if c)} hold a coastline way; the buildings in their answers: '
+              + (f'{counts[0]} to {counts[-1]}, median {counts[len(counts) // 2]}, {sum(1 for b in counts if b < 67)} '
+                 f'under 67' if counts else 'none read'))
+        for (x, y), (c, b) in sorted(theirs.items()):
+            print(f'    14/{x}/{y}: {b} buildings, {"a coastline way" if c else "no coastline way"}'
+                  f'{", a large one" if (x, y) in held else ""}: {bad[(x, y)]}')
 
 
 if __name__ == '__main__':
