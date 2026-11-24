@@ -1,17 +1,22 @@
 # Rust libraries (the core's buildings' cleaning, and what else includes this file): a crate built by cargo into the
 # build directory as a static library, linked by the build's own linker (the NDK's on Android).
 #
-#   atlas_rust_library(<target> CRATE <dir> LIB <name> [RUSTFLAGS <flags>] [OVERFLOW_CHECKS] [CARGO_ARGS <arg>...])
+#   atlas_rust_library(<target> CRATE <dir> LIB <name> [RUSTFLAGS <flags>] [CARGO_ARGS <arg>...])
 #
 # makes <target>, an imported static library (lib<name>.a, with what Rust's standard library links), and
 # <target>_build, the cargo build that makes it: `cargo build --release --offline --locked --lib` in the crate's folder
 # (CRATE, relative to the calling CMakeLists.txt's folder), for the Android ABI's target on Android, into
-# rust/ under the build directory. RUSTFLAGS is passed to rustc as it is (a fuzz build's sanitizer coverage, say);
-# CARGO_ARGS go after cargo's own (features, say). OVERFLOW_CHECKS builds the crate with its overflow checks on
-# (-Coverflow-checks=on), which the release profile has off, and holds the build to it: after cargo,
-# cmake/RustOverflowChecks.cmake reads the crate's own object and fails the build if it names none of Rust's overflow
-# panics (the core's fuzz build). A crate takes the standard library and nothing else, so cargo
-# fetches nothing (--offline --locked); a crate from the network would fail the build, not be fetched.
+# ATLAS_RUST_DIR (rust/ under the build directory). RUSTFLAGS is passed to rustc as it is; CARGO_ARGS go after cargo's
+# own (features, say). A crate takes the standard library and nothing else, so cargo fetches nothing (--offline
+# --locked); a crate from the network would fail the build, not be fetched.
+#
+# The fuzz build (ATLAS_SANITIZE fuzzer, cmake/Sanitizers.cmake) builds every crate so, with no word from the call:
+# - instrumented for libFuzzer as the C++ is (sanitizer coverage);
+# - with its overflow checks on (-Coverflow-checks=on), which the release profile has off: there an overflow is a
+#   panic, which aborts, and libFuzzer reports it where the shipped build would wrap. The build is held to it: after
+#   cargo, cmake/RustOverflowChecks.cmake reads the crate's own objects, in a folder of the library's own, and fails
+#   the build if they name none of the panics only an overflow check calls.
+# The other sanitizers leave a crate as it is (it holds no C++ and shares no memory it does not own).
 #
 # The Rust it builds with is the one the nearest rust-toolchain.toml pins, in the crate's folder or above it, as
 # rustup picks it; for Atlas's crates, app/android/rust-toolchain.toml. A change of that pin, of the crate's
@@ -21,13 +26,12 @@
 #
 # cargo is found on the PATH, or where rustup puts it (~/.cargo/bin, or $CARGO_HOME/bin): ATLAS_CARGO.
 include_guard(GLOBAL)
-set(_atlas_rust_cmake "${CMAKE_CURRENT_LIST_DIR}") # this folder, where RustOverflowChecks.cmake is
 # Where cargo builds every crate, for the whole build (a cache entry, so any folder sees it): cmake/LinkedBytes.cmake
 # counts every archive under it that a link takes.
 set(ATLAS_RUST_DIR "${CMAKE_BINARY_DIR}/rust" CACHE INTERNAL "where cargo builds the Rust crates")
 
 function(atlas_rust_library target)
-    cmake_parse_arguments(PARSE_ARGV 1 arg "OVERFLOW_CHECKS" "CRATE;LIB;RUSTFLAGS" "CARGO_ARGS")
+    cmake_parse_arguments(PARSE_ARGV 1 arg "" "CRATE;LIB;RUSTFLAGS" "CARGO_ARGS")
     if(arg_UNPARSED_ARGUMENTS)
         message(FATAL_ERROR "atlas_rust_library(${target}): what is '${arg_UNPARSED_ARGUMENTS}'?")
     endif()
@@ -90,11 +94,14 @@ function(atlas_rust_library target)
     set(rustflags "${arg_RUSTFLAGS}")
     set(check "")
     set(check_script "")
-    if(arg_OVERFLOW_CHECKS)
-        string(JOIN " " rustflags ${rustflags} -Coverflow-checks=on)
-        set(check_script "${_atlas_rust_cmake}/RustOverflowChecks.cmake")
+    if(ATLAS_SANITIZE STREQUAL "fuzzer")
+        string(JOIN " " rustflags ${rustflags} -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
+            -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
+            -Cllvm-args=-sanitizer-coverage-trace-compares -Coverflow-checks=on)
+        # this file's folder, wherever the function is called from
+        set(check_script "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RustOverflowChecks.cmake")
         set(check COMMAND "${CMAKE_COMMAND}" "-DLIB=${lib}" "-DNAME=${arg_LIB}" "-DAR=${CMAKE_AR}"
-                  "-DDIR=${cargo_dir}/overflow-checks" -P "${check_script}")
+                  "-DDIR=${cargo_dir}/overflow-checks/${arg_LIB}" -P "${check_script}")
     endif()
 
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${crate}/src/*.rs")

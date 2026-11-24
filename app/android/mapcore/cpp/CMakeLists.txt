@@ -190,20 +190,9 @@ list(REMOVE_ITEM _core_sources ${_stage_p_sources})
 # The buildings' cleaning (load/Clean.hpp), a Rust library: app/android/mapcore/rust/clean, built by cargo as a static
 # library (cmake/Rust.cmake) and linked into stage P (atlas_clean). Release settings in its Cargo.toml (opt-level s,
 # LTO over the crate and the standard library, one unit, panic = abort) keep it small. A fuzz build instruments it for
-# libFuzzer as the C++ is (sanitizer coverage), and turns on its overflow checks, which the build that ships has off
-# (overflow-checks = false): there an overflow is a panic, which aborts, and libFuzzer reports it where the shipped
-# build would wrap. The build fails if the library's code names no overflow panic (OVERFLOW_CHECKS, cmake/Rust.cmake).
-# The other sanitizers leave it as it is (it holds no C++ and shares no memory it does not own).
+# libFuzzer and turns on its overflow checks, as it does every crate (cmake/Rust.cmake).
 set(_clean_crate "${CMAKE_CURRENT_SOURCE_DIR}/../rust/clean")
-set(_clean_rustflags "")
-set(_clean_checks "")
-if(ATLAS_SANITIZE STREQUAL "fuzzer")
-    string(JOIN " " _clean_rustflags -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4
-        -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table
-        -Cllvm-args=-sanitizer-coverage-trace-compares)
-    set(_clean_checks OVERFLOW_CHECKS)
-endif()
-atlas_rust_library(atlas_clean CRATE "${_clean_crate}" LIB atlas_clean RUSTFLAGS "${_clean_rustflags}" ${_clean_checks})
+atlas_rust_library(atlas_clean CRATE "${_clean_crate}" LIB atlas_clean)
 
 # What stage P's code links: dialect, warnings, sanitizers, zstd, the buildings' cleaning, and the generated headers
 # under the build directory (gen/data/*: the style file and the traditions).
