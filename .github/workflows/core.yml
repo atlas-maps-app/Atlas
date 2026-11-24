@@ -17,8 +17,9 @@
 #
 # Which job runs for which paths: the core's matrix (the core job) runs when the push or pull request changes
 # app/android/mapcore/** (the building traditions the core compiles in among them), the Rust its stage P is built with
-# (app/android/rust-toolchain.toml), this file or .github/docker/lavapipe/** (core-changes decides, by a git diff),
-# whatever else it changes, and on every nightly and run by hand.
+# (app/android/rust-toolchain.toml), this file, the scripts its steps run (.github/scripts/**: the Rust's install and
+# lint among them) or .github/docker/lavapipe/** (core-changes decides, by a git diff), whatever else it changes, and
+# on every nightly and run by hand.
 #
 # Only the extras need this file on the default branch, where GitHub keeps schedules and runs by hand: the nightly
 # (every fuzz target for up to 30 minutes, clang-tidy on every file without its cache; it checks out `app`), the MODS
@@ -32,10 +33,10 @@ name: Core
 on:
   push:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', 'app/android/rust-toolchain.toml', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+    paths: ['app/android/mapcore/**', 'app/android/rust-toolchain.toml', '.github/workflows/core.yml', '.github/scripts/**', '.github/docker/lavapipe/**']
   pull_request:
     branches: [main, app]
-    paths: ['app/android/mapcore/**', 'app/android/rust-toolchain.toml', '.github/workflows/core.yml', '.github/docker/lavapipe/**']
+    paths: ['app/android/mapcore/**', 'app/android/rust-toolchain.toml', '.github/workflows/core.yml', '.github/scripts/**', '.github/docker/lavapipe/**']
   schedule:
     - cron: '23 2 * * *' # nightly: every fuzz target for up to 30 minutes, clang-tidy on every file
   workflow_dispatch:
@@ -122,7 +123,7 @@ jobs:
           core=true
           if [ "${{ github.event_name }}" = push ] || [ "${{ github.event_name }}" = pull_request ]; then
             if [ -n "$base" ] && [ "$base" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$base^{commit}" 2> /dev/null; then
-              if git diff --quiet "$base" HEAD -- app/android/mapcore app/android/rust-toolchain.toml .github/workflows/core.yml .github/docker/lavapipe; then
+              if git diff --quiet "$base" HEAD -- app/android/mapcore app/android/rust-toolchain.toml .github/workflows/core.yml .github/scripts .github/docker/lavapipe; then
                 core=false
               fi
               echo "changed since $base:"
