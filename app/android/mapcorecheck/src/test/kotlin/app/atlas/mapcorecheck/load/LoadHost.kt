@@ -8,7 +8,7 @@ import java.io.File
  */
 internal object LoadHost {
     /** The layout version of these entry points; a library of another is refused. */
-    const val ABI = 6
+    const val ABI = 7
 
     init {
         val path = System.getProperty("atlas.mapcore.host") ?: error("atlas.mapcore.host names no host build of the core")
@@ -33,12 +33,15 @@ internal object LoadHost {
      */
     @JvmStatic external fun comparePacks(a: String, b: String): String
 
+    /** The names of the layers the buildings' cleaning touches (`CP/load/Clean.hpp`'s `cleaned_layers`), joined by commas. */
+    @JvmStatic external fun touched(): String
+
     /**
-     * The layers the buildings' cleaning touches (`CP/load/Clean.hpp`, core-p14): the buildings and parts and their variants, and
-     * what stage P derives from their rings, the things on their walls (a door's and a shopfront's wall) and the quays they line.
-     * Every other layer of the core's cut is still the port's, line for line, until cut 2 makes the test packs with the core.
+     * The layers the buildings' cleaning touches, as the core lists them, once (`CP/load/Clean.hpp`'s `cleaned_layers`, since
+     * core-p14): the buildings and parts and their variants, and what stage P derives from their rings. Every other layer of the
+     * core's cut is still the port's, line for line, until cut 2 makes the test packs with the core.
      */
-    val TOUCHED = setOf("building", "part", "variant", "thing", "quay")
+    val TOUCHED: Set<String> by lazy { touched().split(',').toSet() }
 
     /** The layers of a summary's `layers=` whose lines differ, each `<layer>:<differ>/<lines>`, but the [TOUCHED] ones. */
     fun untouchedThatDiffer(summary: String): List<String> {

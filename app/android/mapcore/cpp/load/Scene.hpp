@@ -161,7 +161,8 @@ struct Building {
     /// (load/Clean.hpp) it is what stands: its courtyards and its pieces joined into the one ring by seams, an edge run
     /// there and back, which draws nothing.
     std::vector<V2> poly;
-    /// The inner rings mapped in it (a relation's courtyards), until the cleaning cuts them out of `poly`.
+    /// The inner rings mapped in it (a relation's courtyards), until the cleaning cuts them out of `poly`. A footprint
+    /// the cleaning leaves as it is (a corner off the grid, or below the ground) keeps them; nothing draws them.
     std::vector<std::vector<V2>> holes;
     /// Below the ground (load/Amsterdam.cpp's underground): hidden, kept for its places and for picking, cleaned with
     /// nothing.
@@ -412,8 +413,8 @@ struct BuildingCounts {
     std::uint32_t flat_roofs = 0;         ///< roofs with a shape, as drawn, that stage T draws flat
     std::uint32_t flat_by_seam = 0;       ///< of them, those flat only over a piece with a courtyard
     std::uint32_t roofed_by_piece = 0;    ///< rings with seams whose roof stands on a piece by itself (one or more)
-    std::uint32_t underground = 0;        ///< below the ground by location=underground: hidden (a part: left out)
-    std::uint32_t underground_layer = 0;  ///< below the ground by a layer under 0 alone: hidden (a part: left out)
+    std::uint32_t underground = 0;        ///< below the ground by location=underground: hidden, a part too
+    std::uint32_t underground_layer = 0;  ///< below the ground by a layer under 0 alone: hidden, a part too
     std::uint32_t doubles = 0;            ///< a relation's outer ring that is a building's own way, loaded once
     std::uint32_t doubles_disagree = 0;   ///< of them, the way and its relation mapping a key both carry otherwise
     std::uint32_t bounded = 0;            ///< building numbers past what a building can be, taken as unmapped

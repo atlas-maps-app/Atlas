@@ -2,7 +2,8 @@
 // the rules the renders draw every place by besides the living map. On top of the living map's load
 // (load/Amsterdam.hpp, in the region's frame, with its palette), what regions add:
 //   - buildings and parts mapped as multipolygon relations, their outer ways joined into rings (Notre-Dame, the
-//     Louvre), with guess_tags's values and their outlines' `hidden`;
+//     Louvre), with guess_tags's values; an outline's `hidden` is the cleaning's (load/Clean.hpp: one its parts
+//     cover whole), after each part's outline is found in the outlines as mapped;
 //   - roof shapes the renders do not draw taken as the closest they do (a dome as pyramidal, a gambrel as gabled);
 //   - land cover by regions.py's LAND, runways and taxiways, big roads, railways, power lines and their towers, marine
 //     works, cranes, masts, gantries, conveyors, wind turbines, towers with a height, and national parks' edges;

@@ -9,6 +9,7 @@
 #include "base/arena.hpp"
 #include "base/pymath/PyMath.hpp"
 #include "load/Amsterdam.hpp"
+#include "load/Clean.hpp"
 #include "load/Cut.hpp"
 #include "load/PackStyle.hpp"
 #include "load/Regions.hpp"
@@ -61,16 +62,12 @@ struct Compared {
     std::vector<tl::LayerLines> layers; ///< how the pack's tiles and the core's compare, layer by layer
 };
 
-/// The layers the buildings' cleaning touches: the buildings and parts themselves and their variants, and what stage P
-/// derives from their rings: the things on their walls (a door's and a shopfront's wall), and the quays they line.
-constexpr std::array<std::string_view, 5> touched_layers = {"building", "part", "variant", "thing", "quay"};
-
-/// Holds every layer the buildings' cleaning does not touch to the port's, line for line (until cut 2 makes the test
-/// packs with the core), and says how the touched ones moved.
+/// Holds every layer the buildings' cleaning does not touch (load/Clean.hpp's cleaned_layers) to the port's, line for
+/// line (until cut 2 makes the test packs with the core), and says how the touched ones moved.
 void check_layers(const Compared& c, std::string_view what) {
     std::string moved;
     for (const tl::LayerLines& l : c.layers) {
-        if (std::ranges::find(touched_layers, l.layer) != touched_layers.end()) {
+        if (std::ranges::find(load::cleaned_layers, l.layer) != load::cleaned_layers.end()) {
             moved += std::format(" {} {}/{}", l.layer, l.differ, l.lines);
             continue;
         }

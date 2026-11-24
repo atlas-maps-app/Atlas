@@ -6,7 +6,8 @@
 //   - a relation's outer members are joined into rings and its inner members are its courtyards; an outer member that
 //     is a building's or part's own way loads once, as itself, with the courtyards that lie in it;
 //   - what is below the ground (location=underground, or a layer below 0 unless its location puts it on the ground or
-//     above) is not loaded;
+//     above) is hidden, a building and a part alike: kept for its places and for picking, drawn by nothing, cleaned
+//     with nothing;
 //   - a building's numbers past what a building can be (building_bounds) are taken as unmapped, and a base at or over
 //     the top as none;
 //   - an outline is drawn less its parts, not hidden whole where one part's centroid lay in it; overlapping footprints
@@ -94,16 +95,16 @@ inline constexpr std::int64_t max_levels = 200;
 
 /// `load(raw)`: the scene of a document in `frame`, with `palette` for the guessed colours, its buildings cleaned.
 /// guess_tags's values come with each record (each building draws from its own random stream, seeded by its id, so the
-/// order is free). With `looks`, generic.py's looks after guess_tags, as amsterdam.py applies them to its own data:
-/// Amsterdam's New looks (ATLAS_LOOKS: `keep_homes`) or its tradition and kit (ATLAS_KIT: nl_amsterdam), the land use
-/// from the areas.
+/// order is free). With `looks`, generic.py's looks as amsterdam.py applies them to its own data: Amsterdam's New looks
+/// (ATLAS_LOOKS: `keep_homes`) or its tradition and kit (ATLAS_KIT: nl_amsterdam), the land use from the areas. They
+/// are taken after the cleaning, by what stands, in the order a region's load takes its own (load/Regions.cpp).
 [[nodiscard]] std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
                                                              const Palette& palette, const Looks* looks = nullptr);
 
-/// load_amsterdam before its buildings are cleaned: a region's load (load/Regions.hpp) finds each part's outline in
-/// the outlines as mapped, then cleans them.
+/// load_amsterdam before its buildings are cleaned and before any looks: a region's load (load/Regions.hpp) finds each
+/// part's outline in the outlines as mapped, then cleans them, then takes its looks.
 [[nodiscard]] std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame,
-                                                          const Palette& palette, const Looks* looks = nullptr);
+                                                          const Palette& palette);
 
 /// Counts the roofs with a shape, as drawn (after the closest shapes and the looks: mapped or a tradition's or the
 /// guesses'), that stage T draws flat (Scene::counts' flat_roofs): a shape it does not draw, no height, or over a

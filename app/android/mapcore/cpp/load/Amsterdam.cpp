@@ -434,8 +434,8 @@ Building make_building(std::vector<V2> poly, std::int64_t id, const Tags& t, boo
 
 } // namespace
 
-std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame, const Palette& palette,
-                                            const Looks* looks) {
+std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tiles::Frame& frame,
+                                            const Palette& palette) {
     Scene s;
     Positions at(frame);
     // The largest lists' room up front, from the elements that fill them (a relation's other rings may add a few):
@@ -644,7 +644,6 @@ std::expected<Scene, LoadError> load_living(const osm::Document& doc, const tile
         }
     }
     if (at.error()) return std::unexpected(*at.error());
-    if (looks != nullptr) apply_looks(s, *looks);
     place(s);
     return s;
 }
@@ -681,9 +680,11 @@ void count_flat_roofs(Scene& s) {
 
 std::expected<Scene, LoadError> load_amsterdam(const osm::Document& doc, const tiles::Frame& frame,
                                                const Palette& palette, const Looks* looks) {
-    auto s = load_living(doc, frame, palette, looks);
+    auto s = load_living(doc, frame, palette);
     if (!s) return s;
+    // a region's order (load/Regions.cpp's load_region): cleaned first, so that a look is taken by what stands
     clean_buildings(*s, frame);
+    if (looks != nullptr) apply_looks(*s, *looks);
     count_flat_roofs(*s);
     return s;
 }

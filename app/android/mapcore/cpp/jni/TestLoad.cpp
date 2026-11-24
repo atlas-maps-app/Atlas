@@ -3,6 +3,7 @@
 // to every tile of the bundled render pack of it. It binds to the Kotlin object app.atlas.mapcorecheck.load.LoadHost by
 // JNI's names; nothing of it is in the phone's library.
 #include "base/arena.hpp"
+#include "load/Clean.hpp"
 #include "load/Cut.hpp"
 #include "load/Regions.hpp"
 #include "osm/Overpass.hpp"
@@ -24,6 +25,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -33,7 +35,7 @@ namespace load = atlas::load;
 namespace osm = atlas::osm;
 
 /// The layout version of these entry points; LoadHost refuses another.
-constexpr jint test_load_abi = 6;
+constexpr jint test_load_abi = 7;
 
 std::string string_of(JNIEnv* env, jstring s) {
     const char* chars = env->GetStringUTFChars(s, nullptr);
@@ -56,6 +58,16 @@ std::string layers_text(const std::vector<atlas::tiles::LayerLines>& layers) {
 extern "C" {
 
 JNIEXPORT jint JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_abi(JNIEnv*, jclass) { return test_load_abi; }
+
+/// The layers the buildings' cleaning touches (load/Clean.hpp's cleaned_layers), their names joined by commas.
+JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_load_LoadHost_touched(JNIEnv* env, jclass) {
+    std::string names;
+    for (const std::string_view layer : atlas::load::cleaned_layers) {
+        if (!names.empty()) names += ',';
+        names += layer;
+    }
+    return env->NewStringUTF(names.c_str());
+}
 
 /// A region's tiles cut by the core from the raw.json at `raw` (its box from the region.json at `region_json`, its
 /// frame and its variants' tolerances from the render pack at `pack`, loaded whole and at each of them), beside that

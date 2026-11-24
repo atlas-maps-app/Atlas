@@ -165,11 +165,11 @@ void clean_buildings(Scene& s, const tiles::Frame& frame) {
         for (std::size_t i = 0; i < list.size(); ++i) {
             Building& b = list[i];
             const std::size_t k = first + i;
-            b.holes.clear();
-            if (!on_grid[k]) {
+            if (!on_grid[k]) { // left as it is, its courtyards with it
                 kept.push_back(std::move(b));
                 continue;
             }
+            b.holes.clear(); // in its ring now, where it has any
             const std::uint8_t state = o.state[k];
             if ((state & ATLAS_CLEAN_RING) != 0) {
                 std::vector<V2> ring;
