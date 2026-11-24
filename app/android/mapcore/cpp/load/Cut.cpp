@@ -707,6 +707,14 @@ struct Piece {
     return {pts.begin(), pts.end()};
 }
 
+// ---------------------------------------------------------------- where a building is
+
+/// The point a building or part is filed at: where it was mapped (Building::at, the mapped outline's centroid where
+/// the cleaning changed its ring), else its ring's centroid. The one point of the cut: the tile and the cell it is
+/// filed in (place_buildings), and the window that keeps it and compares its variants (kept_by), so that a building
+/// has its variants in the window that holds it.
+[[nodiscard]] V2 filed_at(const Building& b) { return b.at ? *b.at : geometry::centroid(b.poly); }
+
 // ---------------------------------------------------------------- a building's attributes
 
 /// What a building or part carries besides its ring (Schema.BUILDING_ATTRIBUTES), as the packer derives it: what a
@@ -1113,7 +1121,7 @@ private:
         refs.assign(list.size(), {});
         for (std::uint32_t i = 0; i < list.size(); ++i) {
             const Building& b = list[i];
-            const V2 c = b.at ? *b.at : geometry::centroid(b.poly); // where it was mapped (load/Clean.hpp)
+            const V2 c = filed_at(b);
             refs[i] = tl::nearest_grid(f_, c.x, c.z);
             put({.layer = layer,
                  .source = source,
@@ -2338,10 +2346,11 @@ struct BaseAttributes {
     std::vector<Edge> edges;
 };
 
-/// Whether the cut by `plan` keeps building `b`: every one, or a window's whose reference point lies in its tile.
+/// Whether the cut by `plan` keeps building `b`: every one, or a window's whose point (filed_at, the point it is filed
+/// at) lies in its tile.
 [[nodiscard]] bool kept_by(const CutPlan& plan, const tiles::Frame& frame, const Building& b) {
     if (!plan.only) return true;
-    const V2 c = geometry::centroid(b.poly);
+    const V2 c = filed_at(b);
     const tiles::GridPoint ref = tiles::nearest_grid(frame, c.x, c.z);
     return tiles::tile_of(plan.only->z, ref.lat, ref.lon).packed() == plan.only->packed();
 }
