@@ -59,6 +59,10 @@ on:
         description: The commit or branch the look is built from and drawn with, its own stage P and stage T (empty = this run's)
         type: string
         default: ''
+      look_world:
+        description: "With the look: the world on the phone (world-latest's world.json and its release's world.idx), beside which the tool fetches the globe and each view's packs, for the globe and views beyond the countries"
+        type: boolean
+        default: false
 
 # A push to `app` never cancels a run in progress: each push's run has a group of its own and goes to its end beside
 # the others, so an agent pushes when its change is ready, not when CI is idle, and every commit of `app` gets its word
@@ -703,6 +707,8 @@ jobs:
   # the canal ring's element pack (-Datlas.phonelook.elements), kept as the artifact `look`. Two runs, one of a change's
   # base and one of its tip, give its before and after: the same cameras, moment and data, so the pictures differ by the
   # change alone. Its steps are mapcorecheck's, of the commit drawn (which has no Rust to install before core-p14).
+  # With look_world, the world on the phone beside them (-Datlas.phonelook.world): world-latest's world.json and the
+  # index of the release it names, the tool fetching the globe and each view's packs as the phone does.
   look:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.look != '' }}
     runs-on: ubuntu-latest
@@ -803,19 +809,36 @@ jobs:
             curl -fsSL --retry 3 -o "$f" https://github.com/atlas-maps-app/Atlas/releases/download/packs-renders/grachten.atlas
           fi
           echo "3ec8629e2d3f5708a604ada1592b4bc4a5dd722e69c2aaefa1cbafe5811593ec  $f" | sha256sum -c -
+      - name: The world on the phone, world-latest's
+        if: ${{ inputs.look_world }}
+        working-directory: .
+        run: |
+          # world.json, and its release's index held to world.json's SHA-256 (WorldFetch.readRelease's reading)
+          d=look-world
+          mkdir -p "$d"
+          curl -fsSL --retry 3 -o "$d/world.json" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/world-latest/world.json"
+          url=$(jq -r '.url | if endswith("/") then . else . + "/" end' "$d/world.json")
+          name=$(jq -r '.index.name' "$d/world.json")
+          sha=$(jq -r '.index.sha256 | ascii_downcase' "$d/world.json")
+          curl -fsSL --retry 3 -o "$d/world.idx" "$url$name"
+          echo "$sha  $d/world.idx" | sha256sum -c -
+          jq -c '{release, url, index}' "$d/world.json"
       - name: The core's host build
         run: ./gradlew :mapcorecheck:coreHost --stacktrace
       - name: The look
         env:
           VIEWS: ${{ inputs.look }}
+          WORLD: ${{ inputs.look_world && format('{0}/look-world', github.workspace) || '' }}
         run: >-
           ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.phonelook.out="$GITHUB_WORKSPACE/look"
           -Datlas.phonelook.views="$VIEWS" -Datlas.phonelook.elements="$GITHUB_WORKSPACE/cache/packs/regions/grachten.atlas"
-          --stacktrace
+          ${WORLD:+"-Datlas.phonelook.world=$WORLD"} --stacktrace
       - name: What was drawn
         working-directory: .
         run: |
           git rev-parse HEAD | tee look/commit.txt
+          # the world drawn beside them, which release (its packs stay out: the views' notes name them)
+          [ ! -f look-world/world.json ] || cp look-world/world.json look/world.json
           rm -rf look/core-work
           ls -la look
       - name: Keep the look
