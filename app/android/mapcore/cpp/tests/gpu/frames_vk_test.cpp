@@ -10,11 +10,15 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <numeric>
 #include <string>
 #include <tuple>
+#include <vector>
 
 using namespace atlas;
 
@@ -85,3 +89,82 @@ TEST_CASE("frames: a slot the GPU does not finish fails its next frame within th
     for (const std::string& m : s->take_messages()) MESSAGE(m);
 }
 #endif
+
+// An acquire's wait in slices (gpu::acquire_in_slices, as gpu::Swapchain's acquire takes it): no device, an acquire
+// that answers as a presentation engine would, starved where the window's consumer goes only once the main thread's
+// destroy callback returns, which waits for the render thread (VK bench's 60 s, Android 44458997508).
+TEST_CASE("frames: an acquire waits in slices up to its bound, gives the wait up within a slice once told the window "
+          "is going (none at all where told before), and brings any other answer back at once") {
+    constexpr std::uint64_t slice = gpu::Frames::acquire_slice_ns;
+    constexpr std::uint64_t ms = 1'000'000;
+    std::vector<std::uint64_t> asked;
+    const auto answer = [](vk::Result result, std::uint32_t index = 0) {
+        return vk::ResultValue<std::uint32_t>(result, index);
+    };
+    const auto starved = [&](std::uint64_t ns) {
+        asked.push_back(ns);
+        return answer(vk::Result::eTimeout);
+    };
+    const auto waited = [&] { return std::accumulate(asked.begin(), asked.end(), std::uint64_t{0}); };
+
+    SUBCASE("starved and never told: a GPU's 2 s and a CPU device's 60 s, in slices, then the timeout") {
+        for (const std::uint64_t bound : {std::uint64_t{2'000} * ms, std::uint64_t{60'000} * ms}) {
+            asked.clear();
+            CHECK(gpu::acquire_in_slices(bound, slice, nullptr, starved).result == vk::Result::eTimeout);
+            CHECK(asked.size() == bound / slice);
+            CHECK(waited() == bound);
+            CHECK(std::ranges::all_of(asked, [&](std::uint64_t ns) { return ns == slice; }));
+        }
+    }
+    SUBCASE("a bound that is no whole number of slices: the last slice is what is left of it") {
+        CHECK(gpu::acquire_in_slices(250 * ms, slice, nullptr, starved).result == vk::Result::eTimeout);
+        CHECK(asked == std::vector<std::uint64_t>{slice, slice, 50 * ms});
+    }
+    SUBCASE("told while it waits: given up at the end of that slice") {
+        std::atomic<bool> going{false};
+        const auto told_in_third = [&](std::uint64_t ns) {
+            asked.push_back(ns);
+            if (asked.size() == 3) going.store(true); // the main thread's word, during the third slice
+            return answer(vk::Result::eTimeout);
+        };
+        CHECK(gpu::acquire_in_slices(60'000 * ms, slice, &going, told_in_third).result == vk::Result::eTimeout);
+        CHECK(asked.size() == 3);
+        CHECK(waited() == 3 * slice);
+    }
+    SUBCASE("told before: no acquire at all") {
+        std::atomic<bool> going{true};
+        CHECK(gpu::acquire_in_slices(2'000 * ms, slice, &going, starved).result == vk::Result::eTimeout);
+        CHECK(asked.empty());
+    }
+    SUBCASE("not starved: one call, the image") {
+        std::atomic<bool> going{false};
+        const auto r = gpu::acquire_in_slices(2'000 * ms, slice, &going, [&](std::uint64_t ns) {
+            asked.push_back(ns);
+            return answer(vk::Result::eSuccess, 1);
+        });
+        CHECK(r.result == vk::Result::eSuccess);
+        CHECK(r.value == 1);
+        CHECK(asked == std::vector<std::uint64_t>{slice});
+    }
+    SUBCASE("an image in the fourth slice, after three timeouts (eNotReady among them): that image") {
+        const auto r = gpu::acquire_in_slices(2'000 * ms, slice, nullptr, [&](std::uint64_t ns) {
+            asked.push_back(ns);
+            if (asked.size() == 2) return answer(vk::Result::eNotReady);
+            return asked.size() < 4 ? answer(vk::Result::eTimeout) : answer(vk::Result::eSuboptimalKHR, 2);
+        });
+        CHECK(r.result == vk::Result::eSuboptimalKHR);
+        CHECK(r.value == 2);
+        CHECK(asked.size() == 4);
+    }
+    SUBCASE("out of date, a lost device: back at once, as given") {
+        for (const vk::Result given : {vk::Result::eErrorOutOfDateKHR, vk::Result::eErrorDeviceLost}) {
+            asked.clear();
+            const auto r = gpu::acquire_in_slices(2'000 * ms, slice, nullptr, [&](std::uint64_t ns) {
+                asked.push_back(ns);
+                return answer(given);
+            });
+            CHECK(r.result == given);
+            CHECK(asked.size() == 1);
+        }
+    }
+}

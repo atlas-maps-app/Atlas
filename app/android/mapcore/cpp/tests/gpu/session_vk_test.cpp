@@ -896,6 +896,40 @@ TEST_CASE("the Map look's compression switch makes the output again with it, onc
     }
 }
 
+TEST_CASE("a detach on its way (leave): no frame begins on the window going, until it goes or another is attached; "
+          "then the frames are drawn again") {
+    // jni/Bridge.cpp's detach says so before it posts the detach and waits: the frame in its acquire gives the wait up
+    // within a slice (tests/gpu/frames_vk_test, swapchain_vk_test), and no frame begins from the word to the detach.
+    if (!test::open_session()) return;
+    const Folder folder("leave");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    {
+        standin::Session session(*started, session_in(dir));
+        std::string why;
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        ATLAS_REQUIRE(session.bench(1, started->device->facts().choice, pills).empty());
+        CHECK(draw(session, 2) == 2);
+        session.leave();
+        CHECK(draw(session, 3) == 0);
+        CHECK(has(session.health(), "undrawn 3 (the window is going)"));
+        session.detach();
+        // the word went with the window: the next one draws
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        CHECK(draw(session, 2) == 2);
+        // another window attached over the one going (attach lets go of the old one first): the word goes with it
+        session.leave();
+        CHECK(draw(session, 1) == 0);
+        ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), size, why), why);
+        CHECK(draw(session, 2) == 2);
+        const std::vector<std::string> messages = started->instance->messages().take();
+        CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+        session.close();
+    }
+}
+
 TEST_CASE("the window is told 120 frames a second while the map moves and 60 at rest, once a change, and a window "
           "come back as it stands") {
     // ENGINE.md gain 11: the frame loop says the map moves from its second new camera since it last rested, and that

@@ -17,6 +17,7 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -102,6 +103,22 @@ TEST_CASE("the swapchain presents the stand-in on a headless surface and is rema
             ATLAS_REQUIRE(report.has_value(), report.error().text());
             CHECK(report->status == gpu::Acquired::ok);
         }
+        // The window going (standin/Session.hpp's leave): its acquire waits for no image, the frame a timeout's, and
+        // once the word is gone the frames draw again.
+        std::atomic<bool> going{true};
+        (*bigger)->give_up_when(&going);
+        for (int i = 0; i < 2; ++i) {
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
+            CHECK(report->status == gpu::Acquired::timeout);
+        }
+        going.store(false);
+        for (int i = 0; i < 3; ++i) {
+            auto report = (*renderer)->draw(0);
+            ATLAS_REQUIRE(report.has_value(), report.error().text());
+            CHECK(report->status == gpu::Acquired::ok);
+        }
+        (*bigger)->give_up_when(nullptr);
         CHECK_FALSE((*bigger)->colour().ten_bit()); // the frame's 8 bits
         // As deep as the surface allows, as VK bench's colour stage remakes it, the device asked about 10 bits first
         // (lavapipe's headless surface offers 8 bits only, so 8 again, saying why).
