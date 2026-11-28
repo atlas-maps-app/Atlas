@@ -124,6 +124,7 @@ public:
     [[nodiscard]] double waited_ms() const noexcept { return waited_ms_; }
     /// How long a begin waits for its slot's previous frame at most, ns: wait_ns(device), or a test's shorter limit.
     [[nodiscard]] std::uint64_t slot_wait_ns() const noexcept { return slot_wait_ns_; }
+#if defined(ATLAS_TESTS)
     /// A test's: a begin waits `most` ns at most, when that is shorter.
     void limit_slot_wait(std::uint64_t most) noexcept { slot_wait_ns_ = std::min(most, slot_wait_ns_); }
     /// A test's: the next begin's slot is taken as holding a frame the GPU never finishes (its fence unsignalled and
@@ -131,7 +132,6 @@ public:
     /// alone, which the GPU then signals. A held slot's earlier frame is waited for first.
     [[nodiscard]] Result<void> hold_next();
     [[nodiscard]] Result<void> let_go();
-#if defined(ATLAS_TESTS)
     /// A test's: the next submit ends its frame's commands, then fails as a queue that refuses them does (out of device
     /// memory) before they reach the GPU: a frame recorded and never submitted.
     void fail_next_submit() noexcept { fail_submit_ = true; }
@@ -150,9 +150,9 @@ private:
     vk::raii::QueryPool statistics_{nullptr}; // empty without pipelineStatisticsQuery
     std::uint32_t next_ = 0;
     std::uint64_t slot_wait_ns_ = 0;
-    std::uint32_t held_ = in_flight; // the slot hold_next() holds, else in_flight
 #if defined(ATLAS_TESTS)
-    bool fail_submit_ = false; // fail_next_submit
+    std::uint32_t held_ = in_flight; // the slot hold_next() holds, else in_flight
+    bool fail_submit_ = false;       // fail_next_submit
 #endif
     double period_ns_ = 1.0;
     std::uint64_t mask_ = 0;

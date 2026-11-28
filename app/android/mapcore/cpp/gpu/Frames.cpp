@@ -155,6 +155,7 @@ Result<void> Frames::submit(FrameSlot& slot, bool acquired, vk::Semaphore render
     return {};
 }
 
+#if defined(ATLAS_TESTS)
 Result<void> Frames::hold_next() {
     FrameSlot& slot = slots_[next_];
     const vk::raii::Device& d = device_->handle();
@@ -175,6 +176,7 @@ Result<void> Frames::let_go() {
     held_ = in_flight;
     return {};
 }
+#endif
 
 void Frames::drain() {
     for (std::uint32_t i = 0; i < in_flight; ++i) {
