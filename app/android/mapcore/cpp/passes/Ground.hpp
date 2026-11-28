@@ -1856,10 +1856,12 @@ struct GlowLayer {
     vk::Extent2D view{};     ///< the view's upright device px
     vk::Extent2D extent{};   ///< the layers': the view and the margin either side
     std::int32_t margin = 0; ///< device px
-    bool kept = false;       ///< the tests' look: the buffers readable, the layers copied each frame
-    gpu::Image samples;      ///< the runs' 4x samples (RGBA8, transient)
-    gpu::Image glow;         ///< the glow's layer (RGBA8): premultiplied sRGB
-    gpu::Image cores;        ///< the cores' layer
+#if defined(ATLAS_TESTS)
+    bool kept = false; ///< the tests' look: the buffers readable, the layers copied each frame
+#endif
+    gpu::Image samples; ///< the runs' 4x samples (RGBA8, transient)
+    gpu::Image glow;    ///< the glow's layer (RGBA8): premultiplied sRGB
+    gpu::Image cores;   ///< the cores' layer
     vk::raii::ImageView samples_view{nullptr};
     vk::raii::ImageView glow_view{nullptr};
     vk::raii::ImageView cores_view{nullptr};
@@ -1867,8 +1869,10 @@ struct GlowLayer {
     vk::raii::Framebuffer glow_framebuffer{nullptr};
     vk::raii::Framebuffer cores_framebuffer{nullptr};
     std::array<gpu::Buffer, 2> buffers; ///< a and b: premultiplied linear RGB, a r g b
-    gpu::Buffer glow_copy;              ///< the kept layers, a row of extent.width texels after another (RGBA8)
+#if defined(ATLAS_TESTS)
+    gpu::Buffer glow_copy; ///< the kept layers, a row of extent.width texels after another (RGBA8)
     gpu::Buffer core_copy;
+#endif
     vk::raii::DescriptorSetLayout set_layout{nullptr};
     vk::raii::DescriptorPool pool{nullptr};
     /// [0] reads a and writes b, [1] reads b and writes a (both read the glow's layer)

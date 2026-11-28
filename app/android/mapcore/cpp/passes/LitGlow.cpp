@@ -337,8 +337,12 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
     };
     ATLAS_GPU_LET(samples, transient());
     s->samples = std::move(samples);
+#if defined(ATLAS_TESTS)
     const vk::ImageUsageFlags layer_usage =
         U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{});
+#else
+    const vk::ImageUsageFlags layer_usage = U::eColorAttachment | U::eSampled;
+#endif
     ATLAS_GPU_LET(glow, image(vk::SampleCountFlagBits::e1, layer_usage, gpu::MemoryUse::gpu));
     s->glow = std::move(glow);
     ATLAS_GPU_LET(cores, image(vk::SampleCountFlagBits::e1, layer_usage, gpu::MemoryUse::gpu));
@@ -431,17 +435,23 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
     // the filter's two buffers (readable where the tests keep them), and the kept layers' copies
     using B = vk::BufferUsageFlagBits;
     const vk::DeviceSize texels = vk::DeviceSize{s->extent.width} * s->extent.height * 4;
+#if defined(ATLAS_TESTS)
     const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
+#else
+    const gpu::MemoryUse look = gpu::MemoryUse::gpu;
+#endif
     for (gpu::Buffer& b : s->buffers) {
         ATLAS_GPU_LET(made, device.memory().buffer(texels, B::eStorageBuffer, look));
         b = std::move(made);
     }
+#if defined(ATLAS_TESTS)
     if (s->kept) {
         ATLAS_GPU_LET(glow_copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
         s->glow_copy = std::move(glow_copy);
         ATLAS_GPU_LET(core_copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
         s->core_copy = std::move(core_copy);
     }
+#endif
     // the composite reads the result and the layers from the ground's set 3 (the same three in each frame slot's: the
     // layers' and the boxes' barriers wait for the last frame's composite before they are written again)
     for (const vk::raii::DescriptorSet& set : p.soft_sets) {
@@ -616,6 +626,7 @@ void Ground::record_lit_layer(const frame::Recording& r) {
                                                .new_layout = L::eShaderReadOnlyOptimal});
         s.laid_out[i] = true;
     }
+#if defined(ATLAS_TESTS)
     if (s.kept) {
         // the tests' look: the layers, a row after another, and the buffers readable by the host
         const auto copy = [&](const gpu::Image& image, const gpu::Buffer& to) {
@@ -649,6 +660,7 @@ void Ground::record_lit_layer(const frame::Recording& r) {
                                                 .dst_stage = S::eHost,
                                                 .dst_access = A::eHostRead});
     }
+#endif
     drew_glow_ = true;
 }
 
