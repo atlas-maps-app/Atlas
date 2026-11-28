@@ -6,7 +6,9 @@
 // shadows' sets alternate between the slots, and the last frame drawn in motion is the frame drawn alone at its camera
 // (once every other frame has finished), pixel for pixel. The same frames resized with a frame in flight (the phone
 // turned): to another size with the same formats the frame stays, no shader module and no pipeline made, its targets
-// alone made again; to another format (10 bits) the frame is made again; the layer silent throughout.
+// alone made again; to another format (10 bits) the frame is made again. And a window gone with a frame in flight (a
+// phone's surface at a stop): its targets go with it, the rest stays, and another window takes a resize's path, nothing
+// made; what the targets and the rest kept hold of graphics memory. The layer silent throughout.
 #if !defined(__ANDROID__)
 
 #include "frame/FrameBuilder.hpp"
@@ -225,8 +227,8 @@ TEST_CASE("frames back to back while the camera moves: each frame slot's own buf
 }
 
 TEST_CASE("a resize with a frame in flight: to another size with the same formats the frame stays, no shader module "
-          "and no pipeline made, its targets alone made again; to another format the frame is made again; the "
-          "validation layer silent") {
+          "and no pipeline made, its targets alone made again; to another format the frame is made again; a window "
+          "gone and another given take a resize's path; the validation layer silent") {
     const std::string dir = test::environment("ATLAS_TILES_DIR");
     if (dir.empty()) {
         MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
@@ -342,8 +344,60 @@ TEST_CASE("a resize with a frame in flight: to another size with the same format
     } else {
         MESSAGE("no 10 bits here: the move to another format is not drawn");
     }
-    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+
+    // A window gone with a frame in flight (a phone's surface at a stop) and another given. First a window upright at
+    // 8 bits (from 10 bits another format, the frame made again), settled; then it goes with a frame in flight, the
+    // frame's targets with it and the rest kept, its images gone after it; the next, on its side, takes a resize's
+    // path, nothing made, and the frames into it back to back draw the soft shadows and the ripple. Then that window
+    // goes too, and the frame after it: what its targets and its kept rest hold of graphics memory.
+    auto back = gpu::Offscreen::create(device, {.width = home.width_px, .height = home.height_px}, 2);
+    ATLAS_REQUIRE(back.has_value(), back.error().text());
+    draw(side);
+    ATLAS_REQUIRE((*renderer)->retarget(**back).has_value(), "the window upright failed");
+    REQUIRE(settle(home));
+    const std::size_t modules_back = watch.modules.load();
+    const std::size_t pipelines_back = watch.pipelines.load();
+    const std::size_t targets_back = watch.released("targets");
+    const std::size_t frames_back = watch.released("frame");
+    draw(home);
+    const vk::DeviceSize drawing = device.memory().allocated();
+    CHECK((*renderer)->keeps());
+    (*renderer)->release_targets();
+    const vk::DeviceSize kept = device.memory().allocated();
+    CHECK(watch.released("targets") == targets_back + 1);
+    CHECK(watch.released("frame") == frames_back);
+    CHECK(kept < drawing);
+    back->reset(); // the window's images go after it: nothing of them is held
+    on_side->reset();
+    auto again = gpu::Offscreen::create(device, {.width = side.width_px, .height = side.height_px}, 2);
+    ATLAS_REQUIRE(again.has_value(), again.error().text());
+    ATLAS_REQUIRE((*renderer)->retarget(**again).has_value(), "the window given again failed");
+    CHECK(watch.modules.load() == modules_back);
+    CHECK(watch.pipelines.load() == pipelines_back);
+    CHECK(watch.released("targets") == targets_back + 1); // gone with the window already, none let go of again
+    CHECK(watch.released("frame") == frames_back);
+    REQUIRE(settle(side));
+    for (int f = 0; f < 3; ++f) {
+        draw(test::moving(side));
+        CHECK(ground->drew_soft());
+        CHECK(ground->drew_ripple());
+    }
+    (*renderer)->drain();
+    CHECK(watch.modules.load() == modules_back);
+    CHECK(watch.pipelines.load() == pipelines_back);
+    draw(side);
+    (*renderer)->release_targets();
+    const vk::DeviceSize kept_again = device.memory().allocated();
     renderer->reset();
+    const vk::DeviceSize gone = device.memory().allocated();
+    CHECK(watch.released("frame") == frames_back + 1);
+    for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
+    MESSAGE(std::format("the window gone with a frame in flight at {}x{} and another given at {}x{}: {} modules and {} "
+                        "pipelines made before, none since; graphics memory: the frame's targets {:.1f} MB at {}x{}, "
+                        "the rest it kept without a window {:.1f} MB",
+                        home.width_px, home.height_px, side.width_px, side.height_px, modules_back, pipelines_back,
+                        static_cast<double>(drawing - kept) / 1e6, home.width_px, home.height_px,
+                        static_cast<double>(kept_again - gone) / 1e6));
 }
 
 #endif

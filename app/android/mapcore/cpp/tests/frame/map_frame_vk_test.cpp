@@ -6,10 +6,10 @@
 // is done, and nothing more due at the same camera after that; the world's wake called as tiles land, and at rest a
 // frame for each picture the workers finish (a run of the sun's bits wakes it once), a pan ending in the rest picture;
 // the map off and on again; VK bench taking the window and giving it back; a resize with the same formats making no
-// shader module and no pipeline, its pictures by day and at night a new session's at that size; and after the close, no
-// marker of the crash guard on disk. And the windows alone, as alpha 22 lists them: at a corner of four frame cells,
-// every cell drawn with its own sun, and a cell crossed placing no item again, its picture that of every item placed in
-// the new frame.
+// shader module and no pipeline, its pictures by day and at night a new session's at that size, and so a window gone
+// (no marker on disk meanwhile) and another given; and after the close, no marker of the crash guard on disk. And the
+// windows alone, as alpha 22 lists them: at a corner of four frame cells, every cell drawn with its own sun, and a cell
+// crossed placing no item again, its picture that of every item placed in the new frame.
 #include "base/pymath/PyMath.hpp"
 #include "frame/FrameBlock.hpp"
 #include "frame/FrameBuilder.hpp"
@@ -1924,6 +1924,113 @@ TEST_CASE("a frame that never ran: the frame of a camera's step fails to begin (
     session.close();
 }
 
+namespace {
+
+/// The other size of the windows below: wider than it is tall (a phone turned).
+constexpr vk::Extent2D wider{.width = 300, .height = 240};
+
+/// `c` on a window of `e` pixels, the home's two frosted pills over it (VK bench's chrome: the frosted backdrops' copy
+/// is of the output's size too).
+[[nodiscard]] style::CameraState on_window(style::CameraState c, vk::Extent2D e) {
+    c.width_px = e.width;
+    c.height_px = e.height;
+    c.width_dp = e.width;
+    c.height_dp = e.height;
+    c.principal_x = e.width / 2.0;
+    c.principal_y = 0.48 * e.height;
+    const auto w = static_cast<float>(e.width);
+    const auto h = static_cast<float>(e.height);
+    c.keep_out_count = 2;
+    c.keep_out[0] = style::KeepOut{.left = 16.0F,
+                                   .top = 40.0F,
+                                   .right = w - 16.0F,
+                                   .bottom = 92.0F,
+                                   .radius = 26.0F,
+                                   .blur16 = 20 * 16,
+                                   .saturation = 180,
+                                   .flags = 1};
+    c.keep_out[1] = style::KeepOut{.left = 16.0F,
+                                   .top = h - 100.0F,
+                                   .right = w - 16.0F,
+                                   .bottom = h - 48.0F,
+                                   .radius = 26.0F,
+                                   .blur16 = 20 * 16,
+                                   .saturation = 180,
+                                   .flags = 1};
+    return c;
+}
+
+/// The moments the frame's targets are made again at: by day (`sunny`: the soft shadows) and at night (`dry_night`:
+/// the lit streets' glow and the ripple).
+[[nodiscard]] std::array<std::pair<const char*, style::ThemeBlock>, 2> target_moments() {
+    return {std::pair{"by day", sunny()}, std::pair{"at night", dry_night()}};
+}
+
+/// The settled pictures of a session made in `dir` at `extent`, at `camera`: a moment's each.
+[[nodiscard]] std::vector<gpu::Pixels> pictures_made_at(const fs::path& dir, const std::string& tiles_dir,
+                                                        vk::Extent2D extent, const style::CameraState& camera) {
+    std::vector<gpu::Pixels> pictures;
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE_OR_RETURN(pictures, started.has_value(), started.error().reason);
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    auto window = std::make_unique<KeptWindow>();
+    const KeptWindow& kept = *window;
+    std::string why;
+    ATLAS_REQUIRE_OR_RETURN(pictures, session.attach(std::move(window), extent, why), why);
+    for (const auto& [moment, theme] : target_moments()) {
+        map.set_theme(theme);
+        std::optional<gpu::Pixels> picture = settled_picture(session, map, kept, camera);
+        ATLAS_REQUIRE_OR_RETURN(pictures, picture.has_value(),
+                                moment << ": the picture of the session made at that size never settled");
+        pictures.push_back(std::move(*picture));
+    }
+    session.close();
+    return pictures;
+}
+
+/// What the guard watched so far: the shader modules and pipelines made (in a stage or not), those the marker named,
+/// and the frame's targets and the frames it let go of.
+struct Counts {
+    std::size_t modules = 0;
+    std::size_t pipelines = 0;
+    std::size_t named_modules = 0;
+    std::size_t named_pipelines = 0;
+    std::size_t targets = 0;
+    std::size_t frames = 0;
+};
+
+[[nodiscard]] Counts counts_of(const gpu::Guard& guard) {
+    const gpu::Guard::Made made = guard.made();
+    return Counts{.modules = made.modules,
+                  .pipelines = made.pipelines,
+                  .named_modules = guard.noted("module "),
+                  .named_pipelines = guard.noted("pipeline "),
+                  .targets = guard.noted("release targets "),
+                  .frames = guard.noted("release frame ")};
+}
+
+/// None made and none named by `then` since `before`, the frame kept and its targets let go of `targets` times.
+void none_made(const Counts& before, const Counts& then, std::size_t targets) {
+    CHECK(then.modules == before.modules);
+    CHECK(then.pipelines == before.pipelines);
+    CHECK(then.named_modules == before.named_modules);
+    CHECK(then.named_pipelines == before.named_pipelines);
+    CHECK(then.targets == before.targets + targets);
+    CHECK(then.frames == before.frames);
+}
+
+/// The graphics memory the session's stats line gives (its `graphics <MB> MB`: the allocator's books), -1 for none.
+[[nodiscard]] double graphics_mb(const std::string& stats) {
+    const std::size_t at = stats.rfind("graphics ");
+    if (at == std::string::npos) return -1;
+    return std::stod(stats.substr(at + 9));
+}
+
+} // namespace
+
 TEST_CASE("a resize to another size with the same formats lets go of the frame's targets alone and makes them again: "
           "no shader module and no pipeline made, none named in the marker; by day and at night its pictures are "
           "those of a session made at that size, to the pixel") {
@@ -1936,65 +2043,11 @@ TEST_CASE("a resize to another size with the same formats lets go of the frame's
     const Folder folder("resized");
     const fs::path& dir = folder.path();
     if (!can_start(dir)) return;
-    // The home on a window made again wider than it is tall (a phone turned), its frosted pills over it (VK bench's
-    // chrome: the frosted backdrops' copy is of the output's size too), by day (the soft shadows) and at night (the lit
-    // streets' glow and the ripple).
-    constexpr vk::Extent2D wider{.width = 300, .height = 240};
-    const auto on = [](style::CameraState c, vk::Extent2D e) {
-        c.width_px = e.width;
-        c.height_px = e.height;
-        c.width_dp = e.width;
-        c.height_dp = e.height;
-        c.principal_x = e.width / 2.0;
-        c.principal_y = 0.48 * e.height;
-        const auto w = static_cast<float>(e.width);
-        const auto h = static_cast<float>(e.height);
-        c.keep_out_count = 2;
-        c.keep_out[0] = style::KeepOut{.left = 16.0F,
-                                       .top = 40.0F,
-                                       .right = w - 16.0F,
-                                       .bottom = 92.0F,
-                                       .radius = 26.0F,
-                                       .blur16 = 20 * 16,
-                                       .saturation = 180,
-                                       .flags = 1};
-        c.keep_out[1] = style::KeepOut{.left = 16.0F,
-                                       .top = h - 100.0F,
-                                       .right = w - 16.0F,
-                                       .bottom = h - 48.0F,
-                                       .radius = 26.0F,
-                                       .blur16 = 20 * 16,
-                                       .saturation = 180,
-                                       .flags = 1};
-        return c;
-    };
-    const style::CameraState here = on(home(1), size);
-    const style::CameraState there = on(home(1), wider);
-    const std::array<std::pair<const char*, style::ThemeBlock>, 2> moments{std::pair{"by day", sunny()},
-                                                                           std::pair{"at night", dry_night()}};
-
+    const style::CameraState here = on_window(home(1), size);
+    const style::CameraState there = on_window(home(1), wider);
+    const auto moments = target_moments();
     // A session made at the second size: its pictures, a moment's each.
-    std::vector<gpu::Pixels> made_there;
-    {
-        auto started = gpu::start_guarded(start_in(dir));
-        ATLAS_REQUIRE(started.has_value(), started.error().reason);
-        frame::MapFrame map(2, nullptr, {.cache_dir = dir});
-        standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
-        CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
-        CHECK(session.map(&map).empty());
-        auto window = std::make_unique<KeptWindow>();
-        const KeptWindow& kept = *window;
-        std::string why;
-        ATLAS_REQUIRE(session.attach(std::move(window), wider, why), why);
-        for (const auto& [moment, theme] : moments) {
-            map.set_theme(theme);
-            std::optional<gpu::Pixels> picture = settled_picture(session, map, kept, there);
-            ATLAS_REQUIRE(picture.has_value(),
-                          moment << ": the picture of the session made at that size never settled");
-            made_there.push_back(std::move(*picture));
-        }
-        session.close();
-    }
+    const std::vector<gpu::Pixels> made_there = pictures_made_at(dir, tiles_dir, wider, there);
 
     // A session made at the first size, resized to the second at each moment, and back.
     auto started = gpu::start_guarded(start_in(dir));
@@ -2008,57 +2061,118 @@ TEST_CASE("a resize to another size with the same formats lets go of the frame's
     const KeptWindow& kept = *window;
     std::string why;
     ATLAS_REQUIRE(session.attach(std::move(window), size, why), why);
-    // What the guard watched so far: the shader modules and pipelines made (in a stage or not), those the marker
-    // named, and the frame's targets and the frames it let go of.
-    struct Counts {
-        std::size_t modules = 0;
-        std::size_t pipelines = 0;
-        std::size_t named_modules = 0;
-        std::size_t named_pipelines = 0;
-        std::size_t targets = 0;
-        std::size_t frames = 0;
-    };
-    const auto counts = [&guard] {
-        const gpu::Guard::Made made = guard.made();
-        return Counts{.modules = made.modules,
-                      .pipelines = made.pipelines,
-                      .named_modules = guard.noted("module "),
-                      .named_pipelines = guard.noted("pipeline "),
-                      .targets = guard.noted("release targets "),
-                      .frames = guard.noted("release frame ")};
-    };
-    // None made, none named, by `then` since `before`, the frame kept and `targets` times its targets let go of.
-    const auto none_made = [](const Counts& before, const Counts& then, std::size_t targets) {
-        CHECK(then.modules == before.modules);
-        CHECK(then.pipelines == before.pipelines);
-        CHECK(then.named_modules == before.named_modules);
-        CHECK(then.named_pipelines == before.named_pipelines);
-        CHECK(then.targets == before.targets + targets);
-        CHECK(then.frames == before.frames);
-    };
     for (std::size_t m = 0; m < moments.size(); ++m) {
         const std::string_view moment = moments[m].first;
         CAPTURE(moment);
         map.set_theme(moments[m].second);
         ATLAS_REQUIRE(settled_picture(session, map, kept, here).has_value(), "the home never settled");
-        const Counts before = counts();
+        const Counts before = counts_of(guard);
         CHECK(before.named_modules > 0); // the frame's own, made at the first size in the pipelines stage
         CHECK(before.named_pipelines > 0);
         session.resize(wider);
         CHECK(session.drawing());
-        none_made(before, counts(), 1);
+        none_made(before, counts_of(guard), 1);
         const std::optional<gpu::Pixels> drawn = settled_picture(session, map, kept, there);
         ATLAS_REQUIRE(drawn.has_value(), "the picture after the resize never settled");
         const std::size_t apart = pixels_apart(*drawn, made_there[m]);
         CHECK(apart == 0);
-        none_made(before, counts(), 1); // and none in the frames drawn at the new size
-        session.resize(size);           // back, for the next moment
-        none_made(before, counts(), 2);
+        none_made(before, counts_of(guard), 1); // and none in the frames drawn at the new size
+        session.resize(size);                   // back, for the next moment
+        none_made(before, counts_of(guard), 2);
         MESSAGE(std::format("{}: resized from {}x{} to {}x{} and back: {} modules and {} pipelines made before it, "
                             "none by it; {} pixels apart from the session made at that size",
                             moment, size.width, size.height, wider.width, wider.height, before.modules,
                             before.pipelines, apart));
     }
+    const std::vector<std::string> messages = started->instance->messages().take();
+    CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
+    session.close();
+}
+
+TEST_CASE("a window gone and given again with the same formats takes a resize's path: the frame's targets go with the "
+          "window and no marker stays; the next window's first draw makes them again, no shader module and no "
+          "pipeline made or named; by day and at night its pictures are those of a session made at that size, to "
+          "the pixel") {
+    const std::string tiles_dir = environment("ATLAS_TILES_DIR");
+    if (tiles_dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the map is not drawn over the bundled packs here");
+        return;
+    }
+    if (!test::open_session()) return; // no Vulkan here
+    const Folder folder("given-again");
+    const fs::path& dir = folder.path();
+    if (!can_start(dir)) return;
+    const style::CameraState here = on_window(home(1), size);
+    const style::CameraState there = on_window(home(1), wider);
+    const auto moments = target_moments();
+    // A session made at the second size: its pictures, a moment's each.
+    const std::vector<gpu::Pixels> made_there = pictures_made_at(dir, tiles_dir, wider, there);
+
+    // A session drawing at the first size, its window gone at each moment and another given at the second size (a
+    // phone's surface gone at a stop, and the phone turned meanwhile), then gone and given again at the first.
+    auto started = gpu::start_guarded(start_in(dir));
+    ATLAS_REQUIRE(started.has_value(), started.error().reason);
+    const gpu::Guard& guard = *started->guard;
+    frame::MapFrame map(2, nullptr, {.cache_dir = dir});
+    standin::Session session(*started, {.cache_file = dir / "pipelines.bin", .spirv = 42});
+    CHECK(map.set_packs(bundled(tiles_dir)) == "amsterdam listed\ngrachten listed\n");
+    CHECK(session.map(&map).empty());
+    std::string why;
+    // A window of `extent` given to the session (its images read back), or none where the attach was refused.
+    const auto give = [&session, &why](vk::Extent2D extent) -> const KeptWindow* {
+        auto window = std::make_unique<KeptWindow>();
+        const KeptWindow* shown = window.get();
+        if (!session.attach(std::move(window), extent, why)) return nullptr;
+        return shown;
+    };
+    const KeptWindow* shown = give(size);
+    ATLAS_REQUIRE(shown != nullptr, why);
+    for (std::size_t m = 0; m < moments.size(); ++m) {
+        const std::string_view moment = moments[m].first;
+        CAPTURE(moment);
+        map.set_theme(moments[m].second);
+        ATLAS_REQUIRE(settled_picture(session, map, *shown, here).has_value(), "the home never settled");
+        const Counts before = counts_of(guard);
+        CHECK(before.named_modules > 0); // the frame's own, made at the first size in the pipelines stage
+        CHECK(before.named_pipelines > 0);
+        const double drawing_mb = graphics_mb(session.stats());
+        session.detach();
+        CHECK_FALSE(session.drawing());
+        none_made(before, counts_of(guard), 1); // the frame's targets gone with the window, the rest kept
+        CHECK_FALSE(fs::exists(dir / "guard")); // nothing drawn: no marker on disk
+        const double gone_mb = graphics_mb(session.stats());
+        CHECK(gone_mb < drawing_mb); // the window's images and the frame's targets
+        shown = give(wider);
+        ATLAS_REQUIRE(shown != nullptr, why);
+        CHECK(session.drawing());
+        none_made(before, counts_of(guard), 1); // its targets are made at its first draw
+        const std::optional<gpu::Pixels> drawn = settled_picture(session, map, *shown, there);
+        ATLAS_REQUIRE(drawn.has_value(), "the picture in the window given again never settled");
+        const std::size_t apart = pixels_apart(*drawn, made_there[m]);
+        CHECK(apart == 0);
+        none_made(before, counts_of(guard), 1); // none in the frames drawn into it either
+        // Gone, and given again at the first size for the next moment.
+        session.detach();
+        shown = give(size);
+        ATLAS_REQUIRE(shown != nullptr, why);
+        none_made(before, counts_of(guard), 2);
+        MESSAGE(std::format("{}: the window gone at {}x{} and another given at {}x{}: {} modules and {} pipelines "
+                            "made before, none since; {} pixels apart from the session made at that size; graphics "
+                            "{:.1f} MB drawing, {:.1f} MB with the window gone",
+                            moment, size.width, size.height, wider.width, wider.height, before.modules,
+                            before.pipelines, apart, drawing_mb, gone_mb));
+    }
+    // What the kept frame holds: the graphics memory with the window gone, the frame kept and without it (let go of as
+    // the map is drawn for another host, Session::map, its data staying).
+    const Counts last = counts_of(guard);
+    session.detach();
+    const double with_mb = graphics_mb(session.stats());
+    CHECK(session.map(&map, true).empty());
+    CHECK(counts_of(guard).frames == last.frames + 1);
+    const double without_mb = graphics_mb(session.stats());
+    CHECK(without_mb <= with_mb);
+    MESSAGE(std::format("the window gone: graphics {:.1f} MB with the frame kept, {:.1f} MB without it", with_mb,
+                        without_mb));
     const std::vector<std::string> messages = started->instance->messages().take();
     CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
     session.close();
