@@ -1811,17 +1811,21 @@ struct SoftShadows {
 /// device px; the filter's two buffers, a word a pixel, which its stages write back and forth.
 struct RippleLayer {
     vk::Extent2D extent{}; ///< the view's upright device px
-    bool kept = false;     ///< the tests' look: the buffers readable, the layer copied each frame
-    gpu::Image samples;    ///< the reflections' 4x samples (RGBA8, transient)
-    gpu::Image depth;      ///< their slots' depths (the main pass's depth format, transient)
-    gpu::Image layer;      ///< their resolve (RGBA8): the group's layer, premultiplied sRGB
+#if defined(ATLAS_TESTS)
+    bool kept = false; ///< the tests' look: the buffers readable, the layer copied each frame
+#endif
+    gpu::Image samples; ///< the reflections' 4x samples (RGBA8, transient)
+    gpu::Image depth;   ///< their slots' depths (the main pass's depth format, transient)
+    gpu::Image layer;   ///< their resolve (RGBA8): the group's layer, premultiplied sRGB
     vk::raii::ImageView samples_view{nullptr};
     vk::raii::ImageView depth_view{nullptr};
     vk::raii::ImageView layer_view{nullptr};
     vk::raii::RenderPass pass{nullptr};
     vk::raii::Framebuffer framebuffer{nullptr};
     std::array<gpu::Buffer, 2> buffers; ///< a and b: premultiplied linear RGB, a r g b
-    gpu::Buffer layer_copy;             ///< the kept layer, a row of extent.width texels after another (RGBA8)
+#if defined(ATLAS_TESTS)
+    gpu::Buffer layer_copy; ///< the kept layer, a row of extent.width texels after another (RGBA8)
+#endif
     vk::raii::DescriptorSetLayout set_layout{nullptr};
     vk::raii::DescriptorPool pool{nullptr};
     /// [0] reads a and writes b, [1] reads b and writes a (both read the layer)

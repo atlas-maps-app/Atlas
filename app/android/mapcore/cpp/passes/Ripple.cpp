@@ -391,8 +391,12 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     s->samples = std::move(samples);
     ATLAS_GPU_LET(depth, transient(depth_format, U::eDepthStencilAttachment));
     s->depth = std::move(depth);
-    ATLAS_GPU_LET(layer, image(colour, vk::SampleCountFlagBits::e1,
-                               U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
+#if defined(ATLAS_TESTS)
+    const vk::ImageUsageFlags copied = s->kept ? U::eTransferSrc : vk::ImageUsageFlags{};
+#else
+    const vk::ImageUsageFlags copied{};
+#endif
+    ATLAS_GPU_LET(layer, image(colour, vk::SampleCountFlagBits::e1, U::eColorAttachment | U::eSampled | copied,
                                gpu::MemoryUse::gpu));
     s->layer = std::move(layer);
     auto view_of = [&](const gpu::Image& i, vk::Format format,
@@ -488,15 +492,21 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     // the filter's two buffers (readable where the tests keep them), and the kept layer's copy
     using B = vk::BufferUsageFlagBits;
     const vk::DeviceSize texels = vk::DeviceSize{view.width} * view.height * 4;
+#if defined(ATLAS_TESTS)
     const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
+#else
+    const gpu::MemoryUse look = gpu::MemoryUse::gpu;
+#endif
     for (gpu::Buffer& b : s->buffers) {
         ATLAS_GPU_LET(made, device.memory().buffer(texels, B::eStorageBuffer, look));
         b = std::move(made);
     }
+#if defined(ATLAS_TESTS)
     if (s->kept) {
         ATLAS_GPU_LET(copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
         s->layer_copy = std::move(copy);
     }
+#endif
     // the composite reads both from the soft shadows' sets (the ground's set 3, the same two in each frame slot's)
     for (const vk::raii::DescriptorSet& set : p.soft_sets) {
         gpu::SetWriter(*set)
@@ -738,6 +748,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
         }
         s.result = result;
     }
+#if defined(ATLAS_TESTS)
     if (s.kept) {
         // the tests' look: the layer, a row after another (after the last frame's copy), and the buffers readable by
         // the host
@@ -766,6 +777,7 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                                 .dst_stage = S::eHost,
                                                 .dst_access = A::eHostRead});
     }
+#endif
     drew_ripple_ = true;
 }
 
