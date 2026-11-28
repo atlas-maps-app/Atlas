@@ -174,6 +174,7 @@ void Session::release_window(bool keep) {
         });
     }
     window_.reset();
+    leaving_.store(false, std::memory_order_relaxed); // the window leave spoke of is gone
 }
 
 void Session::drop_renderer() {
@@ -242,7 +243,7 @@ std::string Session::make_output() {
                                        compression_);
             });
             if (made) {
-                output_ = std::move(*made);
+                take_output(std::move(*made));
                 output_error_.clear();
                 facts.deepest = output_->colour();
                 if (output_->colour().ten_bit()) return {};
@@ -269,10 +270,15 @@ std::string Session::make_output() {
         output_error_ = made.error().text();
         return output_error_;
     }
-    output_ = std::move(*made);
+    take_output(std::move(*made));
     output_error_.clear();
     note_colour();
     return {};
+}
+
+void Session::take_output(std::unique_ptr<gpu::Output> made) {
+    output_ = std::move(made);
+    output_->give_up_when(&leaving_);
 }
 
 void Session::remake_output() {
@@ -295,7 +301,7 @@ void Session::remake_output() {
         auto made = window_->output(*started_.device, *surface_, wanted_, output_.get(), depth_, compression_);
         release_output();
         if (made) {
-            output_ = std::move(*made);
+            take_output(std::move(*made));
         } else {
             why = made.error().text();
         }
@@ -678,7 +684,8 @@ bool Session::drawing() const noexcept {
 }
 
 Drawn Session::draw(const style::CameraState& camera, const FrameTimes& times) {
-    if (!drawing()) {
+    // none on a window going (leave): the detach behind this frame lets go of it
+    if (!drawing() || leaving_.load(std::memory_order_relaxed)) {
         note_not_drawing();
         return {};
     }
@@ -707,6 +714,7 @@ void Session::note_not_drawing() {
 
 std::string Session::not_drawing_why() const {
     if (closed_) return "the core is closed";
+    if (leaving_.load(std::memory_order_relaxed)) return "the window is going";
     if (lost_ >= 3) return session_off_.empty() ? std::string("the map is off") : "the map is off: " + session_off_;
     if (output_ == nullptr) return "no surface";
     if (mode_ == 2) return map_ == nullptr ? "no map" : "the map is not ready";

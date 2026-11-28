@@ -182,8 +182,14 @@ public:
     /// lets an app ask (the Map look's switch; the driver's until it is set): a change makes the output again.
     void set_compression(gpu::Compression compression);
     /// Lets go of the window: the output and the frame's targets, the colour stage, the surface. The app's map keeps
-    /// the rest of its frame at 8 bits for the next window (attach); any other frame goes.
+    /// the rest of its frame at 8 bits for the next window (attach); any other frame goes. It clears leave's word.
     void detach();
+    /// A detach is on its way (any thread: the main thread says so before it posts the detach to the render thread and
+    /// waits for it, jni/Bridge.cpp): until the window goes (detach, or another attached), no frame begins, and the
+    /// frame waiting for an image now gives it up within a slice of its wait (gpu::Output::give_up_when), its frame a
+    /// skipped one, as at a timeout. The window's consumer may go only once the destroy callback that waits returns (a
+    /// TextureView's SurfaceTexture), so an image would come only after the acquire's whole bound.
+    void leave() noexcept { leaving_.store(true, std::memory_order_relaxed); }
     [[nodiscard]] bool attached() const noexcept { return window_ != nullptr; }
     /// The map moves, or has come to rest (the frame loop's word): the window is told its frames come at 120 a second
     /// while it moves, so that the display runs at 120 Hz where it has it, and at 60 at rest (SessionWindow's
@@ -316,6 +322,8 @@ private:
     /// device (asked inside it) can draw the frame in them, else (or refused by the driver) the stage closed again and
     /// the 8-bit output made in its place, `depth_` back at 8; "" or why not.
     std::string make_output();
+    /// `made` is the output from now on, its acquires given up while the window is going (leave).
+    void take_output(std::unique_ptr<gpu::Output> made);
     /// The output made again at its size, retiring the old one (gone once the new one is made or refused), and the
     /// renderer retargeted; refused, the renderer goes, and the colour stage closes.
     void remake_output();
@@ -427,6 +435,8 @@ private:
     std::string not_drawn_why_;
     /// When the frame drawn now began (now_ns), 0 between frames: health's stuck frame.
     std::atomic<std::int64_t> frame_since_ns_{0};
+    /// leave's word: a detach is on its way. Every output is given it (take_output); release_window clears it.
+    std::atomic<bool> leaving_{false};
 };
 
 } // namespace atlas::standin

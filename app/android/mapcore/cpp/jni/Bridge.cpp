@@ -696,6 +696,10 @@ public:
     }
 
     void detach() {
+        // Said before the wait: a frame waiting for an image of this window gives it up within a slice, where the
+        // image would come only once this returns (a TextureView's SurfaceTexture goes after its destroy callback),
+        // and no frame begins on it before the detach (Session::leave).
+        session_->leave();
         on_session([this] {
             session_->detach();
             requested_ = false;
