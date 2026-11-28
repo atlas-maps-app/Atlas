@@ -1060,19 +1060,23 @@ public:
 
     /// The last frame's decisions (tests, and the twin).
     [[nodiscard]] const GroundFrame& decided() const noexcept { return frame_; }
+#if defined(ATLAS_TESTS)
     /// The tests' look at the lines: the runs the last frame's words hold (at most 2^18, a segment's instance word's
     /// bits of its run), 0 before the first frame.
     [[nodiscard]] std::uint32_t line_runs() const noexcept;
+#endif
     /// Whether this frame draws the canopy through its filter (canopy_fs): it is drawn, and the fields are bound in
     /// full mode; else its union is black at .55, as a frame without filters draws it.
     [[nodiscard]] bool canopy_filtered(const frame::FrameState& state) const noexcept;
     /// What the last select cost, milliseconds of CPU time: the render thread's and the team's helpers' over the
     /// tiles they took (what it costs on one core).
     [[nodiscard]] double select_ms() const noexcept { return select_ms_; }
+#if defined(ATLAS_TESTS)
     /// The last frame's words for the GPU and its ripple's layer, hashed (FNV-1a), the tiles' heap offsets left out
     /// (they lie where each build's tiles landed): the pinch audit's ATLAS_PINCH_HASH holds two builds' frames to the
     /// same words by it. 0 before a frame's words.
     [[nodiscard]] std::uint64_t words_hash() const noexcept;
+#endif
     /// The absolute painter slot of a group's element this frame (from update on).
     [[nodiscard]] std::uint32_t slot(std::uint16_t group, std::uint32_t order, std::uint32_t sub) const noexcept;
     /// The order a drawn tile's fill `i` (stroke `i`) takes in its group this frame: its scene's, or where the frame
@@ -1091,9 +1095,11 @@ public:
     /// that frame's.
     [[nodiscard]] std::optional<scene::PickedGround> pick(const frame::FrameState& state, double x, double y) const;
 
+#if defined(ATLAS_TESTS)
     /// The tests' look at the soft shadows: from the next prepare on, their grid and blurred mask lie in memory the
     /// CPU reads, and each frame copies the resolved mask there too (SoftShadows::mask_copy).
     void keep_soft_shadows(bool keep) noexcept { keep_soft_ = keep; }
+#endif
     /// The soft shadows' objects (null where prepare made none).
     [[nodiscard]] const SoftShadows* soft_shadows() const noexcept;
     /// Whether the last frame drew its shadows soft (the moment blurs them).
@@ -1105,7 +1111,6 @@ public:
     /// The tests' look at the soft shadows' kept result: how many results the mask has made (its box, grid, union and
     /// blur run) since the pass was made; a frame whose mask is the last one's makes none, and dispatches nothing.
     [[nodiscard]] std::uint64_t mask_makes() const noexcept { return mask_made_; }
-#endif
     /// The tests' look at a sett road's courses: from the next frame on, the pass draws them alone over the frame's
     /// clear colour (no sky, plate, fills, other lines, water or shadows), each road's lines one layer.
     void draw_only_setts(bool only) noexcept { only_setts_ = only; }
@@ -1133,13 +1138,13 @@ public:
     /// What the maps took (LightStats), and a wait until every bake asked for is done (a test's: the next frame takes
     /// them).
     [[nodiscard]] LightStats light_stats() const;
-#if defined(ATLAS_TESTS)
     void wait_for_light() const;
 #endif
     /// The maps the frame draws.
     [[nodiscard]] std::span<const GroundFrame::LightDrawn> light_drawn() const noexcept { return frame_.light_tiles; }
     /// A bake of the night's light is under way: frames are due until its map is drawn.
     [[nodiscard]] bool fading() const noexcept override;
+#if defined(ATLAS_TESTS)
     /// Whether the reflected trees take their leaf filter (where the ripple draws their layer).
     void draw_leaves(bool draw) noexcept { no_leaves_ = !draw; }
     /// The tests' look at the reflections' ripple: from the next frame on, the reflections drawn without it (as where
@@ -1193,10 +1198,12 @@ public:
     /// along its middle at its share of them (passes/Water.cpp's thin water), else as it lies (on by default; the far
     /// flicker's measure, tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN).
     void draw_thin_water(bool draw) noexcept { thin_water_ = draw; }
+#endif
     /// The ripple's objects (null where prepare made none).
     [[nodiscard]] const RippleLayer* ripple_layer() const noexcept;
     /// Whether the last frame drew its reflections rippled.
     [[nodiscard]] bool drew_ripple() const noexcept { return drew_ripple_; }
+#if defined(ATLAS_TESTS)
     /// The tests' look at the ripple's kept result: how many results it has made (its layer drawn and its stages run)
     /// since the pass was made; a frame whose ripple is the last one's makes none.
     [[nodiscard]] std::uint64_t ripple_makes() const noexcept { return ripple_made_; }
@@ -1208,6 +1215,7 @@ public:
     /// The tests' look at the lit streets' glow: from the next prepare on, its buffers lie in memory the CPU reads, and
     /// each frame copies its layers there too (GlowLayer::glow_copy, core_copy).
     void keep_glow(bool keep) noexcept { keep_glow_ = keep; }
+#endif
     /// The glow's objects (null where prepare made none), and whether the last frame drew its layers.
     [[nodiscard]] const GlowLayer* glow_layer() const noexcept;
     [[nodiscard]] bool drew_glow() const noexcept { return drew_glow_; }
@@ -1556,9 +1564,9 @@ private:
     std::uint64_t rankings_ = 0;
     std::vector<std::uint32_t> ranked_handles_; ///< the drawn tiles ranks_ was made for, sorted
     std::vector<std::uint32_t> pack_ordinals_;  ///< per drawn tile: its pack's place among the drawn ones' ids, sorted
-    bool keep_soft_ = false;
     bool drew_soft_ = false;
 #if defined(ATLAS_TESTS)
+    bool keep_soft_ = false;      // keep_soft_shadows
     bool mask_always_ = false;    // make_mask_always
     std::uint64_t mask_made_ = 0; // mask_makes
 #endif
@@ -1567,10 +1575,14 @@ private:
     std::vector<std::uint32_t> mask_key_;
     bool mask_kept_ = false;
     std::uint32_t mask_entry_ = 0;
+    /// The least width a street or a big road is drawn at, device px (the tests' least_width_px changes it).
+    static constexpr float least_px = 2.0F;
+#if defined(ATLAS_TESTS)
+    // the tests' looks and switches (their setters')
     bool only_setts_ = false;
     std::uint32_t left_out_fills_ = 0;
     bool least_width_ = true;
-    float least_px_ = 2.0F;
+    float least_px_ = least_px;
     std::optional<float> fade_every_;
     bool fade_over_itself_ = false;
     std::uint32_t left_out_under_ = 0;
@@ -1589,13 +1601,14 @@ private:
     bool no_wind_glints_ = false;
     bool no_clouds_ = false;
     bool no_light_ = false;
-    bool light_was_asked_ = false;     ///< the last decision's light_asked
-    std::unique_ptr<LightMaps> light_; ///< the night's light's maps, from the first frame that asks for them
     bool keep_ripple_ = false;
     bool fuse_ripple_ = true;
     bool ripple_always_ = false;
-    bool drew_ripple_ = false;
     bool keep_glow_ = false;
+#endif
+    bool light_was_asked_ = false;     ///< the last decision's light_asked
+    std::unique_ptr<LightMaps> light_; ///< the night's light's maps, from the first frame that asks for them
+    bool drew_ripple_ = false;
     bool drew_glow_ = false;
     /// What the last glow's layers and filter were made of (write_lit), and whether this frame's differ; what they
     /// cover this frame. A frame's key counts once its layers recorded (record_lit_layer takes glow_next_), not when it
@@ -1613,8 +1626,10 @@ private:
     bool ripple_stale_ = true;
     RipplePlan ripple_plan_;
     std::vector<PixelBox> ripple_boxes_; ///< each element's box in the layer this frame (plan_ripple's scratch)
-    std::uint64_t ripple_made_ = 0;
-    std::uint64_t ripple_keyed_ = 0;
+#if defined(ATLAS_TESTS)
+    std::uint64_t ripple_made_ = 0;  // ripple_makes
+    std::uint64_t ripple_keyed_ = 0; // ripple_keyed
+#endif
     double select_ms_ = 0;
     double helped_ms_ = 0; ///< the team's helpers' CPU time over the select under way
     /// The tiles' decisions, kept while the camera rests (their grounds held), reused as scratch while it moves.

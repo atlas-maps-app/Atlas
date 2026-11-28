@@ -788,9 +788,10 @@ bool Ground::decide(const frame::FrameState& state) {
                 it->under = it->under && c.under;
                 continue;
             }
+            shaders::TilePlace place = c.place;
+#if defined(ATLAS_TESTS)
             // (a test's fade on every tile: its place's scale.w, which the vertex stage reads; and under it, where the
             // test says, the tile's own copy as the cover keeps a tile under one fading in)
-            shaders::TilePlace place = c.place;
             if (fade_every_) {
                 if (fade_over_itself_) {
                     f.tiles.push_back({.tile = c.drawn,
@@ -806,6 +807,7 @@ bool Ground::decide(const frame::FrameState& state) {
                 }
                 place.scale.w = *fade_every_;
             }
+#endif
             f.tiles.push_back({.tile = c.drawn,
                                .pass = &p,
                                .ground = g,
@@ -819,8 +821,11 @@ bool Ground::decide(const frame::FrameState& state) {
         }
     }
     // the settled streets' marks, in the app's map where a tile fades in (record_fading_fills' tiles)
-    f.marks = marks_ && f.grounded && !f.out(style::camera_part::ground) &&
+    f.marks = f.grounded && !f.out(style::camera_part::ground) &&
               std::ranges::any_of(f.tiles, [](const DrawnTile& t) { return t.fade < 1.0F && t.pass->ranges[0]; });
+#if defined(ATLAS_TESTS)
+    f.marks = f.marks && marks_; // draw_marks(false)
+#endif
     // The plate under every window drawn: the renders' plate is GR about the frame's origin, which for a frame cell's
     // windows is the cell's centre, kilometres off, and windows carry the city past the renders' radius; so where
     // windows are drawn the plate reaches each of them whole (frames without windows keep the renders' plate).
@@ -1035,6 +1040,7 @@ bool Ground::decide(const frame::FrameState& state) {
     // sea lies in it: no plate over it)
     f.plate = p.points >= 3 && p.inside && (std::abs(p.sum) / 2) > 0.2 && !f.out(style::camera_part::ground) &&
               state.world == nullptr;
+#if defined(ATLAS_TESTS)
     if (only_setts_) {
         // the tests' look at the sett roads' courses: nothing else
         std::ranges::fill(f.drawn, std::uint8_t{0});
@@ -1066,6 +1072,7 @@ bool Ground::decide(const frame::FrameState& state) {
             }
         }
     }
+#endif
     return true;
 }
 
@@ -1084,11 +1091,13 @@ Team& Ground::team() {
     return *team_;
 }
 
+#if defined(ATLAS_TESTS)
 void Ground::decide_on(unsigned helpers) {
     team_ = std::make_unique<Team>(helpers);
     poly_.resize(team_->takers());
     told_ = false;
 }
+#endif
 
 void Ground::decide_tiles(std::span<const std::pair<const DrawnTile*, TileDecisions*>> tiles) {
     Team& team = this->team();
@@ -1703,6 +1712,7 @@ void Ground::write_words(const frame::FrameState& state) {
     w.ready = true;
 }
 
+#if defined(ATLAS_TESTS)
 std::uint64_t Ground::words_hash() const noexcept {
     if (words_ == nullptr || !words_->ready) return 0;
     const Words& w = *words_;
@@ -1729,6 +1739,7 @@ std::uint64_t Ground::words_hash() const noexcept {
     for (const std::int32_t v : {l.x0, l.y0, l.x1, l.y1}) put(static_cast<std::uint32_t>(v));
     return h;
 }
+#endif
 
 void Ground::update(const frame::FrameState& state) {
     frame_.thin_runs.clear();
@@ -1791,7 +1802,12 @@ void Ground::push_run(const frame::Recording& r, std::uint32_t flags, std::uint3
     layouts::ground_ground::PushConstants pc{};
     pc.at = {w.tiles, w.slots, w.theme, w.runs};
     // (mode.y: the least width a street is drawn at, device px, as soft_point reads it)
-    pc.mode = {flags | (frame_.night ? ground_flag::night : 0U), std::bit_cast<std::uint32_t>(least_px_), first, count};
+#if defined(ATLAS_TESTS)
+    const float least = least_px_;
+#else
+    const float least = least_px;
+#endif
+    pc.mode = {flags | (frame_.night ? ground_flag::night : 0U), std::bit_cast<std::uint32_t>(least), first, count};
     r.frame.cmd.pushConstants<layouts::ground_ground::PushConstants>(*pipelines_->layout, frame::push_stages, 0, pc);
 }
 
@@ -1829,7 +1845,11 @@ void Ground::record(const frame::Recording& r, std::uint32_t phase) {
         record_water_band(r);
         if (!frame_.out(style::camera_part::ground)) record_streets(r);
         record_water_end(r, false);
+#if defined(ATLAS_TESTS)
         if (!only_setts_ && !frame_.out(style::camera_part::sky)) {
+#else
+        if (!frame_.out(style::camera_part::sky)) {
+#endif
             record_sky(r);
             record_sky_layer(r);
         }
@@ -1899,7 +1919,11 @@ void Ground::record_fills(const frame::Recording& r, bool above) {
 void Ground::record_streets(const frame::Recording& r) {
     if (!frame_.grounded) return;
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
+#if defined(ATLAS_TESTS)
     const std::uint32_t soft = least_width_ ? ground_flag::soft : 0U;
+#else
+    const std::uint32_t soft = ground_flag::soft;
+#endif
     // The streets off a bridge, where the stencil holds no water at the street; then those on a bridge, over the
     // water; then the big roads' asphalt, which lies over them. Each: its colour over what lies under it, the run's
     // triangles bottom first without their depth (street_vs: the draw names its run), so a street's edge at its share
@@ -1958,7 +1982,12 @@ void Ground::record_fading_fills(const frame::Recording& r) {
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     // the big roads' asphalt as wide as at rest, and in the app's map the streets off a bridge by their own draw
     // (record_streets), here in their place among the tile's fills, top first, a thin one drawn as wide as there
-    const std::uint32_t wide = frame_.grounded ? ground_flag::wide | (least_width_ ? ground_flag::least : 0U) : 0U;
+#if defined(ATLAS_TESTS)
+    const std::uint32_t least = least_width_ ? ground_flag::least : 0U;
+#else
+    const std::uint32_t least = ground_flag::least;
+#endif
+    const std::uint32_t wide = frame_.grounded ? ground_flag::wide | least : 0U;
     const auto bind = [&](bool streets) {
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics,
                          streets ? *pipelines_->fill_fading_streets : *pipelines_->fill_fading);

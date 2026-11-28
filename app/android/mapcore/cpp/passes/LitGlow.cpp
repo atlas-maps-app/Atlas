@@ -111,7 +111,10 @@ void Ground::decide_lit(const view::Camera& view_cam) {
     f.lit_runs.clear();
     f.lit_run_points.clear();
     f.lit_opacity = f.weather ? 0.3 : 0.4;
-    if (!f.night || no_lit_ || only_setts_ || f.tiles.empty()) return;
+    if (!f.night || f.tiles.empty()) return;
+#if defined(ATLAS_TESTS)
+    if (no_lit_ || only_setts_) return;
+#endif
     // neither the glow nor (on a wet night) the cores, where the map leaves them out
     if (f.out(style::camera_part::lit_streets) && (!f.wet || f.out(style::camera_part::wet_cores))) return;
     // `eye = th.get('wx') and cfg.get('pitch', 90) < 10`
@@ -299,7 +302,9 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
     const gpu::Device& device = context.device;
     const vk::raii::Device& d = device.handle();
     auto s = std::make_unique<GlowLayer>();
+#if defined(ATLAS_TESTS)
     s->kept = keep_glow_;
+#endif
     // the view's device px, the output's turned back, and the margin about them
     vk::Extent2D view = context.output.extent();
     if (turned(context.output.transform())) std::swap(view.width, view.height);

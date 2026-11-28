@@ -90,9 +90,11 @@ const RippleLayer* Ground::ripple_layer() const noexcept {
 
 bool Ground::rippled(const frame::FrameState& state) const noexcept {
     // a filter of the renders: in full mode alone, where the fields are bound
-    return !frame_.reflections.empty() && !no_ripple_ && !frame_.out(style::camera_part::ripple) &&
-           state.mode == frame::Mode::full && (state.block.info.x & shaders::FRAME_FIELDS) != 0U &&
-           pipelines_ != nullptr && pipelines_->ripple != nullptr;
+#if defined(ATLAS_TESTS)
+    if (no_ripple_) return false;
+#endif
+    return !frame_.reflections.empty() && !frame_.out(style::camera_part::ripple) && state.mode == frame::Mode::full &&
+           (state.block.info.x & shaders::FRAME_FIELDS) != 0U && pipelines_ != nullptr && pipelines_->ripple != nullptr;
 }
 
 void Ground::write_ripple(std::vector<std::uint32_t>& words, const frame::FrameState& state) {
@@ -341,7 +343,9 @@ void Ground::key_ripple(const std::vector<std::uint32_t>& words, const frame::Fr
         add(w.leaf_offsets, 257);
         if (w.ripple_map != 0) add(w.ripple_map, 9);
         if (w.ripple_plan != 0) add(w.ripple_plan, words.size() - w.ripple_plan); // the plan, the words' last
+#if defined(ATLAS_TESTS)
         ++ripple_keyed_;
+#endif
     }
     ripple_stale_ = key != ripple_key_;
     ripple_next_ = std::move(key); // the frame's, once its layer records (record_ripple_layer)
@@ -351,7 +355,9 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     const gpu::Device& device = context.device;
     const vk::raii::Device& d = device.handle();
     auto s = std::make_unique<RippleLayer>();
+#if defined(ATLAS_TESTS)
     s->kept = keep_ripple_;
+#endif
     // the view's device px, the output's turned back: the fields' pixels
     vk::Extent2D view = context.output.extent();
     if (turned(context.output.transform())) std::swap(view.width, view.height);
@@ -569,7 +575,11 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
     drew_ripple_ = false;
     const Words& w = *words_;
     if (!rippled(r.state) || w.reflection_count == 0) return;
-    if (drew && !ripple_stale_ && !ripple_always_) {
+    bool stands = drew && !ripple_stale_;
+#if defined(ATLAS_TESTS)
+    stands = stands && !ripple_always_; // make_ripple_always
+#endif
+    if (stands) {
         // the last frame's result stands: the buffers hold it, and the composite reads them again
         drew_ripple_ = true;
         return;
@@ -584,7 +594,9 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
         drew_ripple_ = true;
         return;
     }
+#if defined(ATLAS_TESTS)
     ++ripple_made_;
+#endif
     const vk::raii::CommandBuffer& cmd = r.frame.cmd;
     const gpu::Sync& sync = r.frame.sync;
     using S = vk::PipelineStageFlagBits2;
@@ -645,7 +657,11 @@ void Ground::record_ripple_layer(const frame::Recording& r) {
                                            .old_layout = L::eColorAttachmentOptimal,
                                            .new_layout = L::eShaderReadOnlyOptimal});
 
-    if (fuse_ripple_ && plan.rx <= ripple_reach && plan.ry <= ripple_reach) {
+    bool fused = plan.rx <= ripple_reach && plan.ry <= ripple_reach;
+#if defined(ATLAS_TESTS)
+    fused = fused && fuse_ripple_;
+#endif
+    if (fused) {
         // 2. the displacement and the boxes in one dispatch, a tile of the result a workgroup (ripple_fused_cs), into
         // the buffer the last frame's composite did not read: the frame before it, which may have, has finished
         const std::uint32_t t = 1U - s.result;

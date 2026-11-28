@@ -90,7 +90,11 @@ void Ground::decide_sky(const view::Camera& cam, const frame::FrameState& state)
     const std::optional<view::Layers>& l = state.layers;
     if (!l || !l->clouds || f.out(style::camera_part::sky)) return;
     f.sky_bottom = printed(l->sky_bottom, 1);
-    if (state.mode == frame::Mode::full && !no_clouds_ && !only_setts_) {
+    bool clouds = state.mode == frame::Mode::full;
+#if defined(ATLAS_TESTS)
+    clouds = clouds && !no_clouds_ && !only_setts_;
+#endif
+    if (clouds) {
         // `<filter id="cloudf" ... width="%d" height="%d">` of W and hb, the matrices' numbers as sky_layer prints them
         const view::Clouds& c = *l->clouds;
         const auto scale = static_cast<float>(state.camera.density);

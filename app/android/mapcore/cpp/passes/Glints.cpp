@@ -169,10 +169,10 @@ double water_level(const GroundFrame& f) noexcept {
 void Ground::decide_wind_glints(const view::Camera& cam, const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.wind_glints = false;
-    if (!f.weather || !f.water || no_wind_glints_ || only_setts_ || f.tiles.empty() ||
-        f.out(style::camera_part::glints)) {
-        return;
-    }
+    if (!f.weather || !f.water || f.tiles.empty() || f.out(style::camera_part::glints)) return;
+#if defined(ATLAS_TESTS)
+    if (no_wind_glints_ || only_setts_) return;
+#endif
     if (state.mode != frame::Mode::full) return;
     // `eye = cam.f[1] > -0.25 and 0 < hy < H`: at eye level the glint bands (still to come), else one band, the frame
     const double hy = cam.horizon_y();

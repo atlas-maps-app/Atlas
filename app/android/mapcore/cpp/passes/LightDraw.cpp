@@ -112,6 +112,7 @@ void out_of_walls(const LightJob& job, fx::LightEmitter& light) {
 
 } // namespace
 
+#if defined(ATLAS_TESTS)
 LightStats Ground::light_stats() const {
     if (light_ == nullptr) return {};
     LightStats s = light_->stats;
@@ -127,6 +128,7 @@ LightStats Ground::light_stats() const {
     s.pending = static_cast<std::uint32_t>(light_->baker.pending());
     return s;
 }
+#endif
 
 #if defined(ATLAS_TESTS)
 void Ground::wait_for_light() const {
@@ -144,9 +146,16 @@ bool Ground::fading() const noexcept {
 
 bool Ground::light_asked(const frame::FrameState& state) const noexcept {
     const GroundFrame& f = frame_;
+#if defined(ATLAS_TESTS)
     const bool lamps_on = !no_pools_ && !f.out(style::camera_part::lamp_pools);
+#else
+    const bool lamps_on = !f.out(style::camera_part::lamp_pools);
+#endif
     const bool open_on = state.theme.has(style::theme_flag::daylight) && !f.out(style::camera_part::open_glows);
-    return f.night && !no_light_ && !only_setts_ && !f.tiles.empty() && state.view.has_value() &&
+#if defined(ATLAS_TESTS)
+    if (no_light_ || only_setts_) return false;
+#endif
+    return f.night && !f.tiles.empty() && state.view.has_value() &&
            state.camera.has(style::camera_flag::light_cascades) && (lamps_on || open_on);
 }
 
@@ -163,7 +172,11 @@ void Ground::decide_light(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.light_tiles.clear();
     f.light_mapped.assign(f.tiles.size(), 0);
+#if defined(ATLAS_TESTS)
     const bool lamps_on = !no_pools_ && !f.out(style::camera_part::lamp_pools);
+#else
+    const bool lamps_on = !f.out(style::camera_part::lamp_pools);
+#endif
     const bool open_on = state.theme.has(style::theme_flag::daylight) && !f.out(style::camera_part::open_glows);
     light_was_asked_ = light_asked(state);
     if (!light_was_asked_) return;

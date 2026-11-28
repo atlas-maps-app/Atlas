@@ -380,7 +380,9 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     const gpu::Device& device = context.device;
     const vk::raii::Device& d = device.handle();
     auto s = std::make_unique<SoftShadows>();
+#if defined(ATLAS_TESTS)
     s->kept = keep_soft_;
+#endif
     // the mask: the view's device px (the output's, turned back) with the widest reach and a pixel around them
     vk::Extent2D view = context.output.extent();
     if (turned(context.output.transform())) std::swap(view.width, view.height);

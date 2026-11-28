@@ -337,7 +337,9 @@ void Ground::write_lines(const frame::FrameState& state, std::vector<std::uint32
     }
 }
 
+#if defined(ATLAS_TESTS)
 std::uint32_t Ground::line_runs() const noexcept { return words_ != nullptr ? words_->run_count : 0; }
+#endif
 
 void Ground::record_lines(const frame::Recording& r, std::uint32_t phase) {
     const std::size_t k = phase == phase_over ? 0 : 1;

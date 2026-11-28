@@ -450,7 +450,10 @@ void Ground::record_water_opaque(const frame::Recording& r) {
 void Ground::cull_thin(const frame::FrameState& state) {
     GroundFrame& f = frame_;
     f.thin_runs.clear();
-    if (!f.water || !f.grounded || !thin_water_ || !state.view) return;
+    if (!f.water || !f.grounded || !state.view) return;
+#if defined(ATLAS_TESTS)
+    if (!thin_water_) return;
+#endif
     const ThinView view(state.block.camera);
     // the bits and heights thin_of reads: with weather its pieces' at their level, without at the street
     const std::uint8_t bit = f.weather ? drawn_bit::level : drawn_bit::street;

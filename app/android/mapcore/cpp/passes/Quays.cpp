@@ -165,7 +165,10 @@ void Ground::decide_quays(const frame::FrameState& state) {
     const bool walls = !f.out(style::camera_part::quays);
     const bool waterlines = !f.out(style::camera_part::quay_waterlines);
     const bool tops = !f.out(style::camera_part::quay_tops);
-    if (!f.weather || no_quays_ || (!walls && !waterlines && !tops)) return;
+    if (!f.weather || (!walls && !waterlines && !tops)) return;
+#if defined(ATLAS_TESTS)
+    if (no_quays_) return;
+#endif
     const shaders::Theme& theme = state.block.theme;
     const std::array<double, 3>& light = f.light;
     // every piece of the drawn tiles, in water_edges' order: the sun's pieces where its bits have come, else each
@@ -294,10 +297,11 @@ void Ground::decide_quays(const frame::FrameState& state) {
         }
         // at eye level the quay wall shows its brick courses: `if cam.f[1] > -0.25 and th.get('wx') and not night and
         // f1`, f1 the wall as drawn (its bands' paths where it is in bands)
-        if (wall_drawn && !f.night && !no_courses_ && g.quay_course && *g.quay_course != 0.0 &&
-            cam.forward().y > -0.25) {
-            course_paths(cam, face, wy, *g.quay_course, f.quays);
-        }
+        bool courses = wall_drawn && !f.night && g.quay_course && *g.quay_course != 0.0 && cam.forward().y > -0.25;
+#if defined(ATLAS_TESTS)
+        courses = courses && !no_courses_;
+#endif
+        if (courses) course_paths(cam, face, wy, *g.quay_course, f.quays);
         QuayFace waterline = face;
         waterline.kind = QuayFace::Kind::waterline;
         waterline.colour = colours.waterline;

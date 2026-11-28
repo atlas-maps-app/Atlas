@@ -756,7 +756,11 @@ void Ground::decide_reflections(const frame::FrameState& state) {
     // the mirrored buildings and trees, and the night's streaks after them, as the map leaves them in
     const bool mirroring = !f.out(style::camera_part::reflections);
     const bool streaks = night && !f.out(style::camera_part::water_streaks);
-    if (!f.weather || no_reflections_ || only_setts_ || (!mirroring && !streaks)) {
+    bool none = !f.weather || (!mirroring && !streaks);
+#if defined(ATLAS_TESTS)
+    none = none || no_reflections_ || only_setts_;
+#endif
+    if (none) {
         // none drawn while the moment or the switches leave them out: the kept tiles go
         reflections_kept_ = {};
         return;
@@ -1206,8 +1210,11 @@ void Ground::write_reflections(std::vector<std::uint32_t>& words) {
         }
         if (e.kind == Reflection::Kind::tree) {
             const std::uint32_t colour = lit_mix(e.colour, e.colour, 0.0);
-            const std::uint32_t leaf =
-                no_leaves_ || frame_.out(style::camera_part::leaf_filters) ? 0U : reflection_leaf;
+            bool leaves = !frame_.out(style::camera_part::leaf_filters);
+#if defined(ATLAS_TESTS)
+            leaves = leaves && !no_leaves_;
+#endif
+            const std::uint32_t leaf = leaves ? reflection_leaf : 0U;
             for (std::uint32_t k = 0; k < e.count; ++k) {
                 const ReflectionCircle& c = frame_.reflection_circles[e.first + k];
                 // a circle of its tree's group under the leaf filter: its centre and radius, then the group's region
