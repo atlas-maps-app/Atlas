@@ -11,12 +11,15 @@
 //   cache      a pipeline cache made or loaded (the one on disk, and VK bench's timing's), every write back
 //              (vkGetPipelineCacheData), and the timing's caches as they go;
 //   surface    the window's surface and its queries, and the swapchain at the frame's 8 bits: made, remade, destroyed;
-//   pipelines  the shader modules and pipelines, made, and a frame's, destroyed as the frame goes;
-//   frames     the first 120 frames of each renderer: of each configuration VK bench draws, of a frame made again for a
-//              new size, of the device rebuilt after a loss (the frame loop's per-frame calls after them run unmarked:
-//              D5.10 guards the first draws); it ends whenever the frame loop rests (nothing to draw, or the app's
-//              windows hidden), the renderer goes or the frame it draws changes (another configuration, an output
-//              made again), and opens again at the next draw within them, naming the frame drawn then;
+//   pipelines  the shader modules and pipelines, made, and a frame's, destroyed as the frame goes; a frame's targets
+//              (what of it is sized to the output), let go of and made again as the output comes back at another size
+//              with the same formats, its modules and pipelines kept;
+//   frames     the first 120 frames of each renderer: of each configuration VK bench draws, of a frame at a new size
+//              (resized, or made again), of the device rebuilt after a loss (the frame loop's per-frame calls after
+//              them run unmarked: D5.10 guards the first draws); it ends whenever the frame loop rests (nothing to
+//              draw, or the app's windows hidden), the renderer goes or the frame it draws changes (another
+//              configuration, an output made again), and opens again at the next draw within them, naming the frame
+//              drawn then;
 //   profiles   Android's Vulkan profiles (the Profiles library's checks), read only when VK facts or VK bench asks,
 //              never on the start's path: they decide nothing, VK facts reports them;
 //   colour     VK bench's colour stage (below);
@@ -28,17 +31,17 @@
 //   close      the core's close: the stand-in's shared objects, the pipeline cache, the device and its allocator, the
 //              instance;
 //   refused    a start the guard or a failed step refused: what it had made goes (the device, the instance).
-// While the driver makes a shader module or a pipeline, the marker also names it (in the pipelines and colour stages:
-// a module by its symbol, a pipeline by its name, its module and the frame configuration, gpu/Pipelines.hpp), and while
+// While the driver makes a shader module or a pipeline, the marker also names it (in the pipelines and colour stages: a
+// module by its symbol, a pipeline by its name, its module and the frame configuration, gpu/Pipelines.hpp), and while
 // the driver destroys something as a whole, in any stage, it names that (gpu/Pipelines.hpp's Release: a frame, a
-// swapchain, a pipeline cache, the stand-in, the device, the instance). Each name lasts its call alone: once the call
-// returns the marker names the stage again (rewritten without a sync, since a process's crash leaves the page cache
-// whole), so whatever the driver does next, unannounced, is the stage's and no one object's. A frame's passes make
-// their modules and pipelines on several threads at once (frame/FrameBuilder.cpp, ENGINE.md gain 20): the marker then
-// names every call under way, a line each (each thread's innermost, in the order they were announced), and the next
-// start's `vk guard` line names them all, separated by "; ", since a crash in one thread's call ends the others' too.
-// Between named calls the frames stage's marker names the frame it draws (`drawing frame (configuration <…>
-// <colour>)`), so that a crash in a renderer's first draws says which configuration it was.
+// frame's targets, a swapchain, a pipeline cache, the stand-in, the device, the instance). Each name lasts its call
+// alone: once the call returns the marker names the stage again (rewritten without a sync, since a process's crash
+// leaves the page cache whole), so whatever the driver does next, unannounced, is the stage's and no one object's. A
+// frame's passes make their modules and pipelines on several threads at once (frame/FrameBuilder.cpp, ENGINE.md gain
+// 20): the marker then names every call under way, a line each (each thread's innermost, in the order they were
+// announced), and the next start's `vk guard` line names them all, separated by "; ", since a crash in one thread's
+// call ends the others' too. Between named calls the frames stage's marker names the frame it draws (`drawing frame
+// (configuration <…> <colour>)`), so that a crash in a renderer's first draws says which configuration it was.
 //
 // VK bench draws configurations, routes, forms and targets the facts would not pick, to measure them: its cells. A
 // renderer tells the guard whose frame its work is (gpu/Pipelines.hpp's PipelineWatch::frame_of), and while that frame
@@ -226,15 +229,18 @@ public:
     ///   `<stage>:<name>`          in the pipelines or the colour stage, as the pipeline or shader module <name> is
     ///                             made (`pipelines:composite`, `colour:standin_composite`: in the colour stage only
     ///                             the 10-bit frame's are made, the stand-in's shared ones before it opens);
-    ///   `<stage>:release`         as the stage's first thing goes; in the colour stage its first 10-bit frame or
-    ///                             10-bit swapchain, whichever goes first, never anything of 8 bits nor its cache;
+    ///   `<stage>:release`         as the stage's first thing goes; in the colour stage its first 10-bit frame, 10-bit
+    ///                             frame's targets or 10-bit swapchain, whichever goes first, never anything of 8 bits
+    ///                             nor its cache;
     ///   `<stage>:release:<kind>`  as the stage's first thing of that kind goes (gpu/Pipelines.hpp's Release: frame,
-    ///                             swapchain, cache, standin, device, instance), in the colour stage a 10-bit one:
-    ///                             `colour:release:frame` as the 10-bit frame goes, `colour:release:swapchain` as the
-    ///                             10-bit swapchain goes, `colour:release:cache` as the stage's own pipeline cache
-    ///                             goes, `pipelines:release:frame` as an 8-bit frame goes, `surface:release:swapchain`
-    ///                             as an 8-bit swapchain goes, `close:release:cache` as the pipeline cache on disk goes
-    ///                             at the close, `close:release:device` as the device goes at the close,
+    ///                             targets, swapchain, cache, standin, device, instance), in the colour stage a 10-bit
+    ///                             one: `colour:release:frame` as the 10-bit frame goes, `colour:release:targets` as
+    ///                             the 10-bit frame's targets go at a resize, `colour:release:swapchain` as the 10-bit
+    ///                             swapchain goes, `colour:release:cache` as the stage's own pipeline cache goes,
+    ///                             `pipelines:release:frame` as an 8-bit frame goes, `pipelines:release:targets` as an
+    ///                             8-bit frame's targets go at a resize, `surface:release:swapchain` as an 8-bit
+    ///                             swapchain goes, `close:release:cache` as the pipeline cache on disk goes at the
+    ///                             close, `close:release:device` as the device goes at the close,
     ///                             `refused:release:instance` as a refused start's instance goes;
     ///   `cell:<plant>`            any of the above in a VK bench cell's work alone, its marker naming the cell
     ///                             (`cell:pipelines:box`, `cell:frames`, `cell:pipelines:release:frame`, `cell:cache`):
@@ -289,6 +295,18 @@ public:
     [[nodiscard]] std::optional<Stage> current() const noexcept { return current_; }
     /// Whether the colour stage is open.
     [[nodiscard]] bool colour_open() const noexcept { return colour_; }
+#if defined(ATLAS_TESTS)
+    /// A test's: how many of the calls the marker named since the guard was made begin with `prefix` ("module ",
+    /// "pipeline ", "release targets ", …): those a stage named, not the ones outside every stage that names them.
+    [[nodiscard]] std::size_t noted(std::string_view prefix) const;
+    /// A test's: the shader modules and pipelines made under the guard's watch since it was made, in a stage that names
+    /// them or not.
+    struct Made {
+        std::size_t modules = 0;
+        std::size_t pipelines = 0;
+    };
+    [[nodiscard]] Made made() const;
+#endif
 
     /// The `vk guard colour …` line when 10 bits are off for this driver and version (once known) and this build: VK
     /// bench's colour stage crashed under them. "" when they are not off.
@@ -371,6 +389,10 @@ private:
     /// The calls announced and not returned yet, in the order they were announced (a thread's innermost last among its
     /// own). A stage's change clears them.
     std::vector<Note> notes_;
+#if defined(ATLAS_TESTS)
+    std::vector<std::string> noted_; // every call named, in order (noted)
+    Made made_;                      // every module and pipeline made (made)
+#endif
     /// Held by every call that reads or writes the notes or the marker: the announcements come from several threads.
     mutable std::mutex mutex_;
     std::string drawing_;               // the frame the frames stage draws (set_drawing)

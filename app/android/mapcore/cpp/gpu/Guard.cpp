@@ -480,9 +480,11 @@ bool Guard::planted_release(const Release& release) const {
     if (!rest.starts_with(releases)) return false;
     rest.remove_prefix(releases.size());
     // The colour stage's plant takes a thing of 10 bits only, never one of 8 that goes inside the stage; and without a
-    // kind, a 10-bit frame or swapchain only (the stage's own cache goes even where the device refused 10 bits).
+    // kind, a 10-bit frame, its targets or a swapchain only (the stage's own cache goes even where the device refused
+    // 10 bits).
     if (colour_ && !release.ten_bit) return false;
-    if (rest.empty()) return !colour_ || release.kind == "frame" || release.kind == "swapchain";
+    if (rest.empty())
+        return !colour_ || release.kind == "frame" || release.kind == "targets" || release.kind == "swapchain";
     return rest.size() > 1 && rest.front() == ':' && rest.substr(1) == release.kind;
 }
 
@@ -508,13 +510,32 @@ void Guard::enter(Stage stage) {
 
 void Guard::note(std::string what, bool planted) {
     const std::vector<std::string> was = making();
+#if defined(ATLAS_TESTS)
+    if (!what.empty()) noted_.push_back(what);
+#endif
     notes_.push_back({.thread = std::this_thread::get_id(), .what = std::move(what)});
     if (making() != was) write_marker();
     if (planted) abort_planted(std::format("{}, {}", where(), notes_.back().what));
 }
 
+#if defined(ATLAS_TESTS)
+std::size_t Guard::noted(std::string_view prefix) const {
+    const std::scoped_lock lock(mutex_);
+    return static_cast<std::size_t>(
+        std::ranges::count_if(noted_, [prefix](const std::string& n) { return n.starts_with(prefix); }));
+}
+
+Guard::Made Guard::made() const {
+    const std::scoped_lock lock(mutex_);
+    return made_;
+}
+#endif
+
 void Guard::before(const PipelineLabel& label) {
     const std::scoped_lock lock(mutex_);
+#if defined(ATLAS_TESTS)
+    ++made_.pipelines;
+#endif
     // Outside the pipelines and colour stages no stage names a pipeline: the call is the stage's alone, and its after
     // still comes.
     if (current_ != Stage::pipelines && !colour_) {
@@ -526,6 +547,9 @@ void Guard::before(const PipelineLabel& label) {
 
 void Guard::before_module(std::string_view module) {
     const std::scoped_lock lock(mutex_);
+#if defined(ATLAS_TESTS)
+    ++made_.modules;
+#endif
     if (current_ != Stage::pipelines && !colour_) {
         note({}, false);
         return;

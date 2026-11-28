@@ -6,14 +6,14 @@
 // No pipeline takes specialization constants: the core's modules hold none (cmake/Shaders.cmake refuses them, after
 // PowerVR's compiler crashed on one), so a variant is a module of its own and the pipeline picks the module. Each
 // pipeline and each shader module is announced before it is made (announce, announce_module), and whatever the core
-// destroys as a whole before it goes (announce_release: a frame's pipelines, passes and images, a swapchain, a pipeline
-// cache, the stand-in, the device, the instance): the log names it, and the crash guard writes it into its marker, so a
-// driver that crashes making or destroying it is known by it at the next start (D5.10), a crash in
-// vkCreateShaderModule by its module, not by the pipeline made before it. An announcement lasts as long as the scope
-// that holds what it returns (Announced), which is the call it names and no more: when the call returns the marker
-// names its stage alone again, so the driver calls that follow, the next object's making among them, are never
-// charged to it. A renderer also tells the watch whose frame its work is (PipelineWatch::frame_of), so that the crash
-// guard tells VK bench's cells from the facts' own pick (D5.10).
+// destroys as a whole before it goes (announce_release: a frame's pipelines, passes and images, a frame's targets as it
+// is resized, a swapchain, a pipeline cache, the stand-in, the device, the instance): the log names it, and the crash
+// guard writes it into its marker, so a driver that crashes making or destroying it is known by it at the next start
+// (D5.10), a crash in vkCreateShaderModule by its module, not by the pipeline made before it. An announcement lasts as
+// long as the scope that holds what it returns (Announced), which is the call it names and no more: when the call
+// returns the marker names its stage alone again, so the driver calls that follow, the next object's making among them,
+// are never charged to it. A renderer also tells the watch whose frame its work is (PipelineWatch::frame_of), so that
+// the crash guard tells VK bench's cells from the facts' own pick (D5.10).
 #pragma once
 
 #include "gpu/Error.hpp"
@@ -46,10 +46,13 @@ struct PipelineLabel {
 struct Release {
     /// What kind of thing goes, each a name of its own, which the crash guard's plants take (gpu/Guard.hpp):
     /// "frame" (a renderer's main pass and everything it prepared in its content: the configuration's pipelines,
-    /// passes, framebuffers and images), "swapchain" (the window's output: a swapchain on the phone, the images that
-    /// stand in for one on hosts), "cache" (a pipeline cache: the one on disk, VK bench's colour stage's own, its
-    /// pipelines' timing's), "standin" (the stand-in's shared pipelines, modules, buffers and atlas), "device" (the
-    /// device and its allocator), "instance".
+    /// passes, framebuffers and images), "targets" (what of a frame is sized to the output or made of its images, as
+    /// the output is made again at another size with the same formats: the main pass's attachments and framebuffers,
+    /// the content's images, framebuffers and buffers of the output's size; the frame's pipelines, layouts and render
+    /// passes stay), "swapchain" (the window's output: a swapchain on the phone, the images that stand in for one on
+    /// hosts), "cache" (a pipeline cache: the one on disk, VK bench's colour stage's own, its pipelines' timing's),
+    /// "standin" (the stand-in's shared pipelines, modules, buffers and atlas), "device" (the device and its
+    /// allocator), "instance".
     std::string_view kind;
     /// Which: "(configuration A renderpass composite resolve rgb10a2)", "rgb10a2", "(the colour stage's)", ….
     std::string_view detail;
