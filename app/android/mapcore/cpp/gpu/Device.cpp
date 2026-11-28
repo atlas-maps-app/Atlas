@@ -167,13 +167,19 @@ Result<std::unique_ptr<Device>> Device::open(Instance& instance, Picked picked, 
     }
     // Local reads where the frame can draw with them (Facts' frame_local_read: of multisampled and depth-stencil
     // attachments, which Vulkan 1.4 makes properties), or where a test forces them for coverage.
+#if defined(ATLAS_TESTS)
     const bool reads = has.frame_local_read() || (options.force_local_read && has.local_read);
+#else
+    const bool reads = has.frame_local_read();
+#endif
     if (version < VK_API_VERSION_1_4) {
         if (on.dynamic_rendering && reads) on.local_read = enable(vk::KHRDynamicRenderingLocalReadExtensionName);
     } else {
         on.local_read = on.dynamic_rendering && reads;
     }
+#if defined(ATLAS_TESTS)
     on.local_read_forced = on.local_read && !has.frame_local_read();
+#endif
     if (on.swapchain && has.swapchain_maintenance1) {
         const bool surface_khr = instance.has_extension(vk::KHRSurfaceMaintenance1ExtensionName);
         const bool surface_ext = instance.has_extension(vk::EXTSurfaceMaintenance1ExtensionName);

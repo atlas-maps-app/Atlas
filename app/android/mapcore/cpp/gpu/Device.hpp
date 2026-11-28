@@ -26,10 +26,12 @@ struct DeviceOptions {
     bool present = false;
     /// K6's answer to configuration B's condition (2x within 0.15 MAD of 4x in both classes).
     bool msaa2_close = false;
+#if defined(ATLAS_TESTS)
     /// A test's option, never the phone's: enable local reads where the device has them but its Vulkan 1.4 properties
     /// deny the frame's use of them (multisampled or depth-stencil attachments: lavapipe's), so the host tests draw the
     /// dynamic route there for coverage. The facts' own pick never takes such a device to the dynamic route.
     bool force_local_read = false;
+#endif
 };
 
 /// What the device was created with, which the frame's code may rely on.
@@ -37,8 +39,10 @@ struct Enabled {
     bool swapchain = false; // only on a device that presents (DeviceOptions::present)
     bool dynamic_rendering = false;
     bool local_read = false;
+#if defined(ATLAS_TESTS)
     /// Local reads enabled only by DeviceOptions::force_local_read: the device's properties deny the frame their use.
     bool local_read_forced = false;
+#endif
     bool synchronization2 = false;
     bool create_renderpass2 = false;
     bool swapchain_maintenance1 = false;
