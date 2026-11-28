@@ -105,10 +105,12 @@ ReliefStats ReliefTiles::stats() const {
     return s;
 }
 
+#if defined(ATLAS_TESTS)
 void ReliefTiles::wait_idle() {
     std::unique_lock lock(mutex_);
     idle_cv_.wait(lock, [this] { return queue_.empty() && building_ == ~std::uint64_t{0}; });
 }
+#endif
 
 const ReliefTile* ReliefTiles::resident(const tl::TileKey& key) const noexcept {
     const auto it = resident_.find(key.packed());
@@ -332,7 +334,9 @@ void ReliefTiles::run(const std::stop_token& stop) {
             building_ = ~std::uint64_t{0};
             wake = wake_;
         }
+#if defined(ATLAS_TESTS)
         idle_cv_.notify_all();
+#endif
         if (wake) wake();
     }
 }

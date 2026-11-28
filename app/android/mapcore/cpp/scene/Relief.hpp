@@ -149,8 +149,10 @@ public:
     [[nodiscard]] std::string sources() const;
     [[nodiscard]] ReliefStats stats() const;
 
+#if defined(ATLAS_TESTS)
     /// Waits until the worker has nothing to do (a test's).
     void wait_idle();
+#endif
 
 private:
     /// What the store gives for a tile: its raster's chunk and pack (none: no heights there).
@@ -189,7 +191,9 @@ private:
 
     mutable std::mutex mutex_;
     std::condition_variable wake_worker_;
-    std::condition_variable idle_cv_;
+#if defined(ATLAS_TESTS)
+    std::condition_variable idle_cv_; ///< wait_idle's
+#endif
     std::vector<tiles::TileKey> queue_;                ///< the rasters to bake, nearest first
     std::uint64_t building_ = ~std::uint64_t{0};       ///< the one the worker bakes now
     std::vector<std::unique_ptr<ReliefTile>> built_;   ///< baked, for the next update to take
