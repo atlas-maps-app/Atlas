@@ -217,6 +217,7 @@ public:
     /// "" where the kept walls and near cells can be drawn from shape records, else why not: the lists drawn as their
     /// runs (no kept pipelines), or each kept primitive decided at each point (no records' pipelines).
     [[nodiscard]] std::string_view records_why() const noexcept;
+#if defined(ATLAS_TESTS)
     /// Every kept job's tile on the dither's levels from `range`[0] to `range`[1] (its place's offset.w and scale.w:
     /// ENGINE.md's standing fades), the pass dithering; unset, each tile's own. For the tests, which hold the kept
     /// walls and near cells drawn from their records to the pixels of each decided at each point while a tile fades.
@@ -229,6 +230,7 @@ public:
     /// than 2.5 device px drawn at their share of each pixel (record_thin_walls; on by default), else on the samples
     /// as every other wall (tests/frame/pinch_audit_vk_test.cpp's ATLAS_PINCH_THIN_WALLS).
     void draw_thin_walls(bool draw) noexcept { thin_walls_ = draw; }
+#endif
     /// How many chunks the last frame's thin walls' list may fill (0: no job left it any wall).
     [[nodiscard]] std::uint32_t thin_wall_chunks() const noexcept;
     /// How many of the last frame's tile draws read lean records.
@@ -275,8 +277,10 @@ public:
     };
     [[nodiscard]] Lighting lighting() const noexcept { return lighting_; }
     void reset_lighting() noexcept { lighting_ = {}; }
+#if defined(ATLAS_TESTS)
     /// Waits until the light ahead has lit every tile asked for (tests).
     void wait_ahead();
+#endif
 
     /// The primitives per index buffer chunk (65,536 points of u16 indexes), and each one's indexes.
     static constexpr std::uint32_t edged_chunk = 4096;
@@ -394,11 +398,13 @@ private:
     void forget_ahead();
 
     std::uint16_t kind_ = 0;
-    bool lean_every_ = false;
-    bool thin_walls_ = true;
+#if defined(ATLAS_TESTS)
+    bool lean_every_ = false;                        // lean_every_tile
+    bool thin_walls_ = true;                         // draw_thin_walls
+    std::optional<std::array<float, 2>> fade_every_; // fade_every
+#endif
     bool grounded_ = false; ///< the frame is the app's map's (update)
     std::optional<std::uint32_t> most_shape_chunks_;
-    std::optional<std::array<float, 2>> fade_every_;
     /// The parts the map leaves out this frame (the camera state's, style::camera_part), from select on.
     std::uint64_t left_out_ = 0;
     [[nodiscard]] bool out(std::uint64_t part) const noexcept { return (left_out_ & part) != 0U; }

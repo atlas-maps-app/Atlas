@@ -152,11 +152,13 @@ struct Buildings::Ahead {
         return at != taken.end() ? &*at : nullptr;
     }
 
+#if defined(ATLAS_TESTS)
     /// Waits until every tile asked for is lit, or nothing is asked for (tests).
     void wait() {
         std::unique_lock lock(mutex);
         idle.wait(lock, [this] { return !asked || lit == tiles.size(); });
     }
+#endif
 
     void work(const std::stop_token& stop) {
 #if defined(__ANDROID__)
@@ -194,7 +196,9 @@ struct Buildings::Ahead {
             ms += took;
             if (lit < tiles.size()) continue;
             // every tile asked for is lit: the frame loop draws the moment
+#if defined(ATLAS_TESTS)
             idle.notify_all();
+#endif
             const std::function<void()> wake = on_lit;
             lock.unlock();
             if (wake) wake();
@@ -207,7 +211,9 @@ struct Buildings::Ahead {
 
     std::mutex mutex;
     std::condition_variable_any wake_up; ///< the thread's
-    std::condition_variable idle;        ///< wait's
+#if defined(ATLAS_TESTS)
+    std::condition_variable idle; ///< wait's
+#endif
     // under mutex
     shaders::Theme theme{};
     style::PaletteBlock palette{}; ///< the user's palette asked for with the theme
@@ -252,9 +258,11 @@ bool Buildings::ready_for(const frame::FrameState& last, const shaders::Theme& n
     return ahead_->ask(next, palette, std::move(drawn), wake);
 }
 
+#if defined(ATLAS_TESTS)
 void Buildings::wait_ahead() {
     if (ahead_) ahead_->wait();
 }
+#endif
 
 void Buildings::take_ahead(const shaders::Theme& theme) {
     if (ahead_) ahead_->take(theme, palette_, lighting_);

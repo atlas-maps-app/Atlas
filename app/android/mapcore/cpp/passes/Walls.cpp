@@ -123,8 +123,10 @@ gpu::Result<void> Buildings::build(scene::TileBuild& b) const {
                    .kit_boards = style.kit ? style.kit->boards : std::nullopt},
         .kind = kind_,
         .share = {},
-        .blocks = 1,
-        .lean = lean_every_};
+        .blocks = 1};
+#if defined(ATLAS_TESTS)
+    in.lean = lean_every_;
+#endif
     // a dense tile's records in blocks on the residency's idle workers (gain 9), joined as one walk makes them: a block
     // for this worker and one for each worker waiting for work now
     if (const unsigned helpers = b.helpers(); helpers > 0) {

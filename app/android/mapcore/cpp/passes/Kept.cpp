@@ -227,7 +227,9 @@ std::string_view Buildings::records_why() const noexcept {
 
 void Buildings::write_kept_jobs(std::uint32_t slot) {
     Kept& k = *kept_;
+#if defined(ATLAS_TESTS)
     if (fade_every_) dithers_ = true;
+#endif
     // what this frame slot's last frame kept of each list, its draws' first words (that frame has finished)
     std::array<std::uint32_t, lists> last{};
     if (k.counted[slot] && k.draws[slot]) {
@@ -266,15 +268,20 @@ void Buildings::write_kept_jobs(std::uint32_t slot) {
             if (runs[list] == 0) continue;
             std::array<std::byte, 64> push = d.push;
             // (in the app's map a level's tile's walls leave the thin ones to their own list: record_thin_walls)
-            const bool thin = list == 0 && thin_walls_ && grounded_ && d.tile->lean && *k.thin;
+            bool thin = list == 0 && grounded_ && d.tile->lean && *k.thin;
+#if defined(ATLAS_TESTS)
+            thin = thin && thin_walls_;
+#endif
             const std::uint32_t mode = d.tile->list_mode(list == 1) | (thin ? shaders::BUILDING_LIST_THIN : 0U);
             std::memcpy(push.data() + 32, &ats[list], sizeof(std::uint32_t)); // BuildingPush.at.x: the list
             std::memcpy(push.data() + 60, &mode, sizeof mode);                // BuildingPush.sun.w: the list's kind
+#if defined(ATLAS_TESTS)
             if (fade_every_) {
                 // (a test's fade on every tile: BuildingPush.place.offset.w and scale.w)
                 std::memcpy(push.data() + 12, fade_every_->data(), sizeof(float));
                 std::memcpy(push.data() + 28, fade_every_->data() + 1, sizeof(float));
             }
+#endif
             for (std::uint32_t r = 0; r < runs[list]; ++r) {
                 const Run& run = runs_[firsts[list] + r];
                 for (std::uint32_t first = run.first; first < run.end; first += job_size) {
