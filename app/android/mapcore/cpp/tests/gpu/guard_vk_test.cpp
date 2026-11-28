@@ -10,15 +10,19 @@
 // or swapchain goes, turns off 10 bits only, the next start draws at 8 bits with them off, keeps its pipeline cache and
 // says so, and a reset brings them back; a crash in the profiles stage turns off the profiles check alone; a crash in
 // the work of a VK bench cell the facts would not pick (its pipelines, its first frames, its going, the cache's write
-// after its pipelines) turns that cell alone off, while one in the pick's follows Vulkan's ladder. A marker whose
-// process Android recorded as stopped, not crashed, or ended by an uncaught exception of the app's own code, counts for
-// nothing. The crashing starts run in child processes: this test binary, spawned with one test case, which on hosts
-// runs the core's session (standin/Session.hpp) in VK bench's order.
+// after its pipelines) turns that cell alone off, while one in the pick's follows Vulkan's ladder. A resize with the
+// same formats makes no module and no pipeline, and a crash as the frame's targets go is the pipelines stage's. A
+// marker whose process Android recorded as stopped, not crashed, or ended by an uncaught exception of the app's own
+// code, counts for nothing. The crashing starts run in child processes: this test binary, spawned with one test case,
+// which on hosts runs the core's session (standin/Session.hpp) in VK bench's order.
 #include "base/log.hpp"
 #include "frame/CompositeCheck.hpp"
+#include "frame/FrameBuilder.hpp"
+#include "frame/PassRegistry.hpp"
 #include "fx/GpuFields.hpp"
 #include "gpu/Frames.hpp"
 #include "gpu/Guard.hpp"
+#include "gpu/Offscreen.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "standin/Session.hpp"
 #include "standin/StandIn.hpp"
@@ -113,8 +117,8 @@ struct Child {
 /// or a VK bench cell first (a configuration the facts would not pick: the pick's own in the other form), then the
 /// pick, as VK bench's matrix draws its cells before the pick's runs; or VK facts' drawing checks after the facts,
 /// then the pick; or VK facts' fields line after the facts (the GPU's noise, on the host's lavapipe too), then the
-/// pick.
-enum class First : std::uint8_t { pick, ten, cell, checks, noise };
+/// pick; or the map's frame made and resized (on hosts), then the pick.
+enum class First : std::uint8_t { pick, ten, cell, checks, noise, resize };
 
 /// Runs this binary's child test case with the guard's folder, the plant, the core's build ID and the app's process
 /// exits as the façade would pass them (gpu::parse_exits' text; "" for none known); `first`: how its session begins.
@@ -132,6 +136,7 @@ Child spawn_child(const fs::path& dir, const std::string& plant, const std::stri
     env.push_back(std::format("ATLAS_GUARD_CELL_FIRST={}", first == First::cell ? 1 : 0));
     env.push_back(std::format("ATLAS_GUARD_CHECKS_FIRST={}", first == First::checks ? 1 : 0));
     env.push_back(std::format("ATLAS_GUARD_NOISE_FIRST={}", first == First::noise ? 1 : 0));
+    env.push_back(std::format("ATLAS_GUARD_RESIZE_FIRST={}", first == First::resize ? 1 : 0));
     std::vector<char*> argv;
     argv.reserve(args.size() + 1);
     for (std::string& a : args) argv.push_back(a.data());
@@ -250,6 +255,36 @@ TEST_CASE("guard child start") {
             if (!off.empty()) return fx::fields_line(small, 2, fx::GpuPart{.off = std::string(off)});
             return fx::fields_line(small, 2, *s.device, *s.cache, s.guard.get(), off);
         }));
+    }
+    if (const char* resize_first = std::getenv("ATLAS_GUARD_RESIZE_FIRST"); // NOLINT(concurrency-mt-unsafe)
+        resize_first != nullptr && std::string_view(resize_first) == "1") {
+        // The map's frame (every pass of the registry, no packs) on offscreen images, made behind the pipelines stage,
+        // then at another size with the same formats behind it, as the session makes the frame and resizes it
+        // (standin/Session.cpp's remake_output): its targets alone go and are made again.
+        gpu::Guard& guard = *started->guard;
+        const gpu::Device& device = *started->device;
+        auto small = gpu::Offscreen::create(device, {.width = 64, .height = 64}, 2);
+        ATLAS_REQUIRE(small.has_value(), small.error().text());
+        auto wide = gpu::Offscreen::create(device, {.width = 96, .height = 64}, 2);
+        ATLAS_REQUIRE(wide.has_value(), wide.error().text());
+        guard.enter(gpu::Stage::pipelines);
+        auto builder = frame::FrameBuilder::create(device, *started->cache, frame::make_passes(), {}, &guard);
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        auto renderer = gpu::Renderer::create(device, **small, **builder, facts.choice, &guard);
+        ATLAS_REQUIRE(renderer.has_value(), renderer.error().text());
+        guard.leave();
+        const gpu::Guard::Made before = guard.made();
+        guard.enter(gpu::Stage::pipelines);
+        const gpu::Result<void> resized = (*renderer)->retarget(**wide);
+        guard.leave();
+        ATLAS_REQUIRE(resized.has_value(), resized.error().text());
+        const gpu::Guard::Made after = guard.made();
+        log::info("guard child: the frame resized from 64x64 to 96x64: {} modules and {} pipelines made by it",
+                  after.modules - before.modules, after.pipelines - before.pipelines);
+        guard.enter(gpu::Stage::pipelines);
+        renderer->reset();
+        builder->reset();
+        guard.leave();
     }
     std::string why;
     ATLAS_REQUIRE(session.attach(std::make_unique<test::OffscreenWindow>(), {.width = 64, .height = 64}, why), why);
@@ -1182,6 +1217,13 @@ TEST_CASE("the crash guard's marker names an announced call for that call alone"
         CHECK(named_in(dir) == "release frame (configuration C renderpass composite resolve rgba8)");
     }
     CHECK(named_in(dir).empty());
+    {
+        // A frame resized: its targets go, named by its configuration and colour as the frame is.
+        const gpu::Announced targets = gpu::announce_release(
+            {.kind = "targets", .detail = "(configuration C renderpass composite resolve rgba8)"}, &guard);
+        CHECK(named_in(dir) == "release targets (configuration C renderpass composite resolve rgba8)");
+    }
+    CHECK(named_in(dir).empty());
     guard.leave();
     CHECK_FALSE(fs::exists(dir / "guard"));
     // A pipeline outside the pipelines and colour stages is named by none, yet its end pairs with it: the thing going
@@ -1565,6 +1607,50 @@ TEST_CASE(
     child = spawn_child(dir, "", "build-c1", {}, First::cell);
     CHECK(WIFEXITED(child.status));
     CHECK(has(child.log, std::format("guard child: the cell {} drawn", cell)));
+    fs::remove_all(dir, ec);
+}
+
+TEST_CASE("a crash as a frame's targets go in a resize is the pipelines stage's: the marker names them, and the next "
+          "start retries without the cache") {
+    // A resize to another size with the same formats keeps the frame (its modules and pipelines) and makes its targets
+    // alone again (gpu/Frames.hpp's retarget): the attachments, the framebuffers and the passes' images of the output's
+    // size. Their going is announced as the frame's is, a release of kind `targets` named by the frame's configuration
+    // and colour, inside the pipelines stage the session resizes behind; a crash in it follows that stage's ladder.
+    if (!test::open_session()) return;
+    const fs::path dir = fresh("targets");
+    std::error_code ec;
+    std::string driver;
+    std::string version;
+    std::string targets; // what the marker names
+    {
+        auto probe = gpu::start_guarded(options_in(dir, "", "build-probe"));
+        ATLAS_REQUIRE(probe.has_value(), probe.error().reason);
+        const gpu::Facts& facts = probe->device->facts();
+        std::tie(driver, version) = gpu::guard_key(facts);
+        targets = std::format("release targets (configuration {} {})", gpu::name_of(facts.choice),
+                              gpu::colour_name(gpu::colour_offscreen(facts, gpu::default_depth).format));
+    }
+
+    // 1. A clean run resizes the frame, making no module and no pipeline, and leaves no marker.
+    Child child = spawn_child(dir, "", "build-r", {}, First::resize);
+    ATLAS_REQUIRE(WIFEXITED(child.status), "the clean child did not exit:\n" << child.log);
+    CHECK(WEXITSTATUS(child.status) == 0);
+    CHECK(has(child.log, "guard child: the frame resized from 64x64 to 96x64: 0 modules and 0 pipelines made by it"));
+    CHECK_FALSE(fs::exists(dir / "guard"));
+
+    // 2. A plant as the targets go: the marker names them in the pipelines stage; the next start says so and retries
+    // once without the cache.
+    child = spawn_child(dir, "pipelines:release:targets", "build-r", {}, First::resize);
+    CHECK(aborted(child));
+    const std::string marker = read(dir / "guard");
+    MESSAGE("the targets' going: the marker\n" << marker);
+    CHECK(marker.starts_with(std::format("stage pipelines\n{}\ndriver ", targets)));
+    auto next = gpu::start_guarded(options_in(dir, "", "build-r"));
+    ATLAS_REQUIRE(next.has_value(), next.error().line);
+    MESSAGE("found " << next->guard_line);
+    CHECK(next->guard_line ==
+          std::format("vk guard pipelines {} {} attempt 1 {} build build-r", driver, version, targets));
+    CHECK(next->retried);
     fs::remove_all(dir, ec);
 }
 
