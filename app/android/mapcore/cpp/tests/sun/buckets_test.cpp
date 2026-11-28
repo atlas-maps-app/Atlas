@@ -17,6 +17,7 @@
 #include <bit>
 #include <chrono>
 #include <filesystem>
+#include <format>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -32,12 +33,12 @@ namespace pm = atlas::pymath;
 namespace tl = atlas::tiles;
 
 /// A tile of `solids` square solids and `samples` samples drawn from `rnd` (every tenth a crown, the last fifth
-/// windows), at column x of the Westerkerk's L14 row.
-SunTile drawn_tile(pm::PyRandom& rnd, std::uint32_t x, int solids, int samples) {
+/// windows), at column x of the Westerkerk's L14 row, within 200 m of (ox, 0).
+SunTile drawn_tile(pm::PyRandom& rnd, std::uint32_t x, int solids, int samples, double ox = 0.0) {
     SunTile t;
     t.key = {14, x, 5384};
     for (int k = 0; k < solids; ++k) {
-        const double cx = rnd.uniform(-200.0, 200.0);
+        const double cx = ox + rnd.uniform(-200.0, 200.0);
         const double cz = rnd.uniform(-200.0, 200.0);
         const double r = rnd.uniform(3.0, 12.0);
         for (const auto& [dx, dz] : {std::pair{-r, -r}, std::pair{r, -r}, std::pair{r, r}, std::pair{-r, r}}) {
@@ -57,34 +58,39 @@ SunTile drawn_tile(pm::PyRandom& rnd, std::uint32_t x, int solids, int samples) 
         const double a = rnd.uniform(0.0, 2 * pm::pi);
         const std::uint32_t f = s.add_face(pm::cos(a), 0.0, pm::sin(a));
         const auto skip = static_cast<std::uint32_t>(rnd.random() * solids);
-        s.add(Kind::wall, Source::building, skip, 0, 0, rnd.uniform(-200.0, 200.0), rnd.uniform(0.0, 30.0),
+        s.add(Kind::wall, Source::building, skip, 0, 0, ox + rnd.uniform(-200.0, 200.0), rnd.uniform(0.0, 30.0),
               rnd.uniform(-200.0, 200.0), f, skip);
     }
     s.crowns_first = s.size();
     for (int i = 0; i < (samples - windows) / 10; ++i) {
-        s.add(Kind::crown, Source::tree, static_cast<std::uint32_t>(i), 0, 0, rnd.uniform(-200.0, 200.0), 7.5,
+        s.add(Kind::crown, Source::tree, static_cast<std::uint32_t>(i), 0, 0, ox + rnd.uniform(-200.0, 200.0), 7.5,
               rnd.uniform(-200.0, 200.0), no_face, no_solid);
         s.crown_r.push_back(rnd.uniform(1.0, 5.0));
     }
     s.crowns_end = s.windows_first = s.size();
     for (int i = 0; i < windows; ++i) {
         const std::uint32_t f = s.add_face(0.0, 0.0, 1.0);
-        s.add(Kind::window, Source::building, 0, 0, static_cast<std::uint32_t>(i), rnd.uniform(-200.0, 200.0),
+        s.add(Kind::window, Source::building, 0, 0, static_cast<std::uint32_t>(i), ox + rnd.uniform(-200.0, 200.0),
               rnd.uniform(1.0, 20.0), rnd.uniform(-200.0, 200.0), f, no_solid);
     }
     return t;
 }
 
-std::shared_ptr<const Scene> drawn_scene(int tiles, int samples) {
+/// `tiles` tiles drawn from PyRandom(99), tile k of `samples` + 37k samples, each its own chunk. `apart`: tile k
+/// within 200 m of (k km, 0), beyond the march's reach of the others (else all within 200 m of the origin), and tile
+/// `changed`'s chunk another (its context: what its scene holds near it).
+std::shared_ptr<const Scene> drawn_scene(int tiles, int samples, bool apart = false, int changed = -1) {
     pm::PyRandom rnd(99);
     std::vector<SunTile> ts;
     std::vector<tl::Sha256Digest> chunks;
     double maxh = 0.0;
     for (int k = 0; k < tiles; ++k) {
-        ts.push_back(drawn_tile(rnd, 8400 + static_cast<std::uint32_t>(k), 60, samples + (k * 37)));
+        ts.push_back(
+            drawn_tile(rnd, 8400 + static_cast<std::uint32_t>(k), 60, samples + (k * 37), apart ? 1000.0 * k : 0.0));
         for (const double h : ts.back().solids.h) maxh = pm::max(maxh, h);
         tl::Sha256Digest d{};
         d[0] = static_cast<std::byte>(k + 1);
+        if (k == changed) d[1] = std::byte{0xFF};
         chunks.push_back(d);
     }
     return std::make_shared<const Scene>(std::move(ts), maxh, std::move(chunks));
@@ -449,4 +455,138 @@ TEST_CASE("sun: a run stops before its next piece once told, and a cancelled wor
         CHECK(files() < all.size()); // stopped before its end
     }
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("sun: a run a newer request makes stale finishes the tiles it began and begins no other, within the time of "
+          "a tile on its threads; it publishes them, the newer run leaves them out, and the newer scene's bits are a "
+          "whole run's, word for word") {
+    // 48 tiles of 3 pieces each (9,000 to 10,739 samples, windows among them) on 3 threads, a low sun: a run long
+    // enough to be under way a quarter of it in. The newer scene holds the same tiles, tile 20's chunk another (so its
+    // context: what its scene holds near it), and asks for the first 38 alone, the eye at the other end (its jobs the
+    // other way round).
+    constexpr std::uint32_t count = 48;
+    constexpr std::uint32_t kept = 38;
+    constexpr std::uint32_t changed = 20;
+    constexpr unsigned threads = 3;
+    const auto scene = drawn_scene(int{count}, 9000, true);
+    const auto newer = drawn_scene(int{count}, 9000, true, int{changed});
+    const Bucket b = bucket_of(sun_vector(200.0, 6.0), false);
+    std::vector<TileJob> jobs;
+    std::size_t pieces = 0;
+    std::size_t most = 0; // the most pieces of a tile
+    for (std::uint32_t t = 0; t < count; ++t) {
+        jobs.push_back({t, true});
+        const std::size_t p = (std::size_t{scene->tiles()[t].samples.size()} + piece_samples - 1) / piece_samples;
+        pieces += p;
+        most = std::max(most, p);
+    }
+    std::vector<TileJob> newer_jobs;
+    for (std::uint32_t t = kept; t-- > 0;) newer_jobs.push_back({t, true});
+    REQUIRE(most == 3);
+    CHECK(newer->context(changed) != scene->context(changed));
+    CHECK(newer->context(changed + 1) == scene->context(changed + 1));
+
+    // A whole run of each, on as many threads: the bits the worker's are held to, and the times the bound is made of.
+    const auto since = [](std::chrono::steady_clock::time_point from) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count();
+    };
+    const auto whole_at = std::chrono::steady_clock::now();
+    const std::vector<TileBits> want = run_all(*scene, b, threads, true);
+    const double whole_ms = since(whole_at);
+    const std::vector<TileBits> newer_want = run_all(*newer, b, threads, true);
+    for (std::uint32_t t = 0; t < kept; ++t)
+        CHECK(newer_want[t].words == want[t].words); // the same tiles, the same bits
+    const double piece_ms = whole_ms * threads / static_cast<double>(pieces);
+
+    struct Seen {
+        StaleStats stale;                 // the worker's
+        double newer_all_ms = 0;          // from the newer request to every bit of the newer scene there
+        std::vector<std::uint32_t> first; // the tiles of the first publication (the stale run's), in the scene's order
+        std::uint64_t runs = 0;
+        std::uint64_t run_tiles = 0;
+    };
+    const std::chrono::duration<double, std::milli> under_way{whole_ms / 4.0};
+    const auto stale_run = [&](bool stop, Seen& seen) {
+        BitTiles bits;
+        std::atomic<int> published{0};
+        std::mutex m;
+        std::vector<std::shared_ptr<const TileBits>> first(count); // the first publication's, on the worker's thread
+        bits.on_publish([&] {
+            if (published.fetch_add(1) != 0) return;
+            const std::lock_guard lock(m);
+            for (std::uint32_t t = 0; t < count; ++t) {
+                if (const auto v = bits.view(scene->tiles()[t].key, 1e9)) first[t] = v->now;
+            }
+        });
+        std::atomic<int> ticks{0};
+        Worker w(bits, threads, nullptr, [&ticks] { return 100.0 + ticks.fetch_add(1); });
+        w.stop_stale(stop);
+        w.request(scene, b, jobs);
+        std::this_thread::sleep_for(under_way);
+        const auto asked = std::chrono::steady_clock::now();
+        w.request(newer, b, newer_jobs);
+        w.wait_idle();
+        seen.newer_all_ms = since(asked);
+        seen.stale = w.stale();
+        seen.runs = w.runs();
+        seen.run_tiles = w.run_tiles();
+        for (std::uint32_t t = 0; t < kept; ++t) {
+            const auto v = bits.view(newer->tiles()[t].key, 1e9);
+            ATLAS_REQUIRE(v.has_value(), "tile " << t);
+            CHECK(v->now->bucket == b.key);
+            CHECK(v->now->words == newer_want[t].words);
+            CHECK(v->now->context == newer->context(t));
+        }
+        const std::lock_guard lock(m);
+        CHECK(published.load() == 2);
+        for (std::uint32_t t = 0; t < count; ++t) {
+            if (!first[t]) continue;
+            seen.first.push_back(t);
+            CHECK(first[t]->bucket == b.key);
+            CHECK(first[t]->words == want[t].words); // whole, as a whole run makes it
+        }
+    };
+
+    Seen stopped;
+    stale_run(true, stopped);
+    CHECK(stopped.runs == 2);
+    CHECK(stopped.stale.stopped == 1);
+    // It began no tile after the newer request but those it had begun: its tiles, published whole, are the first of
+    // its jobs, and fewer than all.
+    const std::size_t made = stopped.first.size();
+    CHECK(made > 0);
+    CHECK(made < count);
+    for (std::size_t k = 0; k < made; ++k) CHECK(stopped.first[k] == k);
+    // The newer run left out those it holds with the same context, and made the others alone: no tile made twice but
+    // the one whose context changed.
+    std::uint64_t same = 0;
+    for (std::size_t t = 0; t < std::min<std::size_t>(made, kept); ++t) same += t == changed ? 0 : 1;
+    CHECK(stopped.stale.left_out == same);
+    CHECK(stopped.run_tiles == made + kept - same);
+    // The bound, in pieces: once told, its threads began the rest of the tile being taken (at most 2 of its 3 pieces)
+    // and at most one piece each, the next tile's first, taken as they were told (dropped). So it ended within the
+    // time of the piece each thread had under way and two more.
+    const std::uint64_t bound = most - 1 + threads;
+    CHECK_MESSAGE(stopped.stale.late <= bound,
+                  std::format("{} pieces begun once told, beyond the bound {}", stopped.stale.late, bound));
+    CHECK(stopped.stale.dropped <= threads);
+
+    // The base: the run under way goes to its end, its tiles all made, and the newer run makes its scene's all again.
+    Seen ended;
+    stale_run(false, ended);
+    CHECK(ended.runs == 2);
+    CHECK(ended.stale.stopped == 0);
+    CHECK(ended.stale.late == 0);
+    CHECK(ended.stale.left_out == 0);
+    CHECK(ended.first.size() == count);
+    CHECK(ended.run_tiles == count + kept);
+    CHECK(stopped.stale.newer_wait_ms < ended.stale.newer_wait_ms);
+    MESSAGE(std::format(
+        "a whole run {:.1f} ms ({} pieces on {} threads, a piece {:.2f} ms on the mean); the newer "
+        "request a quarter in: stopped {:.2f} ms after it, pieces begun once told {} (bound {}), dropped {}, "
+        "{} tiles made and published, {} left out of the newer run, its scene's bits all "
+        "there {:.1f} ms after the request; let end, {:.1f} ms after it, all there {:.1f} ms after",
+        whole_ms, pieces, threads, piece_ms, stopped.stale.newer_wait_ms, stopped.stale.late, bound,
+        stopped.stale.dropped, made, stopped.stale.left_out, stopped.newer_all_ms, ended.stale.newer_wait_ms,
+        ended.newer_all_ms));
 }

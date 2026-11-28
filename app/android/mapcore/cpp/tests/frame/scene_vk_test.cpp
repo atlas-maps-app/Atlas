@@ -4740,3 +4740,146 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
         kept.stats.scenes_ms, whole.stats.scenes, whole.stats.parts_made, whole.stats.scenes_ms));
     (void)session->take_messages();
 }
+
+TEST_CASE("the sun's stale runs stop for the newer scene: stepping across the canal ring as each step's scene is "
+          "asked, runs a newer scene made stale stop and the newer runs leave out what they made; at rest, every "
+          "drawn tile's bits are those of runs let end, word for word") {
+    const std::string dir = environment("ATLAS_TILES_DIR");
+    const std::filesystem::path path = std::filesystem::path(dir) / "grachten.atlas";
+    if (dir.empty()) {
+        MESSAGE("ATLAS_TILES_DIR is not set: the sun's stale runs are not checked over the bundled packs here");
+        return;
+    }
+    // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
+    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
+    auto session = test::open_session();
+    if (!session) return;
+    auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
+    ATLAS_REQUIRE(cache.has_value(), cache.error().text());
+    // The kept parts' steps (straight down from 300 m, northward across the canal ring in steps of 250 m), from the
+    // first at rest. Each next step is taken as soon as the sun has asked for its scene, its runs not waited for: a
+    // run under way is stale once the next scene is asked.
+    const auto above = [](int step) {
+        style::CameraState c = home();
+        c.latitude = 52.3660 + (step * (250.0 / 111250.0));
+        c.longitude = 4.8880;
+        c.bearing = 0.0;
+        c.pitch = 0.0;
+        c.distance = 300.0;
+        return c;
+    };
+    constexpr int steps = 6;
+    struct Bits {
+        std::vector<std::uint64_t> words;
+        std::uint32_t count = 0;
+        std::uint32_t windows_from = 0;
+        std::uint32_t crowns_from = 0;
+        bool windows = false;
+        std::uint64_t context = 0;
+        std::size_t quays = 0;
+        bool operator==(const Bits&) const = default;
+    };
+    struct Run {
+        std::map<std::uint64_t, Bits> at_rest; // the last step's drawn tiles' bits, at rest, by packed key
+        scene::SunStats stats;                 // once the last step's runs are done
+        double last_ms = 0;                    // from the last step's scene asked to the sun at rest
+        int frames = 0;                        // the steps' frames
+    };
+    const auto since = [](std::chrono::steady_clock::time_point from) {
+        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count();
+    };
+    // (filling `out`: a failed ATLAS_REQUIRE returns from the lambda)
+    const auto run = [&](bool stop, Run& out) {
+        std::vector<std::unique_ptr<frame::Pass>> passes;
+        passes.push_back(std::make_unique<BuildProbe>());
+        auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
+        ATLAS_REQUIRE(builder.has_value(), builder.error().text());
+        std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
+        auto world = scene::World::create(*session->device, (*builder)->passes(),
+                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+        ATLAS_REQUIRE(world.has_value(), world.error().text());
+        scene::World& w = **world;
+        auto added = w.store().add({.id = "grachten", .kind = tiles::PackKind::bundled, .path = path.string()});
+        ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+        std::uint64_t n = 0;
+        const auto frame = [&](const style::CameraState& camera) {
+            (*builder)->set_inputs({.camera = camera, .scene = &w});
+            now = static_cast<double>(++n) * 0.016;
+            ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
+            w.update((*builder)->state());
+            if (w.sun() != nullptr) w.sun()->stop_stale(stop);
+            w.residency().wait_idle();
+        };
+        const auto settle = [&](const style::CameraState& camera) {
+            for (int i = 0; i < 20; ++i) {
+                frame(camera);
+                if (w.sun() != nullptr) w.sun()->wait_idle();
+            }
+            frame(camera);
+        };
+        settle(above(0));
+        REQUIRE(w.sun() != nullptr);
+        auto asked = std::chrono::steady_clock::now();
+        for (int s = 1; s < steps; ++s) {
+            const std::uint64_t scenes = w.sun()->stats().scenes;
+            for (int i = 0; i < 40 && w.sun()->stats().scenes == scenes; ++i) {
+                frame(above(s));
+                ++out.frames;
+            }
+            CHECK_MESSAGE(w.sun()->stats().scenes > scenes, "step " << s << ": no scene asked in 40 frames");
+            asked = std::chrono::steady_clock::now();
+        }
+        w.sun()->wait_idle();
+        out.last_ms = since(asked);
+        out.stats = w.sun()->stats();
+        settle(above(steps - 1));
+        for (const scene::CoverTile& t : w.cover()->tiles()) {
+            if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
+            const auto v = w.sun()->bits().view(t.key, now);
+            if (!v || !v->now) continue;
+            const sun::TileBits& b = *v->now;
+            out.at_rest[t.key.packed()] = {.words = b.words,
+                                           .count = b.count,
+                                           .windows_from = b.windows_from,
+                                           .crowns_from = b.crowns_from,
+                                           .windows = b.windows,
+                                           .context = b.context,
+                                           .quays = b.quays ? b.quays->size() : 0};
+        }
+        // every drawn tile at its own level has its bits
+        CHECK(out.at_rest.size() ==
+              static_cast<std::size_t>(std::ranges::count_if(
+                  w.cover()->tiles(), [](const scene::CoverTile& t) { return t.drawn->key.z == t.key.z; })));
+    };
+
+    Run stopped;
+    Run ended;
+    run(true, stopped);
+    run(false, ended);
+    CHECK(!ended.at_rest.empty());
+    CHECK(stopped.at_rest.size() == ended.at_rest.size());
+    for (const auto& [key, bits] : ended.at_rest) {
+        const auto it = stopped.at_rest.find(key);
+        const tiles::TileKey k = tiles::TileKey::unpack(key);
+        CHECK_MESSAGE(it != stopped.at_rest.end(),
+                      std::format("{}/{}/{} has no bits with stale runs stopped", k.z, k.x, k.y));
+        if (it == stopped.at_rest.end()) continue;
+        CHECK_MESSAGE(it->second == bits,
+                      std::format("{}/{}/{}'s bits differ from those of runs let end", k.z, k.x, k.y));
+    }
+    // runs were made stale and stopped, their tiles left out of the newer runs; let end, none was
+    const sun::StaleStats& st = stopped.stats.stale;
+    CHECK(st.stopped > 0);
+    CHECK(ended.stats.stale.stopped == 0);
+    CHECK(ended.stats.stale.left_out == 0);
+    MESSAGE(std::format(
+        "{} steps, {} drawn tiles' bits equal at rest. Stopped: {} frames, {} scenes, {} runs ({:.0f} ms, {} tiles), "
+        "{} stopped (the longest wait {:.0f} ms, {} pieces begun once told, {} dropped), {} tiles left out; the last "
+        "scene at rest {:.0f} ms after it was asked. Let end: {} frames, {} scenes, {} runs ({:.0f} ms, {} tiles), the "
+        "longest wait {:.0f} ms; the last scene at rest {:.0f} ms after it was asked",
+        steps, ended.at_rest.size(), stopped.frames, stopped.stats.scenes, stopped.stats.runs, stopped.stats.runs_ms,
+        stopped.stats.run_tiles, st.stopped, st.newer_wait_ms, st.late, st.dropped, st.left_out, stopped.last_ms,
+        ended.frames, ended.stats.scenes, ended.stats.runs, ended.stats.runs_ms, ended.stats.run_tiles,
+        ended.stats.stale.newer_wait_ms, ended.last_ms));
+    (void)session->take_messages();
+}
