@@ -2,12 +2,13 @@
 // phone look tool (MT/likeness/PhoneLook.kt): the map frame the phone's Bridge drives (frame/MapFrame.hpp, through the
 // stand-in's session, jni/Bridge.cpp), its packs listed with their kinds and numbers as the app lists them (PackList:
 // windows the core takes into their frame cells' packs, render packs, the APK's), the screen's haze, vignette and grain
-// as the Look settings hand them over, the moment's theme block and each frame's camera state as Kotlin writes them
-// (CoreMoment, MapCameraSource), drawn into offscreen images the session made in the frame's colour (10 bits a channel
-// where the device draws in them, as the phone's swapchain) on the host's Vulkan (lavapipe on this Mac and on CI) until
-// the picture is complete, then read back at 8 bits a channel. The windows the map's world wants are given back,
-// nearest first, so the tool takes them from their country's tiles as the phone's Windows does. They bind to the Kotlin
-// object app.atlas.mapcorecheck.likeness.LookHost by JNI's names; nothing of them is in the phone's library.
+// as the Look settings hand them over, the user's palette, the moment's theme block and each frame's camera state as
+// Kotlin writes them (PaletteBlock, CoreMoment, MapCameraSource), drawn into offscreen images the session made in the
+// frame's colour (10 bits a channel where the device draws in them, as the phone's swapchain) on the host's Vulkan
+// (lavapipe on this Mac and on CI) until the picture is complete, then read back at 8 bits a channel. The windows the
+// map's world wants are given back, nearest first, so the tool takes them from their country's tiles as the phone's
+// Windows does. They bind to the Kotlin object app.atlas.mapcorecheck.likeness.LookHost by JNI's names; nothing of them
+// is in the phone's library.
 #include "frame/MapFrame.hpp"
 #include "frame/Still.hpp"
 #include "fx/FieldCache.hpp"
@@ -45,8 +46,8 @@ using namespace atlas;
 namespace fs = std::filesystem;
 
 /// The layout of this file's calls; MT/likeness/PhoneLook.kt's LookHost.ABI. 2: screen takes no painter switch (the
-/// phone draws true depth alone).
-constexpr jint look_abi = 3;
+/// phone draws true depth alone); 4: palette, the user's palette.
+constexpr jint look_abi = 4;
 
 thread_local std::string last_error; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): per thread
 
@@ -237,6 +238,16 @@ JNIEXPORT jboolean JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_theme(J
     }
     look_of(handle)->map->set_theme(*block);
     return JNI_TRUE;
+}
+
+/// The user's palette from now on (MapCore.palette: a palette block as PaletteBlock.kt writes it, as the Bridge's
+/// native_palette hands it to the map); "" or why it was refused.
+JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_palette(JNIEnv* env, jclass /*unused*/,
+                                                                                jlong handle, jobject palette) {
+    const auto block = style::read_palette_block(bytes_of(env, palette));
+    if (!block) return java(env, std::string("the palette was refused: ") + style::name_of(block.error()));
+    look_of(handle)->map->set_palette(*block);
+    return java(env, "");
 }
 
 /// The screen's haze, vignette and grain (MapCore.screenEffects).

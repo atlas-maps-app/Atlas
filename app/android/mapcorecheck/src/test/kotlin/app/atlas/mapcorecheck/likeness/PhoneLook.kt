@@ -2,9 +2,13 @@ package app.atlas.mapcorecheck.likeness
 
 import app.atlas.geo.BBox
 import app.atlas.mapcore.state.CameraWriter
+import app.atlas.mapcore.state.PaletteBlock
 import app.atlas.mapcore.state.ThemeBlock
 import app.atlas.mapview.MapPart
 import app.atlas.mapview.MapParts
+import app.atlas.mapview.palette.Palette
+import app.atlas.mapview.palette.Preset
+import app.atlas.mapview.palette.Slot
 import app.atlas.mapview.vk.CoreMoment
 import app.atlas.render.Amsterdam
 import app.atlas.render.live.LiveCamera
@@ -41,7 +45,7 @@ import kotlin.math.min
  */
 internal object LookHost {
     /** The layout of its calls; the library refuses another. */
-    const val ABI = 3
+    const val ABI = 4
 
     @JvmStatic external fun abi(): Int
     @JvmStatic external fun lastError(): String
@@ -57,6 +61,9 @@ internal object LookHost {
 
     /** MapCore.moment: the theme block from now on. */
     @JvmStatic external fun theme(handle: Long, theme: ByteBuffer): Boolean
+
+    /** MapCore.palette: the user's palette from now on, a PaletteBlock's block; "" or why it was refused. */
+    @JvmStatic external fun palette(handle: Long, palette: ByteBuffer): String
 
     /** MapCore.screenEffects. */
     @JvmStatic external fun screen(handle: Long, haze: Boolean, vignette: Boolean, grain: Boolean)
@@ -104,8 +111,10 @@ internal object LookHost {
  *     ./gradlew :mapcorecheck:test --tests '*PhoneLook.draw' -Datlas.phonelook.out=/tmp/look \
  *         -Datlas.phonelook.views='edge=52.3735,4.8745,900,60,50'
  *
- * with the views (`<name>=<lat>,<lon>,<distance>,<bearing>,<pitch>;…`), `-Datlas.phonelook.moment` (a local time,
- * `2026-10-02T12:00`, or `named:<moment>`) and `-Datlas.phonelook.size` (S1, or `<w>x<h>@<density>`), and
+ * with the views (`<name>=<lat>,<lon>,<distance>,<bearing>,<pitch>;…`; a name `<name>~<preset>~<noon|night>` draws its
+ * view in that palette, a preset's code of Palette.kt's Preset, and at noon or 21:30 of the default moment's day, as
+ * `<name>-<preset>-<moment>`), `-Datlas.phonelook.moment` (a local time, `2026-10-02T12:00`, or `named:<moment>`) and
+ * `-Datlas.phonelook.size` (S1, or `<w>x<h>@<density>`), and
  * optionally, for a place outside the countries (ENGINE.md step 3): `-Datlas.phonelook.world=<folder>` (the world on
  * the phone: world-latest's `world.json` and `world.idx`, beside which the globe and each pack holding a view's target
  * are fetched as the phone fetches them, a pack whole by its range of its part, held to the index's SHA-256, and
@@ -154,8 +163,19 @@ class PhoneLook {
         val elements = System.getProperty("atlas.phonelook.elements")?.split(',')?.filter { it.isNotBlank() }?.map { File(it.trim()) }.orEmpty()
         val phone = PhoneCore(work, list, canal, off, world, under, elements)
         val side = if (under) "under" else ""
-        for ((name, spec) in views) {
-            val f = phone.draw(spec, moment, w, h, density)
+        for ((named, spec) in views) {
+            // a view's name may say its palette and moment, <name>~<preset>~<moment> (a preset's code, Palette.kt's
+            // Preset; noon or night, at the default moment's date), and is written <name>-<preset>-<moment>
+            val said = named.split('~')
+            val name = said.joinToString("-")
+            val palette = Palette(said.getOrNull(1)?.let { Preset.ofCode(it) ?: error("no preset '$it'") } ?: Preset.TODAY)
+            val at = when (said.getOrNull(2)) {
+                null -> moment
+                "noon" -> "2026-10-02T12:00"
+                "night" -> "2026-10-02T21:30"
+                else -> error("a moment is noon or night, not '${said[2]}'")
+            }
+            val f = phone.draw(spec, at, w, h, density, palette)
             png(f.argb, w, h, File(out, "$name-core$path$side.png"))
             File(out, "$name-core$path$side.txt").writeText(f.notes)
             println("phone look core $name (alpha $path): ${f.notes.lines().first()}")
@@ -257,7 +277,7 @@ internal class PhoneCore(
     }
 
     /** [spec] at [moment] in a [w] × [h] px frame at [density], as the phone's core draws it. */
-    fun draw(spec: PhoneLook.Spec.View, moment: String, w: Int, h: Int, density: Double): Frame {
+    fun draw(spec: PhoneLook.Spec.View, moment: String, w: Int, h: Int, density: Double, palette: Palette = Palette()): Frame {
         val widthDp = Math.round(w / density).toInt()
         val heightDp = Math.round(h / density).toInt()
         val view = spec.view(widthDp, heightDp)
@@ -268,6 +288,13 @@ internal class PhoneCore(
         try {
             // MapData.wire with the Look settings unset: the haze, vignette and grain on
             LookHost.screen(handle, haze = true, vignette = true, grain = true)
+            // CoreMap.moment's palette, the colours the theme does not carry, then its theme
+            if (!palette.isToday) {
+                val block = PaletteBlock.allocate()
+                PaletteBlock.write(block, palette.switches, Slot.entries.filter { palette.colour(it) != it.today }.associate { it.code to palette.colour(it) })
+                LookHost.palette(handle, block).takeIf { it.isNotEmpty() }?.let { error(it) }
+            }
+            notes.appendLine("palette ${palette.base.code}, tone ${palette.toneStrength}, moment $moment")
             val taken = ArrayList<String>()
             var drew = ""
             var listed: List<Listed>
@@ -282,7 +309,7 @@ internal class PhoneCore(
                 // MapController.sendMoment: the moment for the drawn pack's zone (every pack here is Amsterdam's)
                 val zone = ZoneId.of("Europe/Amsterdam")
                 val theme = ThemeBlock.allocate()
-                CoreMoment.write(theme, PhoneLook.Spec.moment(moment, zone), zone, daylight = false)
+                CoreMoment.write(theme, PhoneLook.Spec.moment(moment, zone), zone, daylight = false, palette.toneStrength, palette)
                 check(LookHost.theme(handle, theme)) { LookHost.lastError() }
                 drew = LookHost.draw(handle, camera(view, w, h, density, pack), DRAW_SECONDS)
                 check(drew.isNotEmpty()) { "the host map drew nothing: ${LookHost.lastError()}" }
