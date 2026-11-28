@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <span>
@@ -61,6 +62,10 @@ public:
     }
     /// Asks for the next image, signalling `acquired` when it may be written (when acquire_signals() is true).
     [[nodiscard]] virtual Acquired acquire(vk::Semaphore acquired, std::uint32_t& index) = 0;
+    /// From now on an acquire still waiting for an image gives it up (a timeout) within a slice of its wait once
+    /// `flag` is set, and one asked for then waits for none: the window it draws into is going (standin/Session.hpp's
+    /// leave). Null: none. A swapchain's; an offscreen output never waits.
+    virtual void give_up_when(const std::atomic<bool>* flag) noexcept { (void)flag; }
     /// Whether acquire() signals its semaphore, so the frame must wait for it (a swapchain); offscreen it does not.
     [[nodiscard]] virtual bool acquire_signals() const noexcept { return true; }
     /// The semaphore that a frame drawn into image `index` signals and the present waits for.
@@ -105,6 +110,9 @@ public:
     /// phone's GPU (integrated or discrete) finishes a frame in milliseconds: 2 s. A rasterizer on the CPU or a virtual
     /// GPU (CI's lavapipe, the emulator's) takes seconds over a whole map's frame under the sanitizers: 60 s.
     [[nodiscard]] static std::uint64_t wait_ns(const Device& device) noexcept;
+    /// An acquire's wait for an image goes in slices of this, up to wait_ns in all (acquire_in_slices), so that a
+    /// window going gives it up within one: 100 ms. An image not starved comes within the first.
+    static constexpr std::uint64_t acquire_slice_ns = 100'000'000;
 
     [[nodiscard]] static Result<Frames> create(const Device& device);
 
@@ -219,6 +227,24 @@ public:
         return {};
     }
 };
+
+/// An acquire's wait for an image in slices (Output::give_up_when): `once(ns)` asks for one, waiting at most `ns`, and
+/// is called again for as long as it answers with a timeout (eTimeout, or eNotReady), each call waiting at most
+/// `slice_ns`, `bound_ns` in all. A set `give_up` ends the wait at the next slice, a timeout; set already, no call is
+/// made. Any other answer comes back at once, as it was given; the last timeout comes back once the bound is spent.
+template <typename Once>
+[[nodiscard]] vk::ResultValue<std::uint32_t> acquire_in_slices(std::uint64_t bound_ns, std::uint64_t slice_ns,
+                                                               const std::atomic<bool>* give_up, const Once& once) {
+    std::uint64_t waited = 0;
+    while (true) {
+        if (give_up != nullptr && give_up->load(std::memory_order_relaxed)) return {vk::Result::eTimeout, 0};
+        const std::uint64_t ns = std::min(slice_ns, bound_ns - waited);
+        vk::ResultValue<std::uint32_t> answer = once(ns);
+        if (answer.result != vk::Result::eTimeout && answer.result != vk::Result::eNotReady) return answer;
+        waited += ns;
+        if (waited >= bound_ns) return answer;
+    }
+}
 
 /// One drawn frame, as the frame loop saw it.
 struct FrameReport {

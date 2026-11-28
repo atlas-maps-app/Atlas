@@ -13,6 +13,7 @@
 #include "gpu/Device.hpp"
 #include "gpu/Frames.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -59,6 +60,7 @@ public:
     [[nodiscard]] bool transfer_source() const noexcept override { return transfer_source_; }
     [[nodiscard]] vk::SurfaceTransformFlagBitsKHR transform() const noexcept override { return transform_; }
     [[nodiscard]] Acquired acquire(vk::Semaphore acquired, std::uint32_t& index) override;
+    void give_up_when(const std::atomic<bool>* flag) noexcept override { give_up_ = flag; }
     [[nodiscard]] vk::Semaphore rendered(std::uint32_t index) const noexcept override { return *rendered_[index]; }
     [[nodiscard]] Acquired present(std::uint32_t index, std::uint64_t frame, std::uint64_t desired_ns) override;
 
@@ -88,6 +90,7 @@ private:
     std::uint64_t refresh_ns_ = 0;
     bool transfer_source_ = false;
     bool stale_ = false;
+    const std::atomic<bool>* give_up_ = nullptr; // the session's: set, the window is going (give_up_when)
 };
 
 } // namespace atlas::gpu

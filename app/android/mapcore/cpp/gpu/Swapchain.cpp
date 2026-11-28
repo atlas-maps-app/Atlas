@@ -166,8 +166,15 @@ Result<std::unique_ptr<Swapchain>> Swapchain::create(const Device& device, vk::S
 }
 
 Acquired Swapchain::acquire(vk::Semaphore acquired, std::uint32_t& index) {
-    // within the frame loop's bound: an image the presentation engine never gives back fails the frame (timeout)
-    const vk::ResultValue<std::uint32_t> r = swapchain_.acquireNextImage(Frames::wait_ns(*device_), acquired, nullptr);
+    // Within the frame loop's bound: an image the presentation engine never gives back fails the frame (timeout). In
+    // slices, so that a window going gives the wait up within one (give_up_when): its consumer may go only once the
+    // main thread's destroy callback returns, which waits for this thread (a TextureView's SurfaceTexture), and an
+    // image would come only then.
+    const vk::ResultValue<std::uint32_t> r =
+        acquire_in_slices(Frames::wait_ns(*device_), Frames::acquire_slice_ns, give_up_,
+                          [&](std::uint64_t ns) { return swapchain_.acquireNextImage(ns, acquired, nullptr); });
+    if (r.result == vk::Result::eTimeout && give_up_ != nullptr && give_up_->load(std::memory_order_relaxed))
+        log::info("vk acquire: given up, the window going");
     switch (r.result) {
     case vk::Result::eSuccess: index = r.value; return Acquired::ok;
     case vk::Result::eSuboptimalKHR:
