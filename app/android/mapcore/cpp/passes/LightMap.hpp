@@ -105,8 +105,10 @@ public:
     /// The jobs asked for whose results have not been taken, and those of them that are done.
     [[nodiscard]] std::size_t pending() const;
     [[nodiscard]] std::size_t ready() const;
+#if defined(ATLAS_TESTS)
     /// Waits until every job asked for is baked (a test's).
     void wait() const;
+#endif
 
 private:
     void run(const std::stop_token& stop);

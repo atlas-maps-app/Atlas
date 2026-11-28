@@ -1133,7 +1133,9 @@ public:
     /// What the maps took (LightStats), and a wait until every bake asked for is done (a test's: the next frame takes
     /// them).
     [[nodiscard]] LightStats light_stats() const;
+#if defined(ATLAS_TESTS)
     void wait_for_light() const;
+#endif
     /// The maps the frame draws.
     [[nodiscard]] std::span<const GroundFrame::LightDrawn> light_drawn() const noexcept { return frame_.light_tiles; }
     /// A bake of the night's light is under way: frames are due until its map is drawn.

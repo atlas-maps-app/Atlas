@@ -128,9 +128,11 @@ LightStats Ground::light_stats() const {
     return s;
 }
 
+#if defined(ATLAS_TESTS)
 void Ground::wait_for_light() const {
     if (light_ != nullptr) light_->baker.wait();
 }
+#endif
 
 bool Ground::fading() const noexcept {
     // a bake under way for a tile the last frame drew: its map is due

@@ -224,10 +224,12 @@ std::size_t LightBaker::ready() const {
     return done_.size();
 }
 
+#if defined(ATLAS_TESTS)
 void LightBaker::wait() const {
     std::unique_lock lock(mutex_);
     changed_.wait(lock, [this] { return jobs_.empty() && baking_ == 0; });
 }
+#endif
 
 void LightBaker::run(const std::stop_token& stop) {
     for (;;) {
@@ -245,7 +247,9 @@ void LightBaker::run(const std::stop_token& stop) {
             done_.emplace_back(job.first, std::move(baked));
             --baking_;
         }
-        changed_.notify_all();
+#if defined(ATLAS_TESTS)
+        changed_.notify_all(); // wait's (the thread's own wait is for jobs, which a bake done does not add)
+#endif
     }
 }
 
