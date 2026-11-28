@@ -193,7 +193,9 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
     // buffer. A tile drawn before its first bits is drawn by day, and its first bits cross-fade from by day from their
     // publication (FirstLight; every entry of a tile the same).
     const double t = now();
+#if defined(ATLAS_TESTS)
     const bool holding = held_.load(std::memory_order_relaxed);
+#endif
     ++prepared_;
     std::vector<std::uint32_t> local(drawn.size(), no_sun);
     for (std::size_t i = 0; i < drawn.size(); ++i) {
@@ -206,7 +208,11 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
             }
         }
         if (lane == nullptr) continue; // a stand-in ancestor, or a pack without a lane: not in a scene
+#if defined(ATLAS_TESTS)
         std::optional<sun::TileView> view = holding ? std::nullopt : lane->bits.view(c.drawn->key, t);
+#else
+        std::optional<sun::TileView> view = lane->bits.view(c.drawn->key, t);
+#endif
         const std::uint64_t key = c.drawn->key.packed();
         if (!view) {
             // by day until its bits come; bits lost mid-fade (the sun off, a hold) fade in anew from their return
@@ -218,7 +224,12 @@ void SunGlobals::prepare(const frame::FrameState& state, const std::shared_ptr<c
         if (const auto light = lane->first_light.find(key); light != lane->first_light.end()) {
             FirstLight& f = light->second;
             if (!f.day || f.day->count != view->now->count) {
-                if (!f.day) f.since = std::max(view->came, released_.load(std::memory_order_relaxed));
+                if (!f.day) {
+                    f.since = view->came;
+#if defined(ATLAS_TESTS)
+                    f.since = std::max(f.since, released_.load(std::memory_order_relaxed)); // a hold's end, if later
+#endif
+                }
                 f.day = std::make_shared<const sun::TileBits>(sun::by_day(*view->now));
             }
             const double w = sun::fade_weight(f.since, t);

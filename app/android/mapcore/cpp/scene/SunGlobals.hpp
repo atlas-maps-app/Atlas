@@ -163,12 +163,12 @@ public:
     }
     /// Whether a tile the cover drew last frame is still cross-fading its bits.
     [[nodiscard]] bool fading() const noexcept { return fading_; }
+#if defined(ATLAS_TESTS)
     /// Draws every tile as before its first bits while `held`, the bits made and published meanwhile, which come as the
     /// hold ends (tests: bits that come after a tile's fade, as on a phone, however fast the workers here).
     void hold(bool held) {
         if (held_.exchange(held, std::memory_order_relaxed) && !held) released_.store(now(), std::memory_order_relaxed);
     }
-#if defined(ATLAS_TESTS)
     /// The tests' switch: every scene built whole, no tile's part taken from the scene before (the base its kept parts
     /// are held to).
     void keep_parts(bool keep) noexcept { keep_parts_.store(keep, std::memory_order_relaxed); }
@@ -371,11 +371,11 @@ private:
     std::vector<std::pair<gpu::Buffer, std::uint64_t>> retired_; ///< old buffers and the last frame that read them
     bool fading_ = false;
     std::uint64_t prepared_ = 0; ///< the frames prepared (FirstLight::seen)
-    std::atomic<bool> held_{false};
 #if defined(ATLAS_TESTS)
-    std::atomic<bool> keep_parts_{true}; // keep_parts
-#endif
+    std::atomic<bool> held_{false};                                          // hold
     std::atomic<double> released_{-std::numeric_limits<double>::infinity()}; ///< the last hold's end
+    std::atomic<bool> keep_parts_{true};                                     // keep_parts
+#endif
     std::size_t last_texels_ = 0;
     double others_ms_ = 0;
     std::atomic<bool> on_{true}; ///< whether the sun works (prepare: the frame's parts)
