@@ -65,7 +65,7 @@ Session::~Session() { close(); }
 // ---- The window.
 
 bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, std::string& why) {
-    release_window();
+    release_window(true); // a window attached over another: the old one goes as at a detach
     if (closed_) {
         why = "the core is closed";
         return false;
@@ -118,8 +118,9 @@ bool Session::attach(std::unique_ptr<SessionWindow> window, vk::Extent2D size, s
     }
     if (!why.empty()) {
         // Nothing of the window is held: a refused attach has no detach after it, and the colour stage must not stay
-        // open on a window that went (a window that comes back attaches afresh).
-        release_window();
+        // open on a window that went (a window that comes back attaches afresh). A frame the app's map kept from the
+        // last window is not this one's, and waits for the next.
+        release_window(true);
         return false;
     }
     return true;
@@ -138,7 +139,7 @@ void Session::set_compression(gpu::Compression compression) {
     remake_output();
 }
 
-void Session::detach() { release_window(); }
+void Session::detach() { release_window(true); }
 
 void Session::set_moving(bool moving) {
     if (moving == moving_) return;
@@ -157,9 +158,13 @@ bool Session::tell_frame_rate() {
     return window_->set_frame_rate(fast_refresh_ && moving_ ? 120.0F : 60.0F, fast_refresh_);
 }
 
-void Session::release_window() {
+void Session::release_window(bool keep) {
     renderer_due_ = false;
-    drop_renderer();
+    if (keep) {
+        keep_renderer();
+    } else {
+        drop_renderer();
+    }
     drop_output();
     close_colour(); // nothing of 10 bits is left: a window come back opens it again (make_output)
     if (*surface_) {
@@ -172,16 +177,35 @@ void Session::release_window() {
 }
 
 void Session::drop_renderer() {
-    if (!renderer_) return;
+    if (!renderer_ && !kept_) return;
     // No frames without a renderer: the frames stage ends with it (its marker taken by the pipelines stage's, then
     // gone), and the next renderer's first draw opens it again. So no marker stays on disk while nothing is drawn: the
     // window gone, mode 0.
     guarding_ = false;
     behind(gpu::Stage::pipelines, [&] {
-        renderer_->drain();
+        if (renderer_) renderer_->drain();
         renderer_.reset();
+        kept_.reset(); // drained as the window went
         return true;
     });
+}
+
+void Session::keep_renderer() {
+    if (!renderer_) return; // none drawn: one kept from an earlier window stays
+    // The app's map at 8 bits, its frame whole and holding its parts apart: the rest of it stays for the next window.
+    // VK bench's stand-in holds none apart; a 10-bit frame goes whole, before the colour stage closes.
+    if (mode_ != 2 || colour_open() || !renderer_->keeps()) {
+        drop_renderer();
+        return;
+    }
+    // Nothing is drawn while no window is attached: the frames stage ends here, its marker taken by the pipelines
+    // stage's, which goes once the targets have (no marker on disk until the next window's first draw).
+    guarding_ = false;
+    behind(gpu::Stage::pipelines, [&] {
+        renderer_->release_targets();
+        return true;
+    });
+    kept_ = std::move(renderer_);
 }
 
 void Session::drop_output() {
@@ -385,6 +409,23 @@ std::string Session::make_renderer() {
     gpu::Content& content = map ? map_->content() : *standin_;
     const bool colour = colour_open();
     new_frame(); // a new frame: its first draws are guarded (the frames stage), under its name
+    if (map && kept_) {
+        // The frame the map kept as the last window went (keep_renderer): its targets made again for this output, as
+        // a resize makes them, no module and no pipeline where the output has the formats the frame was made for
+        // (otherwise it is made again whole, as for another format: gpu::Renderer::retarget). Refused, it goes, and a
+        // new one is made in its place.
+        auto back = behind(gpu::Stage::pipelines, [&] {
+            renderer_ = std::move(kept_);
+            return renderer_->retarget(*output_);
+        });
+        if (back) {
+            log_configuration();
+            save_cache(); // nothing new where no pipeline was made: nothing written
+            return {};
+        }
+        log::error("vk retarget: {}", back.error().text());
+        drop_renderer();
+    }
     std::string why = behind(gpu::Stage::pipelines, [&]() -> std::string {
         if (!map) {
             // In the colour stage the 10-bit frame's pipelines go through the stage's own cache.
@@ -1073,7 +1114,8 @@ void Session::close() {
     if (closed_) return;
     // The frames stage ends with the session: the stages below take its marker, and the close's goes last.
     guarding_ = false;
-    release_window();
+    // A frame the app's map kept goes too, before what it drew with.
+    release_window(false);
     save_cache(); // the cache's last write: a reset may forget it from now on
     closed_ = true;
     gpu::Guard& guard = *started_.guard;

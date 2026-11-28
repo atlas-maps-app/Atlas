@@ -15,7 +15,8 @@
 // renderer's first 120 frames, which D5.10 leaves unguarded: the commands each frame records and submits, its acquire
 // and present, its fences, queries and memory flushes, and the display's timings it reads back. No marker stays on disk
 // while nothing is drawn: the frames stage ends when the frame loop rests (rest; a trim from TRIM_MEMORY_UI_HIDDEN
-// rests it too), the renderer goes or the frame it draws changes (another configuration, an output made again), and
+// rests it too), the renderer goes or the frame it draws changes (another configuration, an output made again, the
+// window gone), and
 // opens again with the next draw within that renderer's first 120, naming the frame it draws; a frame loop at rest
 // inside VK bench's colour stage leaves that stage as well, as mode 0 does. The stand-in's shared objects are 8-bit
 // work, made before anything of 10 bits and never inside the colour stage, and written back to the pipeline cache
@@ -27,6 +28,16 @@
 // written back right after each new frame's pipelines are made (a new renderer, another configuration), the write
 // that first holds a cell's pipelines being the cell's; and a cell the guard turned off is refused (bench), nothing
 // made for it.
+//
+// A window that goes (its surface with it: a phone's at a stop, ENGINE.md's audit B1) takes everything of the output
+// with it: the swapchain, and the frame's targets (the attachments, the framebuffers, what the passes size to the
+// output) behind the pipelines stage, announced as a resize's are (`release targets`). At 8 bits the app's map keeps
+// the rest of its frame while no window is attached: its pipelines, the main pass's render pass, the frames in flight
+// (gpu/Frames.hpp's Content says what outlives what). The next window's first draw makes the targets again as a resize
+// does, and no module and no pipeline where its formats are the frame's. VK bench's stand-in holds no part apart, and
+// a 10-bit frame goes whole before the colour stage closes, so either goes at the detach as before. No trim gives the
+// kept frame up; the map switched off or to another, another host, VK bench taking the window, a lost device and the
+// close let go of it as of the frame drawn.
 //
 // The colour depth (plan-vector D5, "Colour depth"): the frame is 8 bits a channel (gpu/Facts.hpp's default_depth);
 // VK bench's colour stage (bench's flag 4) draws it at 10 where the surface offers them, the device (asked as the
@@ -170,7 +181,8 @@ public:
     /// The swapchain's images with the driver's framebuffer compression from now on, or without it where the driver
     /// lets an app ask (the Map look's switch; the driver's until it is set): a change makes the output again.
     void set_compression(gpu::Compression compression);
-    /// Lets go of the window: the renderer, the output, the colour stage, the surface.
+    /// Lets go of the window: the output and the frame's targets, the colour stage, the surface. The app's map keeps
+    /// the rest of its frame at 8 bits for the next window (attach); any other frame goes.
     void detach();
     [[nodiscard]] bool attached() const noexcept { return window_ != nullptr; }
     /// The map moves, or has come to rest (the frame loop's word): the window is told its frames come at 120 a second
@@ -290,8 +302,12 @@ private:
 
     /// The renderer goes, behind the pipelines stage (the colour stage's while it is open): its frame announced, the
     /// stand-in's pipelines, passes, framebuffers and images made for it, then its main pass and frames in flight. The
-    /// frames stage ends with it.
+    /// frames stage ends with it. A frame kept while no window is attached (kept_) goes with it.
     void drop_renderer();
+    /// The window goes: the app's map keeps its frame at 8 bits (kept_), its targets let go of behind the pipelines
+    /// stage, where the frame holds them apart (gpu::Renderer::keeps); any other renderer goes (drop_renderer). The
+    /// frames stage ends either way.
+    void keep_renderer();
     /// The output goes, announced, behind the surface stage (the colour stage's while it is open).
     void drop_output();
     /// The output goes, announced, in the stage open now.
@@ -310,7 +326,8 @@ private:
     /// The stand-in, if there is none yet, behind the pipelines stage; "" or why not. Its shared objects are 8-bit
     /// work, so never inside the colour stage: each step makes it before an output of 10 bits opens that stage.
     std::string make_standin();
-    /// The renderer of the configuration on the output, behind the pipelines stage; "" or why not.
+    /// The renderer of the configuration on the output, behind the pipelines stage; "" or why not. The app's map takes
+    /// the frame it kept from the last window first (kept_), its targets made for this output.
     std::string make_renderer();
     /// What the map made goes, behind the pipelines stage (a loss and the close let go of it in their own stages).
     void release_map();
@@ -322,8 +339,9 @@ private:
     /// each in the stage open now (the colour stage's), the stage closes, and the frame is back at its 8 bits, its
     /// output made by the next step that draws. Nothing where the frame is at 8 bits already.
     void leave_ten_bits();
-    /// Everything of the window goes, each in its stage: the renderer, the output, the colour stage, the surface.
-    void release_window();
+    /// Everything of the window goes, each in its stage: the frame's targets and, unless `keep` lets the app's map keep
+    /// the rest of its frame (keep_renderer), the renderer; the output, the colour stage, the surface.
+    void release_window(bool keep);
     /// Tells the window its frames' rate as the map and the Fast refresh stand (set_moving, set_fast_refresh); whether
     /// it could be told.
     bool tell_frame_rate();
@@ -362,6 +380,9 @@ private:
     /// thread (an ANR on CI's emulator, 26 October). A renderer that cannot be made there turns the map off for the
     /// session, which the frame loop tells the app (FrameSource.off).
     bool renderer_due_ = false;
+    /// The app's map's frame while no window is attached (keep_renderer): its targets gone with the window's output,
+    /// the rest kept for the next window's first draw (make_renderer), which takes it as renderer_. Never both.
+    std::unique_ptr<gpu::Renderer> kept_;
     std::unique_ptr<gpu::PipelineCache> colour_cache_; // the colour stage's, while it is open
     std::vector<gpu::PresentedTiming> timings_;
     vk::Extent2D wanted_{};
