@@ -18,6 +18,7 @@ import app.atlas.render.live.ViewLadder
 import app.atlas.render.live.WxHour
 import app.atlas.render.py.PyJson
 import app.atlas.tiles.PackCatalog
+import app.atlas.tiles.PackList
 import app.atlas.tiles.WindowTiles
 import app.atlas.tiles.WorldFetch
 import app.atlas.tiles.WorldIndex
@@ -130,6 +131,7 @@ internal object LookHost {
  * `<out>/core-work` by default). It writes `<name>-core<path>.png` and `.txt` (what was drawn and how it settled, the
  * windows taken, the light). Once every view is written, it fails where a view's frame never became final (the first
  * line's `final no`: the packs listed could not make it complete, or the time ran out before it came to rest final).
+ * Without `-Datlas.phonelook.list` it fails at the start where packs-latest's list cannot be had, with the reason.
  */
 class PhoneLook {
     @Test
@@ -268,11 +270,24 @@ internal class PhoneCore(
     private val windowsDir = File(work, "windows").apply { mkdirs() }
     private val numbers = HashMap<String, Long>()
     private val version = LookHost.windowVersion()
-    private val tiles: WindowTiles = run {
-        val parsed = listText?.let { PackCatalog.parse(it).packs }
-        val catalog = PackCatalog(PackCatalog.DEFAULT_URL, cacheFile = File(work, "index/packs-latest.json"), client = app.atlas.mapcorecheck.tilesClient)
-        WindowTiles({ parsed ?: kotlinx.coroutines.runBlocking { catalog.packs() } }, File(work, "index"), client = app.atlas.mapcorecheck.tilesClient)
+
+    /**
+     * The published list the windows are taken by: the one handed over ([listText]), else packs-latest's, had here once
+     * or the look fails, saying why. WindowTiles answers no window where it cannot have its list (PackReads.list), so
+     * every window would be marked none and the look go on with less in its pictures.
+     */
+    private val published: PackList = listText?.let { PackCatalog.parse(it) } ?: try {
+        kotlinx.coroutines.runBlocking {
+            PackCatalog(PackCatalog.DEFAULT_URL, cacheFile = File(work, "index/packs-latest.json"), client = app.atlas.mapcorecheck.tilesClient).list()
+        }
+    } catch (e: Exception) {
+        throw IllegalStateException("the look asked for packs-latest's list of packs (${PackCatalog.DEFAULT_URL}) and could not have it: $e", e)
     }
+
+    /** Where the list came from and when it was made, for the notes. */
+    private val publishedSaid = "${if (listText != null) "handed over" else "packs-latest's"}, generated ${published.generated ?: "(not said)"}, ${published.packs.size} packs"
+
+    private val tiles = WindowTiles({ published.packs }, File(work, "index"), client = app.atlas.mapcorecheck.tilesClient)
 
     /** What the element packs gave: the windows built from them, for the notes. */
     private val built = ArrayList<String>()
@@ -341,7 +356,7 @@ internal class PhoneCore(
             val pack = choose(listed, view.lat, view.lon, view.distance)
             notes.insert(0, "$drew\n")
             notes.appendLine("camera names ${pack?.id ?: "none"} (#${pack?.number ?: 0}, profile ${pack?.profile ?: 0}); ${listed.size} packs listed after $rounds rounds")
-            notes.appendLine("windows taken from the country's tiles: ${taken.size} (${taken.joinToString(" ")})")
+            notes.appendLine("windows taken from the country's tiles: ${taken.size} (${taken.joinToString(" ")}); the list $publishedSaid")
             // the windows the map still wants: those no country's tiles hold (the phone builds them from their data,
             // which this tool does not), or more than the rounds took
             val unhad = LookHost.wanted(handle).map { k -> "${k ushr 48}/${(k ushr 24) and 0xFFFFFF}/${k and 0xFFFFFF}" }
