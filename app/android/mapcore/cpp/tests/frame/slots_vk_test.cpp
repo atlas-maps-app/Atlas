@@ -306,20 +306,22 @@ TEST_CASE("a resize with a frame in flight: to another size with the same format
     CHECK(watch.released("frame") == 0);
     CHECK(watch.released("targets") == 0);
 
-    // On its side with the home's frame in flight: the frame stays, its targets made again, and the frames at the new
-    // size back to back draw the soft shadows and the ripple into them.
+    // On its side with the home's frame in flight: the frame stays, its targets made again. Settled there (the turned
+    // view's tiles in, and with them the water's reflections), the frames at the new size back to back draw the soft
+    // shadows and the ripple into them.
     draw(home);
     ATLAS_REQUIRE((*renderer)->retarget(**on_side).has_value(), "the resize failed");
     CHECK(watch.modules.load() == modules);
     CHECK(watch.pipelines.load() == pipelines);
     CHECK(watch.released("frame") == 0);
     CHECK(watch.released("targets") == 1);
+    REQUIRE(settle(side));
     for (int f = 0; f < 3; ++f) {
         draw(test::moving(side));
         CHECK(ground->drew_soft());
         CHECK(ground->drew_ripple());
     }
-    REQUIRE(settle(side));
+    (*renderer)->drain();
     CHECK(watch.modules.load() == modules); // none in the frames at the new size either
     CHECK(watch.pipelines.load() == pipelines);
     CHECK(watch.released("targets") == 1);
