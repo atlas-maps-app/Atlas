@@ -337,6 +337,38 @@ void FrameBuilder::release() {
     prepared_ = false;
 }
 
+void FrameBuilder::release_targets() {
+    for (const std::unique_ptr<Pass>& p : passes_) p->release_targets();
+}
+
+gpu::Result<void> FrameBuilder::prepare_targets(const gpu::MainPass& pass, const gpu::Output& output) {
+    const auto started = clock::now();
+    quarter_turns_ = quarter_turns_of(output.transform());
+    for (const std::unique_ptr<Pass>& p : passes_) {
+        const PassContext context{.device = device_,
+                                  .cache = cache_,
+                                  .watch = watch_,
+                                  .pass = pass,
+                                  .output = output,
+                                  .layout = *layout_,
+                                  .configuration = configuration_,
+                                  .overdraw = options_.overdraw,
+                                  .overdraw_module = *overdraw_module_,
+                                  .owners = options_.owners,
+                                  .owner_module = *owner_module_};
+        if (auto made = p->prepare_targets(context); !made) {
+            const gpu::Error error{.code = made.error().code,
+                                   .what = std::format("the {} pass: {}", p->name(), made.error().what)};
+            release(); // as prepare's failure: nothing half made is kept
+            return std::unexpected(error);
+        }
+    }
+    // Not a `vk frame` line: smoke.sh counts those as frames drawn.
+    log::info("vk passes resized {}: their targets at {}x{} in {:.1f} ms", configuration_, output.extent().width,
+              output.extent().height, ms_since(started));
+    return {};
+}
+
 Count FrameBuilder::total() const noexcept {
     Count c;
     for (const PassCounters& p : counters_) c += p.total();

@@ -337,6 +337,13 @@ public:
     [[nodiscard]] gpu::Result<void> prepare(const gpu::MainPass& pass, const gpu::Output& output) override;
     void release() override;
     void record(const gpu::FrameContext& frame) override;
+    /// Every pass holds its targets apart (Pass::release_targets, prepare_targets).
+    [[nodiscard]] bool resizes() const noexcept override { return true; }
+    void release_targets() override;
+    /// Every pass's prepare_targets for `pass` (resized) and `output`, in the registry's order, on the calling thread:
+    /// they make images and framebuffers alone. On a failure the first pass to fail says why, and every pass lets go of
+    /// what it holds (release), as on prepare's.
+    [[nodiscard]] gpu::Result<void> prepare_targets(const gpu::MainPass& pass, const gpu::Output& output) override;
 
     /// The last frame's state and counts.
     [[nodiscard]] const FrameState& state() const noexcept { return state_; }

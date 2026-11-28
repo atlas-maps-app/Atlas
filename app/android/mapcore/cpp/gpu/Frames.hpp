@@ -191,6 +191,25 @@ public:
     virtual void release() = 0;
     /// Records one frame: the offscreen passes, then Mark::offscreen; the main pass, then Mark::main; what follows it.
     virtual void record(const FrameContext& frame) = 0;
+
+    /// Whether what prepare made holds apart what depends only on the device, the configuration and the main pass's
+    /// formats and samples (its shader modules, pipelines, layouts, pools and render passes) from what is sized to the
+    /// output or made of its images or the main pass's attachments: then an output made again at another size with
+    /// the same formats lets go of the second alone (release_targets) and makes it again (prepare_targets), and no
+    /// module and no pipeline is made. No by default: the renderer releases and prepares it whole, as for another
+    /// configuration.
+    [[nodiscard]] virtual bool resizes() const noexcept { return false; }
+    /// Lets go of what prepare made that is sized to the output or made of its images or the main pass's attachments
+    /// (images, framebuffers, buffers of the output's size, the descriptor writes to them), after the GPU has finished
+    /// every frame that used it. The rest stays, and release lets go of it with the frame.
+    virtual void release_targets() {}
+    /// Makes again what release_targets let go of, for `pass` (resized, of the formats and samples it was prepared for)
+    /// and `output`: no shader module and no pipeline.
+    [[nodiscard]] virtual Result<void> prepare_targets(const MainPass& pass, const Output& output) {
+        (void)pass;
+        (void)output;
+        return {};
+    }
 };
 
 /// One drawn frame, as the frame loop saw it.
@@ -232,7 +251,11 @@ public:
     /// Switches the configuration (VK bench): waits for the frames in flight, then remakes the main pass and the
     /// content.
     [[nodiscard]] Result<void> reconfigure(const Configuration& configuration);
-    /// The output was remade (a resize, a rotation): the same, for the new output.
+    /// The output was remade (a resize, a rotation): waits for the frames in flight, then, where the new output has the
+    /// formats and the final layout the frame was made for and the content keeps its parts apart (Content::resizes),
+    /// lets go of the frame's targets alone, announced (announce_release: `targets`), and makes them again: the main
+    /// pass's attachments and framebuffers, the content's parts sized to the output; its pipelines stay. Otherwise
+    /// it remakes the main pass and the content, as reconfigure does.
     [[nodiscard]] Result<void> retarget(Output& output);
     /// Waits for every frame in flight (before the output or the device goes away).
     void drain();
@@ -248,6 +271,18 @@ private:
     [[nodiscard]] Result<void> remake(const Configuration& configuration);
     /// Lets go of the frame drawn so far (announced first, if there is one): the content's prepared objects, the pass.
     void release_frame();
+    /// Lets go of the frame's targets (announced first): the content's parts sized to the output, the main pass's
+    /// attachments and framebuffers; then makes them again for the output.
+    [[nodiscard]] Result<void> resize_targets();
+    /// What the frame's pass and the content's device parts were made for, of the output: they hold for a new output
+    /// with the same.
+    struct Made {
+        vk::Format format = vk::Format::eUndefined;
+        vk::ImageLayout final_layout = vk::ImageLayout::eUndefined;
+        bool transfer_source = false;
+        friend bool operator==(const Made&, const Made&) = default;
+    };
+    [[nodiscard]] static Made made_of(const Output& output) noexcept;
 
     const Device& device_;
     Output* output_;
@@ -257,6 +292,8 @@ private:
     std::unique_ptr<Frames> frames_;
     std::unique_ptr<MainPass> pass_;
     bool prepared_ = false;    // the content holds what this renderer prepared for pass_
+    bool whole_ = false;       // and all of it: the last prepare, or prepare_targets, succeeded
+    Made made_;                // what the frame was made for (retarget)
     bool unsubmitted_ = false; // unsubmitted()
     std::uint64_t number_ = 0;
 };

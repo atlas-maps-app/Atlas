@@ -216,7 +216,32 @@ void Renderer::release_frame() {
         announce_release({.kind = "frame", .detail = detail, .ten_bit = ten_bit(pass_->spec().colour_format)}, watch_);
     if (prepared_) content_.release();
     prepared_ = false;
+    whole_ = false;
     pass_.reset();
+}
+
+Renderer::Made Renderer::made_of(const Output& output) noexcept {
+    return {
+        .format = output.format(), .final_layout = output.final_layout(), .transfer_source = output.transfer_source()};
+}
+
+Result<void> Renderer::resize_targets() {
+    whole_ = false;
+    {
+        // Named as the frame is (release_frame): a driver crashing as a 10-bit frame's targets go is told from one
+        // crashing as an 8-bit frame's go. The frame stays, its configuration's: frame_of is as it was.
+        const std::string detail = std::format("(configuration {} {})", name_of(pass_->spec().config),
+                                               colour_name(pass_->spec().colour_format));
+        const Announced named = announce_release(
+            {.kind = "targets", .detail = detail, .ten_bit = ten_bit(pass_->spec().colour_format)}, watch_);
+        content_.release_targets();
+        pass_->release_targets();
+    }
+    ATLAS_GPU_CHECK(pass_->resize(device_, output_->extent(), output_->views(), output_->images()));
+    ATLAS_GPU_CHECK(content_.prepare_targets(*pass_, *output_));
+    made_ = made_of(*output_);
+    whole_ = true;
+    return {};
 }
 
 Result<void> Renderer::remake(const Configuration& configuration) {
@@ -235,7 +260,10 @@ Result<void> Renderer::remake(const Configuration& configuration) {
     pass_ = std::make_unique<MainPass>(std::move(pass));
     // From here the content holds what this renderer prepared, whole or in part: released with the frame.
     prepared_ = true;
-    return content_.prepare(*pass_, *output_);
+    ATLAS_GPU_CHECK(content_.prepare(*pass_, *output_));
+    made_ = made_of(*output_);
+    whole_ = true;
+    return {};
 }
 
 void Renderer::drain() {
@@ -250,6 +278,9 @@ Result<void> Renderer::reconfigure(const Configuration& configuration) {
 Result<void> Renderer::retarget(Output& output) {
     drain();
     output_ = &output;
+    // The same formats, final layout and copies (a new size, a rotation): the frame stays, and only its targets are
+    // made again. Its depth-stencil is the device's, so it stays too.
+    if (pass_ && whole_ && content_.resizes() && made_of(output) == made_) return resize_targets();
     return remake(pass_ ? pass_->spec().config : Configuration{});
 }
 
