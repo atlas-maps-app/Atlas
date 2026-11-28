@@ -434,15 +434,20 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     // each frame slot's mask (its framebuffer with the samples), grid (mapped: the CPU starts its box) and blur's
     // texels (readable where the tests keep them), the kept mask's copy, and the slot's set 3
     using B = vk::BufferUsageFlagBits;
+#if defined(ATLAS_TESTS)
     const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
     const gpu::MemoryUse mapped = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::upload;
+    const vk::ImageUsageFlags copied = s->kept ? U::eTransferSrc : vk::ImageUsageFlags{};
+#else
+    const gpu::MemoryUse look = gpu::MemoryUse::gpu;
+    const gpu::MemoryUse mapped = gpu::MemoryUse::upload;
+    const vk::ImageUsageFlags copied{};
+#endif
     const vk::DeviceSize texels = vk::DeviceSize{s->stride} * 4 * s->extent.height;
     for (std::size_t slot = 0; slot < s->slots.size(); ++slot) {
         SoftShadowSlot& t = s->slots[slot];
-        ATLAS_GPU_LET(mask,
-                      image(vk::SampleCountFlagBits::e1,
-                            U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
-                            gpu::MemoryUse::gpu));
+        ATLAS_GPU_LET(
+            mask, image(vk::SampleCountFlagBits::e1, U::eColorAttachment | U::eSampled | copied, gpu::MemoryUse::gpu));
         t.mask = std::move(mask);
         ATLAS_GPU_LET(mask_view, view_of(t.mask));
         t.mask_view = std::move(mask_view);
@@ -462,11 +467,13 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
         t.blurred[0] = std::move(first);
         ATLAS_GPU_LET(second, device.memory().buffer(texels, B::eStorageBuffer, gpu::MemoryUse::gpu));
         t.blurred[1] = std::move(second);
+#if defined(ATLAS_TESTS)
         if (s->kept) {
             ATLAS_GPU_LET(copy, device.memory().buffer(vk::DeviceSize{s->extent.width} * s->extent.height,
                                                        B::eTransferDst, gpu::MemoryUse::readback));
             t.mask_copy = std::move(copy);
         }
+#endif
         gpu::SetWriter(*p.soft_sets[slot])
             .buffer(0, vk::DescriptorType::eStorageBuffer, t.grid.handle())
             .buffer(1, vk::DescriptorType::eStorageBuffer, t.blurred[0].handle())
@@ -748,6 +755,7 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
                                             .src_access = A::eShaderWrite,
                                             .dst_stage = S::eFragmentShader,
                                             .dst_access = A::eShaderRead});
+#if defined(ATLAS_TESTS)
     if (s.kept) {
         // the tests' look: the resolved mask, a row after another, and the grid and the blur readable by the host
         sync.barrier(cmd, gpu::ImageDependency{.image = mine.mask.handle(),
@@ -770,6 +778,7 @@ void Ground::record_shadow_mask(const frame::Recording& r) {
                                                 .dst_stage = S::eHost,
                                                 .dst_access = A::eHostRead});
     }
+#endif
     s.last = mask_entry_;
     s.result = true;
 #if defined(ATLAS_TESTS)

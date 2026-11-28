@@ -1769,7 +1769,9 @@ struct SoftShadowSlot {
     vk::raii::Framebuffer framebuffer{nullptr}; ///< the samples, resolved into this mask
     gpu::Buffer grid;                           ///< one ShadowGrid (shared/shadow_grid.slang)
     std::array<gpu::Buffer, 2> blurred;         ///< the blur's passes, back and forth; the last writes the first
-    gpu::Buffer mask_copy;                      ///< the kept mask, a row of extent.width bytes after another
+#if defined(ATLAS_TESTS)
+    gpu::Buffer mask_copy; ///< the kept mask, a row of extent.width bytes after another
+#endif
     /// The blur's passes' sets (from SoftShadows::blur_pool): the grid, the mask, a pass's two buffers.
     std::array<vk::raii::DescriptorSet, 3> blur_sets{vk::raii::DescriptorSet{nullptr}, vk::raii::DescriptorSet{nullptr},
                                                      vk::raii::DescriptorSet{nullptr}};
@@ -1781,7 +1783,9 @@ struct SoftShadowSlot {
 struct SoftShadows {
     vk::Extent2D extent{};    ///< the mask's texels
     std::uint32_t stride = 0; ///< the blurred mask's words a row (four texels a word)
-    bool kept = false;        ///< the tests' look: the grid and the blurred mask readable, the mask copied each frame
+#if defined(ATLAS_TESTS)
+    bool kept = false; ///< the tests' look: the grid and the blurred mask readable, the mask copied each frame
+#endif
     /// The union's 4x samples (R8, transient), one for both slots: the mask's pass clears them and leaves them
     /// undefined, and its colour output waits for all earlier colour output anyway (its dependency on what came before
     /// it), so a copy a slot would let nothing start sooner.
