@@ -127,6 +127,12 @@ public:
     [[nodiscard]] gpu::Result<void> prepare(const Target& target);
     /// Lets go of everything prepare made (the GPU has finished every frame that used it).
     void release() noexcept;
+    /// Lets go of what prepare made of the output's size or images (the copy, the scratch image, their views and sets,
+    /// the glass's framebuffers), the GPU having finished every frame that used them; its pipelines, render pass,
+    /// layouts, sampler and jobs stay.
+    void release_targets() noexcept;
+    /// Makes them again for `target`'s output, of the format prepare made the rest for: no module and no pipeline.
+    [[nodiscard]] gpu::Result<void> prepare_targets(const Target& target);
 
     /// Records the frosted backdrops of `camera`'s frosted shapes over output image `image`, after the main pass left
     /// it in the output's final layout, and leaves it in that layout again; frame slot `slot`'s jobs. Nothing when no
@@ -190,6 +196,8 @@ public:
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
+    void release_targets() noexcept override;
+    [[nodiscard]] gpu::Result<void> prepare_targets(const frame::PassContext& context) override;
     void record(const frame::Recording& recording, std::uint32_t phase) override;
 
     [[nodiscard]] const FrostedBackdrops& backdrops() const noexcept { return backdrops_; }

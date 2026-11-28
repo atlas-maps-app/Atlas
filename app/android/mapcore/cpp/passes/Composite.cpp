@@ -163,6 +163,31 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
     pool_ = std::move(pool);
     ATLAS_GPU_LET(set, gpu::allocate_set(d, pool_, inputs_layout_));
     inputs_ = std::move(set);
+    const std::array<vk::DescriptorSetLayout, 1> extra{*inputs_layout_};
+    ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
+    layout_ = std::move(layout);
+
+    const std::string names =
+        glsl_ ? std::format("{} and {}", modules.direct.name, modules.glsl.name) : std::string(modules.direct.name);
+    gpu::GraphicsDesc desc{.label = {.name = "composite", .module = names, .configuration = context.configuration},
+                           .module = *module_,
+                           .vertex = "fullscreen_vs",
+                           .fragment = glsl_ ? "main" : "composite_fs",
+                           .fragment_module = glsl_ ? *glsl_module_ : vk::ShaderModule{},
+                           .layout = *layout_,
+                           .target = pass.composite_target()};
+    if (desc.target.colour_count == 2) {
+        desc.blends[0] = gpu::Blend::untouched(); // the scene's colour, which the composite only reads
+        desc.blends[1] = gpu::Blend::opaque();
+    }
+    ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::none));
+    pipeline_ = std::move(pipeline);
+    return prepare_targets(context);
+}
+
+gpu::Result<void> Composite::prepare_targets(const frame::PassContext& context) {
+    const gpu::MainPass& pass = context.pass;
+    const vk::raii::Device& d = context.device.handle();
     // The tables: a slice per frame slot of three tables, each as long as the output's longer side (upright or turned,
     // its rows and columns are within it).
     const vk::Extent2D extent = context.output.extent();
@@ -184,34 +209,19 @@ gpu::Result<void> Composite::prepare(const frame::PassContext& context) {
         .image(1, vk::DescriptorType::eInputAttachment, pass.stencil_input(), pass.stencil_input_layout())
         .buffer(2, vk::DescriptorType::eStorageBufferDynamic, tables_.handle(), 0, table_bytes)
         .apply(d);
-    const std::array<vk::DescriptorSetLayout, 1> extra{*inputs_layout_};
-    ATLAS_GPU_LET(layout, context.layout.make_layout(extra));
-    layout_ = std::move(layout);
-
-    const std::string names =
-        glsl_ ? std::format("{} and {}", modules.direct.name, modules.glsl.name) : std::string(modules.direct.name);
-    gpu::GraphicsDesc desc{.label = {.name = "composite", .module = names, .configuration = context.configuration},
-                           .module = *module_,
-                           .vertex = "fullscreen_vs",
-                           .fragment = glsl_ ? "main" : "composite_fs",
-                           .fragment_module = glsl_ ? *glsl_module_ : vk::ShaderModule{},
-                           .layout = *layout_,
-                           .target = pass.composite_target()};
-    if (desc.target.colour_count == 2) {
-        desc.blends[0] = gpu::Blend::untouched(); // the scene's colour, which the composite only reads
-        desc.blends[1] = gpu::Blend::opaque();
-    }
-    ATLAS_GPU_LET(pipeline, frame::make_pipeline(context, desc, frame::Overdraw::none));
-    pipeline_ = std::move(pipeline);
     return {};
 }
 
-void Composite::release() noexcept {
+void Composite::release_targets() noexcept {
     tables_ = {};
     words_.clear();
     rain_made_ = false;
     side_ = 0;
     slice_ = 0;
+}
+
+void Composite::release() noexcept {
+    release_targets();
     pipeline_.clear();
     layout_.clear();
     inputs_.clear();

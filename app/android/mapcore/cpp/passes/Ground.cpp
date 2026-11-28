@@ -1283,8 +1283,12 @@ gpu::Result<void> Ground::prepare(const frame::PassContext& context) {
 }
 
 void Ground::release() noexcept {
+    release_targets();
     pipelines_.reset();
     words_.reset();
+}
+
+void Ground::release_targets() noexcept {
     drew_soft_ = false;
     drew_ripple_ = false;
     ripple_key_.clear();
@@ -1294,6 +1298,35 @@ void Ground::release() noexcept {
     glow_key_.clear();
     glow_next_.reset();
     glow_stale_ = true;
+    if (!pipelines_) return;
+    Pipelines& p = *pipelines_;
+    if (p.soft) release_soft_targets(*p.soft);
+    if (p.ripple) release_ripple_targets(*p.ripple);
+    if (p.glow) release_glow_targets(*p.glow);
+}
+
+gpu::Result<void> Ground::prepare_targets(const frame::PassContext& context) {
+    if (!pipelines_) return {};
+    Pipelines& p = *pipelines_;
+    if (p.soft) {
+        if (auto made = make_soft_targets(context, p); !made) {
+            log::warn("vk ground: the soft shadows: {}; the shadows are drawn sharp", made.error().text());
+            p.soft.reset();
+        }
+    }
+    if (p.ripple) {
+        if (auto made = make_ripple_targets(context, p); !made) {
+            log::warn("vk ground: the ripple: {}; the reflections are drawn without it", made.error().text());
+            p.ripple.reset();
+        }
+    }
+    if (p.glow) {
+        if (auto made = make_glow_targets(context, p); !made) {
+            log::warn("vk ground: the lit streets: {}; they are drawn without their glow", made.error().text());
+            p.glow.reset();
+        }
+    }
+    return {};
 }
 
 gpu::Result<void> Ground::make_pipelines(const frame::PassContext& context) {

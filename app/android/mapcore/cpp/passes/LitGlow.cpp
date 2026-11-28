@@ -300,61 +300,8 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
     const vk::raii::Device& d = device.handle();
     auto s = std::make_unique<GlowLayer>();
     s->kept = keep_glow_;
-    // the view's device px, the output's turned back, and the margin about them
-    vk::Extent2D view = context.output.extent();
-    if (turned(context.output.transform())) std::swap(view.width, view.height);
-    s->view = view;
     s->margin = glow_margin;
-    const auto wide = static_cast<std::uint32_t>(2 * glow_margin);
-    s->extent = {.width = view.width + wide, .height = view.height + wide};
-    using U = vk::ImageUsageFlagBits;
     const vk::Format colour = vk::Format::eR8G8B8A8Unorm;
-    auto image = [&](vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage, gpu::MemoryUse use) {
-        return device.memory().image({.imageType = vk::ImageType::e2D,
-                                      .format = colour,
-                                      .extent = {.width = s->extent.width, .height = s->extent.height, .depth = 1},
-                                      .mipLevels = 1,
-                                      .arrayLayers = 1,
-                                      .samples = samples,
-                                      .tiling = vk::ImageTiling::eOptimal,
-                                      .usage = usage,
-                                      .initialLayout = vk::ImageLayout::eUndefined},
-                                     use);
-    };
-    // the samples in lazily allocated memory where the frame's are (no pages on a tiler), else, or where that fails, in
-    // ordinary memory
-    const bool lazy = context.pass.spec().config.lazy();
-    auto transient = [&]() -> gpu::Result<gpu::Image> {
-        auto made = image(vk::SampleCountFlagBits::e4, U::eColorAttachment | U::eTransientAttachment,
-                          lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
-        if (!made && lazy) made = image(vk::SampleCountFlagBits::e4, U::eColorAttachment, gpu::MemoryUse::gpu);
-        return made;
-    };
-    ATLAS_GPU_LET(samples, transient());
-    s->samples = std::move(samples);
-    const vk::ImageUsageFlags layer_usage =
-        U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{});
-    ATLAS_GPU_LET(glow, image(vk::SampleCountFlagBits::e1, layer_usage, gpu::MemoryUse::gpu));
-    s->glow = std::move(glow);
-    ATLAS_GPU_LET(cores, image(vk::SampleCountFlagBits::e1, layer_usage, gpu::MemoryUse::gpu));
-    s->cores = std::move(cores);
-    auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
-        ATLAS_VK_LET(v,
-                     d.createImageView({.image = i.handle(),
-                                        .viewType = vk::ImageViewType::e2D,
-                                        .format = colour,
-                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                                             .levelCount = 1,
-                                                             .layerCount = 1}}),
-                     "the lit streets' layer's view");
-        return std::move(v);
-    };
-    ATLAS_GPU_LET(samples_view, view_of(s->samples));
-    s->samples_view = std::move(samples_view);
-    ATLAS_GPU_LET(glow_view, view_of(s->glow));
-    s->glow_view = std::move(glow_view);
-    ATLAS_GPU_LET(cores_view, view_of(s->cores));
-    s->cores_view = std::move(cores_view);
     // a layer's pass: the samples cleared and drawn, resolved into the layer; record moves the layer into the colour
     // layout before it and out after it
     using L = vk::ImageLayout;
@@ -407,45 +354,6 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
                                      .pDependencies = dependencies.data()}),
                  "the lit streets' layers' render pass");
     s->pass = std::move(pass);
-    auto framebuffer_of = [&](const vk::raii::ImageView& resolve) -> gpu::Result<vk::raii::Framebuffer> {
-        const std::array<vk::ImageView, 2> views{*s->samples_view, *resolve};
-        ATLAS_VK_LET(f,
-                     d.createFramebuffer({.renderPass = *s->pass,
-                                          .attachmentCount = static_cast<std::uint32_t>(views.size()),
-                                          .pAttachments = views.data(),
-                                          .width = s->extent.width,
-                                          .height = s->extent.height,
-                                          .layers = 1}),
-                     "the lit streets' layers' framebuffer");
-        return std::move(f);
-    };
-    ATLAS_GPU_LET(glow_framebuffer, framebuffer_of(s->glow_view));
-    s->glow_framebuffer = std::move(glow_framebuffer);
-    ATLAS_GPU_LET(cores_framebuffer, framebuffer_of(s->cores_view));
-    s->cores_framebuffer = std::move(cores_framebuffer);
-    // the filter's two buffers (readable where the tests keep them), and the kept layers' copies
-    using B = vk::BufferUsageFlagBits;
-    const vk::DeviceSize texels = vk::DeviceSize{s->extent.width} * s->extent.height * 4;
-    const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
-    for (gpu::Buffer& b : s->buffers) {
-        ATLAS_GPU_LET(made, device.memory().buffer(texels, B::eStorageBuffer, look));
-        b = std::move(made);
-    }
-    if (s->kept) {
-        ATLAS_GPU_LET(glow_copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
-        s->glow_copy = std::move(glow_copy);
-        ATLAS_GPU_LET(core_copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
-        s->core_copy = std::move(core_copy);
-    }
-    // the composite reads the result and the layers from the ground's set 3 (the same three in each frame slot's: the
-    // layers' and the boxes' barriers wait for the last frame's composite before they are written again)
-    for (const vk::raii::DescriptorSet& set : p.soft_sets) {
-        gpu::SetWriter(*set)
-            .buffer(5, vk::DescriptorType::eStorageBuffer, s->buffers[0].handle())
-            .image(6, vk::DescriptorType::eSampledImage, *s->glow_view, L::eShaderReadOnlyOptimal)
-            .image(7, vk::DescriptorType::eSampledImage, *s->cores_view, L::eShaderReadOnlyOptimal)
-            .apply(d);
-    }
     // the passes' set: the glow's layer, a buffer to read and one to write, both ways
     constexpr auto in_compute = vk::ShaderStageFlagBits::eCompute;
     const std::array bindings{
@@ -457,14 +365,9 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
     ATLAS_GPU_LET(pool, gpu::make_pool(d, kinds, static_cast<std::uint32_t>(s->sets.size())));
     s->pool = std::move(pool);
-    for (std::size_t i = 0; i < s->sets.size(); ++i) {
-        ATLAS_GPU_LET(set, gpu::allocate_set(d, s->pool, s->set_layout));
-        s->sets[i] = std::move(set);
-        gpu::SetWriter(*s->sets[i])
-            .image(0, vk::DescriptorType::eSampledImage, *s->glow_view, L::eShaderReadOnlyOptimal)
-            .buffer(1, vk::DescriptorType::eStorageBuffer, s->buffers[i].handle())
-            .buffer(2, vk::DescriptorType::eStorageBuffer, s->buffers[1 - i].handle())
-            .apply(d);
+    for (vk::raii::DescriptorSet& set : s->sets) {
+        ATLAS_GPU_LET(made, gpu::allocate_set(d, s->pool, s->set_layout));
+        set = std::move(made);
     }
     const std::array<vk::DescriptorSetLayout, 4> sets{
         context.layout.frame_set_layout(), context.layout.global_set_layout(), *p.set_layout, *s->set_layout};
@@ -492,7 +395,137 @@ gpu::Result<void> Ground::make_glow(const frame::PassContext& context, Pipelines
     ATLAS_GPU_LET(composite, frame::make_pipeline(context, lit, frame::Overdraw::translucent));
     s->composite = std::move(composite);
     p.glow = std::move(s);
+    return make_glow_targets(context, p);
+}
+
+gpu::Result<void> Ground::make_glow_targets(const frame::PassContext& context, Pipelines& p) const {
+    const gpu::Device& device = context.device;
+    const vk::raii::Device& d = device.handle();
+    GlowLayer& s = *p.glow;
+    // the view's device px, the output's turned back, and the margin about them
+    vk::Extent2D view = context.output.extent();
+    if (turned(context.output.transform())) std::swap(view.width, view.height);
+    s.view = view;
+    const auto wide = static_cast<std::uint32_t>(2 * glow_margin);
+    s.extent = {.width = view.width + wide, .height = view.height + wide};
+    using U = vk::ImageUsageFlagBits;
+    const vk::Format colour = vk::Format::eR8G8B8A8Unorm;
+    auto image = [&](vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage, gpu::MemoryUse use) {
+        return device.memory().image({.imageType = vk::ImageType::e2D,
+                                      .format = colour,
+                                      .extent = {.width = s.extent.width, .height = s.extent.height, .depth = 1},
+                                      .mipLevels = 1,
+                                      .arrayLayers = 1,
+                                      .samples = samples,
+                                      .tiling = vk::ImageTiling::eOptimal,
+                                      .usage = usage,
+                                      .initialLayout = vk::ImageLayout::eUndefined},
+                                     use);
+    };
+    // the samples in lazily allocated memory where the frame's are (no pages on a tiler), else, or where that fails, in
+    // ordinary memory
+    const bool lazy = context.pass.spec().config.lazy();
+    auto transient = [&]() -> gpu::Result<gpu::Image> {
+        auto made = image(vk::SampleCountFlagBits::e4, U::eColorAttachment | U::eTransientAttachment,
+                          lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
+        if (!made && lazy) made = image(vk::SampleCountFlagBits::e4, U::eColorAttachment, gpu::MemoryUse::gpu);
+        return made;
+    };
+    ATLAS_GPU_LET(samples, transient());
+    s.samples = std::move(samples);
+    const vk::ImageUsageFlags layer_usage =
+        U::eColorAttachment | U::eSampled | (s.kept ? U::eTransferSrc : vk::ImageUsageFlags{});
+    ATLAS_GPU_LET(glow, image(vk::SampleCountFlagBits::e1, layer_usage, gpu::MemoryUse::gpu));
+    s.glow = std::move(glow);
+    ATLAS_GPU_LET(cores, image(vk::SampleCountFlagBits::e1, layer_usage, gpu::MemoryUse::gpu));
+    s.cores = std::move(cores);
+    auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
+        ATLAS_VK_LET(v,
+                     d.createImageView({.image = i.handle(),
+                                        .viewType = vk::ImageViewType::e2D,
+                                        .format = colour,
+                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                             .levelCount = 1,
+                                                             .layerCount = 1}}),
+                     "the lit streets' layer's view");
+        return std::move(v);
+    };
+    ATLAS_GPU_LET(samples_view, view_of(s.samples));
+    s.samples_view = std::move(samples_view);
+    ATLAS_GPU_LET(glow_view, view_of(s.glow));
+    s.glow_view = std::move(glow_view);
+    ATLAS_GPU_LET(cores_view, view_of(s.cores));
+    s.cores_view = std::move(cores_view);
+    using L = vk::ImageLayout;
+    auto framebuffer_of = [&](const vk::raii::ImageView& resolve) -> gpu::Result<vk::raii::Framebuffer> {
+        const std::array<vk::ImageView, 2> views{*s.samples_view, *resolve};
+        ATLAS_VK_LET(f,
+                     d.createFramebuffer({.renderPass = *s.pass,
+                                          .attachmentCount = static_cast<std::uint32_t>(views.size()),
+                                          .pAttachments = views.data(),
+                                          .width = s.extent.width,
+                                          .height = s.extent.height,
+                                          .layers = 1}),
+                     "the lit streets' layers' framebuffer");
+        return std::move(f);
+    };
+    ATLAS_GPU_LET(glow_framebuffer, framebuffer_of(s.glow_view));
+    s.glow_framebuffer = std::move(glow_framebuffer);
+    ATLAS_GPU_LET(cores_framebuffer, framebuffer_of(s.cores_view));
+    s.cores_framebuffer = std::move(cores_framebuffer);
+    // the filter's two buffers (readable where the tests keep them), and the kept layers' copies
+    using B = vk::BufferUsageFlagBits;
+    const vk::DeviceSize texels = vk::DeviceSize{s.extent.width} * s.extent.height * 4;
+    const gpu::MemoryUse look = s.kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
+    for (gpu::Buffer& b : s.buffers) {
+        ATLAS_GPU_LET(made, device.memory().buffer(texels, B::eStorageBuffer, look));
+        b = std::move(made);
+    }
+    if (s.kept) {
+        ATLAS_GPU_LET(glow_copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
+        s.glow_copy = std::move(glow_copy);
+        ATLAS_GPU_LET(core_copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
+        s.core_copy = std::move(core_copy);
+    }
+    // the composite reads the result and the layers from the ground's set 3 (the same three in each frame slot's: the
+    // layers' and the boxes' barriers wait for the last frame's composite before they are written again)
+    for (const vk::raii::DescriptorSet& set : p.soft_sets) {
+        gpu::SetWriter(*set)
+            .buffer(5, vk::DescriptorType::eStorageBuffer, s.buffers[0].handle())
+            .image(6, vk::DescriptorType::eSampledImage, *s.glow_view, L::eShaderReadOnlyOptimal)
+            .image(7, vk::DescriptorType::eSampledImage, *s.cores_view, L::eShaderReadOnlyOptimal)
+            .apply(d);
+    }
+    // the passes' sets: the glow's layer, a buffer to read and one to write, both ways
+    for (std::size_t i = 0; i < s.sets.size(); ++i) {
+        gpu::SetWriter(*s.sets[i])
+            .image(0, vk::DescriptorType::eSampledImage, *s.glow_view, L::eShaderReadOnlyOptimal)
+            .buffer(1, vk::DescriptorType::eStorageBuffer, s.buffers[i].handle())
+            .buffer(2, vk::DescriptorType::eStorageBuffer, s.buffers[1 - i].handle())
+            .apply(d);
+    }
+    // nothing drawn into the layers yet, nor laid out to be read
+    s.drew = {};
+    s.laid_out = {};
     return {};
+}
+
+void release_glow_targets(GlowLayer& s) noexcept {
+    s.cores_framebuffer.clear();
+    s.glow_framebuffer.clear();
+    s.cores_view.clear();
+    s.glow_view.clear();
+    s.samples_view.clear();
+    s.cores = {};
+    s.glow = {};
+    s.samples = {};
+    s.buffers = {};
+    s.glow_copy = {};
+    s.core_copy = {};
+    s.view = {};
+    s.extent = {};
+    s.drew = {};
+    s.laid_out = {};
 }
 
 void Ground::record_lit_layer(const frame::Recording& r) {

@@ -352,10 +352,6 @@ gpu::Result<void> FrostedBackdrops::prepare(const Target& target) {
     release();
     device_ = &target.device;
     const gpu::Output& output = target.output;
-    extent_ = output.extent();
-    final_layout_ = output.final_layout();
-    quarter_turns_ = quarter_turns_of(output.transform());
-    images_.assign(output.images().begin(), output.images().end());
     using F = vk::FormatFeatureFlagBits;
     const vk::FormatFeatureFlags need =
         F::eBlitSrc | F::eSampledImageFilterLinear | F::eColorAttachment | F::eColorAttachmentBlend;
@@ -365,43 +361,9 @@ gpu::Result<void> FrostedBackdrops::prepare(const Target& target) {
         log::warn("vk frosted: the output ({}) cannot be {}: the core draws no frosted backdrops on it",
                   vk::to_string(output.format()),
                   output.transfer_source() ? "blitted from and blended into" : "copied from (no TRANSFER_SRC)");
-        return {};
+        return prepare_targets(target); // its size and images alone: nothing to draw with
     }
     const vk::raii::Device& d = target.device.handle();
-    copy_extent_ = frost_copy_extent(extent_);
-    using U = vk::ImageUsageFlagBits;
-    auto image = [&](vk::ImageUsageFlags usage) {
-        return target.device.memory().image(
-            {.imageType = vk::ImageType::e2D,
-             .format = vk::Format::eR8G8B8A8Unorm,
-             .extent = {.width = copy_extent_.width, .height = copy_extent_.height, .depth = 1},
-             .mipLevels = 1,
-             .arrayLayers = 1,
-             .samples = vk::SampleCountFlagBits::e1,
-             .tiling = vk::ImageTiling::eOptimal,
-             .usage = usage,
-             .initialLayout = vk::ImageLayout::eUndefined},
-            gpu::MemoryUse::gpu);
-    };
-    ATLAS_GPU_LET(copy, image(U::eTransferDst | U::eStorage | U::eSampled));
-    copy_ = std::move(copy);
-    ATLAS_GPU_LET(scratch, image(U::eStorage));
-    scratch_ = std::move(scratch);
-    auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
-        ATLAS_VK_LET(view,
-                     d.createImageView({.image = i.handle(),
-                                        .viewType = vk::ImageViewType::e2D,
-                                        .format = i.format(),
-                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                                             .levelCount = 1,
-                                                             .layerCount = 1}}),
-                     "the frosted copy's view");
-        return std::move(view);
-    };
-    ATLAS_GPU_LET(copy_view, view_of(copy_));
-    copy_view_ = std::move(copy_view);
-    ATLAS_GPU_LET(scratch_view, view_of(scratch_));
-    scratch_view_ = std::move(scratch_view);
     ATLAS_VK_LET(sampler,
                  d.createSampler({.magFilter = vk::Filter::eLinear,
                                   .minFilter = vk::Filter::eLinear,
@@ -421,11 +383,6 @@ gpu::Result<void> FrostedBackdrops::prepare(const Target& target) {
     double ms = 0;
     ATLAS_GPU_LET(boxes, fx::BoxBlur::create(target.device, target.cache, target.watch, fx::BlurFormat::rgba8, 2, &ms));
     boxes_ = std::move(boxes);
-    ATLAS_GPU_LET(along_x, boxes_->bind(*copy_view_, *scratch_view_, jobs_.handle()));
-    along_x_ = std::move(along_x);
-    ATLAS_GPU_LET(along_y, boxes_->bind(*scratch_view_, *copy_view_, jobs_.handle()));
-    along_y_ = std::move(along_y);
-
     // The glass: its copy as a combined image sampler, its push constants, its module.
     const std::array bindings{gpu::Binding{
         .slot = 0, .type = vk::DescriptorType::eCombinedImageSampler, .stages = vk::ShaderStageFlagBits::eFragment}};
@@ -436,10 +393,6 @@ gpu::Result<void> FrostedBackdrops::prepare(const Target& target) {
     glass_pool_ = std::move(pool);
     ATLAS_GPU_LET(set, gpu::allocate_set(d, glass_pool_, glass_set_layout_));
     glass_set_ = std::move(set);
-    gpu::SetWriter(*glass_set_)
-        .image(0, vk::DescriptorType::eCombinedImageSampler, *copy_view_, vk::ImageLayout::eShaderReadOnlyOptimal,
-               *sampler_)
-        .apply(d);
     const std::array<vk::DescriptorSetLayout, 1> sets{*glass_set_layout_};
     ATLAS_GPU_LET(layout, gpu::make_layout(d, sets, sizeof(GlassPush),
                                            vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment));
@@ -487,17 +440,6 @@ gpu::Result<void> FrostedBackdrops::prepare(const Target& target) {
                                      .pDependencies = dependencies.data()}),
                  "the frosted glass's render pass");
     glass_pass_ = std::move(pass);
-    for (const vk::ImageView view : output.views()) {
-        ATLAS_VK_LET(framebuffer,
-                     d.createFramebuffer({.renderPass = *glass_pass_,
-                                          .attachmentCount = 1,
-                                          .pAttachments = &view,
-                                          .width = extent_.width,
-                                          .height = extent_.height,
-                                          .layers = 1}),
-                     "the frosted glass's framebuffer");
-        framebuffers_.push_back(std::move(framebuffer));
-    }
     gpu::GraphicsDesc desc{.label = {.name = "glass", .module = "frosted_glass", .configuration = target.configuration},
                            .module = *glass_module_,
                            .vertex = "glass_vs",
@@ -518,25 +460,80 @@ gpu::Result<void> FrostedBackdrops::prepare(const Target& target) {
         target.stats->ms += ms;
         target.stats->count += 2;
     }
+    return prepare_targets(target);
+}
+
+gpu::Result<void> FrostedBackdrops::prepare_targets(const Target& target) {
+    const gpu::Output& output = target.output;
+    extent_ = output.extent();
+    final_layout_ = output.final_layout();
+    quarter_turns_ = quarter_turns_of(output.transform());
+    images_.assign(output.images().begin(), output.images().end());
+    if (!*glass_pipeline_) return {}; // the output cannot be copied from (prepare): nothing made to draw with
+    const vk::raii::Device& d = target.device.handle();
+    copy_extent_ = frost_copy_extent(extent_);
+    using U = vk::ImageUsageFlagBits;
+    auto image = [&](vk::ImageUsageFlags usage) {
+        return target.device.memory().image(
+            {.imageType = vk::ImageType::e2D,
+             .format = vk::Format::eR8G8B8A8Unorm,
+             .extent = {.width = copy_extent_.width, .height = copy_extent_.height, .depth = 1},
+             .mipLevels = 1,
+             .arrayLayers = 1,
+             .samples = vk::SampleCountFlagBits::e1,
+             .tiling = vk::ImageTiling::eOptimal,
+             .usage = usage,
+             .initialLayout = vk::ImageLayout::eUndefined},
+            gpu::MemoryUse::gpu);
+    };
+    ATLAS_GPU_LET(copy, image(U::eTransferDst | U::eStorage | U::eSampled));
+    copy_ = std::move(copy);
+    ATLAS_GPU_LET(scratch, image(U::eStorage));
+    scratch_ = std::move(scratch);
+    auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
+        ATLAS_VK_LET(view,
+                     d.createImageView({.image = i.handle(),
+                                        .viewType = vk::ImageViewType::e2D,
+                                        .format = i.format(),
+                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                             .levelCount = 1,
+                                                             .layerCount = 1}}),
+                     "the frosted copy's view");
+        return std::move(view);
+    };
+    ATLAS_GPU_LET(copy_view, view_of(copy_));
+    copy_view_ = std::move(copy_view);
+    ATLAS_GPU_LET(scratch_view, view_of(scratch_));
+    scratch_view_ = std::move(scratch_view);
+    ATLAS_GPU_LET(along_x, boxes_->bind(*copy_view_, *scratch_view_, jobs_.handle()));
+    along_x_ = std::move(along_x);
+    ATLAS_GPU_LET(along_y, boxes_->bind(*scratch_view_, *copy_view_, jobs_.handle()));
+    along_y_ = std::move(along_y);
+
+    gpu::SetWriter(*glass_set_)
+        .image(0, vk::DescriptorType::eCombinedImageSampler, *copy_view_, vk::ImageLayout::eShaderReadOnlyOptimal,
+               *sampler_)
+        .apply(d);
+    for (const vk::ImageView view : output.views()) {
+        ATLAS_VK_LET(framebuffer,
+                     d.createFramebuffer({.renderPass = *glass_pass_,
+                                          .attachmentCount = 1,
+                                          .pAttachments = &view,
+                                          .width = extent_.width,
+                                          .height = extent_.height,
+                                          .layers = 1}),
+                     "the frosted glass's framebuffer");
+        framebuffers_.push_back(std::move(framebuffer));
+    }
     ready_ = true;
     return {};
 }
 
-void FrostedBackdrops::release() noexcept {
+void FrostedBackdrops::release_targets() noexcept {
     ready_ = false;
-    glass_pipeline_.clear();
     framebuffers_.clear();
-    glass_pass_.clear();
-    glass_module_.clear();
-    glass_layout_.clear();
-    glass_set_.clear();
-    glass_pool_.clear();
-    glass_set_layout_.clear();
     along_y_.clear();
     along_x_.clear();
-    boxes_.reset();
-    jobs_ = {};
-    sampler_.clear();
     scratch_view_.clear();
     copy_view_.clear();
     scratch_ = {};
@@ -545,6 +542,20 @@ void FrostedBackdrops::release() noexcept {
     plan_.shapes.clear();
     plan_.regions.clear();
     plan_.groups.clear();
+}
+
+void FrostedBackdrops::release() noexcept {
+    release_targets();
+    glass_pipeline_.clear();
+    glass_pass_.clear();
+    glass_module_.clear();
+    glass_layout_.clear();
+    glass_set_.clear();
+    glass_pool_.clear();
+    glass_set_layout_.clear();
+    boxes_.reset();
+    jobs_ = {};
+    sampler_.clear();
 }
 
 bool FrostedBackdrops::holds_prepared() const noexcept {
@@ -799,6 +810,17 @@ gpu::Result<void> Frosted::prepare(const frame::PassContext& context) {
 }
 
 void Frosted::release() noexcept { backdrops_.release(); }
+
+void Frosted::release_targets() noexcept { backdrops_.release_targets(); }
+
+gpu::Result<void> Frosted::prepare_targets(const frame::PassContext& context) {
+    return backdrops_.prepare_targets({.device = context.device,
+                                       .cache = context.cache,
+                                       .watch = context.watch,
+                                       .output = context.output,
+                                       .configuration = context.configuration,
+                                       .stats = context.stats});
+}
 
 void Frosted::record(const frame::Recording& recording, std::uint32_t phase) {
     (void)phase;

@@ -1009,6 +1009,10 @@ struct SoftShadows; // below
 [[nodiscard]] std::array<gpu::Binding, 4> soft_blur_bindings() noexcept;
 struct RippleLayer; // below
 struct GlowLayer;   // below
+/// Each lets go of its targets (Ground::release_targets): what is of the view's size, and the result it held.
+void release_soft_targets(SoftShadows& s) noexcept;
+void release_ripple_targets(RippleLayer& s) noexcept;
+void release_glow_targets(GlowLayer& s) noexcept;
 
 /// The user's palette's table for the fills (ground.slang's repainted): `palette_pairs` pairs of a fill's colour word
 /// today and the user's, each at its colour's hash (palette_hash) or the first free pair after it, for the frame's day
@@ -1050,6 +1054,13 @@ public:
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
+    /// Its targets: the soft shadows' mask, grid and blur's buffers, the ripple's layer and buffers, the lit streets'
+    /// layers and buffers (each of the view's size), their framebuffers and the sets' writes to them; and the results
+    /// the frames keep in them (the last mask, ripple and glow), which the next frames make again.
+    void release_targets() noexcept override;
+    /// Made again for the new output; where the device refuses one of the three, it goes whole and the frame draws
+    /// without it, as a prepare would at that size.
+    [[nodiscard]] gpu::Result<void> prepare_targets(const frame::PassContext& context) override;
     void select(const frame::FrameState& state, frame::Selectors& selectors) override;
     [[nodiscard]] std::uint32_t ground_slots(const frame::FrameState& state) const override;
     [[nodiscard]] std::uint32_t ground_tail_slots(const frame::FrameState& state) const override;
@@ -1420,7 +1431,10 @@ private:
     /// The reflections' group (`<g filter="url(#ripple)" opacity=".92">`) in the water's clip group `water`.
     void emit_reflections(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
     // Ripple.cpp
+    /// The ripple's objects (p.ripple), then its targets (make_ripple_targets: the layer, the buffers, the sets'
+    /// writes).
     [[nodiscard]] gpu::Result<void> make_ripple(const frame::PassContext& context, Pipelines& p) const;
+    [[nodiscard]] gpu::Result<void> make_ripple_targets(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws the reflections rippled: some are drawn, the fields are bound in full mode
     /// (FRAME_FIELDS), the ripple is wanted, and prepare made its objects.
     [[nodiscard]] bool rippled(const frame::FrameState& state) const noexcept;
@@ -1473,7 +1487,10 @@ private:
     /// render's lit streets at night (not at eye level): each lit road's runs of points ahead of the near plane within
     /// the radius cut, their widths from the road's own at the runs' mean depth (frame_.lit_runs).
     void decide_lit(const view::Camera& cam);
+    /// The lit streets' objects (p.glow), then their targets (make_glow_targets: the layers, the buffers, the sets'
+    /// writes).
     [[nodiscard]] gpu::Result<void> make_glow(const frame::PassContext& context, Pipelines& p) const;
+    [[nodiscard]] gpu::Result<void> make_glow_targets(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame blurs the glow: the frame is in full mode with the byte tables bound (FRAME_FIELDS), and
     /// prepare made the glow's objects.
     [[nodiscard]] bool glow_filtered(const frame::FrameState& state) const noexcept;
@@ -1505,7 +1522,10 @@ private:
     void record_rings(const frame::Recording& r);
     /// The rings' rects (`<rect fill="url(#rings)" opacity=".55">`) in the water's clip group `water`.
     void emit_rings(const frame::FrameState& state, twin::Stream& out, std::int32_t water) const;
+    /// The soft shadows' objects (p.soft), then their targets (make_soft_targets: the samples, each entry's mask,
+    /// grid and blur's buffers, the sets' writes).
     [[nodiscard]] gpu::Result<void> make_soft_shadows(const frame::PassContext& context, Pipelines& p) const;
+    [[nodiscard]] gpu::Result<void> make_soft_targets(const frame::PassContext& context, Pipelines& p) const;
     /// Whether this frame draws its shadows soft: some are drawn, the frame is in full mode, the moment blurs them,
     /// and prepare made the soft shadows' objects.
     [[nodiscard]] bool soft(const frame::FrameState& state) const noexcept;

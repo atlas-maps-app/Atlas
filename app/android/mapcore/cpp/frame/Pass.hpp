@@ -17,6 +17,10 @@
 // let go of in release; every shader module and pipeline is announced to the crash guard for its making alone
 // (make_module, make_pipeline: gpu/Pipelines.hpp's Announced), so a driver crashing in it is known by it (D5.10). The
 // passes prepare at once, each on a thread of its own (ENGINE.md gain 20): the guard then names every one under way.
+// What of it is sized to the output or made of its images or the main pass's attachments (images, framebuffers,
+// buffers of the output's size, the descriptor writes to them) is its targets: an output made again at another size
+// with the same formats lets go of them alone (release_targets) and makes them again (prepare_targets), and its
+// pipelines, layouts, pools and render passes stay (gpu::Content::resizes).
 #pragma once
 
 #include "frame/Counters.hpp"
@@ -174,6 +178,18 @@ public:
     [[nodiscard]] virtual gpu::Result<void> prepare(const PassContext& context) = 0;
     /// Lets go of everything prepare made (the GPU has finished every frame that used it).
     virtual void release() noexcept = 0;
+    /// Lets go of the targets prepare made (the file's head: what is sized to the output or made of its images or the
+    /// main pass's attachments), the GPU having finished every frame that used them; the rest stays. And whatever the
+    /// pass keeps from frame to frame of what they held, so the frames after it draw what a new prepare's would.
+    /// Nothing by default: a pass whose prepare makes none.
+    virtual void release_targets() noexcept {}
+    /// Makes again what release_targets let go of, for the context's main pass (resized: the formats and samples
+    /// prepare made the pipelines for) and output, on the render thread: no shader module and no pipeline. Nothing by
+    /// default.
+    [[nodiscard]] virtual gpu::Result<void> prepare_targets(const PassContext& context) {
+        (void)context;
+        return {};
+    }
 
     /// Registers the item kinds the pass's items take (Selectors::kind), once, as the frame builder is made: before
     /// any tile is built, so stage T can write each item's row (ItemSpec::kind) from what the pass keeps of them. The

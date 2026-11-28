@@ -29,6 +29,10 @@ public:
     [[nodiscard]] std::span<const frame::Phase> phases() const noexcept override { return phase_list; }
     [[nodiscard]] gpu::Result<void> prepare(const frame::PassContext& context) override;
     void release() noexcept override;
+    /// Its targets: the tables, as long as the output's longer side, and set 2's writes (the main pass's colour samples
+    /// and stencil, the tables).
+    void release_targets() noexcept override;
+    [[nodiscard]] gpu::Result<void> prepare_targets(const frame::PassContext& context) override;
     /// The frame's tables (ENGINE.md gain 2), into the frame slot's slice: the cloud shadows' table, the rain's block
     /// (rain_block), the haze's opacity by upright row and the vignette's squared distances by upright column and row,
     /// by shared/composite.slang's own arithmetic, so the shader reads what its arithmetic would give at each pixel.

@@ -352,60 +352,8 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     const vk::raii::Device& d = device.handle();
     auto s = std::make_unique<RippleLayer>();
     s->kept = keep_ripple_;
-    // the view's device px, the output's turned back: the fields' pixels
-    vk::Extent2D view = context.output.extent();
-    if (turned(context.output.transform())) std::swap(view.width, view.height);
-    s->extent = view;
-    using U = vk::ImageUsageFlagBits;
-    auto image = [&](vk::Format format, vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage,
-                     gpu::MemoryUse use) {
-        return device.memory().image({.imageType = vk::ImageType::e2D,
-                                      .format = format,
-                                      .extent = {.width = view.width, .height = view.height, .depth = 1},
-                                      .mipLevels = 1,
-                                      .arrayLayers = 1,
-                                      .samples = samples,
-                                      .tiling = vk::ImageTiling::eOptimal,
-                                      .usage = usage,
-                                      .initialLayout = vk::ImageLayout::eUndefined},
-                                     use);
-    };
-    // the samples and their depths in lazily allocated memory where the frame's are (no pages on a tiler), else, or
-    // where that fails, in ordinary memory
-    const bool lazy = context.pass.spec().config.lazy();
     const vk::Format colour = vk::Format::eR8G8B8A8Unorm;
     const vk::Format depth_format = context.pass.spec().depth_stencil;
-    auto transient = [&](vk::Format format, vk::ImageUsageFlags usage) -> gpu::Result<gpu::Image> {
-        auto made = image(format, vk::SampleCountFlagBits::e4, usage | U::eTransientAttachment,
-                          lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
-        if (!made && lazy) made = image(format, vk::SampleCountFlagBits::e4, usage, gpu::MemoryUse::gpu);
-        return made;
-    };
-    ATLAS_GPU_LET(samples, transient(colour, U::eColorAttachment));
-    s->samples = std::move(samples);
-    ATLAS_GPU_LET(depth, transient(depth_format, U::eDepthStencilAttachment));
-    s->depth = std::move(depth);
-    ATLAS_GPU_LET(layer, image(colour, vk::SampleCountFlagBits::e1,
-                               U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
-                               gpu::MemoryUse::gpu));
-    s->layer = std::move(layer);
-    auto view_of = [&](const gpu::Image& i, vk::Format format,
-                       vk::ImageAspectFlags aspect) -> gpu::Result<vk::raii::ImageView> {
-        ATLAS_VK_LET(v,
-                     d.createImageView({.image = i.handle(),
-                                        .viewType = vk::ImageViewType::e2D,
-                                        .format = format,
-                                        .subresourceRange = {.aspectMask = aspect, .levelCount = 1, .layerCount = 1}}),
-                     "the ripple's layer's view");
-        return std::move(v);
-    };
-    using Aspect = vk::ImageAspectFlagBits;
-    ATLAS_GPU_LET(samples_view, view_of(s->samples, colour, Aspect::eColor));
-    s->samples_view = std::move(samples_view);
-    ATLAS_GPU_LET(depth_view, view_of(s->depth, depth_format, Aspect::eDepth));
-    s->depth_view = std::move(depth_view);
-    ATLAS_GPU_LET(layer_view, view_of(s->layer, colour, Aspect::eColor));
-    s->layer_view = std::move(layer_view);
     // the layer's pass: the samples and their depths cleared and drawn, the samples resolved into the layer; record
     // moves the layer into the colour layout before it and out after it
     using L = vk::ImageLayout;
@@ -469,35 +417,6 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
                                      .pDependencies = dependencies.data()}),
                  "the ripple's layer's render pass");
     s->pass = std::move(pass);
-    const std::array<vk::ImageView, 3> views{*s->samples_view, *s->depth_view, *s->layer_view};
-    ATLAS_VK_LET(framebuffer,
-                 d.createFramebuffer({.renderPass = *s->pass,
-                                      .attachmentCount = static_cast<std::uint32_t>(views.size()),
-                                      .pAttachments = views.data(),
-                                      .width = view.width,
-                                      .height = view.height,
-                                      .layers = 1}),
-                 "the ripple's layer's framebuffer");
-    s->framebuffer = std::move(framebuffer);
-    // the filter's two buffers (readable where the tests keep them), and the kept layer's copy
-    using B = vk::BufferUsageFlagBits;
-    const vk::DeviceSize texels = vk::DeviceSize{view.width} * view.height * 4;
-    const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
-    for (gpu::Buffer& b : s->buffers) {
-        ATLAS_GPU_LET(made, device.memory().buffer(texels, B::eStorageBuffer, look));
-        b = std::move(made);
-    }
-    if (s->kept) {
-        ATLAS_GPU_LET(copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
-        s->layer_copy = std::move(copy);
-    }
-    // the composite reads both from the soft shadows' sets (the ground's set 3, the same two in each frame slot's)
-    for (const vk::raii::DescriptorSet& set : p.soft_sets) {
-        gpu::SetWriter(*set)
-            .buffer(3, vk::DescriptorType::eStorageBuffer, s->buffers[0].handle())
-            .buffer(4, vk::DescriptorType::eStorageBuffer, s->buffers[1].handle())
-            .apply(d);
-    }
     // the stages' set: the layer, a buffer to read and one to write, both ways
     constexpr auto in_compute = vk::ShaderStageFlagBits::eCompute;
     const std::array bindings{
@@ -509,14 +428,9 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     const std::array<std::span<const gpu::Binding>, 1> kinds{bindings};
     ATLAS_GPU_LET(pool, gpu::make_pool(d, kinds, static_cast<std::uint32_t>(s->sets.size())));
     s->pool = std::move(pool);
-    for (std::size_t i = 0; i < s->sets.size(); ++i) {
-        ATLAS_GPU_LET(set, gpu::allocate_set(d, s->pool, s->set_layout));
-        s->sets[i] = std::move(set);
-        gpu::SetWriter(*s->sets[i])
-            .image(0, vk::DescriptorType::eSampledImage, *s->layer_view, L::eShaderReadOnlyOptimal)
-            .buffer(1, vk::DescriptorType::eStorageBuffer, s->buffers[i].handle())
-            .buffer(2, vk::DescriptorType::eStorageBuffer, s->buffers[1 - i].handle())
-            .apply(d);
+    for (vk::raii::DescriptorSet& set : s->sets) {
+        ATLAS_GPU_LET(made, gpu::allocate_set(d, s->pool, s->set_layout));
+        set = std::move(made);
     }
     const std::array<vk::DescriptorSetLayout, 4> sets{
         context.layout.frame_set_layout(), context.layout.global_set_layout(), *p.set_layout, *s->set_layout};
@@ -558,7 +472,128 @@ gpu::Result<void> Ground::make_ripple(const frame::PassContext& context, Pipelin
     ATLAS_GPU_LET(draw, frame::make_pipeline(context, layer_draw, frame::Overdraw::none));
     s->draw = std::move(draw);
     p.ripple = std::move(s);
+    return make_ripple_targets(context, p);
+}
+
+gpu::Result<void> Ground::make_ripple_targets(const frame::PassContext& context, Pipelines& p) const {
+    const gpu::Device& device = context.device;
+    const vk::raii::Device& d = device.handle();
+    RippleLayer& s = *p.ripple;
+    // the view's device px, the output's turned back: the fields' pixels
+    vk::Extent2D view = context.output.extent();
+    if (turned(context.output.transform())) std::swap(view.width, view.height);
+    s.extent = view;
+    using U = vk::ImageUsageFlagBits;
+    auto image = [&](vk::Format format, vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage,
+                     gpu::MemoryUse use) {
+        return device.memory().image({.imageType = vk::ImageType::e2D,
+                                      .format = format,
+                                      .extent = {.width = view.width, .height = view.height, .depth = 1},
+                                      .mipLevels = 1,
+                                      .arrayLayers = 1,
+                                      .samples = samples,
+                                      .tiling = vk::ImageTiling::eOptimal,
+                                      .usage = usage,
+                                      .initialLayout = vk::ImageLayout::eUndefined},
+                                     use);
+    };
+    // the samples and their depths in lazily allocated memory where the frame's are (no pages on a tiler), else, or
+    // where that fails, in ordinary memory
+    const bool lazy = context.pass.spec().config.lazy();
+    const vk::Format colour = vk::Format::eR8G8B8A8Unorm;
+    const vk::Format depth_format = context.pass.spec().depth_stencil;
+    auto transient = [&](vk::Format format, vk::ImageUsageFlags usage) -> gpu::Result<gpu::Image> {
+        auto made = image(format, vk::SampleCountFlagBits::e4, usage | U::eTransientAttachment,
+                          lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
+        if (!made && lazy) made = image(format, vk::SampleCountFlagBits::e4, usage, gpu::MemoryUse::gpu);
+        return made;
+    };
+    ATLAS_GPU_LET(samples, transient(colour, U::eColorAttachment));
+    s.samples = std::move(samples);
+    ATLAS_GPU_LET(depth, transient(depth_format, U::eDepthStencilAttachment));
+    s.depth = std::move(depth);
+    ATLAS_GPU_LET(layer, image(colour, vk::SampleCountFlagBits::e1,
+                               U::eColorAttachment | U::eSampled | (s.kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
+                               gpu::MemoryUse::gpu));
+    s.layer = std::move(layer);
+    auto view_of = [&](const gpu::Image& i, vk::Format format,
+                       vk::ImageAspectFlags aspect) -> gpu::Result<vk::raii::ImageView> {
+        ATLAS_VK_LET(v,
+                     d.createImageView({.image = i.handle(),
+                                        .viewType = vk::ImageViewType::e2D,
+                                        .format = format,
+                                        .subresourceRange = {.aspectMask = aspect, .levelCount = 1, .layerCount = 1}}),
+                     "the ripple's layer's view");
+        return std::move(v);
+    };
+    using Aspect = vk::ImageAspectFlagBits;
+    ATLAS_GPU_LET(samples_view, view_of(s.samples, colour, Aspect::eColor));
+    s.samples_view = std::move(samples_view);
+    ATLAS_GPU_LET(depth_view, view_of(s.depth, depth_format, Aspect::eDepth));
+    s.depth_view = std::move(depth_view);
+    ATLAS_GPU_LET(layer_view, view_of(s.layer, colour, Aspect::eColor));
+    s.layer_view = std::move(layer_view);
+    using L = vk::ImageLayout;
+    const std::array<vk::ImageView, 3> views{*s.samples_view, *s.depth_view, *s.layer_view};
+    ATLAS_VK_LET(framebuffer,
+                 d.createFramebuffer({.renderPass = *s.pass,
+                                      .attachmentCount = static_cast<std::uint32_t>(views.size()),
+                                      .pAttachments = views.data(),
+                                      .width = view.width,
+                                      .height = view.height,
+                                      .layers = 1}),
+                 "the ripple's layer's framebuffer");
+    s.framebuffer = std::move(framebuffer);
+    // the filter's two buffers (readable where the tests keep them), and the kept layer's copy
+    using B = vk::BufferUsageFlagBits;
+    const vk::DeviceSize texels = vk::DeviceSize{view.width} * view.height * 4;
+    const gpu::MemoryUse look = s.kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
+    for (gpu::Buffer& b : s.buffers) {
+        ATLAS_GPU_LET(made, device.memory().buffer(texels, B::eStorageBuffer, look));
+        b = std::move(made);
+    }
+    if (s.kept) {
+        ATLAS_GPU_LET(copy, device.memory().buffer(texels, B::eTransferDst, gpu::MemoryUse::readback));
+        s.layer_copy = std::move(copy);
+    }
+    // the composite reads both from the soft shadows' sets (the ground's set 3, the same two in each frame slot's)
+    for (const vk::raii::DescriptorSet& set : p.soft_sets) {
+        gpu::SetWriter(*set)
+            .buffer(3, vk::DescriptorType::eStorageBuffer, s.buffers[0].handle())
+            .buffer(4, vk::DescriptorType::eStorageBuffer, s.buffers[1].handle())
+            .apply(d);
+    }
+    // the stages' sets: the layer, a buffer to read and one to write, both ways
+    for (std::size_t i = 0; i < s.sets.size(); ++i) {
+        gpu::SetWriter(*s.sets[i])
+            .image(0, vk::DescriptorType::eSampledImage, *s.layer_view, L::eShaderReadOnlyOptimal)
+            .buffer(1, vk::DescriptorType::eStorageBuffer, s.buffers[i].handle())
+            .buffer(2, vk::DescriptorType::eStorageBuffer, s.buffers[1 - i].handle())
+            .apply(d);
+    }
+    // no result yet
+    s.result = 0;
+    s.ran_fused = false;
+    s.out = {};
+    s.drawn = {};
     return {};
+}
+
+void release_ripple_targets(RippleLayer& s) noexcept {
+    s.framebuffer.clear();
+    s.layer_view.clear();
+    s.depth_view.clear();
+    s.samples_view.clear();
+    s.layer = {};
+    s.depth = {};
+    s.samples = {};
+    s.buffers = {};
+    s.layer_copy = {};
+    s.extent = {};
+    s.result = 0;
+    s.ran_fused = false;
+    s.out = {};
+    s.drawn = {};
 }
 
 void Ground::record_ripple_layer(const frame::Recording& r) {

@@ -381,47 +381,6 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     const vk::raii::Device& d = device.handle();
     auto s = std::make_unique<SoftShadows>();
     s->kept = keep_soft_;
-    // the mask: the view's device px (the output's, turned back) with the widest reach and a pixel around them
-    vk::Extent2D view = context.output.extent();
-    if (turned(context.output.transform())) std::swap(view.width, view.height);
-    const std::uint32_t reach = 3 * ((fx::box_size(widest_sigma) / 2) + 1);
-    const std::uint32_t margin = (2 * reach) + 4;
-    s->extent = {.width = view.width + margin, .height = view.height + margin};
-    s->stride = (s->extent.width + 3) / 4;
-    using U = vk::ImageUsageFlagBits;
-    auto image = [&](vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage, gpu::MemoryUse use) {
-        return device.memory().image({.imageType = vk::ImageType::e2D,
-                                      .format = vk::Format::eR8Unorm,
-                                      .extent = {.width = s->extent.width, .height = s->extent.height, .depth = 1},
-                                      .mipLevels = 1,
-                                      .arrayLayers = 1,
-                                      .samples = samples,
-                                      .tiling = vk::ImageTiling::eOptimal,
-                                      .usage = usage,
-                                      .initialLayout = vk::ImageLayout::eUndefined},
-                                     use);
-    };
-    // the samples in lazily allocated memory where the frame's are (no pages on a tiler), else, or where that fails
-    // for one channel, in ordinary memory
-    const bool lazy = context.pass.spec().config.lazy();
-    const vk::ImageUsageFlags transient = U::eColorAttachment | U::eTransientAttachment;
-    auto samples = image(vk::SampleCountFlagBits::e4, transient, lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
-    if (!samples && lazy) samples = image(vk::SampleCountFlagBits::e4, transient, gpu::MemoryUse::gpu);
-    if (!samples) return std::unexpected(samples.error());
-    s->samples = std::move(*samples);
-    auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
-        ATLAS_VK_LET(v,
-                     d.createImageView({.image = i.handle(),
-                                        .viewType = vk::ImageViewType::e2D,
-                                        .format = vk::Format::eR8Unorm,
-                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
-                                                             .levelCount = 1,
-                                                             .layerCount = 1}}),
-                     "the soft shadows' mask's view");
-        return std::move(v);
-    };
-    ATLAS_GPU_LET(samples_view, view_of(s->samples));
-    s->samples_view = std::move(samples_view);
     // the mask's pass: the 4x samples cleared and drawn, resolved into the frame slot's mask, which is cleared as the
     // pass begins too, so a tiler that leaves a tile without geometry unresolved leaves it empty, not as a frame two
     // back drew it (ENGINE.md's blocks under an overcast sky on the user's PowerVR: 32 px squares, PowerVR's tiles);
@@ -429,49 +388,6 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
     // colour layout before it and the mask out after it
     ATLAS_GPU_LET(pass, soft_mask_pass(d, true));
     s->pass = std::move(pass);
-    // each frame slot's mask (its framebuffer with the samples), grid (mapped: the CPU starts its box) and blur's
-    // texels (readable where the tests keep them), the kept mask's copy, and the slot's set 3
-    using B = vk::BufferUsageFlagBits;
-    const gpu::MemoryUse look = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
-    const gpu::MemoryUse mapped = s->kept ? gpu::MemoryUse::readback : gpu::MemoryUse::upload;
-    const vk::DeviceSize texels = vk::DeviceSize{s->stride} * 4 * s->extent.height;
-    for (std::size_t slot = 0; slot < s->slots.size(); ++slot) {
-        SoftShadowSlot& t = s->slots[slot];
-        ATLAS_GPU_LET(mask,
-                      image(vk::SampleCountFlagBits::e1,
-                            U::eColorAttachment | U::eSampled | (s->kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
-                            gpu::MemoryUse::gpu));
-        t.mask = std::move(mask);
-        ATLAS_GPU_LET(mask_view, view_of(t.mask));
-        t.mask_view = std::move(mask_view);
-        const std::array<vk::ImageView, 2> views{*s->samples_view, *t.mask_view};
-        ATLAS_VK_LET(framebuffer,
-                     d.createFramebuffer({.renderPass = *s->pass,
-                                          .attachmentCount = static_cast<std::uint32_t>(views.size()),
-                                          .pAttachments = views.data(),
-                                          .width = s->extent.width,
-                                          .height = s->extent.height,
-                                          .layers = 1}),
-                     "the soft shadows' mask's framebuffer");
-        t.framebuffer = std::move(framebuffer);
-        ATLAS_GPU_LET(grid, device.memory().buffer(grid_bytes, B::eStorageBuffer, mapped));
-        t.grid = std::move(grid);
-        ATLAS_GPU_LET(first, device.memory().buffer(texels, B::eStorageBuffer, look));
-        t.blurred[0] = std::move(first);
-        ATLAS_GPU_LET(second, device.memory().buffer(texels, B::eStorageBuffer, gpu::MemoryUse::gpu));
-        t.blurred[1] = std::move(second);
-        if (s->kept) {
-            ATLAS_GPU_LET(copy, device.memory().buffer(vk::DeviceSize{s->extent.width} * s->extent.height,
-                                                       B::eTransferDst, gpu::MemoryUse::readback));
-            t.mask_copy = std::move(copy);
-        }
-        gpu::SetWriter(*p.soft_sets[slot])
-            .buffer(0, vk::DescriptorType::eStorageBuffer, t.grid.handle())
-            .buffer(1, vk::DescriptorType::eStorageBuffer, t.blurred[0].handle())
-            .buffer(2, vk::DescriptorType::eStorageBuffer, t.grid.handle())
-            .apply(d);
-    }
-
     // the compute stages of the ground's module: its sets, its push constants for them
     const std::array<vk::DescriptorSetLayout, 4> sets{
         context.layout.frame_set_layout(), context.layout.global_set_layout(), *p.set_layout, *p.soft_set_layout};
@@ -518,6 +434,108 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
         for (std::size_t i = 0; i < blur_passes; ++i) {
             ATLAS_GPU_LET(set, gpu::allocate_set(d, s->blur_pool, s->blur_set_layout));
             t.blur_sets[i] = std::move(set);
+        }
+    }
+    const std::array<vk::DescriptorSetLayout, 1> blur_sets{*s->blur_set_layout};
+    ATLAS_GPU_LET(blur_layout, gpu::make_layout(d, blur_sets, sizeof(BlurPush), in_compute));
+    s->blur_layout = std::move(blur_layout);
+    ATLAS_GPU_LET(blur,
+                  compute("ground shadow blur", "ground_shadow_blur", *s->blur_module, "blur_cs", *s->blur_layout));
+    s->blur = std::move(blur);
+    p.soft = std::move(s);
+    return make_soft_targets(context, p);
+}
+
+gpu::Result<void> Ground::make_soft_targets(const frame::PassContext& context, Pipelines& p) const {
+    const gpu::Device& device = context.device;
+    const vk::raii::Device& d = device.handle();
+    SoftShadows& s = *p.soft;
+    // the mask: the view's device px (the output's, turned back) with the widest reach and a pixel around them
+    vk::Extent2D view = context.output.extent();
+    if (turned(context.output.transform())) std::swap(view.width, view.height);
+    const std::uint32_t reach = 3 * ((fx::box_size(widest_sigma) / 2) + 1);
+    const std::uint32_t margin = (2 * reach) + 4;
+    s.extent = {.width = view.width + margin, .height = view.height + margin};
+    s.stride = (s.extent.width + 3) / 4;
+    using U = vk::ImageUsageFlagBits;
+    auto image = [&](vk::SampleCountFlagBits samples, vk::ImageUsageFlags usage, gpu::MemoryUse use) {
+        return device.memory().image({.imageType = vk::ImageType::e2D,
+                                      .format = vk::Format::eR8Unorm,
+                                      .extent = {.width = s.extent.width, .height = s.extent.height, .depth = 1},
+                                      .mipLevels = 1,
+                                      .arrayLayers = 1,
+                                      .samples = samples,
+                                      .tiling = vk::ImageTiling::eOptimal,
+                                      .usage = usage,
+                                      .initialLayout = vk::ImageLayout::eUndefined},
+                                     use);
+    };
+    // the samples in lazily allocated memory where the frame's are (no pages on a tiler), else, or where that fails
+    // for one channel, in ordinary memory
+    const bool lazy = context.pass.spec().config.lazy();
+    const vk::ImageUsageFlags transient = U::eColorAttachment | U::eTransientAttachment;
+    auto samples = image(vk::SampleCountFlagBits::e4, transient, lazy ? gpu::MemoryUse::lazy : gpu::MemoryUse::gpu);
+    if (!samples && lazy) samples = image(vk::SampleCountFlagBits::e4, transient, gpu::MemoryUse::gpu);
+    if (!samples) return std::unexpected(samples.error());
+    s.samples = std::move(*samples);
+    auto view_of = [&](const gpu::Image& i) -> gpu::Result<vk::raii::ImageView> {
+        ATLAS_VK_LET(v,
+                     d.createImageView({.image = i.handle(),
+                                        .viewType = vk::ImageViewType::e2D,
+                                        .format = vk::Format::eR8Unorm,
+                                        .subresourceRange = {.aspectMask = vk::ImageAspectFlagBits::eColor,
+                                                             .levelCount = 1,
+                                                             .layerCount = 1}}),
+                     "the soft shadows' mask's view");
+        return std::move(v);
+    };
+    ATLAS_GPU_LET(samples_view, view_of(s.samples));
+    s.samples_view = std::move(samples_view);
+    // each frame slot's mask (its framebuffer with the samples), grid (mapped: the CPU starts its box) and blur's
+    // texels (readable where the tests keep them), the kept mask's copy, and the slot's set 3
+    using B = vk::BufferUsageFlagBits;
+    const gpu::MemoryUse look = s.kept ? gpu::MemoryUse::readback : gpu::MemoryUse::gpu;
+    const gpu::MemoryUse mapped = s.kept ? gpu::MemoryUse::readback : gpu::MemoryUse::upload;
+    const vk::DeviceSize texels = vk::DeviceSize{s.stride} * 4 * s.extent.height;
+    for (std::size_t slot = 0; slot < s.slots.size(); ++slot) {
+        SoftShadowSlot& t = s.slots[slot];
+        ATLAS_GPU_LET(mask,
+                      image(vk::SampleCountFlagBits::e1,
+                            U::eColorAttachment | U::eSampled | (s.kept ? U::eTransferSrc : vk::ImageUsageFlags{}),
+                            gpu::MemoryUse::gpu));
+        t.mask = std::move(mask);
+        ATLAS_GPU_LET(mask_view, view_of(t.mask));
+        t.mask_view = std::move(mask_view);
+        const std::array<vk::ImageView, 2> views{*s.samples_view, *t.mask_view};
+        ATLAS_VK_LET(framebuffer,
+                     d.createFramebuffer({.renderPass = *s.pass,
+                                          .attachmentCount = static_cast<std::uint32_t>(views.size()),
+                                          .pAttachments = views.data(),
+                                          .width = s.extent.width,
+                                          .height = s.extent.height,
+                                          .layers = 1}),
+                     "the soft shadows' mask's framebuffer");
+        t.framebuffer = std::move(framebuffer);
+        ATLAS_GPU_LET(grid, device.memory().buffer(grid_bytes, B::eStorageBuffer, mapped));
+        t.grid = std::move(grid);
+        ATLAS_GPU_LET(first, device.memory().buffer(texels, B::eStorageBuffer, look));
+        t.blurred[0] = std::move(first);
+        ATLAS_GPU_LET(second, device.memory().buffer(texels, B::eStorageBuffer, gpu::MemoryUse::gpu));
+        t.blurred[1] = std::move(second);
+        if (s.kept) {
+            ATLAS_GPU_LET(copy, device.memory().buffer(vk::DeviceSize{s.extent.width} * s.extent.height,
+                                                       B::eTransferDst, gpu::MemoryUse::readback));
+            t.mask_copy = std::move(copy);
+        }
+        gpu::SetWriter(*p.soft_sets[slot])
+            .buffer(0, vk::DescriptorType::eStorageBuffer, t.grid.handle())
+            .buffer(1, vk::DescriptorType::eStorageBuffer, t.blurred[0].handle())
+            .buffer(2, vk::DescriptorType::eStorageBuffer, t.grid.handle())
+            .apply(d);
+    }
+    // the blur's sets: the grid, the mask and a pass's two buffers, each entry's
+    for (SoftShadowSlot& t : s.slots) {
+        for (std::size_t i = 0; i < blur_passes; ++i) {
             // the first pass writes the first buffer, the second the other, the third the first again
             const std::size_t target = i % 2 == 0 ? 0 : 1;
             gpu::SetWriter(*t.blur_sets[i])
@@ -528,14 +546,28 @@ gpu::Result<void> Ground::make_soft_shadows(const frame::PassContext& context, P
                 .apply(d);
         }
     }
-    const std::array<vk::DescriptorSetLayout, 1> blur_sets{*s->blur_set_layout};
-    ATLAS_GPU_LET(blur_layout, gpu::make_layout(d, blur_sets, sizeof(BlurPush), in_compute));
-    s->blur_layout = std::move(blur_layout);
-    ATLAS_GPU_LET(blur,
-                  compute("ground shadow blur", "ground_shadow_blur", *s->blur_module, "blur_cs", *s->blur_layout));
-    s->blur = std::move(blur);
-    p.soft = std::move(s);
+    // no result yet: the first frame that draws them soft makes one, and each frame slot's set names its own entry
+    s.last = 0;
+    s.result = false;
+    s.bound = {0U, 1U};
     return {};
+}
+
+void release_soft_targets(SoftShadows& s) noexcept {
+    for (SoftShadowSlot& t : s.slots) {
+        t.framebuffer.clear();
+        t.mask_view.clear();
+        t.mask = {};
+        t.grid = {};
+        t.blurred = {};
+        t.mask_copy = {};
+    }
+    s.samples_view.clear();
+    s.samples = {};
+    s.extent = {};
+    s.stride = 0;
+    s.last = 0;
+    s.result = false;
 }
 
 void Ground::key_shadow_mask(const std::vector<std::uint32_t>& words, const frame::FrameState& state) {
