@@ -4741,98 +4741,106 @@ TEST_CASE("the sun's scenes keep each tile's part from one scene to the next: ov
     (void)session->take_messages();
 }
 
-TEST_CASE("the sun's stale runs stop for the newer scene: stepping across the canal ring as each step's scene is "
-          "asked, runs a newer scene made stale stop and the newer runs leave out what they made; at rest, every "
-          "drawn tile's bits are those of runs let end, word for word") {
+TEST_CASE("the sun's stale runs stop for the newer request: a named moment's run under way as the moment changes "
+          "finishes the tile it began and begins no other, and at rest every drawn tile's bits are those of runs let "
+          "end, word for word") {
+    // As the sun left out under a run (above): a named moment's run on one thread over the Westerkerk's three tiles,
+    // each kept on disk as it is done, so that the test sees it under way. The moment changes then (another sun, so
+    // another bucket), and the run under way is stale. Each world has a disk cache of its own, so that neither reads
+    // the other's tiles. (The canal ring's bundled pack makes its runs in milliseconds: none is ever under way as the
+    // next scene comes.)
     const std::string dir = environment("ATLAS_TILES_DIR");
-    const std::filesystem::path path = std::filesystem::path(dir) / "grachten.atlas";
+    const std::filesystem::path westerkerk = std::filesystem::path(dir) / "amsterdam.atlas";
     if (dir.empty()) {
-        MESSAGE("ATLAS_TILES_DIR is not set: the sun's stale runs are not checked over the bundled packs here");
+        MESSAGE("ATLAS_TILES_DIR has no Westerkerk's pack: the sun's stale runs are not checked here");
         return;
     }
     // set, the folder must hold the pack (CI sets it only where it does): one missing fails, not skips
-    ATLAS_REQUIRE(std::filesystem::exists(path), "ATLAS_TILES_DIR has no " << path.string());
+    ATLAS_REQUIRE(std::filesystem::exists(westerkerk), "ATLAS_TILES_DIR has no " << westerkerk.string());
     auto session = test::open_session();
     if (!session) return;
     auto cache = gpu::PipelineCache::open(session->device->handle(), session->device->facts(), {}, 0, false);
     ATLAS_REQUIRE(cache.has_value(), cache.error().text());
-    // The kept parts' steps (straight down from 300 m, northward across the canal ring in steps of 250 m), from the
-    // first at rest. Each next step is taken as soon as the sun has asked for its scene, its runs not waited for: a
-    // run under way is stale once the next scene is asked.
-    const auto above = [](int step) {
-        style::CameraState c = home();
-        c.latitude = 52.3660 + (step * (250.0 / 111250.0));
-        c.longitude = 4.8880;
-        c.bearing = 0.0;
-        c.pitch = 0.0;
-        c.distance = 300.0;
-        return c;
-    };
-    constexpr int steps = 6;
     struct Bits {
         std::vector<std::uint64_t> words;
         std::uint32_t count = 0;
         std::uint32_t windows_from = 0;
         std::uint32_t crowns_from = 0;
         bool windows = false;
+        std::uint64_t bucket = 0;
         std::uint64_t context = 0;
         std::size_t quays = 0;
         bool operator==(const Bits&) const = default;
     };
     struct Run {
-        std::map<std::uint64_t, Bits> at_rest; // the last step's drawn tiles' bits, at rest, by packed key
-        scene::SunStats stats;                 // once the last step's runs are done
-        double last_ms = 0;                    // from the last step's scene asked to the sun at rest
-        int frames = 0;                        // the steps' frames
+        bool caught = false;                   // the first moment's run seen under way: a tile done, none published
+        std::size_t done = 0;                  // its tiles done then
+        std::size_t asked = 0;                 // its tiles
+        double rest_ms = 0;                    // from the newer moment's frame to the sun at rest
+        scene::SunStats stats;                 // then
+        std::map<std::uint64_t, Bits> at_rest; // the drawn tiles' bits at rest, by packed key
     };
     const auto since = [](std::chrono::steady_clock::time_point from) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - from).count();
     };
     // (filling `out`: a failed ATLAS_REQUIRE returns from the lambda)
-    const auto run = [&](bool stop, Run& out) {
+    const auto run = [&](bool stop, const style::ThemeBlock& first, const style::ThemeBlock& then, Run& out) {
         std::vector<std::unique_ptr<frame::Pass>> passes;
         passes.push_back(std::make_unique<BuildProbe>());
         auto builder = frame::FrameBuilder::create(*session->device, *cache, std::move(passes));
         ATLAS_REQUIRE(builder.has_value(), builder.error().text());
-        std::atomic<double> now{0}; // the world's clock, read on its workers' threads too
-        auto world = scene::World::create(*session->device, (*builder)->passes(),
-                                          {.workers = 3, .clock = [&now] { return now.load(); }});
+        const std::filesystem::path disk =
+            std::filesystem::path(ATLAS_TEST_SCRATCH) / (stop ? "sun-stale-stopped" : "sun-stale-let-end");
+        std::error_code ignored;
+        std::filesystem::remove_all(disk, ignored);
+        std::atomic<double> now{0};
+        auto world = scene::World::create(
+            *session->device, (*builder)->passes(),
+            {.workers = 3, .sun = {.threads = 1, .cache_dir = disk.string()}, .clock = [&now] { return now.load(); }});
         ATLAS_REQUIRE(world.has_value(), world.error().text());
         scene::World& w = **world;
-        auto added = w.store().add({.id = "grachten", .kind = tiles::PackKind::bundled, .path = path.string()});
+        auto added = w.store().add({.id = "amsterdam", .kind = tiles::PackKind::bundled, .path = westerkerk.string()});
         ATLAS_REQUIRE(added.has_value(), tiles::describe(added.error()));
+        ATLAS_REQUIRE(w.sun() != nullptr);
+        w.sun()->stop_stale(stop);
+        const auto files = [&disk] {
+            std::error_code ec;
+            std::size_t count = 0;
+            for (auto it = std::filesystem::directory_iterator(disk, ec);
+                 !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+                ++count;
+            }
+            return count;
+        };
+        style::CameraState c = home();
+        c.distance = 1500.0; // the pack's three tiles in view: a run of several tiles
         std::uint64_t n = 0;
-        const auto frame = [&](const style::CameraState& camera) {
-            (*builder)->set_inputs({.camera = camera, .scene = &w});
-            now = static_cast<double>(++n) * 0.016;
+        const auto frame = [&](const style::ThemeBlock& theme) {
+            (*builder)->set_inputs({.camera = c, .theme = theme, .scene = &w});
+            ++n;
+            now = now.load() + 0.016;
             ATLAS_REQUIRE((*builder)->derive(n, 0, nullptr));
             w.update((*builder)->state());
-            if (w.sun() != nullptr) w.sun()->stop_stale(stop);
             w.residency().wait_idle();
         };
-        const auto settle = [&](const style::CameraState& camera) {
-            for (int i = 0; i < 20; ++i) {
-                frame(camera);
-                if (w.sun() != nullptr) w.sun()->wait_idle();
-            }
-            frame(camera);
-        };
-        settle(above(0));
-        REQUIRE(w.sun() != nullptr);
-        auto asked = std::chrono::steady_clock::now();
-        for (int s = 1; s < steps; ++s) {
-            const std::uint64_t scenes = w.sun()->stats().scenes;
-            for (int i = 0; i < 40 && w.sun()->stats().scenes == scenes; ++i) {
-                frame(above(s));
-                ++out.frames;
-            }
-            CHECK_MESSAGE(w.sun()->stats().scenes > scenes, "step " << s << ": no scene asked in 40 frames");
-            asked = std::chrono::steady_clock::now();
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+        while (files() == 0 && w.sun()->bits().size() == 0 && std::chrono::steady_clock::now() < until) {
+            frame(first);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        out.asked = w.sun()->stats().resident;
+        out.done = files();
+        out.caught = out.done > 0 && out.done < out.asked && w.sun()->bits().size() == 0;
+        const auto asked = std::chrono::steady_clock::now();
+        frame(then); // the newer moment: its scene asked, the run under way stale
         w.sun()->wait_idle();
-        out.last_ms = since(asked);
+        out.rest_ms = since(asked);
         out.stats = w.sun()->stats();
-        settle(above(steps - 1));
+        for (int k = 0; k < 4; ++k) {
+            frame(then);
+            w.sun()->wait_idle();
+        }
+        frame(then);
         for (const scene::CoverTile& t : w.cover()->tiles()) {
             if (t.drawn->key.z != t.key.z) continue; // a stand-in ancestor has no bits
             const auto v = w.sun()->bits().view(t.key, now);
@@ -4843,6 +4851,7 @@ TEST_CASE("the sun's stale runs stop for the newer scene: stepping across the ca
                                            .windows_from = b.windows_from,
                                            .crowns_from = b.crowns_from,
                                            .windows = b.windows,
+                                           .bucket = b.bucket,
                                            .context = b.context,
                                            .quays = b.quays ? b.quays->size() : 0};
         }
@@ -4850,36 +4859,57 @@ TEST_CASE("the sun's stale runs stop for the newer scene: stepping across the ca
         CHECK(out.at_rest.size() ==
               static_cast<std::size_t>(std::ranges::count_if(
                   w.cover()->tiles(), [](const scene::CoverTile& t) { return t.drawn->key.z == t.key.z; })));
+        std::filesystem::remove_all(disk, ignored);
     };
 
+    // Each try two named moments of their own (a low sun: long marches), until the first's run is seen under way and
+    // stopped for the second's.
     Run stopped;
+    style::ThemeBlock first;
+    style::ThemeBlock then;
+    int attempt = 0;
+    for (; attempt < 6; ++attempt) {
+        first = sun_at(200.0 + (7.0 * attempt), 9.0);
+        then = sun_at(203.0 + (7.0 * attempt), 9.0);
+        first.moment = then.moment = style::MomentName::sunny;
+        stopped = {};
+        run(true, first, then, stopped);
+        if (stopped.caught && stopped.stats.stale.stopped > 0) break;
+    }
+    REQUIRE_MESSAGE(attempt < 6, "no run was seen under way and stopped as the moment changed");
     Run ended;
-    run(true, stopped);
-    run(false, ended);
+    run(false, first, then, ended);
+    // Stopped: it began at most the rest of its tile under way once told (on one thread, P - 1 + 1 pieces, P a tile's
+    // pieces), and dropped none. Let end, none was stopped.
+    std::uint64_t most = 0; // the most pieces of a tile
+    for (const auto& [key, bits] : stopped.at_rest) {
+        most = std::max<std::uint64_t>(most, (std::uint64_t{bits.count} + sun::piece_samples - 1) / sun::piece_samples);
+    }
+    const sun::StaleStats& st = stopped.stats.stale;
+    CHECK(st.late <= most);
+    CHECK(st.dropped == 0);
+    CHECK(ended.stats.stale.stopped == 0);
+    CHECK(ended.stats.stale.late == 0);
+    // at rest the same bits, word for word, whether the stale run stopped or went to its end
     CHECK(!ended.at_rest.empty());
     CHECK(stopped.at_rest.size() == ended.at_rest.size());
     for (const auto& [key, bits] : ended.at_rest) {
         const auto it = stopped.at_rest.find(key);
         const tiles::TileKey k = tiles::TileKey::unpack(key);
         CHECK_MESSAGE(it != stopped.at_rest.end(),
-                      std::format("{}/{}/{} has no bits with stale runs stopped", k.z, k.x, k.y));
+                      std::format("{}/{}/{} has no bits with the stale run stopped", k.z, k.x, k.y));
         if (it == stopped.at_rest.end()) continue;
         CHECK_MESSAGE(it->second == bits,
                       std::format("{}/{}/{}'s bits differ from those of runs let end", k.z, k.x, k.y));
     }
-    // runs were made stale and stopped, their tiles left out of the newer runs; let end, none was
-    const sun::StaleStats& st = stopped.stats.stale;
-    CHECK(st.stopped > 0);
-    CHECK(ended.stats.stale.stopped == 0);
-    CHECK(ended.stats.stale.left_out == 0);
     MESSAGE(std::format(
-        "{} steps, {} drawn tiles' bits equal at rest. Stopped: {} frames, {} scenes, {} runs ({:.0f} ms, {} tiles), "
-        "{} stopped (the longest wait {:.0f} ms, {} pieces begun once told, {} dropped), {} tiles left out; the last "
-        "scene at rest {:.0f} ms after it was asked. Let end: {} frames, {} scenes, {} runs ({:.0f} ms, {} tiles), the "
-        "longest wait {:.0f} ms; the last scene at rest {:.0f} ms after it was asked",
-        steps, ended.at_rest.size(), stopped.frames, stopped.stats.scenes, stopped.stats.runs, stopped.stats.runs_ms,
-        stopped.stats.run_tiles, st.stopped, st.newer_wait_ms, st.late, st.dropped, st.left_out, stopped.last_ms,
-        ended.frames, ended.stats.scenes, ended.stats.runs, ended.stats.runs_ms, ended.stats.run_tiles,
-        ended.stats.stale.newer_wait_ms, ended.last_ms));
+        "try {}: {} of the run's {} tiles done as the moment changed; {} drawn tiles' bits equal at rest (a tile at "
+        "most {} pieces). Stopped: {} runs ({:.0f} ms, {} tiles), {} stopped, the newer request waited {:.0f} ms, {} "
+        "pieces begun once told, {} dropped; at rest {:.0f} ms after the newer moment's frame. Let end: {} of {} done "
+        "then, {} runs ({:.0f} ms, {} tiles), the newer request waited {:.0f} ms; at rest {:.0f} ms after it",
+        attempt, stopped.done, stopped.asked, ended.at_rest.size(), most, stopped.stats.runs, stopped.stats.runs_ms,
+        stopped.stats.run_tiles, st.stopped, st.newer_wait_ms, st.late, st.dropped, stopped.rest_ms, ended.done,
+        ended.asked, ended.stats.runs, ended.stats.runs_ms, ended.stats.run_tiles, ended.stats.stale.newer_wait_ms,
+        ended.rest_ms));
     (void)session->take_messages();
 }
