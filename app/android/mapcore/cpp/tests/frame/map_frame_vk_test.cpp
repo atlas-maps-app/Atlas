@@ -2156,11 +2156,11 @@ TEST_CASE("a window gone and given again with the same formats takes a resize's 
         shown = give(size);
         ATLAS_REQUIRE(shown != nullptr, why);
         none_made(before, counts_of(guard), 2);
-        MESSAGE(std::format("{}: the window gone at {}x{} and another given at {}x{}: {} modules and {} pipelines "
-                            "made before, none since; {} pixels apart from the session made at that size; graphics "
-                            "{:.1f} MB drawing, {:.1f} MB with the window gone",
-                            moment, size.width, size.height, wider.width, wider.height, before.modules,
-                            before.pipelines, apart, drawing_mb, gone_mb));
+        FAIL_CHECK(std::format("{}: the window gone at {}x{} and another given at {}x{}: {} modules and {} pipelines "
+                               "made before, none since; {} pixels apart from the session made at that size; graphics "
+                               "{:.1f} MB drawing, {:.1f} MB with the window gone",
+                               moment, size.width, size.height, wider.width, wider.height, before.modules,
+                               before.pipelines, apart, drawing_mb, gone_mb));
     }
     // What the kept frame holds: the graphics memory with the window gone, the frame kept and without it (let go of as
     // the map is drawn for another host, Session::map, its data staying).
@@ -2171,8 +2171,8 @@ TEST_CASE("a window gone and given again with the same formats takes a resize's 
     CHECK(counts_of(guard).frames == last.frames + 1);
     const double without_mb = graphics_mb(session.stats());
     CHECK(without_mb <= with_mb);
-    MESSAGE(std::format("the window gone: graphics {:.1f} MB with the frame kept, {:.1f} MB without it", with_mb,
-                        without_mb));
+    FAIL_CHECK(std::format("the window gone: graphics {:.1f} MB with the frame kept, {:.1f} MB without it", with_mb,
+                           without_mb));
     const std::vector<std::string> messages = started->instance->messages().take();
     CHECK_MESSAGE(messages.empty(), (messages.empty() ? std::string() : messages.front()));
     session.close();

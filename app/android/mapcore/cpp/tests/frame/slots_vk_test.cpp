@@ -392,12 +392,13 @@ TEST_CASE("a resize with a frame in flight: to another size with the same format
     const vk::DeviceSize gone = device.memory().allocated();
     CHECK(watch.released("frame") == frames_back + 1);
     for (const std::string& m : session->take_messages()) CHECK_MESSAGE(false, m);
-    MESSAGE(std::format("the window gone with a frame in flight at {}x{} and another given at {}x{}: {} modules and {} "
-                        "pipelines made before, none since; graphics memory: the frame's targets {:.1f} MB at {}x{}, "
-                        "the rest it kept without a window {:.1f} MB",
-                        home.width_px, home.height_px, side.width_px, side.height_px, modules_back, pipelines_back,
-                        static_cast<double>(drawing - kept) / 1e6, home.width_px, home.height_px,
-                        static_cast<double>(kept_again - gone) / 1e6));
+    FAIL_CHECK(
+        std::format("the window gone with a frame in flight at {}x{} and another given at {}x{}: {} modules and {} "
+                    "pipelines made before, none since; graphics memory: the frame's targets {:.1f} MB at {}x{}, "
+                    "the rest it kept without a window {:.1f} MB",
+                    home.width_px, home.height_px, side.width_px, side.height_px, modules_back, pipelines_back,
+                    static_cast<double>(drawing - kept) / 1e6, home.width_px, home.height_px,
+                    static_cast<double>(kept_again - gone) / 1e6));
 }
 
 #endif
