@@ -4865,13 +4865,14 @@ TEST_CASE("the sun's stale runs stop for the newer request: a named moment's run
     // Each try two named moments of their own (a low sun: long marches), until the first's run is seen under way and
     // stopped for the second's.
     Run stopped;
-    style::ThemeBlock first;
-    style::ThemeBlock then;
+    style::ThemeBlock first{};
+    style::ThemeBlock then{};
     int attempt = 0;
     for (; attempt < 6; ++attempt) {
         first = sun_at(200.0 + (7.0 * attempt), 9.0);
         then = sun_at(203.0 + (7.0 * attempt), 9.0);
-        first.moment = then.moment = style::MomentName::sunny;
+        first.moment = style::MomentName::sunny;
+        then.moment = style::MomentName::sunny;
         stopped = {};
         run(true, first, then, stopped);
         if (stopped.caught && stopped.stats.stale.stopped > 0) break;
