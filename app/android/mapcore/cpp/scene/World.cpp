@@ -1356,15 +1356,17 @@ std::string World::tiles_line() const {
                         static_cast<double>(planned_triangles_) / 1.0e6,
                         static_cast<double>(options_.triangle_budget) / 1.0e6);
     // the sun (off while it or every part that reads its bits is left out: ENGINE.md's parts): its scenes and runs so
-    // far with their own milliseconds, the tiles their buckets computed, and the texels the last frame wrote; the
+    // far with their own milliseconds, the tiles their buckets computed, the runs a newer request stopped with the
+    // longest it waited and the tiles left out as runs were taken, and the texels the last frame wrote; the
     // scenes kept as built with tiles of their halo made whole, and the tallest solids' working out (its milliseconds
     // and the tiles it decoded)
     if (sun_) {
         const SunStats s = sun_->stats();
-        line += std::format(" sun {} scenes {} {:.0f} ms runs {} {:.0f} ms tiles {} texels {} wholes {} {:.0f} ms "
-                            "maxh {:.0f} ms decoded {}",
-                            s.on ? "on" : "off", s.scenes, s.scenes_ms, s.runs, s.runs_ms, s.run_tiles, s.texels,
-                            s.wholes, s.wholes_ms, s.maxh_ms, s.maxh_tiles);
+        line += std::format(" sun {} scenes {} {:.0f} ms runs {} {:.0f} ms tiles {} stopped {} {:.0f} ms left out {} "
+                            "texels {} wholes {} {:.0f} ms maxh {:.0f} ms decoded {}",
+                            s.on ? "on" : "off", s.scenes, s.scenes_ms, s.runs, s.runs_ms, s.run_tiles, s.stale.stopped,
+                            s.stale.newer_wait_ms, s.stale.left_out, s.texels, s.wholes, s.wholes_ms, s.maxh_ms,
+                            s.maxh_tiles);
     }
     if (const WorldFrame* w = world_frame(); w != nullptr) {
         unsigned finest = 0;

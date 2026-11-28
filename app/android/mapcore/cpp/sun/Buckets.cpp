@@ -33,9 +33,7 @@ namespace {
 namespace pm = atlas::pymath;
 namespace fs = std::filesystem;
 
-/// Samples a worker takes at once: large enough that taking one costs nothing, small enough that four threads share
-/// a tile.
-constexpr std::uint32_t piece = 4096;
+constexpr std::uint32_t piece = piece_samples;
 
 [[nodiscard]] std::uint64_t bits_of(double v) noexcept { return std::bit_cast<std::uint64_t>(v); }
 
@@ -238,8 +236,9 @@ std::vector<TileJob> nearest_first(const Scene& scene, const tiles::Frame& frame
     return jobs;
 }
 
-void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs, unsigned threads,
-         const std::function<void(std::uint32_t tile, TileBits bits)>& done, const std::atomic<bool>* stop) {
+RunEnd run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs, unsigned threads,
+           const std::function<void(std::uint32_t tile, TileBits bits)>& done, const std::atomic<bool>* stop,
+           const std::atomic<bool>* wind_up) {
     struct Piece {
         std::uint32_t job;
         std::uint32_t from;
@@ -247,6 +246,7 @@ void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs
     };
     std::vector<Piece> pieces;
     std::vector<TileBits> bits(jobs.size());
+    std::vector<std::size_t> after(jobs.size()); // where each job's pieces end
     const auto left = std::make_unique<std::atomic<std::uint32_t>[]>(jobs.size());
     for (std::size_t j = 0; j < jobs.size(); ++j) {
         const TileSamples& s = scene.tiles()[jobs[j].tile].samples;
@@ -264,15 +264,32 @@ void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs
             pieces.push_back({static_cast<std::uint32_t>(j), from, std::min(end, from + piece)});
             ++n;
         }
+        after[j] = pieces.size();
         left[j].store(n, std::memory_order_relaxed);
         if (n == 0) done(jobs[j].tile, std::move(b));
     }
     std::atomic<std::size_t> next{0};
+    // No piece from `until` on is evaluated. Wound up, it falls to the end of the tile of the last piece taken (a
+    // tile's pieces are taken in order), so that every tile begun is finished and no other begins. It never rises, so
+    // a tile it leaves in is evaluated whole; a piece taken just as it falls, the next tile's first, may be evaluated
+    // still, its words dropped with that tile's.
+    std::atomic<std::size_t> until{pieces.size()};
+    std::atomic<std::uint64_t> late{0};
     const auto work = [&] {
+        bool told = false;
         for (;;) {
             if (stop != nullptr && stop->load(std::memory_order_relaxed)) return;
+            if (wind_up != nullptr && wind_up->load(std::memory_order_relaxed)) {
+                told = true;
+                const std::size_t taken = std::min(next.load(std::memory_order_relaxed), pieces.size());
+                const std::size_t cut = taken == 0 ? 0 : after[pieces[taken - 1].job];
+                std::size_t u = until.load(std::memory_order_relaxed);
+                while (cut < u && !until.compare_exchange_weak(u, cut, std::memory_order_relaxed)) {
+                }
+            }
             const std::size_t p = next.fetch_add(1, std::memory_order_relaxed);
-            if (p >= pieces.size()) return;
+            if (p >= until.load(std::memory_order_relaxed)) return;
+            if (told) late.fetch_add(1, std::memory_order_relaxed);
             const Piece& pc = pieces[p];
             const std::uint32_t t = jobs[pc.job].tile;
             evaluate(scene.grid(), scene.base(t), scene.tiles()[t].samples, bucket.sun, pc.from, pc.to,
@@ -298,6 +315,17 @@ void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs
         }
         work();
     } // the helpers join here
+    RunEnd end{.late = late.load(std::memory_order_relaxed)};
+    for (std::size_t j = 0; j < jobs.size(); ++j) {
+        const std::size_t n = after[j] - (j == 0 ? 0 : after[j - 1]);
+        if (const std::uint32_t l = left[j].load(std::memory_order_relaxed); l > 0) end.dropped += n - l;
+    }
+    return end;
+}
+
+bool bits_there(const BitTiles& bits, const Scene& scene, const TileJob& j, std::uint64_t bucket, double t) {
+    const auto v = bits.view(scene.tiles()[j.tile].key, t);
+    return v && v->now->bucket == bucket && (!j.windows || v->now->windows) && v->now->context == scene.context(j.tile);
 }
 
 DiskCache::DiskCache(std::string dir, std::uint64_t budget) : dir_(std::move(dir)), budget_(budget) {
@@ -612,10 +640,14 @@ void Worker::request(std::shared_ptr<const Scene> scene, const Bucket& bucket, s
                      unsigned threads) {
     {
         const std::lock_guard lock(mutex_);
+        const bool stops = busy_ && stop_stale_.load(std::memory_order_relaxed);
         next_ = Request{.scene = std::move(scene),
                         .bucket = bucket,
                         .jobs = std::move(jobs),
-                        .threads = threads == 0 ? threads_ : std::min(threads, threads_)};
+                        .threads = threads == 0 ? threads_ : std::min(threads, threads_),
+                        .after_run = stops};
+        if (busy_ && !newer_) newer_ = std::chrono::steady_clock::now();
+        if (stops) stale_.store(true, std::memory_order_relaxed);
     }
     wake_.notify_one();
 }
@@ -651,6 +683,11 @@ std::uint64_t Worker::cached() const {
     return cached_;
 }
 
+StaleStats Worker::stale() const {
+    const std::lock_guard lock(mutex_);
+    return stale_stats_;
+}
+
 void Worker::loop(const std::stop_token& stop) {
 #if defined(__ANDROID__)
     // Named, as the tiles' workers and the render thread are (atlas-tiles, atlas-render): made on the render thread,
@@ -668,8 +705,18 @@ void Worker::loop(const std::stop_token& stop) {
         Request r = std::move(*taken);
         busy_ = true;
         cancelled_.store(false, std::memory_order_relaxed);
+        stale_.store(false, std::memory_order_relaxed);
+        newer_.reset();
         const auto started = std::chrono::steady_clock::now();
         lock.unlock();
+        // Asked while the run before was under way: the tiles that run made since (a stale run's, its last ones
+        // among them) are there, for this bucket and against what this scene holds near them, and are not made again.
+        std::uint64_t left_out = 0;
+        if (r.after_run) {
+            const double t = clock_();
+            left_out = std::erase_if(r.jobs,
+                                     [&](const TileJob& j) { return bits_there(bits_, *r.scene, j, r.bucket.key, t); });
+        }
         std::uint64_t from_disk = 0;
         std::vector<TileJob> jobs;
         jobs.reserve(r.jobs.size());
@@ -694,7 +741,7 @@ void Worker::loop(const std::stop_token& stop) {
             }
             jobs.push_back(j);
         }
-        run(
+        const RunEnd end = run(
             *r.scene, r.bucket, jobs, r.threads,
             [&](std::uint32_t tile, TileBits bits) {
                 const SunTile& t = r.scene->tiles()[tile];
@@ -708,16 +755,30 @@ void Worker::loop(const std::stop_token& stop) {
                 const std::scoped_lock held(made_mutex);
                 made.emplace_back(t.key, std::move(bits));
             },
-            &cancelled_);
+            &cancelled_, &stale_);
         const std::size_t computed = made.size() - from_disk;
+        const bool short_of = made.size() < r.jobs.size();
         lock.lock();
         // published under the lock, so that once cancel has returned no bits of the run it stopped come
-        if (!cancelled_.load(std::memory_order_relaxed)) bits_.publish(std::move(made), clock_());
+        const bool cancelled = cancelled_.load(std::memory_order_relaxed);
+        if (!cancelled) bits_.publish(std::move(made), clock_());
         busy_ = false;
+        const auto ended = std::chrono::steady_clock::now();
         ++runs_;
         cached_ += from_disk;
-        run_ms_ += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        run_ms_ += std::chrono::duration<double, std::milli>(ended - started).count();
         run_tiles_ += computed;
+        StaleStats& st = stale_stats_;
+        st.left_out += left_out;
+        if (!cancelled && stale_.load(std::memory_order_relaxed)) {
+            st.stopped += short_of ? 1 : 0;
+            st.late += end.late;
+            st.dropped += end.dropped;
+        }
+        if (newer_) {
+            st.newer_wait_ms =
+                std::max(st.newer_wait_ms, std::chrono::duration<double, std::milli>(ended - *newer_).count());
+        }
         idle_.notify_all();
     }
 }

@@ -120,6 +120,9 @@ struct SunStats {
     /// publication) and the tiles their buckets computed.
     double runs_ms = 0;
     std::uint64_t run_tiles = 0;
+    /// What every lane's stale runs did (sun::Worker::stale): their counts summed, the longest wait the most of every
+    /// lane's.
+    sun::StaleStats stale;
     /// Whether the sun works (the last frame's parts: style::camera_part::sun_works).
     bool on = true;
 };
@@ -172,6 +175,11 @@ public:
     /// The tests' switch: every scene built whole, no tile's part taken from the scene before (the base its kept parts
     /// are held to).
     void keep_parts(bool keep) noexcept { keep_parts_.store(keep, std::memory_order_relaxed); }
+    /// The tests' switch: off, every lane's run under way goes to its end whatever is asked after it
+    /// (sun::Worker::stop_stale).
+    void stop_stale(bool on) noexcept {
+        for (Lane& l : lanes_) l.worker->stop_stale(on);
+    }
 #endif
     /// A lane's role this frame: the active pack's, the coarser pack's, a neighbour's.
     enum class LaneOf : std::uint8_t { active = 0, coarser = 1, neighbour = 2 };

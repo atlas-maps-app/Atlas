@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -171,11 +172,33 @@ struct TileJob {
 [[nodiscard]] std::vector<TileJob> nearest_first(const Scene& scene, const tiles::Frame& frame, double cx, double cz,
                                                  std::span<const std::uint8_t> visible, double window_reach);
 
-/// A bucket over `jobs`, in their order, on `threads` threads (the caller among them): pieces of up to 4,096 samples
-/// taken in turn, each tile's bits handed to `done` (on whichever thread completed it) as soon as all its pieces are.
-/// Once `stop` (null: never) is set, no piece begins: the tiles not done by then are never handed on.
-void run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs, unsigned threads,
-         const std::function<void(std::uint32_t tile, TileBits bits)>& done, const std::atomic<bool>* stop = nullptr);
+/// The most samples of one tile a thread of a run evaluates at once (a piece): large enough that taking one costs
+/// nothing, small enough that four threads share a tile.
+inline constexpr std::uint32_t piece_samples = 4096;
+
+/// What a run did once told to end: the pieces its threads began after they saw `wind_up`, and the pieces it evaluated
+/// of tiles it never finished (their words dropped with them).
+struct RunEnd {
+    std::uint64_t late = 0;
+    std::uint64_t dropped = 0;
+};
+
+/// A bucket over `jobs`, in their order, on `threads` threads (the caller among them): pieces of up to piece_samples
+/// samples taken in turn, each tile's bits handed to `done` (on whichever thread completed it) as soon as all its
+/// pieces are.
+/// - Once `stop` (null: never) is set, no piece begins: the tiles not done by then are never handed on.
+/// - Once `wind_up` (null: never) is set, no tile begins: the tiles begun by then are finished and handed on, the
+///   others never are. So its threads begin at most P - 1 pieces more, P a tile's pieces (the rest of the tile being
+///   taken), and one each (the next tile's first, taken as they are told), dropped.
+RunEnd run(const Scene& scene, const Bucket& bucket, std::span<const TileJob> jobs, unsigned threads,
+           const std::function<void(std::uint32_t tile, TileBits bits)>& done, const std::atomic<bool>* stop = nullptr,
+           const std::atomic<bool>* wind_up = nullptr);
+
+/// Whether `bits` holds tile `j`'s bits for the bucket `bucket` (its key) made against what `scene` holds near it
+/// (Scene::context), its window group among them where `j` asks for it: a run need not make them again. `t` is the
+/// frame's time, for the view.
+[[nodiscard]] bool bits_there(const BitTiles& bits, const Scene& scene, const TileJob& j, std::uint64_t bucket,
+                              double t);
 
 /// Named moments' buckets kept per tile on disk (`<dir>/<key>.sun`, the key a hash of the chunk's SHA-256, the level,
 /// the samples' format and the sun's bits), at most `budget` bytes, the oldest dropped first.
@@ -235,6 +258,17 @@ inline constexpr std::uint64_t bundled_check_expected = 0x538B'B90B'B4F0'7E41ULL
 /// sun_line for the pack in `length` bytes of the open file `fd` from `offset` (an APK asset's descriptor).
 [[nodiscard]] std::string sun_line(int fd, std::uint64_t offset, std::uint64_t length);
 
+/// What a worker's stale runs did (a run under way as a newer request came: Worker::request), so far.
+struct StaleStats {
+    std::uint64_t stopped = 0; ///< stale runs stopped before their end (fewer tiles made than asked)
+    /// The longest a newer request waited for the run under way to publish, milliseconds of the wall clock (every run
+    /// a newer request came during, stopped or not).
+    double newer_wait_ms = 0;
+    std::uint64_t late = 0;     ///< pieces stale runs began after they were told (RunEnd::late)
+    std::uint64_t dropped = 0;  ///< pieces stale runs evaluated of tiles they never finished (RunEnd::dropped)
+    std::uint64_t left_out = 0; ///< tiles requests left out as they were taken, their bits there by then
+};
+
 /// The sun worker: a thread that runs the latest bucket asked for over the latest scene, publishing into `bits`; a
 /// named moment's tiles come from the disk cache when it holds them and go into it when computed.
 class Worker {
@@ -249,7 +283,9 @@ public:
     Worker& operator=(Worker&&) = delete;
 
     /// Asks for `bucket` over `scene`'s tiles in `jobs`' order, on `threads` threads (0: the worker's own count, at
-    /// most that); it replaces a request not yet begun.
+    /// most that); it replaces a request not yet begun. A run under way is stale then: it begins no tile more, and
+    /// publishes the tiles it made, those it had begun among them (run's `wind_up`). This request, as it is taken,
+    /// leaves out the tiles whose bits are there by then (bits_there), so that none is made twice.
     void request(std::shared_ptr<const Scene> scene, const Bucket& bucket, std::vector<TileJob> jobs,
                  unsigned threads = 0);
 
@@ -266,6 +302,13 @@ public:
     /// (the disk cache's loads among it; its helpers' time is within it), and the tiles their buckets computed.
     [[nodiscard]] double run_ms() const;
     [[nodiscard]] std::uint64_t run_tiles() const;
+    /// What its stale runs did so far.
+    [[nodiscard]] StaleStats stale() const;
+#if defined(ATLAS_TESTS)
+    /// The tests' switch: off, a run under way goes to its end whatever is asked after it, and a request leaves out
+    /// nothing as it is taken (the base a stale run's stop is held to).
+    void stop_stale(bool on) noexcept { stop_stale_.store(on, std::memory_order_relaxed); }
+#endif
 
 private:
     struct Request {
@@ -273,6 +316,7 @@ private:
         Bucket bucket;
         std::vector<TileJob> jobs;
         unsigned threads = 0;
+        bool after_run = false; ///< asked while a run was under way: leaves out the tiles it made (bits_there)
     };
 
     void loop(const std::stop_token& stop);
@@ -287,10 +331,15 @@ private:
     std::optional<Request> next_;
     bool busy_ = false;
     std::atomic<bool> cancelled_{false}; ///< the run under way stops (cancel; cleared as a request is taken)
+    std::atomic<bool> stale_{false};     ///< the run under way winds up (a newer request; cleared as one is taken)
+    std::atomic<bool> stop_stale_{true}; ///< a newer request makes the run under way stale (stop_stale)
+    /// When the first request after the one under way came (none: none came yet).
+    std::optional<std::chrono::steady_clock::time_point> newer_;
     std::uint64_t runs_ = 0;
     std::uint64_t cached_ = 0;
     double run_ms_ = 0;
     std::uint64_t run_tiles_ = 0;
+    StaleStats stale_stats_;
     std::jthread thread_; ///< last: it starts once every member above is made, and stops before they go
 };
 

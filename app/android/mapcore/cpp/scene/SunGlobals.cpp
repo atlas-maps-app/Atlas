@@ -915,9 +915,7 @@ void SunGlobals::ask(Lane& lane, const std::shared_ptr<const sun::Scene>& scene,
         if (j.tile >= b.tiles.size() || !scene->tiles()[j.tile].whole) return true;
         const tiles::TileKey key = scene->tiles()[j.tile].key;
         if (std::ranges::find(b.wanted, key) == b.wanted.end()) return true;
-        const auto v = lane.bits.view(key, t);
-        return v && v->now->bucket == b.bucket.key && (!j.windows || v->now->windows) &&
-               v->now->context == scene->context(j.tile);
+        return sun::bits_there(lane.bits, *scene, j, b.bucket.key, t);
     });
     // the active pack's on all the sun's threads, the others on half as many
     const unsigned threads = std::max(1U, options_.threads);
@@ -1048,6 +1046,12 @@ SunStats SunGlobals::stats() const {
         s.cached += l.worker->cached();
         s.runs_ms += l.worker->run_ms();
         s.run_tiles += l.worker->run_tiles();
+        const sun::StaleStats st = l.worker->stale();
+        s.stale.stopped += st.stopped;
+        s.stale.newer_wait_ms = std::max(s.stale.newer_wait_ms, st.newer_wait_ms);
+        s.stale.late += st.late;
+        s.stale.dropped += st.dropped;
+        s.stale.left_out += st.left_out;
     }
     s.texels = last_texels_;
     s.others_ms = others_ms_;
