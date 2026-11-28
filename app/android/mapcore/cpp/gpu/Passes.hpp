@@ -49,6 +49,15 @@ public:
     MainPass& operator=(const MainPass&) = delete;
     ~MainPass() = default;
 
+    /// Lets go of what is sized to the output or made of its images: the attachments, their views, the framebuffers.
+    /// The render pass stays, and with it every pipeline made against it (scene_target, composite_target); resize makes
+    /// the rest again. The GPU must have finished every frame that used them.
+    void release_targets() noexcept;
+    /// The same pass at `extent`, for `outputs` (views of the output images, in their order) of the formats it was made
+    /// for: release_targets, then the attachments, their views and the framebuffers made again.
+    [[nodiscard]] Result<void> resize(const Device& device, vk::Extent2D extent, std::span<const vk::ImageView> outputs,
+                                      std::span<const vk::Image> output_images);
+
     [[nodiscard]] const MainPassSpec& spec() const noexcept { return spec_; }
     [[nodiscard]] bool composite() const noexcept { return spec_.config.form == FrameForm::composite; }
     /// Where the scene's pipelines draw.
@@ -74,7 +83,11 @@ public:
 
 private:
     MainPass() = default;
-    [[nodiscard]] Result<void> make_render_pass(const Device& device, std::span<const vk::ImageView> outputs);
+    /// The colour samples, the depth-stencil and their views, at the spec's extent.
+    [[nodiscard]] Result<void> make_attachments(const Device& device);
+    [[nodiscard]] Result<void> make_render_pass(const Device& device);
+    /// One framebuffer of the render pass for each output image.
+    [[nodiscard]] Result<void> make_framebuffers(const Device& device);
     void make_dynamic_targets(const Device& device);
 
     MainPassSpec spec_;

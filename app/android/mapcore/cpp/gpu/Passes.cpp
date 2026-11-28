@@ -201,11 +201,47 @@ Result<MainPass> MainPass::create(const Device& device, const MainPassSpec& spec
         !device.enabled().independent_blend) {
         return fail("the dynamic route at 1x needs independentBlend");
     }
+    ATLAS_GPU_CHECK(pass.make_attachments(device));
+    if (c.route == Route::renderpass) {
+        ATLAS_GPU_CHECK(pass.make_render_pass(device));
+        ATLAS_GPU_CHECK(pass.make_framebuffers(device));
+    } else {
+        pass.make_dynamic_targets(device);
+    }
+    return pass;
+}
+
+void MainPass::release_targets() noexcept {
+    framebuffers_.clear();
+    stencil_view_.clear();
+    depth_view_.clear();
+    colour_view_.clear();
+    depth_ = {};
+    colour_ = {};
+    outputs_.clear();
+    output_images_.clear();
+}
+
+Result<void> MainPass::resize(const Device& device, vk::Extent2D extent, std::span<const vk::ImageView> outputs,
+                              std::span<const vk::Image> output_images) {
+    release_targets();
+    spec_.extent = extent;
+    outputs_.assign(outputs.begin(), outputs.end());
+    output_images_.assign(output_images.begin(), output_images.end());
+    ATLAS_GPU_CHECK(make_attachments(device));
+    if (*render_pass_) ATLAS_GPU_CHECK(make_framebuffers(device));
+    return {};
+}
+
+Result<void> MainPass::make_attachments(const Device& device) {
+    const MainPassSpec& spec = spec_;
+    const Configuration& c = spec.config;
+    const vk::SampleCountFlagBits samples = c.samples();
     const MemoryUse memory = c.lazy() ? MemoryUse::lazy : MemoryUse::gpu;
     const vk::Extent3D extent{.width = spec.extent.width, .height = spec.extent.height, .depth = 1};
 
     // The colour samples (absent when the one-subpass form at 1x draws straight into the output).
-    const bool colour_image = !pass.one_sample_ || c.form != FrameForm::onepass;
+    const bool colour_image = !one_sample_ || c.form != FrameForm::onepass;
     if (colour_image) {
         ATLAS_GPU_LET(colour,
                       device.memory().image({.imageType = vk::ImageType::e2D,
@@ -218,10 +254,9 @@ Result<MainPass> MainPass::create(const Device& device, const MainPassSpec& spec
                                              .usage = vk::ImageUsageFlagBits::eColorAttachment | attachment_usage,
                                              .initialLayout = vk::ImageLayout::eUndefined},
                                             memory));
-        pass.colour_ = std::move(colour);
-        ATLAS_GPU_LET(view,
-                      make_view(device, pass.colour_.handle(), spec.colour_format, vk::ImageAspectFlagBits::eColor));
-        pass.colour_view_ = std::move(view);
+        colour_ = std::move(colour);
+        ATLAS_GPU_LET(view, make_view(device, colour_.handle(), spec.colour_format, vk::ImageAspectFlagBits::eColor));
+        colour_view_ = std::move(view);
     }
     ATLAS_GPU_LET(depth,
                   device.memory().image({.imageType = vk::ImageType::e2D,
@@ -234,23 +269,17 @@ Result<MainPass> MainPass::create(const Device& device, const MainPassSpec& spec
                                          .usage = vk::ImageUsageFlagBits::eDepthStencilAttachment | attachment_usage,
                                          .initialLayout = vk::ImageLayout::eUndefined},
                                         memory));
-    pass.depth_ = std::move(depth);
-    ATLAS_GPU_LET(depth_view, make_view(device, pass.depth_.handle(), spec.depth_stencil,
+    depth_ = std::move(depth);
+    ATLAS_GPU_LET(depth_view, make_view(device, depth_.handle(), spec.depth_stencil,
                                         vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil));
-    pass.depth_view_ = std::move(depth_view);
+    depth_view_ = std::move(depth_view);
     ATLAS_GPU_LET(stencil_view,
-                  make_view(device, pass.depth_.handle(), spec.depth_stencil, vk::ImageAspectFlagBits::eStencil));
-    pass.stencil_view_ = std::move(stencil_view);
-
-    if (c.route == Route::renderpass) {
-        ATLAS_GPU_CHECK(pass.make_render_pass(device, outputs));
-    } else {
-        pass.make_dynamic_targets(device);
-    }
-    return pass;
+                  make_view(device, depth_.handle(), spec.depth_stencil, vk::ImageAspectFlagBits::eStencil));
+    stencil_view_ = std::move(stencil_view);
+    return {};
 }
 
-Result<void> MainPass::make_render_pass(const Device& device, std::span<const vk::ImageView> outputs) {
+Result<void> MainPass::make_render_pass(const Device& device) {
     const Configuration& c = spec_.config;
     const vk::SampleCountFlagBits samples = c.samples();
     PassDescription d;
@@ -283,8 +312,6 @@ Result<void> MainPass::make_render_pass(const Device& device, std::span<const vk
     const vk::ImageLayout ds_read = vk::ImageLayout::eDepthStencilReadOnlyOptimal;
     const vk::ImageAspectFlags colour_aspect = vk::ImageAspectFlagBits::eColor;
     const vk::ImageAspectFlags stencil_aspect = vk::ImageAspectFlagBits::eStencil;
-    // Attachment indices in the framebuffer.
-    std::vector<vk::ImageView> views;
 
     if (c.form == FrameForm::onepass) {
         d.inputs.resize(1);
@@ -297,13 +324,11 @@ Result<void> MainPass::make_render_pass(const Device& device, std::span<const vk
             d.attachments = {output, depth};
             d.colours[0] = {ref(0, colour_write)};
             d.depths[0] = ref(1, ds_write);
-            views = {vk::ImageView{}, *depth_view_};
         } else {
             d.attachments = {colour, depth, output};
             d.colours[0] = {ref(0, colour_write)};
             d.resolves[0] = {ref(2, colour_write)};
             d.depths[0] = ref(1, ds_write);
-            views = {*colour_view_, *depth_view_, vk::ImageView{}};
         }
         d.dependencies = {from_external(0), to_external(0)};
     } else {
@@ -342,15 +367,32 @@ Result<void> MainPass::make_render_pass(const Device& device, std::span<const vk
             d.depths[1] = ref(1, ds_read);
         }
         d.dependencies = {from_external(0), from_external(1), scene_to_composite(), to_external(1)};
-        views = {*colour_view_, *depth_view_, vk::ImageView{}};
     }
     ATLAS_GPU_LET(render_pass, create_pass(device, d));
     render_pass_ = std::move(render_pass);
 
+    scene_ = {.render_pass = *render_pass_, .subpass = 0, .samples = samples, .colour_count = 1};
+    if (c.form == FrameForm::composite) {
+        const bool writes_output = one_sample_ || c.target == CompositeTarget::direct;
+        composite_ = {.render_pass = *render_pass_,
+                      .subpass = 1,
+                      .samples = writes_output ? vk::SampleCountFlagBits::e1 : samples,
+                      .colour_count = 1};
+    }
+    return {};
+}
+
+Result<void> MainPass::make_framebuffers(const Device& device) {
+    const Configuration& c = spec_.config;
+    // The attachments in the render pass's order (make_render_pass): the colour (the samples, or the output itself at
+    // 1x in one subpass), the depth-stencil, the output where it is separate.
+    const bool output_first = c.form == FrameForm::onepass && one_sample_;
+    std::vector<vk::ImageView> views = output_first ? std::vector<vk::ImageView>{vk::ImageView{}, *depth_view_}
+                                                    : std::vector<vk::ImageView>{*colour_view_, *depth_view_, {}};
     // One framebuffer per output image: the output's slot takes that image's view.
-    const std::size_t output_slot = (c.form == FrameForm::onepass && one_sample_) ? 0 : 2;
+    const std::size_t output_slot = output_first ? 0 : 2;
     framebuffers_.clear();
-    for (const vk::ImageView output_view : outputs) {
+    for (const vk::ImageView output_view : outputs_) {
         views[output_slot] = output_view;
         ATLAS_VK_LET(framebuffer,
                      device.handle().createFramebuffer({.renderPass = *render_pass_,
@@ -361,15 +403,6 @@ Result<void> MainPass::make_render_pass(const Device& device, std::span<const vk
                                                         .layers = 1}),
                      "a framebuffer of the main pass");
         framebuffers_.push_back(std::move(framebuffer));
-    }
-
-    scene_ = {.render_pass = *render_pass_, .subpass = 0, .samples = samples, .colour_count = 1};
-    if (c.form == FrameForm::composite) {
-        const bool writes_output = one_sample_ || c.target == CompositeTarget::direct;
-        composite_ = {.render_pass = *render_pass_,
-                      .subpass = 1,
-                      .samples = writes_output ? vk::SampleCountFlagBits::e1 : samples,
-                      .colour_count = 1};
     }
     return {};
 }
