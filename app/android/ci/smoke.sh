@@ -1008,10 +1008,17 @@ hidden_check() {
   delay=$(since_marker mapwarm | awk 'function t(s,  a) { split(s, a, ":"); return a[1] * 3600 + a[2] * 60 + a[3] }
     /AtlasMap: vk hidden: off/ { off = t($2) } off && /AtlasMap: vk frame / { d = t($2) - off; if (d < 0) d += 86400; printf "%.1f", d; exit }')
   firsts=$(since_marker mapwarm | grep -c 'AtlasMap: vk first frame ')
-  # A window whose surface did not outlive the stop comes back with a new one, and the core makes its pipelines again
-  # for it (Session::release_window) before the first frame: say which, as that is the delay's cause.
+  # A window whose surface did not outlive the stop comes back with a new one. The core kept the map's frame across it
+  # (Session::detach) and makes its targets again for the new one before the first frame (`vk passes resized`), or,
+  # where the new one's formats are not the frame's, its pipelines (`vk passes prepared`): say which, as that is the
+  # delay's cause.
   if since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk window: surface created'; then
-    surface="a new surface (the old one went at the stop), the pipelines made again"
+    surface="a new surface (the old one went at the stop)"
+    if since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk passes prepared'; then
+      surface="$surface, the pipelines made again"
+    elif since_marker mapwarm | sed -n '/AtlasMap: vk hidden: off/,$p' | grep -q 'AtlasMap: vk passes resized'; then
+      surface="$surface, the frame kept: its targets made again, no pipeline"
+    fi
   else
     surface="the surface kept"
   fi
