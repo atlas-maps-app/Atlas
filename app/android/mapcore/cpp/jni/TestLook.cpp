@@ -5,7 +5,7 @@
 // as the Look settings hand them over, the user's palette, the moment's theme block and each frame's camera state as
 // Kotlin writes them (PaletteBlock, CoreMoment, MapCameraSource), drawn into offscreen images the session made in the
 // frame's colour (10 bits a channel where the device draws in them, as the phone's swapchain) on the host's Vulkan
-// (lavapipe on this Mac and on CI) until the picture is complete, then read back at 8 bits a channel. The windows the
+// (lavapipe on this Mac and on CI) until the picture is final, then read back at 8 bits a channel. The windows the
 // map's world wants are given back, nearest first, so the tool takes them from their country's tiles as the phone's
 // Windows does. They bind to the Kotlin object app.atlas.mapcorecheck.likeness.LookHost by JNI's names; nothing of them
 // is in the phone's library.
@@ -258,11 +258,15 @@ JNIEXPORT void JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_screen(JNIE
     look->map->set_screen(haze == JNI_TRUE, vignette == JNI_TRUE, grain == JNI_TRUE);
 }
 
-/// Draws at `camera` (a camera state as MapCameraSource writes it) until the picture is complete and a few frames on,
-/// as the phone's frame loop draws at rest, the last with the frame's fields (fields_in), or until it cannot be with
-/// the packs listed (no tile under way and no fade: windows it wants that no pack holds, which the tool takes and draws
-/// again with, or none within reach), or `seconds` pass; "<frames> frames, complete <yes|no>, pack <drawn>; <tiles
-/// line>; the last frame: <its draws, triangles, fragments and recording time>", or "" with lastError set.
+/// Draws at `camera` (a camera state as MapCameraSource writes it) until the picture is final (frame/Still.hpp:
+/// complete and the sun's shadows in) and a few frames on, as the phone's frame loop draws at rest, the last with the
+/// frame's fields (fields_in), or until it cannot be complete with the packs listed (no tile under way and no fade:
+/// windows it wants that no pack holds, which the tool takes and draws again with, or none within reach), or `seconds`
+/// pass. Says "<frames> frames, complete <yes|no>, final <yes|no>, <how it ended>, pack <drawn>; <tiles line>; the
+/// last frame: <its draws, triangles, fragments and recording time>", or "" with lastError set. Final says whether the
+/// frame read back is the picture at rest: yes where the frames came to rest final (with the frame's fields, or
+/// without them where they did not come), no where the packs listed could not make it complete or the time ran out
+/// first, whatever complete says (complete() alone is the app's word, which draws a tile by day until its bits come).
 JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNIEnv* env, jclass /*unused*/,
                                                                              jlong handle, jobject camera,
                                                                              jdouble seconds) {
@@ -295,6 +299,8 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
     // the longest the picture at rest waits for its fields: where they never come, the frame as it is
     constexpr auto fields_most = std::chrono::seconds(120);
     std::optional<std::chrono::steady_clock::time_point> rest; // when the picture came to rest
+    // how the frames ended: final at rest, or not final where they ended otherwise
+    const char* ended = nullptr;
     while (std::chrono::steady_clock::now() < until) {
         const bool fields = fields_in(); // before the frame, which draws with them
         frame::Still still(map);         // the sun's work before it
@@ -309,7 +315,14 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
         if (complete_frames > 4 && !map.animating()) {
             const auto now = std::chrono::steady_clock::now();
             if (!rest) rest = now;
-            if (fields || now - *rest > fields_most) break;
+            if (fields) {
+                ended = "final yes, at rest";
+                break;
+            }
+            if (now - *rest > fields_most) {
+                ended = "final yes, at rest without the frame's fields";
+                break;
+            }
             continue;
         }
         rest.reset();
@@ -319,13 +332,23 @@ JNIEXPORT jstring JNICALL Java_app_atlas_mapcorecheck_likeness_LookHost_draw(JNI
         if (scene::WorldTiles* tiles = map.world()->world_tiles(); tiles != nullptr) tiles->wait_idle();
         // as far as it gets with these packs: nothing under way (windows wanted that are not listed, or none within the
         // finest level's reach)
-        if (frames > 4 && !map.complete() && map.world()->residency().stats().pending == 0) break;
+        if (frames > 4 && !map.complete() && map.world()->residency().stats().pending == 0) {
+            ended = "final no, not complete with the packs listed";
+            break;
+        }
+    }
+    // at the time limit: at rest still waiting for the frame's fields, or never at rest (never final, or final with
+    // the fades not over)
+    if (ended == nullptr) {
+        ended =
+            rest ? "final yes, at rest without the frame's fields by the time limit" : "final no, at the time limit";
     }
     last_error.clear();
-    return java(env, std::format("{} frames, complete {}, pack {}; {}; the last frame: {} draws, {}k triangles, {}k "
-                                 "fragments, record {:.1f} ms",
-                                 frames, map.complete() ? "yes" : "no", map.drawn_pack(), map.tiles_line(), last.draws,
-                                 last.triangles_k, last.fragments_k, last.record_ms));
+    return java(env,
+                std::format("{} frames, complete {}, {}, pack {}; {}; the last frame: {} draws, {}k triangles, {}k "
+                            "fragments, record {:.1f} ms",
+                            frames, map.complete() ? "yes" : "no", ended, map.drawn_pack(), map.tiles_line(),
+                            last.draws, last.triangles_k, last.fragments_k, last.record_ms));
 }
 
 /// The world's names the map's frames show without a sprite, by rank, as Native.namesWanted gives them: little-endian,

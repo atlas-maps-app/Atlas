@@ -128,7 +128,8 @@ internal object LookHost {
  * `-Datlas.phonelook.path=22|21`, `-Datlas.phonelook.list=<packs.json>` (the published list the windows
  * are taken by, else packs-latest's) and `-Datlas.phonelook.work=<folder>` (the windows and indexes, kept between runs;
  * `<out>/core-work` by default). It writes `<name>-core<path>.png` and `.txt` (what was drawn and how it settled, the
- * windows taken, the light).
+ * windows taken, the light). Once every view is written, it fails where a view's frame never became final (the first
+ * line's `final no`: the packs listed could not make it complete, or the time ran out before it came to rest final).
  */
 class PhoneLook {
     @Test
@@ -163,6 +164,8 @@ class PhoneLook {
         val elements = System.getProperty("atlas.phonelook.elements")?.split(',')?.filter { it.isNotBlank() }?.map { File(it.trim()) }.orEmpty()
         val phone = PhoneCore(work, list, canal, off, world, under, elements)
         val side = if (under) "under" else ""
+        // the views whose frame never became final (LookHost.draw's line: final no), each written all the same
+        val notFinal = ArrayList<String>()
         for ((named, spec) in views) {
             // a view's name may say its palette and moment, <name>~<preset>~<moment> (a preset's code, Palette.kt's
             // Preset; noon or night, at the default moment's date), and is written <name>-<preset>-<moment>
@@ -179,7 +182,11 @@ class PhoneLook {
             png(f.argb, w, h, File(out, "$name-core$path$side.png"))
             File(out, "$name-core$path$side.txt").writeText(f.notes)
             println("phone look core $name (alpha $path): ${f.notes.lines().first()}")
+            if (!f.final) notFinal += "$name: ${f.notes.lines().first()}"
         }
+        // a frame that never became final is not the phone's picture at rest: every view is drawn and written, then
+        // the look fails, naming each such view and how its frames ended
+        assertTrue("not final, so not the picture at rest: ${notFinal.joinToString("; ")}", notFinal.isEmpty())
     }
 
     /** The views, moment and size. */
@@ -252,7 +259,8 @@ internal class PhoneCore(
     private val under: Boolean = false,
     elements: List<File> = emptyList(),
 ) {
-    class Frame(val argb: IntArray, val notes: String)
+    /** A view drawn: its pixels, its notes (LookHost.draw's line first), and whether its frame was final. */
+    class Frame(val argb: IntArray, val notes: String, val final: Boolean)
 
     /** A pack as PackList lists it: its id, number for the process, MapCore.PackRef's kind, box, profile and views' distances. */
     private class Listed(val id: String, val number: Long, val kind: Int, val box: BBox, val profile: Int, val distances: DoubleArray, val file: File)
@@ -334,6 +342,10 @@ internal class PhoneCore(
             notes.insert(0, "$drew\n")
             notes.appendLine("camera names ${pack?.id ?: "none"} (#${pack?.number ?: 0}, profile ${pack?.profile ?: 0}); ${listed.size} packs listed after $rounds rounds")
             notes.appendLine("windows taken from the country's tiles: ${taken.size} (${taken.joinToString(" ")})")
+            // the windows the map still wants: those no country's tiles hold (the phone builds them from their data,
+            // which this tool does not), or more than the rounds took
+            val unhad = LookHost.wanted(handle).map { k -> "${k ushr 48}/${(k ushr 24) and 0xFFFFFF}/${k and 0xFFFFFF}" }
+            if (unhad.isNotEmpty()) notes.appendLine("windows wanted and not had: ${unhad.size} (${unhad.joinToString(" ")})")
             if (built.isNotEmpty()) notes.appendLine("windows built from the element packs: ${built.size} (${built.joinToString(" ")})")
             if (world != null) {
                 notes.appendLine("the world: ${worldPacks().joinToString(" ") { it.first }}${if (fetched.isEmpty()) "" else "; fetched now: ${fetched.joinToString(" ")}"}")
@@ -344,7 +356,7 @@ internal class PhoneCore(
             notes.appendLine("window version $version")
             notes.appendLine("light " + light(moment))
             notes.appendLine("view lat ${view.lat} lon ${view.lon} zoom ${view.zoom} bearing ${view.bearing} pitch ${view.pitch} ${view.widthDp}x${view.heightDp}dp cy ${view.cyDp} distance ${view.distance}")
-            return Frame(argb, notes.toString())
+            return Frame(argb, notes.toString(), drew.contains(FINAL))
         } finally {
             LookHost.close(handle)
         }
@@ -517,6 +529,9 @@ internal class PhoneCore(
         const val WORLD_BASE = 4
 
         val NAME = Regex("""(\d+)-(\d+)-(\d+)\.atlas""")
+
+        /** LookHost.draw's word that its frame was final. */
+        const val FINAL = ", final yes, "
 
         /** How long a frame may take to settle on lavapipe (the canal ring's densest views take minutes on this Mac). */
         const val DRAW_SECONDS = 600.0
