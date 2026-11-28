@@ -173,6 +173,20 @@ struct FrameContext {
 };
 
 /// What the frames draw: the stand-in for VK bench now, the map's frame builder from K7.
+///
+/// What outlives what. The device outlives the content, and the content every renderer that draws it. What prepare
+/// makes has two lives:
+/// - the device part, what depends only on the device, the configuration and the main pass's formats and samples (the
+///   shader modules, pipelines, layouts, pools and render passes), lives as long as the renderer's frame: it goes at
+///   release, as the renderer goes or makes its frame again (another configuration, another format);
+/// - the targets, what is sized to the output or made of its images or the main pass's attachments (images,
+///   framebuffers, buffers of the output's size, the descriptor writes to them), live no longer than the output they
+///   were made for. Where the content keeps them apart (resizes), they go at release_targets before that output goes
+///   (an output made again at another size; a window gone while the renderer keeps its frame for the next one) and
+///   prepare_targets makes them for the next output; otherwise they go at release, with the device part.
+/// So nothing of an output outlives it, and a renderer kept without one (Renderer::release_targets) holds the device
+/// part alone. A 10-bit frame goes whole before the crash guard's colour stage closes (standin::Session). Each call
+/// comes after the GPU has finished every frame that used what it lets go of.
 class Content {
 public:
     Content() = default;
@@ -182,26 +196,20 @@ public:
     Content& operator=(Content&&) = delete;
     virtual ~Content() = default;
 
-    /// Makes what depends on the main pass and the output (pipelines, images of the output's size, descriptor sets),
-    /// after the GPU has finished every frame that used the old ones; what an earlier prepare made goes first.
+    /// Makes the device part and the targets for `pass` and `output`; what an earlier prepare made goes first.
     [[nodiscard]] virtual Result<void> prepare(const MainPass& pass, const Output& output) = 0;
-    /// Lets go of everything prepare made, after the GPU has finished every frame that used it. The renderer that
-    /// prepared it calls it as it goes, so nothing made for a main pass and an output outlives the renderer of them (a
-    /// 10-bit frame's pipelines, in VK bench's colour stage, go before the crash guard's colour stage closes).
+    /// Lets go of everything prepare made: the device part, and the targets where they are still there. The renderer
+    /// that prepared it calls it as its frame goes, so nothing made for a frame outlives the renderer of it.
     virtual void release() = 0;
     /// Records one frame: the offscreen passes, then Mark::offscreen; the main pass, then Mark::main; what follows it.
     virtual void record(const FrameContext& frame) = 0;
 
-    /// Whether what prepare made holds apart what depends only on the device, the configuration and the main pass's
-    /// formats and samples (its shader modules, pipelines, layouts, pools and render passes) from what is sized to the
-    /// output or made of its images or the main pass's attachments: then an output made again at another size with
-    /// the same formats lets go of the second alone (release_targets) and makes it again (prepare_targets), and no
-    /// module and no pipeline is made. No by default: the renderer releases and prepares it whole, as for another
-    /// configuration.
+    /// Whether what prepare made holds the device part apart from the targets: then an output made again at another
+    /// size with the same formats, or given again after one went, lets go of the targets alone (release_targets) and
+    /// makes them again (prepare_targets), and no module and no pipeline is made. No by default: the renderer releases
+    /// and prepares it whole, as for another configuration.
     [[nodiscard]] virtual bool resizes() const noexcept { return false; }
-    /// Lets go of what prepare made that is sized to the output or made of its images or the main pass's attachments
-    /// (images, framebuffers, buffers of the output's size, the descriptor writes to them), after the GPU has finished
-    /// every frame that used it. The rest stays, and release lets go of it with the frame.
+    /// Lets go of the targets alone. The device part stays, for prepare_targets, or for release with the frame.
     virtual void release_targets() {}
     /// Makes again what release_targets let go of, for `pass` (resized, of the formats and samples it was prepared for)
     /// and `output`: no shader module and no pipeline.
@@ -226,7 +234,8 @@ struct FrameReport {
 /// The frame loop's GPU half: the main pass of one configuration on one output, the frames in flight, the content.
 class Renderer {
 public:
-    /// The renderer of `configuration` on `output`, drawing `content` (both outlive it). `watch` (the crash guard) is
+    /// The renderer of `configuration` on `output`, drawing `content` (which outlives it; the output lives until
+    /// retarget gives the renderer another or release_targets lets go of it). `watch` (the crash guard) is
     /// told before the renderer lets go of a frame (its main pass and what it prepared in the content), and whose frame
     /// its work is (PipelineWatch::frame_of): a frame's making, drawing and going are its configuration's, until the
     /// renderer goes.
@@ -251,12 +260,23 @@ public:
     /// Switches the configuration (VK bench): waits for the frames in flight, then remakes the main pass and the
     /// content.
     [[nodiscard]] Result<void> reconfigure(const Configuration& configuration);
-    /// The output was remade (a resize, a rotation): waits for the frames in flight, then, where the new output has the
-    /// formats and the final layout the frame was made for and the content keeps its parts apart (Content::resizes),
-    /// lets go of the frame's targets alone, announced (announce_release: `targets`), and makes them again: the main
-    /// pass's attachments and framebuffers, the content's parts sized to the output; its pipelines stay. Otherwise
-    /// it remakes the main pass and the content, as reconfigure does.
+    /// The output was remade (a resize, a rotation), or one is given again after release_targets (a window back):
+    /// waits for the frames in flight, then, where the frame keeps its parts apart (keeps()) and the new output has the
+    /// formats and the final layout it was made for, lets go of the frame's targets alone (announced, announce_release:
+    /// `targets`; gone already after release_targets) and makes them again: the main pass's attachments and
+    /// framebuffers, the content's parts sized to the output; its pipelines stay. Otherwise it remakes the main pass
+    /// and the content, as reconfigure does.
     [[nodiscard]] Result<void> retarget(Output& output);
+    /// Whether the frame holds its parts apart (Content::resizes) and has all of them: then its targets can go alone,
+    /// and a new output with the same formats needs no module and no pipeline (retarget).
+    [[nodiscard]] bool keeps() const noexcept { return pass_ && whole_ && content_.resizes(); }
+    /// The output goes, and the frame waits for another (a window gone, its surface with it): waits for the frames in
+    /// flight, then, where keeps(), lets go of the frame's targets alone, announced (`targets`), as a resize does. What
+    /// depends only on the device, the configuration and the formats stays: the content's device parts, the main
+    /// pass's render pass, the frames in flight's pools, fences and semaphores. Nothing of the output is held after
+    /// it, so the output may go; nothing is drawn until retarget gives the renderer one again. Where the frame does not
+    /// keep its parts apart, nothing changes: the caller lets the renderer go.
+    void release_targets();
     /// Waits for every frame in flight (before the output or the device goes away).
     void drain();
 
@@ -271,8 +291,10 @@ private:
     [[nodiscard]] Result<void> remake(const Configuration& configuration);
     /// Lets go of the frame drawn so far (announced first, if there is one): the content's prepared objects, the pass.
     void release_frame();
-    /// Lets go of the frame's targets (announced first): the content's parts sized to the output, the main pass's
-    /// attachments and framebuffers; then makes them again for the output.
+    /// Lets go of the frame's targets (announced first) where they are made: the content's parts sized to the output,
+    /// the main pass's attachments and framebuffers.
+    void let_go_of_targets();
+    /// Lets go of the frame's targets (let_go_of_targets), then makes them again for the output.
     [[nodiscard]] Result<void> resize_targets();
     /// What the frame's pass and the content's device parts were made for, of the output: they hold for a new output
     /// with the same.
@@ -293,6 +315,7 @@ private:
     std::unique_ptr<MainPass> pass_;
     bool prepared_ = false;    // the content holds what this renderer prepared for pass_
     bool whole_ = false;       // and all of it: the last prepare, or prepare_targets, succeeded
+    bool targets_ = false;     // the frame's targets are made (not let go of with an output, or by a failed resize)
     Made made_;                // what the frame was made for (retarget)
     bool unsubmitted_ = false; // unsubmitted()
     std::uint64_t number_ = 0;
