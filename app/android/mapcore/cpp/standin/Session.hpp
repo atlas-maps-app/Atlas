@@ -257,8 +257,10 @@ public:
     /// device and the instance behind the close stage. Once; the session does nothing after it.
     void close();
 
+#if defined(ATLAS_TESTS)
     /// The session's start (the guard, the device), for the tests and the façade's facts.
     [[nodiscard]] const gpu::Started& started() const noexcept { return started_; }
+#endif
     /// The output drawn into now, if any.
     [[nodiscard]] const gpu::Output* output() const noexcept { return output_.get(); }
     /// Whether the guard's colour stage is open (VK bench's 10-bit work may reach the driver).
@@ -266,9 +268,9 @@ public:
     /// Why the map is off for this session (three devices lost, or one not made again after its loss); "" while it
     /// is on.
     [[nodiscard]] const std::string& off_reason() const noexcept { return session_off_; }
+#if defined(ATLAS_TESTS)
     /// The tests' device loss: what a frame does when the device is lost.
     void lose_device() { device_lost(); }
-#if defined(ATLAS_TESTS)
     /// A test's: the next frame is recorded and its submit fails (gpu::Frames::fail_next_submit), once a renderer is
     /// made.
     void fail_next_submit() {
